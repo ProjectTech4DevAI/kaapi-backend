@@ -1,33 +1,32 @@
+import pandas as pd
 import json
-from datetime import datetime, timezone
 
-RESULTS_FILE = "response.json"
+# --- Load JSON ---
+file_name = "response.json"
 
-def parse_timestamp(ts: str) -> datetime:
-    """
-    Parse ISO8601 timestamps ending with 'Z' into timezone-aware UTC datetimes.
-    """
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+with open(file_name, "r") as f:
+    raw_data = json.load(f)
 
-def main():
-    # Load response file
-    with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-        responses = json.load(f)
+# --- Extract Only the Requested Fields ---
+records = []
 
-    # Extract timestamps
-    timestamps = [parse_timestamp(r["timestamp"]) for r in responses]
+for record in raw_data:
+    if record.get("data"):
+        flat_record = {
+            "request_id": record.get("request_id"),
+            # "server_timestamp_unix": record.get("server_timestamp_unix"),
+            # "provider_timestamp_unix": record.get("provider_timestamp_unix"),
+            # "pickup_timestamp_unix": record.get("pickup_timestamp_unix"),
+            "request_process_time_seconds": record.get("request_process_time_seconds"),
+            "time_until_pickup_seconds": record.get("time_until_pickup_seconds"),
+        }
+        records.append(flat_record)
 
-    # Determine earliest timestamp
-    base_time = min(timestamps)
+# --- Convert to DataFrame ---
+df = pd.DataFrame(records)
 
-    print("Base timestamp:", base_time.isoformat(), "\n")
+# --- Sort by request_id ---
+df = df.sort_values(by="request_id")
 
-    # Compute offsets
-    print("Callback timing (seconds since first event):\n")
-
-    for i, (response, ts) in enumerate(zip(responses, timestamps), start=1):
-        diff_seconds = (ts - base_time).total_seconds()
-        print(f"#{i}: +{diff_seconds:.3f} sec   timestamp={ts.isoformat()}")
-
-if __name__ == "__main__":
-    main()
+# --- Display Table ---
+print(df.to_markdown(index=False))
