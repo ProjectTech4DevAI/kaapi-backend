@@ -25,7 +25,7 @@ services:
 
   redis:
     image: redis:7
-    container_name: redis
+    container_name: redis_compose
     restart: always
     env_file:
       - .env
@@ -48,7 +48,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: rabbitmq
+    container_name: rabbitmq_compose
     restart: always
     env_file:
       - .env
@@ -134,6 +134,11 @@ services:
           path: ./backend/pyproject.toml
         - action: rebuild
           path: ./backend/uv.lock
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2048M
 
   celery_worker:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
@@ -151,6 +156,11 @@ services:
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
     command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2048M
 
   celery_flower:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
