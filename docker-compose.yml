@@ -155,7 +155,16 @@ services:
       POSTGRES_SERVER: db
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
-    command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
+    command:
+      - "uv"
+      - "run"
+      - "celery"
+      - "-A"
+      - "app.celery.celery_app"
+      - "worker"
+      - "--pool=gevent"
+      - "--concurrency=${CELERY_WORKER_CONCURRENCY:-100}"
+      - "--loglevel=info"
     deploy:
       resources:
         limits:
