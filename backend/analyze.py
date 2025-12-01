@@ -11,9 +11,10 @@ with open(file_name, "r") as f:
 records = []
 
 for record in raw_data:
+    request_id = record.get("data", {}).get("metadata", {}).get("request_id")
     if record.get("data"):
         flat_record = {
-            "request_id": record.get("request_id"),
+            "request_id": request_id,
             # "server_timestamp_unix": record.get("server_timestamp_unix"),
             # "provider_timestamp_unix": record.get("provider_timestamp_unix"),
             # "pickup_timestamp_unix": record.get("pickup_timestamp_unix"),
