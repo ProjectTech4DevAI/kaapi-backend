@@ -225,6 +225,9 @@ def execute_job(
     config = request.config
     callback_response = None
     config_blob: ConfigBlob | None = None
+    import time
+    pickup_time = int(time.time())
+    request.request_metadata["pickup_time"] = pickup_time
     input_guardrails: list[dict] = []
     output_guardrails: list[dict] = []
     llm_call_id: UUID | None = None  # Track the LLM call record

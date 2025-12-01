@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 app = FastAPI(title="Simple Callback Receiver")
@@ -11,7 +12,8 @@ RESULTS_FILE = "response.json"
 
 @app.post("/callback")
 async def receive_callback(request: Request):
-    server_received_time = datetime.now(timezone.utc)
+    # Server time in unix seconds
+    server_received_unix = int(time.time())
 
     try:
         payload = await request.json()
@@ -19,24 +21,28 @@ async def receive_callback(request: Request):
         raw_body = await request.body()
         payload = {"raw_body": raw_body.decode("utf-8")}
 
-    # Extract provider timestamp (unix seconds)
-    unix_ts = None
-    provider_ts = None
-    processing_delay = None
+    # Extract provider send timestamp
+    provider_unix = payload.get("metadata", {}).get("timestamp")
 
-    try:
-        unix_ts = payload["metadata"]["timestamp"]   # <-- Correct location
-        provider_ts = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
-        processing_delay = (server_received_time - provider_ts).total_seconds()
-    except Exception:
-        pass
+    # Extract celery pickup timestamp (added earlier in execute_job)
+    pickup_unix = payload.get("metadata", {}).get("pickup_time")
+
+    # Calculate delays
+    request_process_time = None
+    if provider_unix is not None:
+        request_process_time = server_received_unix - provider_unix
+
+    time_until_pickup = None
+    if provider_unix is not None and pickup_unix is not None:
+        time_until_pickup = pickup_unix - provider_unix
 
     # Build stored JSON entry
     payload_with_info = {
-        "server_timestamp": server_received_time.isoformat(),
-        "provider_timestamp_unix": unix_ts,
-        "provider_timestamp_iso": provider_ts.isoformat() if provider_ts else None,
-        "processing_delay_seconds": processing_delay,
+        "server_timestamp_unix": server_received_unix,
+        "provider_timestamp_unix": provider_unix,
+        "pickup_timestamp_unix": pickup_unix,
+        "request_process_time_seconds": request_process_time,
+        "time_until_pickup_seconds": time_until_pickup,
         "data": payload
     }
 
