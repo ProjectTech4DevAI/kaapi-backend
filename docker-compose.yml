@@ -163,7 +163,7 @@ services:
       - "app.celery.celery_app"
       - "worker"
       - "--pool=gevent"
-      - "--concurrency=${CELERY_WORKER_CONCURRENCY:-100}"
+      - "--concurrency=${CELERY_WORKER_CONCURRENCY?variable not set}"
       - "--loglevel=info"
     deploy:
       resources:
