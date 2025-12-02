@@ -1,68 +1,64 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+import http.server
+import socketserver
 import json
-import os
-import time
-from datetime import datetime, timezone
+from datetime import datetime
 
-app = FastAPI(title="Simple Callback Receiver")
+PORT = 8000
+OUTPUT_FILE = "callback_responses.json"
 
-RESULTS_FILE = "response.json"
+class WebhookHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
 
+        try:
+            # Attempt to parse the incoming data as JSON
+            data = json.loads(post_data.decode('utf-8'))
+        except json.JSONDecodeError:
+            # If not pure JSON, just store the raw data
+            data = {"raw_data": post_data.decode('utf-8')}
+        except Exception as e:
+            data = {"error": f"Failed to process data: {e}", "raw_data": post_data.decode('utf-8', errors='ignore')}
 
-@app.post("/callback")
-async def receive_callback(request: Request):
-    # Server time in unix seconds
-    server_received_unix = int(time.time())
+        # Structure the entry for the log file
+        import time
+        log_entry = {
+            "timestamp": int(time.time()),
+            "headers": dict(self.headers),
+            "payload": data
+        }
 
-    try:
-        payload = await request.json()
-    except Exception:
-        raw_body = await request.body()
-        payload = {"raw_body": raw_body.decode("utf-8")}
-
-    # Extract provider send timestamp
-    provider_unix = payload.get("metadata", {}).get("timestamp")
-
-    # Extract celery pickup timestamp (added earlier in execute_job)
-    pickup_unix = payload.get("metadata", {}).get("pickup_time")
-
-    # Calculate delays
-    request_process_time = None
-    if provider_unix is not None:
-        request_process_time = server_received_unix - provider_unix
-
-    time_until_pickup = None
-    if provider_unix is not None and pickup_unix is not None:
-        time_until_pickup = pickup_unix - provider_unix
-
-    # Build stored JSON entry
-    payload_with_info = {
-        "server_timestamp_unix": server_received_unix,
-        "provider_timestamp_unix": provider_unix,
-        "pickup_timestamp_unix": pickup_unix,
-        "request_process_time_seconds": request_process_time,
-        "time_until_pickup_seconds": time_until_pickup,
-        "data": payload
-    }
-
-    # Load existing entries
-    if os.path.exists(RESULTS_FILE):
-        with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-            try:
-                responses = json.load(f)
-                if not isinstance(responses, list):
-                    responses = []
-            except json.JSONDecodeError:
-                responses = []
-    else:
+        # Load existing responses and append the new one
         responses = []
+        try:
+            with open(OUTPUT_FILE, 'r') as f:
+                # Handle empty or malformed files gracefully
+                file_content = f.read()
+                if file_content:
+                    responses = json.loads(file_content)
+        except (FileNotFoundError, json.JSONDecodeError):
+            print(f"Starting new log file: {OUTPUT_FILE}")
 
-    # Append
-    responses.append(payload_with_info)
+        responses.append(log_entry)
 
-    # Save
-    with open(RESULTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(responses, f, ensure_ascii=False, indent=2)
+        # Write all responses back to the file
+        with open(OUTPUT_FILE, 'w') as f:
+            json.dump(responses, f, indent=4)
 
-    return JSONResponse({"status": "ok", "message": "Callback received"})
+        # Send a 200 OK response back to the caller
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({"status": "received", "message": "Callback successfully logged"}).encode('utf-8'))
+        print(f"\n✅ Received and logged new callback at {log_entry['timestamp']}")
+        print(f"Response saved to {OUTPUT_FILE}\n")
+
+
+# Start the server
+with socketserver.TCPServer(("", PORT), WebhookHandler) as httpd:
+    print(f"🚀 Starting local webhook server on port {PORT}")
+    print("------------------------------------------------")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Server stopped.")

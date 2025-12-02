@@ -134,11 +134,11 @@ services:
           path: ./backend/pyproject.toml
         - action: rebuild
           path: ./backend/uv.lock
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 2048M
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 2048M
 
   celery_worker:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
@@ -162,14 +162,10 @@ services:
       - "-A"
       - "app.celery.celery_app"
       - "worker"
-      - "--pool=gevent"
+      - "--pool=prefork"
       - "--concurrency=${CELERY_WORKER_CONCURRENCY?variable not set}"
       - "--loglevel=info"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 2048M
+
 
   celery_flower:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
