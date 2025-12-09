@@ -87,11 +87,12 @@ class GoogleAIProvider(BaseProvider):
         if output_language and output_language != input_language:
             lang_instruction += f" and translate to {output_language}"
 
+        forced_trascription_text="Only return transcribed text and no other text."
         # Merge user instructions with language instructions
         if instructions:
-            merged_instruction = f"{instructions}. {lang_instruction}."
+            merged_instruction = f"{instructions}. {lang_instruction}. {forced_trascription_text}"
         else:
-            merged_instruction = f"{lang_instruction}."
+            merged_instruction = f"{lang_instruction}. {forced_trascription_text}"
 
         # Upload file and generate content
         gemini_file = self.client.files.upload(file=parsed_input)
