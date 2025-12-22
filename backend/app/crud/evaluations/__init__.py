@@ -5,6 +5,7 @@ from app.crud.evaluations.core import (
     create_evaluation_run,
     get_evaluation_run_by_id,
     list_evaluation_runs,
+    resolve_model_from_config,
 )
 from app.crud.evaluations.cron import (
     process_all_pending_evaluations,
@@ -39,6 +40,7 @@ __all__ = [
     "create_evaluation_run",
     "get_evaluation_run_by_id",
     "list_evaluation_runs",
+    "resolve_model_from_config",
     # Cron
     "process_all_pending_evaluations",
     "process_all_pending_evaluations_sync",

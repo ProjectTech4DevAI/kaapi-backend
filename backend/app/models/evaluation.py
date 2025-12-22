@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Index, Text, UniqueConstraint
@@ -193,15 +194,17 @@ class EvaluationRun(SQLModel, table=True):
         sa_column_kwargs={"comment": "Name of the Langfuse dataset used"},
     )
 
-    # Config field - dict requires sa_column
-    config: dict[str, Any] = SQLField(
-        default_factory=dict,
-        sa_column=Column(
-            JSONB,
-            nullable=False,
-            comment="Evaluation configuration (model, instructions, etc.)",
-        ),
-        description="Evaluation configuration",
+    config_id: UUID = SQLField(
+        foreign_key="config.id",
+        nullable=True,
+        description="Reference to the stored config used for this evaluation",
+        sa_column_kwargs={"comment": "Reference to the stored config used"},
+    )
+    config_version: int = SQLField(
+        nullable=True,
+        ge=1,
+        description="Version of the config used for this evaluation",
+        sa_column_kwargs={"comment": "Version of the config used"},
     )
 
     # Dataset reference
@@ -339,7 +342,8 @@ class EvaluationRunPublic(SQLModel):
     id: int
     run_name: str
     dataset_name: str
-    config: dict[str, Any]
+    config_id: UUID | None
+    config_version: int | None
     dataset_id: int
     batch_job_id: int | None
     embedding_batch_job_id: int | None

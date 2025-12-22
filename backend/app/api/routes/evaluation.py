@@ -3,12 +3,21 @@ import io
 import logging
 import re
 from pathlib import Path
+from uuid import UUID
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.core.cloud import get_cloud_storage
-from app.crud.assistants import get_assistant_by_id
+from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations import (
     create_evaluation_dataset,
     create_evaluation_run,
@@ -27,12 +36,16 @@ from app.models.evaluation import (
     DatasetUploadResponse,
     EvaluationRunPublic,
 )
+from app.models.llm.request import LLMCallConfig
+from app.services.llm.jobs import resolve_config_blob
+from app.services.llm.providers import LLMProvider
 from app.utils import (
     APIResponse,
     get_langfuse_client,
     get_openai_client,
     load_description,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -430,20 +443,9 @@ def evaluate(
     experiment_name: str = Body(
         ..., description="Name for this evaluation experiment/run"
     ),
-    config: dict = Body(default_factory=dict, description="Evaluation configuration"),
-    assistant_id: str
-    | None = Body(
-        None, description="Optional assistant ID to fetch configuration from"
-    ),
+    config_id: UUID = Body(..., description="Stored config ID"),
+    config_version: int = Body(..., ge=1, description="Stored config version"),
 ) -> APIResponse[EvaluationRunPublic]:
-    logger.info(
-        f"[evaluate] Starting evaluation | experiment_name={experiment_name} | "
-        f"dataset_id={dataset_id} | "
-        f"org_id={auth_context.organization.id} | "
-        f"assistant_id={assistant_id} | "
-        f"config_keys={list(config.keys())}"
-    )
-
     # Step 1: Fetch dataset from database
     dataset = get_dataset_by_id(
         session=_session,
@@ -458,12 +460,6 @@ def evaluate(
             detail=f"Dataset {dataset_id} not found or not accessible to this "
             f"organization/project",
         )
-
-    logger.info(
-        f"[evaluate] Found dataset | id={dataset.id} | name={dataset.name} | "
-        f"object_store_url={'present' if dataset.object_store_url else 'None'} | "
-        f"langfuse_id={dataset.langfuse_dataset_id}"
-    )
 
     dataset_name = dataset.name
 
@@ -487,63 +483,35 @@ def evaluate(
             "Please ensure Langfuse credentials were configured when the dataset was created.",
         )
 
-    # Handle assistant_id if provided
-    if assistant_id:
-        # Fetch assistant details from database
-        assistant = get_assistant_by_id(
-            session=_session,
-            assistant_id=assistant_id,
-            project_id=auth_context.project.id,
+    config_version_crud = ConfigVersionCrud(
+        session=_session, config_id=config_id, project_id=auth_context.project.id
+    )
+
+    config, error = resolve_config_blob(
+        config_crud=config_version_crud,
+        config=LLMCallConfig(id=config_id, version=config_version),
+    )
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to resolve config from stored config: {error}",
+        )
+    elif config.completion.provider != LLMProvider.OPENAI:
+        raise HTTPException(
+            status_code=422,
+            detail="Only 'openai' provider is supported for evaluation configs",
         )
 
-        if not assistant:
-            raise HTTPException(
-                status_code=404, detail=f"Assistant {assistant_id} not found"
-            )
+    logger.info("[evaluate] Successfully resolved config from config management")
 
-        logger.info(
-            f"[evaluate] Found assistant in DB | id={assistant.id} | "
-            f"model={assistant.model} | instructions="
-            f"{assistant.instructions[:50] if assistant.instructions else 'None'}..."
-        )
-
-        # Build config from assistant (use provided config values to override
-        # if present)
-        config = {
-            "model": config.get("model", assistant.model),
-            "instructions": config.get("instructions", assistant.instructions),
-            "temperature": config.get("temperature", assistant.temperature),
-        }
-
-        # Add tools if vector stores are available
-        vector_store_ids = config.get(
-            "vector_store_ids", assistant.vector_store_ids or []
-        )
-        if vector_store_ids and len(vector_store_ids) > 0:
-            config["tools"] = [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": vector_store_ids,
-                }
-            ]
-
-        logger.info("[evaluate] Using config from assistant")
-    else:
-        logger.info("[evaluate] Using provided config directly")
-        # Validate that config has minimum required fields
-        if not config.get("model"):
-            raise HTTPException(
-                status_code=400,
-                detail="Config must include 'model' when assistant_id is not provided",
-            )
-
-    # Create EvaluationRun record
+    # Create EvaluationRun record with config references
     eval_run = create_evaluation_run(
         session=_session,
         run_name=experiment_name,
         dataset_name=dataset_name,
         dataset_id=dataset_id,
-        config=config,
+        config_id=config_id,
+        config_version=config_version,
         organization_id=auth_context.organization.id,
         project_id=auth_context.project.id,
     )
@@ -555,7 +523,7 @@ def evaluate(
             openai_client=openai_client,
             session=_session,
             eval_run=eval_run,
-            config=config,
+            config=config.completion.params,
         )
 
         logger.info(

@@ -364,19 +364,7 @@ def start_embedding_batch(
         logger.info(f"Starting embedding batch for evaluation run {eval_run.id}")
 
         # Get embedding model from config (default: text-embedding-3-large)
-        embedding_model = eval_run.config.get(
-            "embedding_model", "text-embedding-3-large"
-        )
-
-        # Validate and fallback to default if invalid
-        try:
-            validate_embedding_model(embedding_model)
-        except ValueError as e:
-            logger.warning(
-                f"Invalid embedding model '{embedding_model}' in config: {e}. "
-                f"Falling back to text-embedding-3-large"
-            )
-            embedding_model = "text-embedding-3-large"
+        embedding_model = "text-embedding-3-large"
 
         # Step 1: Build embedding JSONL with trace_ids
         jsonl_data = build_embedding_jsonl(
