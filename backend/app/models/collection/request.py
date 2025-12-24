@@ -3,13 +3,13 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now
-from app.models.document import DocumentPublic
-
-from .organization import Organization
-from .project import Project
+from app.models.organization import Organization
+from app.models.project import Project
 
 
 class Collection(SQLModel, table=True):
@@ -30,8 +30,13 @@ class Collection(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Name of the LLM service"},
     )
-
-    # Foreign keys
+    collection_blob: dict[str, Any] | None = Field(
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Provider-specific collection parameters (name, description, chunking params etc.)",
+        )
+    )
     organization_id: int = Field(
         foreign_key="organization.id",
         nullable=False,
@@ -44,8 +49,6 @@ class Collection(SQLModel, table=True):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the project"},
     )
-
-    # Timestamps
     inserted_at: datetime = Field(
         default_factory=now,
         sa_column_kwargs={"comment": "Timestamp when the collection was created"},
@@ -64,27 +67,55 @@ class Collection(SQLModel, table=True):
     project: Project = Relationship(back_populates="collections")
 
 
-# Request models
-class DocumentOptions(SQLModel):
-    documents: list[UUID] = Field(
-        description="List of document IDs",
+class DocumentInput(SQLModel):
+    """Document to be added to knowledge base."""
+
+    name: str | None = Field(
+        description="Display name for the document",
     )
-    batch_size: int = Field(
-        default=1,
-        description=(
-            "Number of documents to send to OpenAI in a single "
-            "transaction. See the `file_ids` parameter in the "
-            "vector store [create batch](https://platform.openai.com/docs/api-reference/vector-stores-file-batches/createBatch)."
-        ),
+    id: UUID = Field(
+        description="Reference to uploaded file/document in Kaapi",
+    )
+
+
+class CreateCollectionParams(SQLModel):
+    """Request-specific parameters for knowledge base creation."""
+
+    name: str | None = Field(
+        min_length=1,
+        description="Name of the knowledge base to create or update",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the knowledge base (required by Bedrock, optional for others)",
+    )
+    documents: list[DocumentInput] = Field(
+        default_factory=list,
+        description="List of documents to add to the knowledge base",
+    )
+    chunking_params: dict[str, Any] | None = Field(
+        default=None,
+        description="Chunking parameters for document processing (e.g., chunk_size, chunk_overlap)",
+    )
+    additional_params: dict[str, Any] | None = Field(
+        default=None,
+        description="Additional provider-specific parameters",
     )
 
     def model_post_init(self, __context: Any):
-        self.documents = list(set(self.documents))
+        """Deduplicate documents by file_id."""
+        seen = set()
+        unique_docs = []
+        for doc in self.documents:
+            if doc.file_id not in seen:
+                seen.add(doc.file_id)
+                unique_docs.append(doc)
+        self.documents = unique_docs
 
 
 class AssistantOptions(SQLModel):
     # Fields to be passed along to OpenAI. They must be a subset of
-    # parameters accepted by the OpenAI.clien.beta.assistants.create
+    # parameters accepted by the OpenAI.client.beta.assistants.create
     # API.
     model: str | None = Field(
         default=None,
@@ -139,6 +170,8 @@ class AssistantOptions(SQLModel):
 
 
 class CallbackRequest(SQLModel):
+    """Optional callback configuration for async job notifications."""
+
     callback_url: HttpUrl | None = Field(
         default=None,
         description="URL to call to report endpoint status",
@@ -153,40 +186,23 @@ class ProviderOptions(SQLModel):
     )
 
 
-class CreationRequest(
-    DocumentOptions,
-    ProviderOptions,
-    AssistantOptions,
-    CallbackRequest,
-):
-    def extract_super_type(self, cls: "CreationRequest"):
-        for field_name in cls.model_fields.keys():
-            field_value = getattr(self, field_name)
-            yield (field_name, field_value)
+class CreationRequest(AssistantOptions, ProviderOptions, CallbackRequest):
+    """API request for collection creation"""
+
+    collection_params: CreateCollectionParams = Field(
+        ...,
+        description="Collection creation specific parameters (name, documents, etc.)",
+    )
+    batch_size: int = Field(
+        default=10,
+        ge=1,
+        le=500,
+        description="Number of documents to process in a single batch",
+    )
 
 
-class DeletionRequest(CallbackRequest):
+class DeletionRequest(ProviderOptions, CallbackRequest):
+
+    """API request for collection deletion"""
+
     collection_id: UUID = Field(description="Collection to delete")
-
-
-# Response models
-
-
-class CollectionIDPublic(SQLModel):
-    id: UUID
-
-
-class CollectionPublic(SQLModel):
-    id: UUID
-    llm_service_id: str
-    llm_service_name: str
-    project_id: int
-    organization_id: int
-
-    inserted_at: datetime
-    updated_at: datetime
-    deleted_at: datetime | None = None
-
-
-class CollectionWithDocsPublic(CollectionPublic):
-    documents: list[DocumentPublic] | None = None

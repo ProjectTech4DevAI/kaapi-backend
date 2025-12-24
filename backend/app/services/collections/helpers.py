@@ -69,17 +69,6 @@ def batch_documents(
     return docs_batches
 
 
-def _backout(crud, llm_service_id: str):
-    """Best-effort cleanup: attempt to delete the assistant by ID"""
-    try:
-        crud.delete(llm_service_id)
-    except OpenAIError as err:
-        logger.error(
-            f"[backout] Failed to delete resource | {{'llm_service_id': '{llm_service_id}', 'error': '{str(err)}'}}",
-            exc_info=True,
-        )
-
-
 # Even though this function is used in the documents router, it's kept here for now since the assistant creation logic will
 # eventually be removed from Kaapi. Once that happens, this function can be safely deleted -
 def pick_service_for_documennt(session, doc_id: UUID, a_crud, v_crud):
