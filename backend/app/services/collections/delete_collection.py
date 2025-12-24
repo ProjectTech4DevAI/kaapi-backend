@@ -177,10 +177,7 @@ def execute_job(
                 organization_id=organization_id,
             )
 
-        provider.delete(
-            llm_service_id=collection.llm_service_id,
-            llm_service_name=collection.llm_service_name,
-        )
+        provider.delete(collection)
 
         with Session(engine) as session:
             CollectionCrud(session, project_id).delete_by_id(collection_id)

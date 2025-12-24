@@ -7,7 +7,11 @@ from app.services.collections.providers import BaseProvider
 from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import batch_documents, OPENAI_VECTOR_STORE
+from app.services.collections.helpers import (
+    batch_documents,
+    OPENAI_VECTOR_STORE,
+    _backout,
+)
 from app.models import CreateCollectionResult, CreationRequest, Collection
 
 
@@ -153,4 +157,4 @@ class OpenAIProvider(BaseProvider):
         Args:
             result: The CreateCollectionResult from execute containing resource IDs
         """
-        self.delete(result.llm_service_id, result.llm_service_name)
+        _backout(result.llm_service_id, result.llm_service_name)
