@@ -54,13 +54,13 @@ class TestDatasetUploadValidation:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             # Mock object store upload
@@ -140,13 +140,13 @@ class TestDatasetUploadValidation:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             # Mock object store and Langfuse uploads
@@ -186,13 +186,13 @@ class TestDatasetUploadDuplication:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
@@ -227,13 +227,13 @@ class TestDatasetUploadDuplication:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
@@ -268,13 +268,13 @@ class TestDatasetUploadDuplication:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
@@ -360,13 +360,13 @@ class TestDatasetUploadDuplication:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.api.routes.evaluation.get_langfuse_client"
+                "app.services.evaluation.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
-                "app.api.routes.evaluation.upload_dataset_to_langfuse"
+                "app.services.evaluation.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
@@ -405,7 +405,7 @@ class TestDatasetUploadErrors:
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
-                "app.api.routes.evaluation.upload_csv_to_object_store"
+                "app.services.evaluation.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch("app.crud.credentials.get_provider_credential") as mock_get_cred,
         ):
