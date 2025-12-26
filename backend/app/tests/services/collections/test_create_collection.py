@@ -1,11 +1,11 @@
 import os
-import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from urllib.parse import urlparse
 import uuid
 from uuid import UUID, uuid4
 
+import pytest
 from moto import mock_aws
 from sqlmodel import Session
 

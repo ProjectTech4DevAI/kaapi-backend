@@ -1,5 +1,4 @@
 import pytest
-
 from openai import OpenAI
 from openai_responses import OpenAIMock
 from fastapi import HTTPException

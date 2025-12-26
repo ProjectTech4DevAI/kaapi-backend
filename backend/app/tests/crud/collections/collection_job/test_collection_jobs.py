@@ -1,6 +1,6 @@
-import pytest
 from uuid import uuid4
 
+import pytest
 from sqlmodel import Session
 from sqlalchemy.exc import IntegrityError
 

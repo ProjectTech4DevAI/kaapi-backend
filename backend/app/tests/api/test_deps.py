@@ -1,6 +1,7 @@
 import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
+
 from app.api.deps import get_auth_context
 from app.models import (
     User,

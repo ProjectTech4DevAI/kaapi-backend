@@ -1,7 +1,8 @@
 import io
+from unittest.mock import patch, MagicMock
+
 import pytest
 from moto import mock_aws
-from unittest.mock import patch, MagicMock
 import boto3
 
 from app.tests.utils.test_data import create_test_fine_tuning_jobs

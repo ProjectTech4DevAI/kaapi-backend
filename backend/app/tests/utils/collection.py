@@ -8,6 +8,7 @@ from app.models import (
     CollectionActionType,
     CollectionJob,
     CollectionJobStatus,
+    Project,
 )
 from app.crud import CollectionCrud, CollectionJobCrud
 
@@ -17,14 +18,14 @@ class constants:
     llm_service_name = "test-service-name"
 
 
-def uuid_increment(value: UUID):
+def uuid_increment(value: UUID) -> UUID:
     inc = int(value) + 1
     return UUID(int=inc)
 
 
 def get_collection(
     db: Session,
-    project,
+    project: Project,
     *,
     assistant_id: Optional[str] = None,
     model: str = "gpt-4o",
@@ -49,7 +50,7 @@ def get_collection(
 
 def get_vector_store_collection(
     db: Session,
-    project,
+    project: Project,
     *,
     vector_store_id: Optional[str] = None,
     collection_id: Optional[UUID] = None,
@@ -73,7 +74,7 @@ def get_vector_store_collection(
 
 def get_collection_job(
     db: Session,
-    project,
+    project: Project,
     *,
     action_type: CollectionActionType = CollectionActionType.CREATE,
     status: CollectionJobStatus = CollectionJobStatus.PENDING,

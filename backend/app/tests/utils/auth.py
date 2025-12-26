@@ -15,7 +15,6 @@ class TestAuthContext(SQLModel):
     key: str  # The full unencrypted API key with "ApiKey " prefix
     api_key_id: UUID  # The UUID of the API key record
 
-    # Complete nested objects
     user: User
     project: Project
     organization: Organization
@@ -45,28 +44,24 @@ def get_test_auth_context(
     Raises:
         ValueError: If the required data is not found in the database
     """
-    # Get user from seed data
     user = session.exec(select(User).where(User.email == user_email)).first()
     if not user:
         raise ValueError(
             f"{user_type} with email {user_email} not found. Ensure seed data is loaded."
         )
 
-    # Get project from seed data
     project = session.exec(select(Project).where(Project.name == project_name)).first()
     if not project:
         raise ValueError(
             f"Project {project_name} not found. Ensure seed data is loaded."
         )
 
-    # Get organization
     org = session.exec(
         select(Organization).where(Organization.id == project.organization_id)
     ).first()
     if not org:
         raise ValueError(f"Organization for project {project_name} not found.")
 
-    # Get API key for this user and project
     api_key = session.exec(
         select(APIKey)
         .where(APIKey.user_id == user.id)
@@ -78,7 +73,6 @@ def get_test_auth_context(
             f"API key for {user_type.lower()} and project {project_name} not found."
         )
 
-    # Return complete auth context
     return TestAuthContext(
         user_id=user.id,
         project_id=project.id,

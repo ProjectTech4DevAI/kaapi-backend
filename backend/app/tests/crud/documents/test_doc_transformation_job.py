@@ -8,8 +8,6 @@ from app.models import (
     DocTransformJobCreate,
     DocTransformJobUpdate,
 )
-from app.core.config import settings
-from app.tests.utils.auth import TestAuthContext
 from app.core.exception_handlers import HTTPException
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project, SequentialUuidGenerator

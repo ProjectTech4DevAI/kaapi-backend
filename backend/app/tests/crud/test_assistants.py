@@ -1,9 +1,9 @@
-import pytest
+from unittest.mock import patch
 
+import pytest
 from fastapi import HTTPException
 from sqlmodel import Session
 from openai import OpenAI
-from unittest.mock import patch
 
 from app.models.project import Project
 from app.models import AssistantCreate, AssistantUpdate

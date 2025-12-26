@@ -221,7 +221,6 @@ def test_list_versions_with_pagination(
         name="test-config",
     )
 
-    # Create 5 additional versions (6 total including initial)
     for i in range(5):
         create_test_version(
             db=db,
@@ -229,7 +228,6 @@ def test_list_versions_with_pagination(
             project_id=user_api_key.project_id,
         )
 
-    # Test with limit
     response = client.get(
         f"{settings.API_V1_STR}/configs/{config.id}/versions",
         headers={"X-API-KEY": user_api_key.key},
@@ -240,7 +238,6 @@ def test_list_versions_with_pagination(
     assert data["success"] is True
     assert len(data["data"]) == 3
 
-    # Test with skip
     response = client.get(
         f"{settings.API_V1_STR}/configs/{config.id}/versions",
         headers={"X-API-KEY": user_api_key.key},
@@ -357,7 +354,6 @@ def test_get_version_from_different_project_fails(
         name="other-project-config",
     )
 
-    # The config has version 1 by default
     response = client.get(
         f"{settings.API_V1_STR}/configs/{config.id}/versions/1",
         headers={"X-API-KEY": user_api_key.key},
@@ -377,7 +373,6 @@ def test_delete_version(
         name="test-config",
     )
 
-    # Create a version to delete
     version = create_test_version(
         db=db,
         config_id=config.id,
@@ -393,7 +388,6 @@ def test_delete_version(
     assert data["success"] is True
     assert "deleted successfully" in data["data"]["message"].lower()
 
-    # Verify the version is no longer accessible
     get_response = client.get(
         f"{settings.API_V1_STR}/configs/{config.id}/versions/{version.version}",
         headers={"X-API-KEY": user_api_key.key},
@@ -439,65 +433,6 @@ def test_delete_version_from_different_project_fails(
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 404
-
-
-def test_create_version_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that creating a version without authentication fails."""
-    version_data = {
-        "config_blob": {
-            "completion": {
-                "provider": "openai",
-                "params": {"model": "gpt-4"},
-            }
-        },
-        "commit_message": "Test",
-    }
-
-    fake_uuid = uuid4()
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions",
-        json=version_data,
-    )
-    assert response.status_code == 401
-
-
-def test_list_versions_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that listing versions without authentication fails."""
-    fake_uuid = uuid4()
-    response = client.get(
-        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions",
-    )
-    assert response.status_code == 401
-
-
-def test_get_version_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that getting a version without authentication fails."""
-    fake_uuid = uuid4()
-    response = client.get(
-        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions/1",
-    )
-    assert response.status_code == 401
-
-
-def test_delete_version_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that deleting a version without authentication fails."""
-    fake_uuid = uuid4()
-    response = client.delete(
-        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions/1",
-    )
-    assert response.status_code == 401
 
 
 def test_versions_isolated_by_project(

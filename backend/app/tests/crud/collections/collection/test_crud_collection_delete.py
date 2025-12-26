@@ -1,10 +1,7 @@
-import pytest
-
 import openai_responses
 from openai import OpenAI
 from sqlmodel import Session, select
 
-from app.core.config import settings
 from app.crud import CollectionCrud
 from app.models import APIKey, Collection
 from app.crud.rag import OpenAIAssistantCrud

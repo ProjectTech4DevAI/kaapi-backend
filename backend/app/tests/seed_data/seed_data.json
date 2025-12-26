@@ -1,0 +1,129 @@
+{
+  "_comment":"This data will be used in testing, modifying this will affect tests. Please ensure to update tests/utils/auth.py if you change this data.",
+  "organization": [
+    {
+      "name": "Project Tech4dev",
+      "is_active": true
+    }
+  ],
+  "projects": [
+    {
+      "name": "Glific",
+      "description": "Two way communication platform",
+      "is_active": true,
+      "organization_name": "Project Tech4dev"
+    },
+    {
+      "name": "Dalgo",
+      "description": "Data platform for the social sector",
+      "is_active": true,
+      "organization_name": "Project Tech4dev"
+    }
+  ],
+  "users": [
+    {
+      "email": "{{SUPERUSER_EMAIL}}",
+      "password": "changethis",
+      "full_name": "SUPERUSER",
+      "is_active": true,
+      "is_superuser": true
+    },
+    {
+      "email": "{{ADMIN_EMAIL}}",
+      "password": "admin123",
+      "full_name": "ADMIN",
+      "is_active": true,
+      "is_superuser": false
+    }
+  ],
+  "apikeys": [
+    {
+      "organization_name": "Project Tech4dev",
+      "user_email": "{{SUPERUSER_EMAIL}}",
+      "project_name": "Glific",
+      "api_key": "ApiKey No3x47A5qoIGhm0kVKjQ77dhCqEdWRIQZlEPzzzh7i8",
+      "is_deleted": false,
+      "deleted_at": null
+    },
+    {
+      "organization_name": "Project Tech4dev",
+      "user_email": "{{ADMIN_EMAIL}}",
+      "project_name": "Dalgo",
+      "api_key": "ApiKey Px8y47B6roJHin1lWLkR88eiDrFdXSJRZmFQazzai8j",
+      "is_deleted": false,
+      "deleted_at": null
+    }
+  ],
+  "credentials": [
+    {
+      "is_active": true,
+      "provider": "openai",
+      "credential": "{\"api_key\": \"sk-proj-GlificI3i5SCxN\"}",
+      "project_name": "Glific",
+      "organization_name": "Project Tech4dev",
+      "deleted_at": null
+    },
+    {
+      "is_active": true,
+      "provider": "openai",
+      "credential": "{\"api_key\": \"sk-proj-DalgoI3i5SCxN\"}",
+      "project_name": "Dalgo",
+      "organization_name": "Project Tech4dev",
+      "deleted_at": null
+    },
+    {
+      "is_active": true,
+      "provider": "langfuse",
+      "credential": "{\"secret_key\": \"sk-lf-test-glific-secret\", \"public_key\": \"pk-lf-test-glific-public\", \"host\": \"https://cloud.langfuse.com\"}",
+      "project_name": "Glific",
+      "organization_name": "Project Tech4dev",
+      "deleted_at": null
+    },
+    {
+      "is_active": true,
+      "provider": "langfuse",
+      "credential": "{\"secret_key\": \"sk-lf-test-dalgo-secret\", \"public_key\": \"pk-lf-test-dalgo-public\", \"host\": \"https://cloud.langfuse.com\"}",
+      "project_name": "Dalgo",
+      "organization_name": "Project Tech4dev",
+      "deleted_at": null
+    }
+  ],
+  "assistants": [
+    {
+      "assistant_id": "assistant_glific",
+      "name": "Test Assistant Glific",
+      "instructions": "Test instructions",
+      "model": "gpt-4o",
+      "vector_store_ids": ["vs_glific"],
+      "temperature": 0.1,
+      "max_num_results": 20,
+      "project_name": "Glific",
+      "organization_name": "Project Tech4dev"
+    },
+    {
+      "assistant_id": "assistant_dalgo",
+      "name": "Test Assistant Dalgo",
+      "instructions": "Test instructions",
+      "model": "gpt-4o",
+      "vector_store_ids": ["vs_dalgo"],
+      "temperature": 0.1,
+      "max_num_results": 20,
+      "project_name": "Dalgo",
+      "organization_name": "Project Tech4dev"
+    }
+  ],
+  "documents": [
+      {
+        "fname": "glific_sample.json",
+        "object_store_url": "s3://test-bucket/glific_sample.json",
+        "project_name": "Glific",
+        "organization_name": "Project Tech4dev"
+      },
+      {
+        "fname": "dalgo_sample.json",
+        "object_store_url": "s3://test-bucket/dalgo_sample.json",
+        "project_name": "Dalgo",
+        "organization_name": "Project Tech4dev"
+      }
+    ]
+}

@@ -1,6 +1,10 @@
-import pytest
 from unittest.mock import patch, MagicMock
 from uuid import uuid4
+
+import pytest
+from openai import OpenAI
+from sqlmodel import Session
+
 from app.services.response.response import process_response
 from app.models import (
     ResponsesAPIRequest,
@@ -11,14 +15,10 @@ from app.models import (
     Project,
     JobType,
 )
-from app.core.db import engine
-from sqlmodel import Session
 from app.utils import APIResponse
-from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_credential
 from app.tests.utils.openai import mock_openai_response, generate_openai_id
 from app.crud import JobCrud, create_assistant
-from openai import OpenAI
 
 
 @pytest.fixture

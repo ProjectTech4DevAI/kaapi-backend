@@ -1,6 +1,8 @@
 from uuid import uuid4
+
 import pytest
 from sqlmodel import Session
+
 from app.crud import JobCrud
 from app.models import JobUpdate, JobStatus, JobType
 

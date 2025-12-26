@@ -1,17 +1,14 @@
 import time
 import secrets
 import string
-
 from typing import Optional
 from types import SimpleNamespace
-
 from unittest.mock import MagicMock
+
 from openai.types.beta import Assistant as OpenAIAssistant
 from openai.types.beta.assistant import ToolResources, ToolResourcesFileSearch
 from openai.types.beta.assistant_tool import FileSearchTool
 from openai.types.beta.file_search_tool import FileSearch
-from openai.types.responses.response import Response, ToolChoice, ResponseUsage
-from openai.types.responses.response_output_item import ResponseOutputItem
 
 
 def generate_openai_id(prefix: str, length: int = 40) -> str:
@@ -111,7 +108,7 @@ def mock_openai_response(
     return response
 
 
-def get_mock_openai_client_with_vector_store():
+def get_mock_openai_client_with_vector_store() -> MagicMock:
     mock_client = MagicMock()
 
     # Vector store
@@ -139,3 +136,42 @@ def get_mock_openai_client_with_vector_store():
     mock_client.beta.assistants.create.return_value = mock_assistant
 
     return mock_client
+
+
+def create_mock_batch(
+    batch_id: str = "batch-xyz789",
+    status: str = "completed",
+    output_file_id: str | None = "output-file-123",
+    error_file_id: str | None = None,
+    total: int = 100,
+    completed: int = 100,
+    failed: int = 0,
+) -> MagicMock:
+    """
+    Create a mock OpenAI batch object with configurable properties.
+
+    Args:
+        batch_id: The batch ID
+        status: Batch status (completed, in_progress, failed, expired, cancelled, etc.)
+        output_file_id: Output file ID (None for incomplete batches)
+        error_file_id: Error file ID (None if no errors)
+        total: Total number of requests in the batch
+        completed: Number of completed requests
+        failed: Number of failed requests
+
+    Returns:
+        MagicMock configured to represent an OpenAI batch object
+    """
+    mock_batch = MagicMock()
+    mock_batch.id = batch_id
+    mock_batch.status = status
+    mock_batch.output_file_id = output_file_id
+    mock_batch.error_file_id = error_file_id
+
+    # Create request_counts mock
+    mock_batch.request_counts = MagicMock()
+    mock_batch.request_counts.total = total
+    mock_batch.request_counts.completed = completed
+    mock_batch.request_counts.failed = failed
+
+    return mock_batch

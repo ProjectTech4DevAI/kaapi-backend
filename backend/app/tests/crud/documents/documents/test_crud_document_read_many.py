@@ -2,7 +2,6 @@ import pytest
 from sqlmodel import Session
 
 from app.crud import DocumentCrud
-
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 

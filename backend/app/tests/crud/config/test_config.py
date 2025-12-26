@@ -1,10 +1,10 @@
-import pytest
 from uuid import uuid4
+
+import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 
 from app.models import (
-    Config,
     ConfigBlob,
     CompletionConfig,
     ConfigCreate,

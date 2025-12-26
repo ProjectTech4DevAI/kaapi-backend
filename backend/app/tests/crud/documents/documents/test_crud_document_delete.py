@@ -1,10 +1,8 @@
 import pytest
 from sqlmodel import Session, select
-from sqlalchemy.exc import NoResultFound
 
 from app.crud import DocumentCrud
 from app.models import Document
-
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_project

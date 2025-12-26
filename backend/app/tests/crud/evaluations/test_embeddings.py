@@ -1,6 +1,3 @@
-"""Tests for evaluation embeddings functionality."""
-
-import numpy as np
 import pytest
 
 from app.crud.evaluations.embeddings import (
@@ -40,7 +37,6 @@ class TestBuildEmbeddingJsonl:
 
         assert len(jsonl_data) == 2
 
-        # Check first item - uses trace_id as custom_id
         assert jsonl_data[0]["custom_id"] == "trace_1"
         assert jsonl_data[0]["method"] == "POST"
         assert jsonl_data[0]["url"] == "/v1/embeddings"
@@ -74,14 +70,14 @@ class TestBuildEmbeddingJsonl:
             {
                 "item_id": "item_1",
                 "question": "Test?",
-                "generated_output": "",  # Empty
+                "generated_output": "",
                 "ground_truth": "Truth",
             },
             {
                 "item_id": "item_2",
                 "question": "Test?",
                 "generated_output": "Output",
-                "ground_truth": "",  # Empty
+                "ground_truth": "",
             },
             {
                 "item_id": "item_3",
@@ -99,7 +95,6 @@ class TestBuildEmbeddingJsonl:
 
         jsonl_data = build_embedding_jsonl(results, trace_id_mapping)
 
-        # Only item_3 should be included
         assert len(jsonl_data) == 1
         assert jsonl_data[0]["custom_id"] == "trace_3"
 
@@ -107,7 +102,6 @@ class TestBuildEmbeddingJsonl:
         """Test that items without item_id or trace_id are skipped."""
         results = [
             {
-                # Missing item_id
                 "question": "Test?",
                 "generated_output": "Output",
                 "ground_truth": "Truth",
@@ -120,12 +114,10 @@ class TestBuildEmbeddingJsonl:
             },
         ]
 
-        # Only item_2 has a mapping
         trace_id_mapping = {"item_2": "trace_2"}
 
         jsonl_data = build_embedding_jsonl(results, trace_id_mapping)
 
-        # Only item_2 should be included
         assert len(jsonl_data) == 1
         assert jsonl_data[0]["custom_id"] == "trace_2"
 
@@ -164,12 +156,10 @@ class TestParseEmbeddingResults:
 
         assert len(embedding_pairs) == 2
 
-        # Check first pair - now uses trace_id
         assert embedding_pairs[0]["trace_id"] == "trace_1"
         assert embedding_pairs[0]["output_embedding"] == [0.1, 0.2, 0.3]
         assert embedding_pairs[0]["ground_truth_embedding"] == [0.15, 0.22, 0.32]
 
-        # Check second pair
         assert embedding_pairs[1]["trace_id"] == "trace_2"
         assert embedding_pairs[1]["output_embedding"] == [0.5, 0.6, 0.7]
         assert embedding_pairs[1]["ground_truth_embedding"] == [0.55, 0.65, 0.75]
@@ -196,7 +186,6 @@ class TestParseEmbeddingResults:
 
         embedding_pairs = parse_embedding_results(raw_results)
 
-        # Only trace_2 should be included (trace_1 had error)
         assert len(embedding_pairs) == 1
         assert embedding_pairs[0]["trace_id"] == "trace_2"
 
@@ -229,7 +218,6 @@ class TestParseEmbeddingResults:
 
         embedding_pairs = parse_embedding_results(raw_results)
 
-        # Only trace_2 should be included (trace_1 missing index 1)
         assert len(embedding_pairs) == 1
         assert embedding_pairs[0]["trace_id"] == "trace_2"
 
@@ -271,7 +259,6 @@ class TestCalculateCosineSimilarity:
 
         similarity = calculate_cosine_similarity(vec1, vec2)
 
-        # cos(45°) ≈ 0.707
         assert similarity == pytest.approx(0.707, abs=0.01)
 
     def test_calculate_cosine_similarity_zero_vector(self):
@@ -293,17 +280,17 @@ class TestCalculateAverageSimilarity:
             {
                 "trace_id": "trace_1",
                 "output_embedding": [1.0, 0.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0, 0.0],  # Similarity = 1.0
+                "ground_truth_embedding": [1.0, 0.0, 0.0],
             },
             {
                 "trace_id": "trace_2",
                 "output_embedding": [1.0, 0.0, 0.0],
-                "ground_truth_embedding": [0.0, 1.0, 0.0],  # Similarity = 0.0
+                "ground_truth_embedding": [0.0, 1.0, 0.0],
             },
             {
                 "trace_id": "trace_3",
                 "output_embedding": [1.0, 1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0, 0.0],  # Similarity ≈ 0.707
+                "ground_truth_embedding": [1.0, 0.0, 0.0],
             },
         ]
 
@@ -351,27 +338,26 @@ class TestCalculateAverageSimilarity:
 
     def test_calculate_average_similarity_statistics(self):
         """Test that all statistics are calculated correctly."""
-        # Create pairs with known similarities
         embedding_pairs = [
             {
                 "trace_id": "trace_1",
                 "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],  # sim = 1.0
+                "ground_truth_embedding": [1.0, 0.0],
             },
             {
                 "trace_id": "trace_2",
                 "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [0.0, 1.0],  # sim = 0.0
+                "ground_truth_embedding": [0.0, 1.0],
             },
             {
                 "trace_id": "trace_3",
                 "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],  # sim = 1.0
+                "ground_truth_embedding": [1.0, 0.0],
             },
             {
                 "trace_id": "trace_4",
                 "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [0.0, 1.0],  # sim = 0.0
+                "ground_truth_embedding": [0.0, 1.0],
             },
         ]
 

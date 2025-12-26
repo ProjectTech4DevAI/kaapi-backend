@@ -1,9 +1,8 @@
-"""Tests for callback SSRF protection in utils.py"""
-
-import pytest
-from unittest.mock import patch, MagicMock
 import socket
 import requests
+from unittest.mock import patch, MagicMock
+
+import pytest
 
 from app.utils import _is_private_ip, validate_callback_url, send_callback
 

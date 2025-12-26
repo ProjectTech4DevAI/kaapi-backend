@@ -1,5 +1,7 @@
 from unittest.mock import patch
+
 from fastapi.testclient import TestClient
+
 from app.models import LLMCallRequest
 from app.models.llm.request import (
     QueryParams,

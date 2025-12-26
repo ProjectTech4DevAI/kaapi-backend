@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
 from urllib.parse import urlparse
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 from botocore.exceptions import ClientError
 from moto import mock_aws
 from sqlmodel import Session, select

@@ -1,6 +1,3 @@
-"""
-Integration tests for document transformation service.
-"""
 from typing import Tuple
 from uuid import uuid4
 from unittest.mock import patch

@@ -1,9 +1,11 @@
-import pytest
+from unittest.mock import patch
 from uuid import uuid4
+
+import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+
 from app.tests.utils.openai import mock_openai_assistant
 from app.tests.utils.utils import get_assistant
 from app.tests.utils.auth import TestAuthContext

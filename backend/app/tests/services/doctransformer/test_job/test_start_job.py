@@ -1,10 +1,7 @@
-"""
-Tests for the start_job function in document transformation service.
-"""
-import pytest
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
 from sqlmodel import Session
 
 from app.services.doctransform.job import start_job

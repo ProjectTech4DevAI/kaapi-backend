@@ -3,7 +3,6 @@ from sqlmodel import Session
 from app.models import (
     Organization,
     Project,
-    APIKey,
     APIKeyCreateResponse,
     Credential,
     OrganizationCreate,
@@ -19,7 +18,7 @@ from app.models import (
     ConfigCreate,
     ConfigVersion,
     ConfigVersionCreate,
-    ConfigBase,
+    EvaluationDataset,
 )
 from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
 from app.crud import (
@@ -208,7 +207,7 @@ def create_test_finetuning_job_with_extra_fields(
     return jobs, True
 
 
-def create_test_model_evaluation(db) -> list[ModelEvaluation]:
+def create_test_model_evaluation(db: Session) -> list[ModelEvaluation]:
     fine_tune_jobs, _ = create_test_finetuning_job_with_extra_fields(db, [0.5, 0.7])
 
     model_evaluations = []
@@ -304,7 +303,7 @@ def create_test_config(
 
 def create_test_version(
     db: Session,
-    config_id,
+    config_id: int,
     project_id: int,
     config_blob: ConfigBlob | None = None,
     commit_message: str | None = None,
@@ -337,3 +336,41 @@ def create_test_version(
     version = version_crud.create_or_raise(version_create=version_create)
 
     return version
+
+
+def create_test_evaluation_dataset(
+    db: Session,
+    organization_id: int,
+    project_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    original_items_count: int = 3,
+    duplication_factor: int = 1,
+) -> EvaluationDataset:
+    """
+    Creates and returns a test evaluation dataset.
+
+    Persists the dataset to the database.
+    """
+    if name is None:
+        name = f"test_dataset_{random_lower_string()}"
+
+    total_items_count = original_items_count * duplication_factor
+
+    dataset = EvaluationDataset(
+        name=name,
+        description=description or "Test evaluation dataset",
+        dataset_metadata={
+            "original_items_count": original_items_count,
+            "total_items_count": total_items_count,
+            "duplication_factor": duplication_factor,
+        },
+        langfuse_dataset_id=f"langfuse_{random_lower_string()}",
+        object_store_url=f"s3://test/{name}.csv",
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return dataset

@@ -1,7 +1,6 @@
-import pytest
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session
 
-from app.models import OpenAI_Thread, OpenAIThreadCreate
+from app.models import OpenAIThreadCreate
 from app.crud import upsert_thread_result, get_thread_result
 
 

@@ -1,8 +1,8 @@
 import pytest
+
 from app.core.providers import (
     validate_provider,
     validate_provider_credentials,
-    Provider,
 )
 
 

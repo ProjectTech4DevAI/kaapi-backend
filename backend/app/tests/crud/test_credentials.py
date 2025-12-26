@@ -1,6 +1,5 @@
 import pytest
 from sqlmodel import Session
-from fastapi import HTTPException
 
 from app.crud import (
     set_creds_for_org,

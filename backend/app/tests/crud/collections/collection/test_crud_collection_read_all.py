@@ -1,8 +1,7 @@
 import pytest
-
 from openai_responses import OpenAIMock
 from openai import OpenAI
-from sqlmodel import Session
+from sqlmodel import Session, delete
 
 from app.crud import CollectionCrud
 from app.models import Collection
@@ -28,17 +27,11 @@ def create_collections(db: Session, n: int):
         return crud.project_id
 
 
-@pytest.fixture(scope="class")
-def refresh(self, db: Session):
-    db.query(Collection).delete()
-    db.commit()
-
-
 class TestCollectionReadAll:
     _ncollections = 5
 
     def test_number_read_is_expected(self, db: Session):
-        db.query(Collection).delete()
+        db.exec(delete(Collection))
 
         owner = create_collections(db, self._ncollections)
         crud = CollectionCrud(db, owner)

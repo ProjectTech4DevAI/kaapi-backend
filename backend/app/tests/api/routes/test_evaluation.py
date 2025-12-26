@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from app.crud.evaluations.batch import build_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
+from app.tests.utils.test_data import create_test_evaluation_dataset
 
 
 # Helper function to create CSV file-like object
@@ -63,13 +64,10 @@ class TestDatasetUploadValidation:
                 "app.api.routes.evaluation.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
-            # Mock object store upload
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
 
-            # Mock Langfuse client
             mock_get_langfuse_client.return_value = Mock()
 
-            # Mock Langfuse upload
             mock_langfuse_upload.return_value = ("test_dataset_id", 9)
 
             filename, file_obj = create_csv_file(valid_csv_content)
@@ -101,7 +99,6 @@ class TestDatasetUploadValidation:
             # Verify object store upload was called
             mock_store_upload.assert_called_once()
 
-            # Verify Langfuse upload was called
             mock_langfuse_upload.assert_called_once()
 
     def test_upload_dataset_missing_columns(
@@ -125,7 +122,6 @@ class TestDatasetUploadValidation:
             headers=user_api_key_header,
         )
 
-        # Check that the response indicates unprocessable entity
         assert response.status_code == 422
         response_data = response.json()
         error_str = response_data.get(
@@ -149,7 +145,6 @@ class TestDatasetUploadValidation:
                 "app.api.routes.evaluation.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
-            # Mock object store and Langfuse uploads
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
             mock_get_langfuse_client.return_value = Mock()
             mock_langfuse_upload.return_value = ("test_dataset_id", 4)
@@ -206,7 +201,7 @@ class TestDatasetUploadDuplication:
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
-                    # duplication_factor not provided, should default to 1
+                    # duplication_factor not provided, would default to 1
                 },
                 headers=user_api_key_header,
             )
@@ -218,7 +213,7 @@ class TestDatasetUploadDuplication:
 
             assert data["duplication_factor"] == 1
             assert data["original_items"] == 3
-            assert data["total_items"] == 3  # 3 items * 1 duplication
+            assert data["total_items"] == 3
 
     def test_upload_with_custom_duplication(
         self, client, user_api_key_header, valid_csv_content
@@ -392,7 +387,7 @@ class TestDatasetUploadDuplication:
 
             assert data["duplication_factor"] == 1
             assert data["original_items"] == 3
-            assert data["total_items"] == 3  # 3 items * 1 duplication
+            assert data["total_items"] == 3
 
 
 class TestDatasetUploadErrors:
@@ -409,9 +404,7 @@ class TestDatasetUploadErrors:
             ) as mock_store_upload,
             patch("app.crud.credentials.get_provider_credential") as mock_get_cred,
         ):
-            # Mock object store upload succeeds
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
-            # Mock Langfuse credentials not found
             mock_get_cred.return_value = None
 
             filename, file_obj = create_csv_file(valid_csv_content)
@@ -478,7 +471,7 @@ class TestDatasetUploadErrors:
             },
         )
 
-        assert response.status_code == 401  # Unauthorized
+        assert response.status_code == 401
 
 
 class TestBatchEvaluation:
@@ -496,13 +489,12 @@ class TestBatchEvaluation:
     def test_start_batch_evaluation_invalid_dataset_id(
         self, client, user_api_key_header, sample_evaluation_config
     ):
-        """Test batch evaluation fails with invalid dataset_id."""
-        # Try to start evaluation with non-existent dataset_id
+        """Test batch evaluation fails with invalid/non-existent dataset_id."""
         response = client.post(
             "/api/v1/evaluations",
             json={
                 "experiment_name": "test_evaluation_run",
-                "dataset_id": 99999,  # Non-existent
+                "dataset_id": 99999,
                 "config": sample_evaluation_config,
             },
             headers=user_api_key_header,
@@ -706,23 +698,15 @@ class TestGetEvaluationRunStatus:
     @pytest.fixture
     def create_test_dataset(self, db, user_api_key):
         """Create a test dataset for evaluation runs."""
-        dataset = EvaluationDataset(
-            name="test_dataset_for_runs",
-            description="Test dataset",
-            dataset_metadata={
-                "original_items_count": 3,
-                "total_items_count": 3,
-                "duplication_factor": 1,
-            },
-            langfuse_dataset_id="langfuse_test_id",
-            object_store_url="s3://test/dataset.csv",
+        return create_test_evaluation_dataset(
+            db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
+            name="test_dataset_for_runs",
+            description="Test dataset",
+            original_items_count=3,
+            duplication_factor=1,
         )
-        db.add(dataset)
-        db.commit()
-        db.refresh(dataset)
-        return dataset
 
     def test_get_evaluation_run_trace_info_not_completed(
         self, client, user_api_key_header, db, user_api_key, create_test_dataset
@@ -792,3 +776,203 @@ class TestGetEvaluationRunStatus:
         assert data["id"] == eval_run.id
         assert data["status"] == "completed"
         assert "traces" in data["score"]
+
+    def test_get_evaluation_run_not_found(self, client, user_api_key_header):
+        """Test getting non-existent evaluation run returns 404."""
+        response = client.get(
+            "/api/v1/evaluations/99999",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 404
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert "not found" in error_str.lower() or "not accessible" in error_str.lower()
+
+    def test_get_evaluation_run_without_trace_info(
+        self, client, user_api_key_header, db, user_api_key, create_test_dataset
+    ):
+        """Test getting evaluation run without requesting trace info."""
+        eval_run = EvaluationRun(
+            run_name="test_simple_run",
+            dataset_name=create_test_dataset.name,
+            dataset_id=create_test_dataset.id,
+            config={"model": "gpt-4o"},
+            status="completed",
+            total_items=3,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response = client.get(
+            f"/api/v1/evaluations/{eval_run.id}",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert data["id"] == eval_run.id
+        assert data["status"] == "completed"
+
+    def test_get_evaluation_run_resync_without_trace_info_fails(
+        self, client, user_api_key_header, db, user_api_key, create_test_dataset
+    ):
+        """Test that resync_score=true requires get_trace_info=true."""
+        eval_run = EvaluationRun(
+            run_name="test_run",
+            dataset_name=create_test_dataset.name,
+            dataset_id=create_test_dataset.id,
+            config={"model": "gpt-4o"},
+            status="completed",
+            total_items=3,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response = client.get(
+            f"/api/v1/evaluations/{eval_run.id}",
+            params={"resync_score": True},  # Missing get_trace_info=true
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 400
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert (
+            "resync_score" in error_str.lower()
+            and "get_trace_info" in error_str.lower()
+        )
+
+
+class TestGetDataset:
+    """Test GET /evaluations/datasets/{dataset_id} endpoint."""
+
+    @pytest.fixture
+    def create_test_dataset(self, db, user_api_key):
+        """Create a test dataset."""
+        return create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="test_dataset_get",
+            description="Test dataset for GET",
+            original_items_count=5,
+            duplication_factor=2,
+        )
+
+    def test_get_dataset_success(
+        self, client, user_api_key_header, create_test_dataset
+    ):
+        """Test successfully getting a dataset by ID."""
+        response = client.get(
+            f"/api/v1/evaluations/datasets/{create_test_dataset.id}",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+
+        assert data["dataset_id"] == create_test_dataset.id
+        assert data["dataset_name"] == "test_dataset_get"
+        assert data["original_items"] == 5
+        assert data["total_items"] == 10
+        assert data["duplication_factor"] == 2
+        assert data["langfuse_dataset_id"].startswith("langfuse")
+        assert data["object_store_url"].startswith("s3://test/")
+
+    def test_get_dataset_not_found(self, client, user_api_key_header):
+        """Test getting non-existent dataset returns 404."""
+        response = client.get(
+            "/api/v1/evaluations/datasets/99999",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 404
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert "not found" in error_str.lower() or "not accessible" in error_str.lower()
+
+    def test_get_dataset_without_authentication(self, client, create_test_dataset):
+        """Test that getting dataset requires authentication."""
+        response = client.get(f"/api/v1/evaluations/datasets/{create_test_dataset.id}")
+
+        assert response.status_code == 401
+
+
+class TestDeleteDataset:
+    """Test DELETE /evaluations/datasets/{dataset_id} endpoint."""
+
+    @pytest.fixture
+    def create_test_dataset(self, db, user_api_key):
+        """Create a test dataset for deletion."""
+        return create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="test_dataset_delete",
+            description="Test dataset for deletion",
+            original_items_count=3,
+            duplication_factor=1,
+        )
+
+    def test_delete_dataset_success(
+        self, client, user_api_key_header, create_test_dataset, db
+    ):
+        """Test successfully deleting a dataset."""
+        dataset_id = create_test_dataset.id
+
+        response = client.delete(
+            f"/api/v1/evaluations/datasets/{dataset_id}",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert data["dataset_id"] == dataset_id
+        assert "message" in data
+
+        verify_response = client.get(
+            f"/api/v1/evaluations/datasets/{dataset_id}",
+            headers=user_api_key_header,
+        )
+        assert verify_response.status_code == 404
+
+    def test_delete_dataset_not_found(self, client, user_api_key_header):
+        """Test deleting non-existent dataset returns 404."""
+        response = client.delete(
+            "/api/v1/evaluations/datasets/99999",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 404
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert "not found" in error_str.lower()
+
+    def test_delete_dataset_without_authentication(self, client, create_test_dataset):
+        """Test that deleting dataset requires authentication."""
+        response = client.delete(
+            f"/api/v1/evaluations/datasets/{create_test_dataset.id}"
+        )
+
+        assert response.status_code == 401
