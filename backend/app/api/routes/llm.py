@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.models import LLMCallRequest, LLMCallResponse, Message
 from app.services.llm.jobs import start_job
 from app.utils import APIResponse, validate_callback_url, load_description
@@ -35,6 +36,7 @@ def llm_callback_notification(body: APIResponse[LLMCallResponse]):
     description=load_description("llm/llm_call.md"),
     response_model=APIResponse[Message],
     callbacks=llm_callback_router.routes,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def llm_call(
     _current_user: AuthContextDep, _session: SessionDep, request: LLMCallRequest
@@ -42,8 +44,8 @@ def llm_call(
     """
     Endpoint to initiate an LLM call as a background job.
     """
-    project_id = _current_user.project.id
-    organization_id = _current_user.organization.id
+    project_id = _current_user.project_.id
+    organization_id = _current_user.organization_.id
 
     if request.callback_url:
         validate_callback_url(str(request.callback_url))

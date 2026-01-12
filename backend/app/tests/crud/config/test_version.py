@@ -3,7 +3,8 @@ from uuid import uuid4
 from sqlmodel import Session
 from fastapi import HTTPException
 
-from app.models import ConfigVersionCreate, ConfigBlob, CompletionConfig
+from app.models import ConfigVersionCreate, ConfigBlob
+from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigVersionCrud
 from app.tests.utils.test_data import (
     create_test_project,
@@ -15,8 +16,8 @@ from app.tests.utils.test_data import (
 @pytest.fixture
 def example_config_blob():
     return ConfigBlob(
-        completion=CompletionConfig(
-            provider="openai",
+        completion=NativeCompletionConfig(
+            provider="openai-native",
             params={
                 "model": "gpt-4",
                 "temperature": 0.8,

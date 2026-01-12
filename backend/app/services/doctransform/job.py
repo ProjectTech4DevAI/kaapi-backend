@@ -22,7 +22,6 @@ from app.models import (
     DocTransformationJob,
 )
 from app.core.cloud import get_cloud_storage
-from app.api.deps import CurrentUserOrgProject
 from app.celery.utils import start_low_priority_job
 from app.utils import send_callback, APIResponse
 from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
@@ -33,18 +32,16 @@ logger = logging.getLogger(__name__)
 
 def start_job(
     db: Session,
-    current_user: CurrentUserOrgProject,
+    project_id: int,
     job_id: UUID,
     transformer_name: str,
     target_format: str,
     callback_url: str | None,
 ) -> str:
     trace_id = correlation_id.get() or "N/A"
-    job_crud = DocTransformationJobCrud(db, project_id=current_user.project_id)
+    job_crud = DocTransformationJobCrud(db, project_id=project_id)
     job_crud.update(job_id, DocTransformJobUpdate(trace_id=trace_id))
     job = job_crud.read_one(job_id)
-
-    project_id = current_user.project_id
 
     task_id = start_low_priority_job(
         function_path="app.services.doctransform.job.execute_job",

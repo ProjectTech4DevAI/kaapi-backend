@@ -13,12 +13,14 @@ from app.utils import APIResponse
 from app.models import ConfigVersion, JobStatus, JobType
 from app.models.llm import (
     LLMCallRequest,
-    CompletionConfig,
+    NativeCompletionConfig,
     QueryParams,
     LLMCallResponse,
     LLMResponse,
     LLMOutput,
     Usage,
+    KaapiLLMParams,
+    KaapiCompletionConfig,
 )
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.services.llm.jobs import (
@@ -40,8 +42,8 @@ class TestStartJob:
             query=QueryParams(input="Test query"),
             config=LLMCallConfig(
                 blob=ConfigBlob(
-                    completion=CompletionConfig(
-                        provider="openai",
+                    completion=NativeCompletionConfig(
+                        provider="openai-native",
                         params={"model": "gpt-4"},
                     )
                 )
@@ -225,7 +227,10 @@ class TestExecuteJob:
             "query": {"input": "Test query"},
             "config": {
                 "blob": {
-                    "completion": {"provider": "openai", "params": {"model": "gpt-4"}}
+                    "completion": {
+                        "provider": "openai-native",
+                        "params": {"model": "gpt-4"},
+                    }
                 }
             },
             "include_provider_raw_response": False,
@@ -396,8 +401,8 @@ class TestExecuteJob:
 
         # Create a real config in the database
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4", "temperature": 0.7},
             )
         )
@@ -445,8 +450,8 @@ class TestExecuteJob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -493,8 +498,8 @@ class TestExecuteJob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4"},
             )
         )
@@ -523,6 +528,200 @@ class TestExecuteJob:
             db.refresh(job_for_execution)
             assert job_for_execution.status == JobStatus.FAILED
 
+    def test_kaapi_config_success(self, db, job_for_execution, mock_llm_response):
+        """Test successful execution with Kaapi abstracted config."""
+        project = get_project(db)
+
+        config_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="gpt-4",
+                    temperature=0.7,
+                    instructions="You are a helpful assistant",
+                ),
+            )
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        kaapi_request_data = {
+            "query": {"input": "Test query with Kaapi config"},
+            "config": {
+                "id": str(config.id),
+                "version": 1,
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_provider = MagicMock()
+            mock_provider.execute.return_value = (mock_llm_response, None)
+            mock_get_provider.return_value = mock_provider
+
+            result = self._execute_job(job_for_execution, db, kaapi_request_data)
+
+            mock_get_provider.assert_called_once()
+            mock_provider.execute.assert_called_once()
+            assert result["success"]
+            db.refresh(job_for_execution)
+            assert job_for_execution.status == JobStatus.SUCCESS
+
+    def test_kaapi_config_with_callback(self, db, job_for_execution, mock_llm_response):
+        """Test successful execution with Kaapi config and callback."""
+        project = get_project(db)
+
+        config_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="gpt-3.5-turbo",
+                    temperature=0.5,
+                ),
+            )
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        kaapi_request_data = {
+            "query": {"input": "Test query with Kaapi config and callback"},
+            "config": {
+                "id": str(config.id),
+                "version": 1,
+            },
+            "include_provider_raw_response": False,
+            "callback_url": "https://example.com/callback",
+        }
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_provider = MagicMock()
+            mock_provider.execute.return_value = (mock_llm_response, None)
+            mock_get_provider.return_value = mock_provider
+
+            result = self._execute_job(job_for_execution, db, kaapi_request_data)
+
+            mock_send_callback.assert_called_once()
+            callback_data = mock_send_callback.call_args[1]["data"]
+            assert callback_data["success"]
+            assert result["success"]
+            db.refresh(job_for_execution)
+            assert job_for_execution.status == JobStatus.SUCCESS
+
+    def test_kaapi_config_warnings_passed_through_metadata(
+        self, db, job_for_execution, mock_llm_response
+    ):
+        """Test that warnings from Kaapi config transformation are passed through in metadata."""
+        project = get_project(db)
+
+        # Use a config that will generate warnings (temperature on reasoning model)
+        config_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="o1",  # Reasoning model
+                    temperature=0.7,  # This will be suppressed with warning
+                ),
+            )
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        kaapi_request_data = {
+            "query": {"input": "Test query"},
+            "config": {
+                "id": str(config.id),
+                "version": 1,
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_provider = MagicMock()
+            mock_provider.execute.return_value = (mock_llm_response, None)
+            mock_get_provider.return_value = mock_provider
+
+            result = self._execute_job(job_for_execution, db, kaapi_request_data)
+
+            # Verify the result includes warnings in metadata
+            assert result["success"]
+            assert "metadata" in result
+            assert "warnings" in result["metadata"]
+            assert len(result["metadata"]["warnings"]) == 1
+            assert "temperature" in result["metadata"]["warnings"][0].lower()
+            assert "suppressed" in result["metadata"]["warnings"][0]
+
+    def test_kaapi_config_warnings_merged_with_existing_metadata(
+        self, db, job_for_execution, mock_llm_response
+    ):
+        """Test that warnings are merged with existing request metadata."""
+        project = get_project(db)
+
+        config_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="gpt-4",  # Non-reasoning model
+                    reasoning="high",  # This will be suppressed with warning
+                ),
+            )
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        kaapi_request_data = {
+            "query": {"input": "Test query"},
+            "config": {
+                "id": str(config.id),
+                "version": 1,
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+            "request_metadata": {"tracking_id": "test-123"},
+        }
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_provider = MagicMock()
+            mock_provider.execute.return_value = (mock_llm_response, None)
+            mock_get_provider.return_value = mock_provider
+
+            result = self._execute_job(job_for_execution, db, kaapi_request_data)
+
+            # Verify warnings are added to existing metadata
+            assert result["success"]
+            assert "metadata" in result
+            assert result["metadata"]["tracking_id"] == "test-123"
+            assert "warnings" in result["metadata"]
+            assert len(result["metadata"]["warnings"]) == 1
+            assert "reasoning" in result["metadata"]["warnings"][0].lower()
+            assert "does not support reasoning" in result["metadata"]["warnings"][0]
+
 
 class TestResolveConfigBlob:
     """Test suite for resolve_config_blob function."""
@@ -532,8 +731,8 @@ class TestResolveConfigBlob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4", "temperature": 0.8},
             )
         )
@@ -549,7 +748,7 @@ class TestResolveConfigBlob:
 
         assert error is None
         assert resolved_blob is not None
-        assert resolved_blob.completion.provider == "openai"
+        assert resolved_blob.completion.provider == "openai-native"
         assert resolved_blob.completion.params["model"] == "gpt-4"
         assert resolved_blob.completion.params["temperature"] == 0.8
 
@@ -558,8 +757,8 @@ class TestResolveConfigBlob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4"},
             )
         )
@@ -583,8 +782,8 @@ class TestResolveConfigBlob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4"},
             )
         )
@@ -620,8 +819,8 @@ class TestResolveConfigBlob:
 
         # Create a config with version 1
         config_blob_v1 = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -635,8 +834,8 @@ class TestResolveConfigBlob:
             session=db, project_id=project.id, config_id=config.id
         )
         config_blob_v2 = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4", "temperature": 0.9},
             )
         )
@@ -668,3 +867,92 @@ class TestResolveConfigBlob:
         assert resolved_blob_v2 is not None
         assert resolved_blob_v2.completion.params["model"] == "gpt-4"
         assert resolved_blob_v2.completion.params["temperature"] == 0.9
+
+    def test_resolve_kaapi_config_blob_success(self, db: Session):
+        """Test successful resolution of stored Kaapi config blob."""
+        project = get_project(db)
+
+        config_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="gpt-4",
+                    temperature=0.8,
+                    instructions="You are a helpful assistant",
+                ),
+            )
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        config_crud = ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=config.id
+        )
+        llm_call_config = LLMCallConfig(id=str(config.id), version=1)
+
+        resolved_blob, error = resolve_config_blob(config_crud, llm_call_config)
+
+        assert error is None
+        assert resolved_blob is not None
+        assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
+        assert resolved_blob.completion.provider == "openai"
+        assert resolved_blob.completion.params.model == "gpt-4"
+        assert resolved_blob.completion.params.temperature == 0.8
+        assert (
+            resolved_blob.completion.params.instructions
+            == "You are a helpful assistant"
+        )
+
+    def test_resolve_both_native_and_kaapi_configs(self, db: Session):
+        """Test that both native and Kaapi configs can be resolved correctly."""
+        project = get_project(db)
+
+        # Create native config
+        native_blob = ConfigBlob(
+            completion=NativeCompletionConfig(
+                provider="openai-native",
+                params={"model": "gpt-3.5-turbo", "temperature": 0.5},
+            )
+        )
+        native_config = create_test_config(
+            db, project_id=project.id, config_blob=native_blob, use_kaapi_schema=False
+        )
+
+        # Create Kaapi config
+        kaapi_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                params=KaapiLLMParams(
+                    model="gpt-4",
+                    temperature=0.7,
+                ),
+            )
+        )
+        kaapi_config = create_test_config(
+            db, project_id=project.id, config_blob=kaapi_blob, use_kaapi_schema=True
+        )
+        db.commit()
+
+        # Test native config resolution
+        native_crud = ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=native_config.id
+        )
+        native_call_config = LLMCallConfig(id=str(native_config.id), version=1)
+        resolved_native, error_native = resolve_config_blob(
+            native_crud, native_call_config
+        )
+
+        assert error_native is None
+        assert isinstance(resolved_native.completion, NativeCompletionConfig)
+        assert resolved_native.completion.provider == "openai-native"
+
+        # Test Kaapi config resolution
+        kaapi_crud = ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=kaapi_config.id
+        )
+        kaapi_call_config = LLMCallConfig(id=str(kaapi_config.id), version=1)
+        resolved_kaapi, error_kaapi = resolve_config_blob(kaapi_crud, kaapi_call_config)
+
+        assert error_kaapi is None
+        assert isinstance(resolved_kaapi.completion, KaapiCompletionConfig)
+        assert resolved_kaapi.completion.provider == "openai"

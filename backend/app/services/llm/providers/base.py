@@ -7,7 +7,7 @@ It provides a provider-agnostic interface for executing LLM calls.
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.models.llm import CompletionConfig, LLMCallResponse, QueryParams
+from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 
 
 class BaseProvider(ABC):
@@ -34,7 +34,7 @@ class BaseProvider(ABC):
     @abstractmethod
     def execute(
         self,
-        completion_config: CompletionConfig,
+        completion_config: NativeCompletionConfig,
         query: QueryParams,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
@@ -43,7 +43,7 @@ class BaseProvider(ABC):
         Directly passes the user's config params to provider API along with input.
 
         Args:
-            completion_config: LLM completion configuration
+            completion_config: LLM completion configuration, pass params as-is to provider API
             query: Query parameters including input and conversation_id
             include_provider_raw_response: Whether to include the raw LLM provider response in the output
 

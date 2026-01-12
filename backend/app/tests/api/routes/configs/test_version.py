@@ -10,7 +10,8 @@ from app.tests.utils.test_data import (
     create_test_project,
     create_test_version,
 )
-from app.models import ConfigBlob, CompletionConfig
+from app.models import ConfigBlob
+from app.models.llm.request import NativeCompletionConfig
 
 
 def test_create_version_success(
@@ -28,7 +29,7 @@ def test_create_version_success(
     version_data = {
         "config_blob": {
             "completion": {
-                "provider": "openai",
+                "provider": "openai-native",
                 "params": {
                     "model": "gpt-4-turbo",
                     "temperature": 0.9,
@@ -303,8 +304,8 @@ def test_get_version_by_number(
         config_id=config.id,
         project_id=user_api_key.project_id,
         config_blob=ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={"model": "gpt-4-turbo", "temperature": 0.5},
             )
         ),

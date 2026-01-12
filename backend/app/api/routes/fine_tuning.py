@@ -6,7 +6,15 @@ from pathlib import Path
 
 import openai
 from sqlmodel import Session
-from fastapi import APIRouter, HTTPException, BackgroundTasks, File, Form, UploadFile
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    BackgroundTasks,
+    File,
+    Form,
+    UploadFile,
+    Depends,
+)
 
 from app.models import (
     FineTuningJobCreate,
@@ -35,13 +43,14 @@ from app.crud import (
     fetch_active_model_evals,
 )
 from app.core.db import engine
-from app.api.deps import CurrentUserOrgProject, SessionDep
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core.finetune.preprocessing import DataPreprocessor
 from app.api.routes.model_evaluation import run_model_evaluation
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/fine_tuning", tags=["fine_tuning"])
+router = APIRouter(prefix="/fine_tuning", tags=["Fine Tuning"])
 
 
 OPENAI_TO_INTERNAL_STATUS = {
@@ -57,11 +66,11 @@ OPENAI_TO_INTERNAL_STATUS = {
 def process_fine_tuning_job(
     job_id: int,
     ratio: float,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     request: FineTuningJobCreate,
 ):
     start_time = time.time()
-    project_id = current_user.project_id
+    project_id = current_user.project_.id
     fine_tune = None
 
     logger.info(
@@ -72,12 +81,12 @@ def process_fine_tuning_job(
             fine_tune = fetch_by_id(session, job_id, project_id)
 
             client = get_openai_client(
-                session, current_user.organization_id, project_id
+                session, current_user.organization_.id, project_id
             )
             storage = get_cloud_storage(
-                session=session, project_id=current_user.project_id
+                session=session, project_id=current_user.project_.id
             )
-            document_crud = DocumentCrud(session, current_user.project_id)
+            document_crud = DocumentCrud(session, current_user.project_.id)
             document = document_crud.read_one(request.document_id)
             preprocessor = DataPreprocessor(
                 document, storage, ratio, request.system_prompt
@@ -184,10 +193,11 @@ def process_fine_tuning_job(
     "/fine_tune",
     description=load_description("fine_tuning/create.md"),
     response_model=APIResponse,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 async def fine_tune_from_CSV(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="CSV file to use for fine-tuning"),
     base_model: str = Form(...),
@@ -207,18 +217,18 @@ async def fine_tune_from_CSV(
     get_openai_client(  # Used here only to validate the user's OpenAI key;
         # the actual client is re-initialized separately inside the background task
         session,
-        current_user.organization_id,
-        current_user.project_id,
+        current_user.organization_.id,
+        current_user.project_.id,
     )
 
     # Upload the file to storage and create document
     # ToDo: create a helper function and then use it rather than doing things in router
-    storage = get_cloud_storage(session=session, project_id=current_user.project_id)
+    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
     object_store_url = storage.put(file, Path(str(document_id)))
 
     # Create document in database
-    document_crud = DocumentCrud(session, current_user.project_id)
+    document_crud = DocumentCrud(session, current_user.project_.id)
     document = Document(
         id=document_id,
         fname=file.filename,
@@ -241,8 +251,8 @@ async def fine_tune_from_CSV(
             session=session,
             request=request,
             split_ratio=ratio,
-            organization_id=current_user.organization_id,
-            project_id=current_user.project_id,
+            organization_id=current_user.organization_.id,
+            project_id=current_user.project_.id,
         )
         results.append((job, created))
 
@@ -253,7 +263,7 @@ async def fine_tune_from_CSV(
 
     if not results:
         logger.error(
-            f"[fine_tune_from_CSV]All fine-tuning job creations failed for document_id={request.document_id}, project_id={current_user.project_id}"
+            f"[fine_tune_from_CSV]All fine-tuning job creations failed for document_id={request.document_id}, project_id={current_user.project_.id}"
         )
         raise HTTPException(
             status_code=500, detail="Failed to create or fetch any fine-tuning jobs."
@@ -286,17 +296,18 @@ async def fine_tune_from_CSV(
     "/{fine_tuning_id}/refresh",
     description=load_description("fine_tuning/retrieve.md"),
     response_model=APIResponse[FineTuningJobPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def refresh_fine_tune_status(
     fine_tuning_id: int,
     background_tasks: BackgroundTasks,
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
 ):
-    project_id = current_user.project_id
+    project_id = current_user.project_.id
     job = fetch_by_id(session, fine_tuning_id, project_id)
-    client = get_openai_client(session, current_user.organization_id, project_id)
-    storage = get_cloud_storage(session=session, project_id=current_user.project_id)
+    client = get_openai_client(session, current_user.organization_.id, project_id)
+    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
 
     if job.provider_job_id is not None:
         try:
@@ -358,7 +369,7 @@ def refresh_fine_tune_status(
                     session=session,
                     request=ModelEvaluationBase(fine_tuning_id=fine_tuning_id),
                     project_id=project_id,
-                    organization_id=current_user.organization_id,
+                    organization_id=current_user.organization_.id,
                     status=ModelEvaluationStatus.pending,
                 )
 
@@ -395,12 +406,13 @@ def refresh_fine_tune_status(
     "/{document_id}",
     description="Retrieves all fine-tuning jobs associated with the given document ID for the current project",
     response_model=APIResponse[list[FineTuningJobPublic]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def retrieve_jobs_by_document(
-    document_id: UUID, session: SessionDep, current_user: CurrentUserOrgProject
+    document_id: UUID, session: SessionDep, current_user: AuthContextDep
 ):
-    storage = get_cloud_storage(session=session, project_id=current_user.project_id)
-    project_id = current_user.project_id
+    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
+    project_id = current_user.project_.id
     jobs = fetch_by_document_id(session, document_id, project_id)
     if not jobs:
         logger.warning(

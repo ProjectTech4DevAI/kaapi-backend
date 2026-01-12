@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator
@@ -28,7 +28,7 @@ class Collection(SQLModel, table=True):
     )
     llm_service_name: str = Field(
         nullable=False,
-        sa_column_kwargs={"comment": "Name of the LLM service provider"},
+        sa_column_kwargs={"comment": "Name of the LLM service"},
     )
 
     # Foreign keys
@@ -89,7 +89,7 @@ class AssistantOptions(SQLModel):
     model: str | None = Field(
         default=None,
         description=(
-            "**[To Be Deprecated]**  "
+            "**[Deprecated]**  "
             "OpenAI model to attach to this assistant. The model "
             "must be compatable with the assistants API; see the "
             "OpenAI [model documentation](https://platform.openai.com/docs/models/compare) for more."
@@ -99,7 +99,7 @@ class AssistantOptions(SQLModel):
     instructions: str | None = Field(
         default=None,
         description=(
-            "**[To Be Deprecated]**  "
+            "**[Deprecated]**  "
             "Assistant instruction. Sometimes referred to as the "
             '"system" prompt.'
         ),
@@ -107,7 +107,7 @@ class AssistantOptions(SQLModel):
     temperature: float = Field(
         default=1e-6,
         description=(
-            "**[To Be Deprecated]**  "
+            "**[Deprecated]**  "
             "Model temperature. The default is slightly "
             "greater-than zero because it is [unknown how OpenAI "
             "handles zero](https://community.openai.com/t/clarifications-on-setting-temperature-0/886447/5)."
@@ -145,8 +145,17 @@ class CallbackRequest(SQLModel):
     )
 
 
+class ProviderOptions(SQLModel):
+    """LLM provider configuration."""
+
+    provider: Literal["openai"] = Field(
+        default="openai", description="LLM provider to use for this collection"
+    )
+
+
 class CreationRequest(
     DocumentOptions,
+    ProviderOptions,
     AssistantOptions,
     CallbackRequest,
 ):

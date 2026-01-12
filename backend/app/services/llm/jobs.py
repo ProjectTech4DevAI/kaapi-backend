@@ -7,12 +7,15 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.crud.config import ConfigVersionCrud
+from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
-from app.models.llm.request import ConfigBlob, LLMCallConfig
+from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
 from app.utils import APIResponse, send_callback
 from app.celery.utils import start_high_priority_job
+from app.core.langfuse.langfuse import observe_llm_execution
 from app.services.llm.providers.registry import get_llm_provider
+from app.services.llm.mappers import transform_kaapi_config_to_native
 
 
 logger = logging.getLogger(__name__)
@@ -169,9 +172,26 @@ def execute_job(
                 config_blob = config.blob
 
             try:
+                # Transform Kaapi config to native config if needed (before getting provider)
+                completion_config = config_blob.completion
+                if isinstance(completion_config, KaapiCompletionConfig):
+                    completion_config, warnings = transform_kaapi_config_to_native(
+                        completion_config
+                    )
+                    if request.request_metadata is None:
+                        request.request_metadata = {}
+                    request.request_metadata.setdefault("warnings", []).extend(warnings)
+            except Exception as e:
+                callback_response = APIResponse.failure_response(
+                    error=f"Error processing configuration: {str(e)}",
+                    metadata=request.request_metadata,
+                )
+                return handle_job_error(job_id, request.callback_url, callback_response)
+
+            try:
                 provider_instance = get_llm_provider(
                     session=session,
-                    provider_type=config_blob.completion.provider,
+                    provider_type=completion_config.provider,  # Now always native provider type
                     project_id=project_id,
                     organization_id=organization_id,
                 )
@@ -182,8 +202,26 @@ def execute_job(
                 )
                 return handle_job_error(job_id, request.callback_url, callback_response)
 
-        response, error = provider_instance.execute(
-            completion_config=config_blob.completion,
+            langfuse_credentials = get_provider_credential(
+                session=session,
+                org_id=organization_id,
+                project_id=project_id,
+                provider="langfuse",
+            )
+
+        # Extract conversation_id for langfuse session grouping
+        conversation_id = None
+        if request.query.conversation and request.query.conversation.id:
+            conversation_id = request.query.conversation.id
+
+        # Apply Langfuse observability decorator to provider execute method
+        decorated_execute = observe_llm_execution(
+            credentials=langfuse_credentials,
+            session_id=conversation_id,
+        )(provider_instance.execute)
+
+        response, error = decorated_execute(
+            completion_config=completion_config,
             query=request.query,
             include_provider_raw_response=request.include_provider_raw_response,
         )

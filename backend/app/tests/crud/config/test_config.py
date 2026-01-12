@@ -10,6 +10,7 @@ from app.models import (
     ConfigCreate,
     ConfigUpdate,
 )
+from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigCrud
 from app.tests.utils.test_data import create_test_project, create_test_config
 from app.tests.utils.utils import random_lower_string
@@ -18,8 +19,8 @@ from app.tests.utils.utils import random_lower_string
 @pytest.fixture
 def example_config_blob():
     return ConfigBlob(
-        completion=CompletionConfig(
-            provider="openai",
+        completion=NativeCompletionConfig(
+            provider="openai-native",
             params={
                 "model": "gpt-4",
                 "temperature": 0.8,

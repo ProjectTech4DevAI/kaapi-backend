@@ -1,9 +1,9 @@
 import logging
-from typing import Any, List
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from app.models import (
     Organization,
@@ -11,23 +11,21 @@ from app.models import (
     OrganizationUpdate,
     OrganizationPublic,
 )
-from app.api.deps import (
-    CurrentUser,
-    SessionDep,
-    get_current_active_superuser,
-)
+from app.api.deps import SessionDep
+from app.api.permissions import Permission, require_permission
 from app.crud.organization import create_organization, get_organization_by_id
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/organizations", tags=["organizations"])
+router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
 
 # Retrieve organizations
 @router.get(
     "/",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[List[OrganizationPublic]],
+    description=load_description("organization/list.md"),
 )
 def read_organizations(session: SessionDep, skip: int = 0, limit: int = 100):
     count_statement = select(func.count()).select_from(Organization)
@@ -42,8 +40,9 @@ def read_organizations(session: SessionDep, skip: int = 0, limit: int = 100):
 # Create a new organization
 @router.post(
     "/",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
+    description=load_description("organization/create.md"),
 )
 def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate):
     new_org = create_organization(session=session, org_create=org_in)
@@ -52,8 +51,9 @@ def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate):
 
 @router.get(
     "/{org_id}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
+    description=load_description("organization/get.md"),
 )
 def read_organization(*, session: SessionDep, org_id: int):
     """
@@ -69,8 +69,9 @@ def read_organization(*, session: SessionDep, org_id: int):
 # Update an organization
 @router.patch(
     "/{org_id}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
+    description=load_description("organization/update.md"),
 )
 def update_organization(
     *, session: SessionDep, org_id: int, org_in: OrganizationUpdate
@@ -97,9 +98,10 @@ def update_organization(
 # Delete an organization
 @router.delete(
     "/{org_id}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[None],
     include_in_schema=False,
+    description=load_description("organization/delete.md"),
 )
 def delete_organization(session: SessionDep, org_id: int):
     org = get_organization_by_id(session=session, org_id=org_id)

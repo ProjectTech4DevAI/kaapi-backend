@@ -1,9 +1,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, HTTPException, Query
-from sqlmodel import Session
 
-from app.api.deps import get_db, get_current_user_org_project
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.crud import (
     get_conversation_by_id,
     get_conversation_by_response_id,
@@ -13,10 +13,9 @@ from app.crud import (
     delete_conversation,
 )
 from app.models import (
-    UserProjectOrg,
     OpenAIConversationPublic,
 )
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 router = APIRouter(prefix="/openai-conversation", tags=["OpenAI Conversations"])
 
@@ -25,17 +24,19 @@ router = APIRouter(prefix="/openai-conversation", tags=["OpenAI Conversations"])
     "/{conversation_id}",
     response_model=APIResponse[OpenAIConversationPublic],
     summary="Get a single conversation by its ID",
+    description=load_description("openai_conversation/get.md"),
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_conversation_route(
-    conversation_id: int = Path(..., description="The conversation ID to fetch"),
-    session: Session = Depends(get_db),
-    current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    conversation_id: Annotated[int, Path(description="The conversation ID to fetch")],
+    session: SessionDep,
+    current_user: AuthContextDep,
 ):
     """
     Fetch a single conversation by its ID.
     """
     conversation = get_conversation_by_id(
-        session, conversation_id, current_user.project_id
+        session, conversation_id, current_user.project_.id
     )
     if not conversation:
         raise HTTPException(
@@ -48,17 +49,19 @@ def get_conversation_route(
     "/response/{response_id}",
     response_model=APIResponse[OpenAIConversationPublic],
     summary="Get a conversation by its OpenAI response ID",
+    description=load_description("openai_conversation/get_by_response_id.md"),
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_conversation_by_response_id_route(
-    response_id: str = Path(..., description="The OpenAI response ID to fetch"),
-    session: Session = Depends(get_db),
-    current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    response_id: Annotated[str, Path(description="The OpenAI response ID to fetch")],
+    session: SessionDep,
+    current_user: AuthContextDep,
 ):
     """
     Fetch a conversation by its OpenAI response ID.
     """
     conversation = get_conversation_by_response_id(
-        session, response_id, current_user.project_id
+        session, response_id, current_user.project_.id
     )
     if not conversation:
         raise HTTPException(
@@ -72,19 +75,21 @@ def get_conversation_by_response_id_route(
     "/ancestor/{ancestor_response_id}",
     response_model=APIResponse[OpenAIConversationPublic],
     summary="Get a conversation by its ancestor response ID",
+    description=load_description("openai_conversation/get_by_ancestor_id.md"),
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_conversation_by_ancestor_id_route(
-    ancestor_response_id: str = Path(
-        ..., description="The ancestor response ID to fetch"
-    ),
-    session: Session = Depends(get_db),
-    current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    ancestor_response_id: Annotated[
+        str, Path(description="The ancestor response ID to fetch")
+    ],
+    session: SessionDep,
+    current_user: AuthContextDep,
 ):
     """
     Fetch a conversation by its ancestor response ID.
     """
     conversation = get_conversation_by_ancestor_id(
-        session, ancestor_response_id, current_user.project_id
+        session, ancestor_response_id, current_user.project_.id
     )
     if not conversation:
         raise HTTPException(
@@ -98,10 +103,12 @@ def get_conversation_by_ancestor_id_route(
     "/",
     response_model=APIResponse[list[OpenAIConversationPublic]],
     summary="List all conversations in the current project",
+    description=load_description("openai_conversation/list.md"),
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_conversations_route(
-    session: Session = Depends(get_db),
-    current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    session: SessionDep,
+    current_user: AuthContextDep,
     skip: int = Query(0, ge=0, description="How many items to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum items to return"),
 ):
@@ -110,7 +117,7 @@ def list_conversations_route(
     """
     conversations = get_conversations_by_project(
         session=session,
-        project_id=current_user.project_id,
+        project_id=current_user.project_.id,
         skip=skip,  # ← Pagination offset
         limit=limit,  # ← Page size
     )
@@ -118,7 +125,7 @@ def list_conversations_route(
     # Get total count for pagination metadata
     total = get_conversations_count_by_project(
         session=session,
-        project_id=current_user.project_id,
+        project_id=current_user.project_.id,
     )
 
     return APIResponse.success_response(
@@ -126,11 +133,16 @@ def list_conversations_route(
     )
 
 
-@router.delete("/{conversation_id}", response_model=APIResponse)
+@router.delete(
+    "/{conversation_id}",
+    response_model=APIResponse,
+    description=load_description("openai_conversation/delete.md"),
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
 def delete_conversation_route(
     conversation_id: Annotated[int, Path(description="Conversation ID to delete")],
-    session: Session = Depends(get_db),
-    current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    session: SessionDep,
+    current_user: AuthContextDep,
 ):
     """
     Soft delete a conversation by marking it as deleted.
@@ -138,7 +150,7 @@ def delete_conversation_route(
     deleted_conversation = delete_conversation(
         session=session,
         conversation_id=conversation_id,
-        project_id=current_user.project_id,
+        project_id=current_user.project_.id,
     )
 
     if not deleted_conversation:

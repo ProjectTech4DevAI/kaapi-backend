@@ -1,42 +1,33 @@
-Upload a CSV file containing Golden Q&A pairs.
+Upload a CSV file containing golden Q&A pairs for evaluation.
 
-This endpoint:
-1. Sanitizes the dataset name (removes spaces, special characters)
-2. Validates and parses the CSV file
-3. Uploads CSV to object store (if credentials configured)
-4. Uploads dataset to Langfuse (for immediate use)
-5. Stores metadata in database
+Datasets allow you to store reusable question-answer pairs for systematic LLM testing with automatic validation, duplication for statistical significance, and Langfuse integration. Response includes dataset ID, sanitized name, item counts, Langfuse dataset ID, and object store URL (the cloud storage location where your CSV file is stored).
 
-## Dataset Name
+**Key Features:**
+* Validates CSV format and required columns (question, answer)
+* Automatic dataset name sanitization for Langfuse compatibility
+* Optional item duplication for statistical significance (1-5x, default: 1x)
+* Uploads to object store and syncs with Langfuse
+* Skips rows with missing values automatically
 
-- Will be sanitized for Langfuse compatibility
-- Spaces replaced with underscores
-- Special characters removed
-- Converted to lowercase
-- Example: "My Dataset 01!" becomes "my_dataset_01"
 
-## CSV Format
+**CSV Format Requirements:**
+* Required columns: `question`, `answer`
+* Additional columns are allowed (will be ignored)
+* Missing values in required columns are automatically skipped
 
-- Must contain 'question' and 'answer' columns
-- Can have additional columns (will be ignored)
-- Missing values in 'question' or 'answer' rows will be skipped
 
-## Duplication Factor
+**Dataset Name Sanitization:**
 
-- Minimum: 1 (no duplication)
-- Maximum: 5
-- Default: 5
-- Each item in the dataset will be duplicated this many times
-- Used to ensure statistical significance in evaluation results
+Your dataset name will be automatically sanitized for Langfuse compatibility:
+* Spaces → underscores
+* Special characters removed
+* Converted to lowercase
+* Example: `"My Dataset 01!"` → `"my_dataset_01"`
 
-## Example CSV
 
-```
-question,answer
-"What is the capital of France?","Paris"
-"What is 2+2?","4"
-```
+**Duplication Factor:**
 
-## Returns
-
-DatasetUploadResponse with dataset_id, object_store_url, and Langfuse details (dataset_name in response will be the sanitized version)
+Control how many times each Q&A pair is duplicated (1-5x, default: 1x):
+* Higher duplication = better statistical significance
+* Useful for batch evaluation reliability
+* `1` = no duplication (original dataset only)

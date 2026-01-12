@@ -12,15 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class LLMProvider:
-    OPENAI = "openai"
-    # Future constants:
-    # ANTHROPIC = "anthropic"
-    # GOOGLE = "google"
+    OPENAI_NATIVE = "openai-native"
+    # Future constants for native providers:
+    # CLAUDE_NATIVE = "claude-native"
+    # GEMINI_NATIVE = "gemini-native"
 
     _registry: dict[str, type[BaseProvider]] = {
-        OPENAI: OpenAIProvider,
-        # ANTHROPIC: AnthropicProvider,
-        # GOOGLE: GoogleProvider,
+        OPENAI_NATIVE: OpenAIProvider,
+        # Future native providers:
+        # CLAUDE_NATIVE: ClaudeProvider,
+        # GEMINI_NATIVE: GeminiProvider,
     }
 
     @classmethod
@@ -45,19 +46,22 @@ def get_llm_provider(
 ) -> BaseProvider:
     provider_class = LLMProvider.get(provider_type)
 
+    # e.g., "openai-native" → "openai", "claude-native" → "claude"
+    credential_provider = provider_type.replace("-native", "")
+
     credentials = get_provider_credential(
         session=session,
-        provider=provider_type,
+        provider=credential_provider,
         project_id=project_id,
         org_id=organization_id,
     )
 
     if not credentials:
         raise ValueError(
-            f"Credentials for provider '{provider_type}' not configured for this project."
+            f"Credentials for provider '{credential_provider}' not configured for this project."
         )
 
-    if provider_type == LLMProvider.OPENAI:
+    if provider_type == LLMProvider.OPENAI_NATIVE:
         if "api_key" not in credentials:
             raise ValueError("OpenAI credentials not configured for this project.")
         client = OpenAI(api_key=credentials["api_key"])
