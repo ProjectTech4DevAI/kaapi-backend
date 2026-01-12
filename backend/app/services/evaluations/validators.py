@@ -10,13 +10,12 @@ from fastapi import HTTPException, UploadFile
 
 logger = logging.getLogger(__name__)
 
-# File upload security constants
 MAX_FILE_SIZE = 1024 * 1024  # 1 MB
 ALLOWED_EXTENSIONS = {".csv"}
 ALLOWED_MIME_TYPES = {
     "text/csv",
     "application/csv",
-    "text/plain",  # Some systems report CSV as text/plain
+    "text/plain",
 }
 
 
@@ -46,7 +45,6 @@ def sanitize_dataset_name(name: str) -> str:
         "My Dataset!" -> "my_dataset"
         "Test--Data__Set" -> "test_data_set"
     """
-    # Convert to lowercase
     sanitized = name.lower()
 
     # Replace spaces and hyphens with underscores
@@ -58,10 +56,8 @@ def sanitize_dataset_name(name: str) -> str:
     # Collapse multiple underscores into one
     sanitized = re.sub(r"_+", "_", sanitized)
 
-    # Remove leading/trailing underscores
     sanitized = sanitized.strip("_")
 
-    # Ensure name is not empty
     if not sanitized:
         raise ValueError("Dataset name cannot be empty after sanitization")
 
@@ -81,7 +77,6 @@ async def validate_csv_file(file: UploadFile) -> bytes:
     Raises:
         HTTPException: If validation fails
     """
-    # Security validation: Check file extension
     if not file.filename:
         raise HTTPException(
             status_code=422,
@@ -94,7 +89,6 @@ async def validate_csv_file(file: UploadFile) -> bytes:
             detail=f"Invalid file type. Only CSV files are allowed. Got: {file_ext}",
         )
 
-    # Security validation: Check MIME type
     content_type = file.content_type
     if content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
@@ -102,10 +96,9 @@ async def validate_csv_file(file: UploadFile) -> bytes:
             detail=f"Invalid content type. Expected CSV, got: {content_type}",
         )
 
-    # Security validation: Check file size
-    file.file.seek(0, 2)  # Seek to end
+    file.file.seek(0, 2)
     file_size = file.file.tell()
-    file.file.seek(0)  # Reset to beginning
+    file.file.seek(0)
 
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
@@ -116,7 +109,6 @@ async def validate_csv_file(file: UploadFile) -> bytes:
     if file_size == 0:
         raise HTTPException(status_code=422, detail="Empty file uploaded")
 
-    # Read and return content
     return await file.read()
 
 
@@ -153,11 +145,9 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
                 f"Found columns: {csv_reader.fieldnames}",
             )
 
-        # Get the actual column names from the CSV
         question_col = clean_headers["question"]
         answer_col = clean_headers["answer"]
 
-        # Extract items
         items = []
         for row in csv_reader:
             question = row.get(question_col, "").strip()
