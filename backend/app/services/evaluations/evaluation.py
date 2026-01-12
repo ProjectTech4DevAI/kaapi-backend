@@ -45,7 +45,6 @@ def build_evaluation_config(
         HTTPException: If assistant not found or model missing
     """
     if assistant_id:
-        # Fetch assistant details from database
         assistant = get_assistant_by_id(
             session=session,
             assistant_id=assistant_id,
@@ -139,7 +138,6 @@ def start_evaluation(
         f"config_keys={list(config.keys())}"
     )
 
-    # Step 1: Fetch dataset from database
     dataset = get_dataset_by_id(
         session=session,
         dataset_id=dataset_id,
@@ -160,7 +158,6 @@ def start_evaluation(
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
 
-    # Validate dataset has Langfuse ID
     if not dataset.langfuse_dataset_id:
         raise HTTPException(
             status_code=400,
@@ -168,7 +165,6 @@ def start_evaluation(
             "Please ensure Langfuse credentials were configured when the dataset was created.",
         )
 
-    # Step 2: Build evaluation config
     eval_config = build_evaluation_config(
         session=session,
         config=config,
@@ -176,7 +172,6 @@ def start_evaluation(
         project_id=project_id,
     )
 
-    # Get API clients
     openai_client = get_openai_client(
         session=session,
         org_id=organization_id,
@@ -188,7 +183,6 @@ def start_evaluation(
         project_id=project_id,
     )
 
-    # Step 3: Create EvaluationRun record
     eval_run = create_evaluation_run(
         session=session,
         run_name=experiment_name,
@@ -199,7 +193,6 @@ def start_evaluation(
         project_id=project_id,
     )
 
-    # Step 4: Start the batch evaluation
     try:
         eval_run = start_evaluation_batch(
             langfuse=langfuse,
@@ -285,7 +278,6 @@ def get_evaluation_with_scores(
     if not resync_score and has_cached_score:
         return eval_run, None
 
-    # Get Langfuse client
     langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
@@ -297,7 +289,6 @@ def get_evaluation_with_scores(
     run_name = eval_run.run_name
     eval_run_id = eval_run.id
 
-    # Fetch scores from Langfuse
     try:
         score = fetch_trace_scores_from_langfuse(
             langfuse=langfuse,
@@ -318,7 +309,6 @@ def get_evaluation_with_scores(
         )
         return eval_run, f"Failed to fetch trace info from Langfuse: {str(e)}"
 
-    # Save score to database (uses its own session)
     eval_run = save_score(
         eval_run_id=eval_run_id,
         organization_id=organization_id,
