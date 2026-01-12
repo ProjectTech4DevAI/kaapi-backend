@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import (
     APIRouter,
     Body,
+    Depends,
     File,
     Form,
     HTTPException,
