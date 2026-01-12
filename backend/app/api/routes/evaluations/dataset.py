@@ -16,12 +16,12 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.evaluations import (
     get_dataset_by_id,
-    list_datasets,
+    list_datasets as list_evaluation_datasets,
 )
 from app.crud.evaluations.dataset import delete_dataset as delete_dataset_crud
 from app.models.evaluation import DatasetUploadResponse, EvaluationDataset
 from app.services.evaluations import (
-    upload_dataset,
+    upload_dataset as upload_evaluation_dataset,
     validate_csv_file,
 )
 from app.utils import (
@@ -53,7 +53,7 @@ def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
     response_model=APIResponse[DatasetUploadResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
-async def upload_dataset_endpoint(
+async def upload_dataset(
     _session: SessionDep,
     auth_context: AuthContextDep,
     file: UploadFile = File(
@@ -73,7 +73,7 @@ async def upload_dataset_endpoint(
     csv_content = await validate_csv_file(file)
 
     # Upload dataset using service
-    dataset = upload_dataset(
+    dataset = upload_evaluation_dataset(
         session=_session,
         csv_content=csv_content,
         dataset_name=dataset_name,
@@ -92,7 +92,7 @@ async def upload_dataset_endpoint(
     response_model=APIResponse[list[DatasetUploadResponse]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
-def list_datasets_endpoint(
+def list_datasets(
     _session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(
@@ -101,7 +101,7 @@ def list_datasets_endpoint(
     offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
 ) -> APIResponse[list[DatasetUploadResponse]]:
     """List evaluation datasets."""
-    datasets = list_datasets(
+    datasets = list_evaluation_datasets(
         session=_session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
