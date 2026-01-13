@@ -17,6 +17,7 @@ from sqlmodel import Session
 from app.core.batch.openai import OpenAIBatchProvider
 from app.crud.batch_operations import start_batch_job
 from app.models import EvaluationRun
+from app.models.llm.request import KaapiLLMParams
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
 
 
 def build_evaluation_jsonl(
-    dataset_items: list[dict[str, Any]], config: dict[str, Any]
+    dataset_items: list[dict[str, Any]], config: KaapiLLMParams
 ) -> list[dict[str, Any]]:
     """
     Build JSONL data for evaluation batch using OpenAI Responses API.
@@ -89,7 +90,6 @@ def build_evaluation_jsonl(
         List of dictionaries (JSONL data)
     """
     jsonl_data = []
-
     for item in dataset_items:
         # Extract question from input
         question = item["input"].get("question", "")
@@ -106,7 +106,12 @@ def build_evaluation_jsonl(
             "method": "POST",
             "url": "/v1/responses",
             "body": {
-                **config,  # Use config as-is
+                # Use config as-is
+                "model": config.model,
+                "instructions": config.instructions,
+                "temperature": config.temperature,
+                "reasoning": {"effort": config.reasoning} if config.reasoning else None,
+                "tools": config.knowledge_base_ids if config.knowledge_base_ids else [],
                 "input": question,  # Add input from dataset
             },
         }
@@ -120,7 +125,7 @@ def start_evaluation_batch(
     openai_client: OpenAI,
     session: Session,
     eval_run: EvaluationRun,
-    config: dict[str, Any],
+    config: KaapiLLMParams,
 ) -> EvaluationRun:
     """
     Fetch data, build JSONL, and start evaluation batch.
@@ -167,7 +172,7 @@ def start_evaluation_batch(
             "description": f"Evaluation: {eval_run.run_name}",
             "completion_window": "24h",
             # Store complete config for reference
-            "evaluation_config": config,
+            "evaluation_config": config.model_dump(exclude_none=True),
         }
 
         # Step 5: Start batch job using generic infrastructure
