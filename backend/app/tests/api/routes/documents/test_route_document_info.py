@@ -7,7 +7,6 @@ from app.tests.utils.document import (
     DocumentStore,
     Route,
     WebCrawler,
-    crawler,
     httpx_to_standard,
 )
 
