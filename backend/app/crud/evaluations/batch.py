@@ -111,7 +111,13 @@ def build_evaluation_jsonl(
                 "instructions": config.instructions,
                 "temperature": config.temperature,
                 "reasoning": {"effort": config.reasoning} if config.reasoning else None,
-                "tools": config.knowledge_base_ids if config.knowledge_base_ids else [],
+                "tools": [
+                    {
+                        "type": "file_search",
+                        "vector_store_ids": config.knowledge_base_ids,
+                        "max_num_results": config.max_num_results or 20,
+                    }
+                ],
                 "input": question,  # Add input from dataset
             },
         }
