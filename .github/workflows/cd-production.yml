@@ -1,4 +1,4 @@
-name: Deploy AI Platform to ECS Production
+name: Deploy Kaapi to ECS Production
 
 on:
   push:

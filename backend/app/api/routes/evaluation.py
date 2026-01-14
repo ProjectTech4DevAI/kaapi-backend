@@ -4,9 +4,19 @@ import logging
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    Depends,
+)
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud.assistants import get_assistant_by_id
 from app.crud.evaluations import (
@@ -45,7 +55,7 @@ ALLOWED_MIME_TYPES = {
     "text/plain",  # Some systems report CSV as text/plain
 }
 
-router = APIRouter(tags=["evaluation"])
+router = APIRouter(tags=["Evaluation"])
 
 
 def _dataset_to_response(dataset) -> DatasetUploadResponse:
@@ -113,6 +123,7 @@ def sanitize_dataset_name(name: str) -> str:
     "/evaluations/datasets",
     description=load_description("evaluation/upload_dataset.md"),
     response_model=APIResponse[DatasetUploadResponse],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 async def upload_dataset(
     _session: SessionDep,
@@ -143,8 +154,8 @@ async def upload_dataset(
 
     logger.info(
         f"[upload_dataset] Uploading dataset | dataset={dataset_name} | "
-        f"duplication_factor={duplication_factor} | org_id={auth_context.organization.id} | "
-        f"project_id={auth_context.project.id}"
+        f"duplication_factor={duplication_factor} | org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id}"
     )
 
     # Security validation: Check file extension
@@ -234,7 +245,7 @@ async def upload_dataset(
     object_store_url = None
     try:
         storage = get_cloud_storage(
-            session=_session, project_id=auth_context.project.id
+            session=_session, project_id=auth_context.project_.id
         )
         object_store_url = upload_csv_to_object_store(
             storage=storage, csv_content=csv_content, dataset_name=dataset_name
@@ -260,8 +271,8 @@ async def upload_dataset(
         # Get Langfuse client
         langfuse = get_langfuse_client(
             session=_session,
-            org_id=auth_context.organization.id,
-            project_id=auth_context.project.id,
+            org_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
         )
 
         # Upload to Langfuse
@@ -300,8 +311,8 @@ async def upload_dataset(
         dataset_metadata=metadata,
         object_store_url=object_store_url,
         langfuse_dataset_id=langfuse_dataset_id,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     logger.info(
@@ -327,6 +338,7 @@ async def upload_dataset(
     "/evaluations/datasets",
     description=load_description("evaluation/list_datasets.md"),
     response_model=APIResponse[list[DatasetUploadResponse]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_datasets_endpoint(
     _session: SessionDep,
@@ -340,8 +352,8 @@ def list_datasets_endpoint(
 
     datasets = list_datasets(
         session=_session,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
         limit=limit,
         offset=offset,
     )
@@ -355,6 +367,7 @@ def list_datasets_endpoint(
     "/evaluations/datasets/{dataset_id}",
     description=load_description("evaluation/get_dataset.md"),
     response_model=APIResponse[DatasetUploadResponse],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_dataset(
     dataset_id: int,
@@ -363,15 +376,15 @@ def get_dataset(
 ) -> APIResponse[DatasetUploadResponse]:
     logger.info(
         f"[get_dataset] Fetching dataset | id={dataset_id} | "
-        f"org_id={auth_context.organization.id} | "
-        f"project_id={auth_context.project.id}"
+        f"org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id}"
     )
 
     dataset = get_dataset_by_id(
         session=_session,
         dataset_id=dataset_id,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     if not dataset:
@@ -386,6 +399,7 @@ def get_dataset(
     "/evaluations/datasets/{dataset_id}",
     description=load_description("evaluation/delete_dataset.md"),
     response_model=APIResponse[dict],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def delete_dataset(
     dataset_id: int,
@@ -394,15 +408,15 @@ def delete_dataset(
 ) -> APIResponse[dict]:
     logger.info(
         f"[delete_dataset] Deleting dataset | id={dataset_id} | "
-        f"org_id={auth_context.organization.id} | "
-        f"project_id={auth_context.project.id}"
+        f"org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id}"
     )
 
     success, message = delete_dataset_crud(
         session=_session,
         dataset_id=dataset_id,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     if not success:
@@ -422,6 +436,7 @@ def delete_dataset(
     "/evaluations",
     description=load_description("evaluation/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def evaluate(
     _session: SessionDep,
@@ -439,7 +454,7 @@ def evaluate(
     logger.info(
         f"[evaluate] Starting evaluation | experiment_name={experiment_name} | "
         f"dataset_id={dataset_id} | "
-        f"org_id={auth_context.organization.id} | "
+        f"org_id={auth_context.organization_.id} | "
         f"assistant_id={assistant_id} | "
         f"config_keys={list(config.keys())}"
     )
@@ -448,8 +463,8 @@ def evaluate(
     dataset = get_dataset_by_id(
         session=_session,
         dataset_id=dataset_id,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     if not dataset:
@@ -470,13 +485,13 @@ def evaluate(
     # Get API clients
     openai_client = get_openai_client(
         session=_session,
-        org_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
     langfuse = get_langfuse_client(
         session=_session,
-        org_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     # Validate dataset has Langfuse ID (should have been set during dataset creation)
@@ -493,7 +508,7 @@ def evaluate(
         assistant = get_assistant_by_id(
             session=_session,
             assistant_id=assistant_id,
-            project_id=auth_context.project.id,
+            project_id=auth_context.project_.id,
         )
 
         if not assistant:
@@ -544,8 +559,8 @@ def evaluate(
         dataset_name=dataset_name,
         dataset_id=dataset_id,
         config=config,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     # Start the batch evaluation
@@ -579,6 +594,7 @@ def evaluate(
     "/evaluations",
     description=load_description("evaluation/list_evaluations.md"),
     response_model=APIResponse[list[EvaluationRunPublic]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_evaluation_runs(
     _session: SessionDep,
@@ -588,15 +604,15 @@ def list_evaluation_runs(
 ) -> APIResponse[list[EvaluationRunPublic]]:
     logger.info(
         f"[list_evaluation_runs] Listing evaluation runs | "
-        f"org_id={auth_context.organization.id} | "
-        f"project_id={auth_context.project.id} | limit={limit} | offset={offset}"
+        f"org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id} | limit={limit} | offset={offset}"
     )
 
     return APIResponse.success_response(
         data=list_evaluation_runs_crud(
             session=_session,
-            organization_id=auth_context.organization.id,
-            project_id=auth_context.project.id,
+            organization_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
             limit=limit,
             offset=offset,
         )
@@ -607,6 +623,7 @@ def list_evaluation_runs(
     "/evaluations/{evaluation_id}",
     description=load_description("evaluation/get_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_evaluation_run_status(
     evaluation_id: int,
@@ -632,8 +649,8 @@ def get_evaluation_run_status(
     logger.info(
         f"[get_evaluation_run_status] Fetching status for evaluation run | "
         f"evaluation_id={evaluation_id} | "
-        f"org_id={auth_context.organization.id} | "
-        f"project_id={auth_context.project.id} | "
+        f"org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id} | "
         f"get_trace_info={get_trace_info} | "
         f"resync_score={resync_score}"
     )
@@ -647,8 +664,8 @@ def get_evaluation_run_status(
     eval_run = get_evaluation_run_by_id(
         session=_session,
         evaluation_id=evaluation_id,
-        organization_id=auth_context.organization.id,
-        project_id=auth_context.project.id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     if not eval_run:
@@ -677,16 +694,16 @@ def get_evaluation_run_status(
         # Get Langfuse client (needs session for credentials lookup)
         langfuse = get_langfuse_client(
             session=_session,
-            org_id=auth_context.organization.id,
-            project_id=auth_context.project.id,
+            org_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
         )
 
         # Capture data needed for Langfuse fetch and DB update
         dataset_name = eval_run.dataset_name
         run_name = eval_run.run_name
         eval_run_id = eval_run.id
-        org_id = auth_context.organization.id
-        project_id = auth_context.project.id
+        org_id = auth_context.organization_.id
+        project_id = auth_context.project_.id
 
         # Session is no longer needed - slow Langfuse API calls happen here
         # without holding the DB connection

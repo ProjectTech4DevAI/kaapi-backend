@@ -13,7 +13,7 @@ class TestCollectionCreate:
     _n_documents = 10
 
     @openai_responses.mock()
-    def test_create_associates_documents(self, db: Session):
+    def test_create_associates_documents(self, db: Session) -> None:
         project = get_project(db)
         collection = Collection(
             id=uuid4(),

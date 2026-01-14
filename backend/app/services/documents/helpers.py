@@ -70,7 +70,6 @@ def schedule_transformation(
     *,
     session,
     project_id: int,
-    current_user,
     source_format: str,
     target_format: str | None,
     actual_transformer: str | None,
@@ -92,7 +91,7 @@ def schedule_transformation(
     transformation_job_id = transformation_job.start_job(
         db=session,
         job_id=job.id,
-        current_user=current_user,
+        project_id=project_id,
         transformer_name=actual_transformer,
         target_format=target_format,
         callback_url=callback_url,

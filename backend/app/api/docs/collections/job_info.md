@@ -1,4 +1,4 @@
-Retrieve information about a collection job by the collection job ID. This endpoint provides detailed status and metadata for a specific collection job in the AI platform. It is especially useful for:
+Retrieve information about a collection job by the collection job ID. This endpoint provides detailed status and metadata for a specific collection job in Kaapi. It is especially useful for:
 
 * Fetching the collection job object, including the collection job ID, the current status, and the associated collection details.
 

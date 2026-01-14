@@ -5,12 +5,12 @@ import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from sqlmodel import Session
 from typing import Optional
 
-from app.api.deps import get_current_user_org, get_db, get_current_user_org_project
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core import logging, settings
-from app.models import UserOrganization, OpenAIThreadCreate, UserProjectOrg
+from app.models import OpenAIThreadCreate
 from app.crud import upsert_thread_result, get_thread_result
 from app.utils import APIResponse, mask_string
 from app.crud.credentials import get_provider_credential
@@ -18,7 +18,7 @@ from app.core.util import configure_openai
 from app.core.langfuse.langfuse import LangfuseTracer
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["threads"])
+router = APIRouter(tags=["Threads"])
 
 
 class StartThreadRequest(BaseModel):
@@ -242,7 +242,7 @@ def process_run(request: dict, client: OpenAI, tracer: LangfuseTracer):
     send_callback(request["callback_url"], response)
 
 
-def poll_run_and_prepare_response(request: dict, client: OpenAI, db: Session):
+def poll_run_and_prepare_response(request: dict, client: OpenAI, db: SessionDep):
     """Handles a thread run, processes the response, and upserts the result to the database."""
     thread_id = request["thread_id"]
     prompt = request["question"]
@@ -286,24 +286,27 @@ def poll_run_and_prepare_response(request: dict, client: OpenAI, db: Session):
     )
 
 
-@router.post("/threads")
+@router.post(
+    "/threads",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+)
 async def threads(
     request: dict,
     background_tasks: BackgroundTasks,
-    _session: Session = Depends(get_db),
-    _current_user: UserOrganization = Depends(get_current_user_org),
+    _session: SessionDep,
+    _current_user: AuthContextDep,
 ):
     """Asynchronous endpoint that processes requests in background."""
     credentials = get_provider_credential(
         session=_session,
-        org_id=_current_user.organization_id,
+        org_id=_current_user.organization_.id,
         provider="openai",
         project_id=request.get("project_id"),
     )
     client, success = configure_openai(credentials)
     if not success:
         logger.error(
-            f"[threads] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_id}, project_id: {request.get('project_id')}"
+            f"[threads] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_.id}, project_id: {request.get('project_id')}"
         )
         return APIResponse.failure_response(
             error="OpenAI API key not configured for this organization."
@@ -311,7 +314,7 @@ async def threads(
 
     langfuse_credentials = get_provider_credential(
         session=_session,
-        org_id=_current_user.organization_id,
+        org_id=_current_user.organization_.id,
         provider="langfuse",
         project_id=request.get("project_id"),
     )
@@ -351,21 +354,24 @@ async def threads(
     # Schedule background task
     background_tasks.add_task(process_run, request, client, tracer)
     logger.info(
-        f"[threads] Background task scheduled for thread ID: {mask_string(request.get('thread_id'))} | organization_id: {_current_user.organization_id}, project_id: {request.get('project_id')}"
+        f"[threads] Background task scheduled for thread ID: {mask_string(request.get('thread_id'))} | organization_id: {_current_user.organization_.id}, project_id: {request.get('project_id')}"
     )
     return initial_response
 
 
-@router.post("/threads/sync")
+@router.post(
+    "/threads/sync",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+)
 async def threads_sync(
     request: dict,
-    _session: Session = Depends(get_db),
-    _current_user: UserOrganization = Depends(get_current_user_org),
+    _session: SessionDep,
+    _current_user: AuthContextDep,
 ):
     """Synchronous endpoint that processes requests immediately."""
     credentials = get_provider_credential(
         session=_session,
-        org_id=_current_user.organization_id,
+        org_id=_current_user.organization_.id,
         provider="openai",
         project_id=request.get("project_id"),
     )
@@ -374,7 +380,7 @@ async def threads_sync(
     client, success = configure_openai(credentials)
     if not success:
         logger.error(
-            f"[threads_sync] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_id}, project_id: {request.get('project_id')}"
+            f"[threads_sync] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_.id}, project_id: {request.get('project_id')}"
         )
         return APIResponse.failure_response(
             error="OpenAI API key not configured for this organization."
@@ -383,7 +389,7 @@ async def threads_sync(
     # Get Langfuse credentials
     langfuse_credentials = get_provider_credential(
         session=_session,
-        org_id=_current_user.organization_id,
+        org_id=_current_user.organization_.id,
         provider="langfuse",
         project_id=request.get("project_id"),
     )
@@ -416,12 +422,15 @@ async def threads_sync(
     return response
 
 
-@router.post("/threads/start")
+@router.post(
+    "/threads/start",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
 async def start_thread(
     request: StartThreadRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _current_user: UserProjectOrg = Depends(get_current_user_org_project),
+    db: SessionDep,
+    _current_user: AuthContextDep,
 ):
     """
     Create a new OpenAI thread for the given question and start polling in the background.
@@ -430,16 +439,16 @@ async def start_thread(
     prompt = request["question"]
     credentials = get_provider_credential(
         session=db,
-        org_id=_current_user.organization_id,
+        org_id=_current_user.organization_.id,
         provider="openai",
-        project_id=_current_user.project_id,
+        project_id=_current_user.project_.id,
     )
 
     # Configure OpenAI client
     client, success = configure_openai(credentials)
     if not success:
         logger.error(
-            f"[start_thread] OpenAI API key not configured for this organization. | project_id: {_current_user.project_id}"
+            f"[start_thread] OpenAI API key not configured for this organization. | project_id: {_current_user.project_.id}"
         )
         return APIResponse.failure_response(
             error="OpenAI API key not configured for this organization."
@@ -465,7 +474,7 @@ async def start_thread(
     background_tasks.add_task(poll_run_and_prepare_response, request, client, db)
 
     logger.info(
-        f"[start_thread] Background task scheduled to process response for thread ID: {mask_string(thread_id)} | project_id: {_current_user.project_id}"
+        f"[start_thread] Background task scheduled to process response for thread ID: {mask_string(thread_id)} | project_id: {_current_user.project_.id}"
     )
     return APIResponse.success_response(
         data={
@@ -477,11 +486,14 @@ async def start_thread(
     )
 
 
-@router.get("/threads/result/{thread_id}")
+@router.get(
+    "/threads/result/{thread_id}",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+)
 async def get_thread(
     thread_id: str,
-    db: Session = Depends(get_db),
-    _current_user: UserOrganization = Depends(get_current_user_org),
+    db: SessionDep,
+    _current_user: AuthContextDep,
 ):
     """
     Retrieve the result of a previously started OpenAI thread using its thread ID.
@@ -490,7 +502,7 @@ async def get_thread(
 
     if not result:
         logger.error(
-            f"[get_thread] Thread result not found for ID: {mask_string(thread_id)} | org_id: {_current_user.organization_id}"
+            f"[get_thread] Thread result not found for ID: {mask_string(thread_id)} | org_id: {_current_user.organization_.id}"
         )
         raise HTTPException(404, "thread not found")
 

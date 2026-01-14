@@ -17,7 +17,9 @@ def test_project(db: Session) -> Project:
 
 
 # Test creating a project
-def test_create_new_project(db: Session, superuser_token_headers: dict[str, str]):
+def test_create_new_project(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
     organization = create_test_organization(db)
 
     unique_project_name = "TestProject"
@@ -48,7 +50,7 @@ def test_create_new_project(db: Session, superuser_token_headers: dict[str, str]
 
 
 # Test retrieving projects
-def test_read_projects(db: Session, superuser_token_headers: dict[str, str]):
+def test_read_projects(db: Session, superuser_token_headers: dict[str, str]) -> None:
     response = client.get(
         f"{settings.API_V1_STR}/projects/", headers=superuser_token_headers
     )
@@ -61,7 +63,7 @@ def test_read_projects(db: Session, superuser_token_headers: dict[str, str]):
 # Test updating a project
 def test_update_project(
     db: Session, test_project: Project, superuser_token_headers: dict[str, str]
-):
+) -> None:
     update_data = {"name": "Updated Project Name", "is_active": False}
 
     response = client.patch(
@@ -81,7 +83,7 @@ def test_update_project(
 # Test deleting a project
 def test_delete_project(
     db: Session, test_project: Project, superuser_token_headers: dict[str, str]
-):
+) -> None:
     response = client.delete(
         f"{settings.API_V1_STR}/projects/{test_project.id}",
         headers=superuser_token_headers,

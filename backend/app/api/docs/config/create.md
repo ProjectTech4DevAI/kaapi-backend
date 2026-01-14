@@ -11,7 +11,7 @@ Configurations allow you to store and manage reusable LLM parameters
 * Provider-agnostic storage - params are passed through to the provider as-is
 
 
-**Example for the config blob: OpenAI Responses API with File Search**
+**Example for the config blob: OpenAI Responses API with File Search -**
 
 ```json
 "config_blob": {

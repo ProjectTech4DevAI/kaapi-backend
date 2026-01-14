@@ -17,7 +17,9 @@ def test_organization(db: Session):
 
 
 # Test creating an organization
-def test_create_organization(db: Session, superuser_token_headers: dict[str, str]):
+def test_create_organization(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
     org_name = "Test-Org"
     org_data = {"name": org_name, "is_active": True}
     response = client.post(
@@ -37,7 +39,9 @@ def test_create_organization(db: Session, superuser_token_headers: dict[str, str
 
 
 # Test retrieving organizations
-def test_read_organizations(db: Session, superuser_token_headers: dict[str, str]):
+def test_read_organizations(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
     response = client.get(
         f"{settings.API_V1_STR}/organizations/", headers=superuser_token_headers
     )
@@ -52,7 +56,7 @@ def test_update_organization(
     db: Session,
     test_organization: Organization,
     superuser_token_headers: dict[str, str],
-):
+) -> None:
     updated_name = "UpdatedOrg"
     update_data = {"name": updated_name, "is_active": False}
 
@@ -75,7 +79,7 @@ def test_delete_organization(
     db: Session,
     test_organization: Organization,
     superuser_token_headers: dict[str, str],
-):
+) -> None:
     response = client.delete(
         f"{settings.API_V1_STR}/organizations/{test_organization.id}",
         headers=superuser_token_headers,

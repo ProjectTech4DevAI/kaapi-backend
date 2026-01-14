@@ -1,13 +1,13 @@
-# Contributing to Tech4Dev AI Platform
+# Contributing to Kaapi
 
-Thank you for considering contributing to **Tech4Dev AI Platform**! We welcome contributions of all kinds, including bug reports, feature requests, documentation improvements, and code contributions.
+Thank you for considering contributing to **Kaapi**! We welcome contributions of all kinds, including bug reports, feature requests, documentation improvements, and code contributions.
 
 ---
 
 ## 📌 Getting Started
 To contribute successfully, you must first set up the project on your local machine. Please follow the instructions outlined in the project's README to configure the repository and begin your contributions.
 
-Before you proceed, **make sure to check the repository's [README](https://github.com/ProjectTech4DevAI/ai-platform/blob/main/backend/README.md) for a comprehensive overview of the project's backend and detailed setup guidelines.**
+Before you proceed, **make sure to check the repository's [README](https://github.com/ProjectTech4DevAI/kaapi-backend/blob/main/backend/README.md) for a comprehensive overview of the project's backend and detailed setup guidelines.**
 
 ---
 
@@ -17,9 +17,17 @@ Before you proceed, **make sure to check the repository's [README](https://githu
 1. Click the **Fork** button on the top right of this repository.
 2. Clone your forked repository:
 ```
-git clone https://github.com/{username}/ai-platform.git
-cd ai-platform
+git clone https://github.com/{username}/kaapi-backend.git
+cd kaapi-backend
 ```
+
+### Check for Existing Issues
+Before you start working on a contribution:
+1. **Check if an issue exists** for the bug or feature you want to work on in the [Issues](https://github.com/ProjectTech4DevAI/kaapi-backend/issues) section.
+2. **If no issue exists**, create one first using the templates present:
+   - For bugs: Use the bug report template
+   - For enhancements: Use the enhancement request template
+   - For features: Create a feature request issue
 
 ### Create a Branch
 • Always work in a new branch based on main.
@@ -30,12 +38,9 @@ cd ai-platform
    - enhancement
    - bugfix
    - feature
-
-
  ```
  git checkout -b type/one-line-description
  ```
-
 ### Make and Test Changes
 1. Adhere to the project's established coding style for consistency.
 2. Make sure the code adheres to best practices.
@@ -60,7 +65,7 @@ git commit -m "one liner for the commit"
 • For PR name, follow this convention:
    ``Module Name: One liner of changes``
 
-• Don't forget to link the PR to the issue if you are solving one.
+• Don't forget to link the PR to the issue.
 
 • Push your changes to GitHub:
 ```

@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Form
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core import security
 from app.core.config import settings
 from app.core.security import get_password_hash
@@ -18,7 +19,7 @@ from app.utils import (
     verify_password_reset_token,
 )
 
-router = APIRouter(tags=["login"])
+router = APIRouter(tags=["Login"])
 
 
 @router.post("/login/access-token")
@@ -51,11 +52,11 @@ def login_access_token(
 
 
 @router.post("/login/test-token", response_model=UserPublic, include_in_schema=False)
-def test_token(current_user: CurrentUser) -> Any:
+def test_token(current_user: AuthContextDep) -> Any:
     """
     Test access token
     """
-    return current_user
+    return current_user.user
 
 
 @router.post("/password-recovery/{email}", include_in_schema=False)
@@ -107,7 +108,7 @@ def reset_password(session: SessionDep, body: NewPassword) -> Message:
 
 @router.post(
     "/password-recovery-html-content/{email}",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_class=HTMLResponse,
     include_in_schema=False,
 )

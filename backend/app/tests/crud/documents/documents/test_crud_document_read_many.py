@@ -2,13 +2,12 @@ import pytest
 from sqlmodel import Session
 
 from app.crud import DocumentCrud
-
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 
 
 @pytest.fixture
-def store(db: Session):
+def store(db: Session) -> DocumentStore:
     project = get_project(db)
     ds = DocumentStore(db, project.id)
     ds.fill(TestDatabaseReadMany._ndocs)
@@ -23,7 +22,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         docs = crud.read_many()
         assert len(docs) == self._ndocs
@@ -32,7 +31,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         assert all(x.is_deleted is False for x in crud.read_many())
 
@@ -40,7 +39,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         skip = self._ndocs // 2
         docs = crud.read_many(skip=skip)
@@ -51,7 +50,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         docs = crud.read_many(skip=0)
         assert len(docs) == self._ndocs
@@ -60,7 +59,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         skip = self._ndocs + 1
         assert not crud.read_many(skip=skip)
@@ -69,7 +68,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         with pytest.raises(ValueError):
             crud.read_many(skip=-1)
@@ -78,7 +77,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         limit = self._ndocs // 2
         docs = crud.read_many(limit=limit)
@@ -89,7 +88,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         assert not crud.read_many(limit=0)
 
@@ -97,7 +96,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         with pytest.raises(ValueError):
             crud.read_many(limit=-1)
@@ -106,7 +105,7 @@ class TestDatabaseReadMany:
         self,
         db: Session,
         store: DocumentStore,
-    ):
+    ) -> None:
         crud = DocumentCrud(db, store.project.id)
         limit = self._ndocs
         skip = limit // 2

@@ -1,4 +1,4 @@
-# FastAPI Project - Backend
+# Kaapi - Backend
 
 ## Requirements
 
@@ -27,13 +27,15 @@ $ source .venv/bin/activate
 
 Make sure your editor is using the correct Python virtual environment, with the interpreter at `backend/.venv/bin/python`.
 
-Modify or add SQLModel models for data and SQL tables in `./backend/app/models.py`, API endpoints in `./backend/app/api/`, CRUD (Create, Read, Update, Delete) utils in `./backend/app/crud.py`.
+Modify or add SQLModel models for data and SQL tables in `./backend/app/models/`, API endpoints in `./backend/app/api/`, CRUD (Create, Read, Update, Delete) utils in `./backend/app/crud/`.
 
-## VS Code
+## Seed Database (Optional)
 
-There are already configurations in place to run the backend through the VS Code debugger, so that you can use breakpoints, pause and explore variables, etc.
+For local development, seed the database with baseline data:
 
-The setup is also already configured so you can run the tests through the VS Code Python tests tab.
+```console
+$ uv run python -m app.seed_data.seed_data
+```
 
 ## Docker Compose Override
 
@@ -91,6 +93,22 @@ Nevertheless, if it doesn't detect a change but a syntax error, it will just sto
 
 ## Backend tests
 
+### Setup Test Environment
+
+Before running tests, create a test environment configuration:
+
+1. Copy the test environment template:
+```console
+$ cp .env.test.example .env.test
+```
+
+2. Update `.env.test` with test-specific settings:
+   - Set `ENVIRONMENT=testing`
+   - Configure a separate test database (recommended). Using a separate
+     database prevents tests from affecting your development data.
+
+### Run Tests
+
 To test the backend run:
 
 ```console
@@ -133,7 +151,7 @@ Make sure you create a "revision" of your models and that you "upgrade" your dat
 $ docker compose exec backend bash
 ```
 
-* Alembic is already configured to import your SQLModel models from `./backend/app/models.py`.
+* Alembic is already configured to import your SQLModel models from `./backend/app/models/`.
 
 * After changing a model (for example, adding a column), inside the container, create a revision, e.g.:
 

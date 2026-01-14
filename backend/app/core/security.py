@@ -110,44 +110,6 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def encrypt_api_key(api_key: str) -> str:
-    """
-    Encrypt an API key before storage.
-
-    Args:
-        api_key: The plain text API key to encrypt
-
-    Returns:
-        str: The encrypted API key
-
-    Raises:
-        ValueError: If encryption fails
-    """
-    try:
-        return get_fernet().encrypt(api_key.encode()).decode()
-    except Exception as e:
-        raise ValueError(f"Failed to encrypt API key: {e}")
-
-
-def decrypt_api_key(encrypted_api_key: str) -> str:
-    """
-    Decrypt an API key when retrieving it.
-
-    Args:
-        encrypted_api_key: The encrypted API key to decrypt
-
-    Returns:
-        str: The decrypted API key
-
-    Raises:
-        ValueError: If decryption fails
-    """
-    try:
-        return get_fernet().decrypt(encrypted_api_key.encode()).decode()
-    except Exception as e:
-        raise ValueError(f"Failed to decrypt API key: {e}")
-
-
 def encrypt_credentials(credentials: dict) -> str:
     """
     Encrypt the entire credentials object before storage.

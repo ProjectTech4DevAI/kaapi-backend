@@ -9,6 +9,7 @@ This module handles:
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import numpy as np
@@ -247,42 +248,55 @@ def upload_dataset_to_langfuse(
         f"duplication_factor={duplication_factor}"
     )
 
+    def upload_item(item: dict[str, str], duplicate_num: int) -> bool:
+        try:
+            langfuse.create_dataset_item(
+                dataset_name=dataset_name,
+                input={"question": item["question"]},
+                expected_output={"answer": item["answer"]},
+                metadata={
+                    "original_question": item["question"],
+                    "duplicate_number": duplicate_num + 1,
+                    "duplication_factor": duplication_factor,
+                },
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"[upload_dataset_to_langfuse] Failed to upload item | "
+                f"duplicate={duplicate_num + 1} | "
+                f"question={item['question'][:50]}... | {e}"
+            )
+            return False
+
     try:
         # Create or get dataset in Langfuse
         dataset = langfuse.create_dataset(name=dataset_name)
 
-        # Upload items with duplication
-        total_uploaded = 0
-        for item in items:
-            # Duplicate each item N times
-            for duplicate_num in range(duplication_factor):
-                try:
-                    langfuse.create_dataset_item(
-                        dataset_name=dataset_name,
-                        input={"question": item["question"]},
-                        expected_output={"answer": item["answer"]},
-                        metadata={
-                            "original_question": item["question"],
-                            "duplicate_number": duplicate_num + 1,
-                            "duplication_factor": duplication_factor,
-                        },
-                    )
-                    total_uploaded += 1
-                except Exception as e:
-                    logger.error(
-                        f"[upload_dataset_to_langfuse] Failed to upload item | "
-                        f"duplicate={duplicate_num + 1} | "
-                        f"question={item['question'][:50]}... | {e}"
-                    )
+        upload_tasks = [
+            (item, duplicate_num)
+            for item in items
+            for duplicate_num in range(duplication_factor)
+        ]
 
-            # Flush after each original item's duplicates to prevent race conditions
-            # in Langfuse SDK's internal batching that could mix up Q&A pairs
-            langfuse.flush()
+        # Upload items concurrently using ThreadPoolExecutor
+        total_uploaded = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all upload tasks and collect the futures
+            futures = []
+            for item, dup_num in upload_tasks:
+                future = executor.submit(upload_item, item, dup_num)
+                futures.append(future)
+
+            for future in as_completed(futures):
+                upload_successful = future.result()
+                if upload_successful:
+                    total_uploaded += 1
 
         # Final flush to ensure all items are uploaded
         langfuse.flush()
 
-        langfuse_dataset_id = dataset.id if hasattr(dataset, "id") else None
+        langfuse_dataset_id = dataset.id
 
         logger.info(
             f"[upload_dataset_to_langfuse] Successfully uploaded to Langfuse | "

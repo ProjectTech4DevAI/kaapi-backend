@@ -10,7 +10,7 @@ from app.models import User
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["cron"])
+router = APIRouter(tags=["Cron"])
 
 
 @router.get(

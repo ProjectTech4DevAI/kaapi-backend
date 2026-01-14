@@ -1,6 +1,3 @@
-"""
-Integration tests for document transformation service.
-"""
 from typing import Tuple
 from uuid import uuid4
 from unittest.mock import patch
@@ -15,7 +12,6 @@ from app.models import (
     Document,
     Project,
     TransformationStatus,
-    UserProjectOrg,
     DocTransformJobCreate,
 )
 from app.tests.services.doctransformer.test_job.utils import (
@@ -40,13 +36,6 @@ class TestExecuteJobIntegration(DocTransformTestBase):
         job_crud = DocTransformationJobCrud(session=db, project_id=project.id)
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
 
-        current_user = UserProjectOrg(
-            id=1,
-            email="test@example.com",
-            project_id=project.id,
-            organization_id=project.organization_id,
-        )
-
         with patch(
             "app.services.doctransform.job.start_low_priority_job",
             return_value="fake-task-id",
@@ -59,7 +48,7 @@ class TestExecuteJobIntegration(DocTransformTestBase):
 
             returned_job_id = start_job(
                 db=db,
-                current_user=current_user,
+                project_id=project.id,
                 job_id=job.id,
                 transformer_name="test",
                 target_format="markdown",

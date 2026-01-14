@@ -21,8 +21,8 @@ class TestProviderRegistry:
 
     def test_registry_contains_openai(self):
         """Test that registry contains OpenAI provider."""
-        assert "openai" in LLMProvider._registry
-        assert LLMProvider._registry["openai"] == OpenAIProvider
+        assert "openai-native" in LLMProvider._registry
+        assert LLMProvider._registry["openai-native"] == OpenAIProvider
 
     def test_registry_values_are_provider_classes(self):
         """Test that all registry values are BaseProvider subclasses."""
@@ -46,7 +46,7 @@ class TestGetLLMProvider:
 
             provider = get_llm_provider(
                 session=db,
-                provider_type="openai",
+                provider_type="openai-native",
                 project_id=project.id,
                 organization_id=project.organization_id,
             )
@@ -64,7 +64,7 @@ class TestGetLLMProvider:
             with pytest.raises(ValueError) as exc_info:
                 get_llm_provider(
                     session=db,
-                    provider_type="openai",
+                    provider_type="openai-native",
                     project_id=project.id,
                     organization_id=project.organization_id,
                 )
@@ -87,7 +87,7 @@ class TestGetLLMProvider:
         error_message = str(exc_info.value)
         assert "invalid_provider" in error_message
         assert "is not supported" in error_message
-        assert "openai" in error_message
+        assert "openai-native" in error_message
 
     def test_get_llm_provider_with_missing_credentials(self, db: Session):
         """Test handling of errors when credentials are not found."""
@@ -101,7 +101,7 @@ class TestGetLLMProvider:
             with pytest.raises(ValueError) as exc_info:
                 get_llm_provider(
                     session=db,
-                    provider_type="openai",
+                    provider_type="openai-native",
                     project_id=project.id,
                     organization_id=project.organization_id,
                 )

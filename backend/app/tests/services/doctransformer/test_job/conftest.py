@@ -13,7 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from app.crud import get_project_by_id
 from app.services.doctransform import job
 from app.core.config import settings
-from app.models import Document, Project, UserProjectOrg
+from app.models import Document, Project, AuthContext
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.auth import TestAuthContext
 
@@ -68,14 +68,12 @@ def fast_execute_job() -> (
 
 
 @pytest.fixture
-def current_user(db: Session, user_api_key: TestAuthContext) -> UserProjectOrg:
+def current_user(db: Session, user_api_key: TestAuthContext) -> AuthContext:
     """Create a test user for testing."""
-    api_key = user_api_key
-    user = api_key.user
-    return UserProjectOrg(
-        **user.model_dump(),
-        project_id=api_key.project_id,
-        organization_id=api_key.organization_id
+    return AuthContext(
+        user=user_api_key.user,
+        organization=user_api_key.organization,
+        project=user_api_key.project,
     )
 
 
@@ -86,10 +84,8 @@ def background_tasks() -> BackgroundTasks:
 
 
 @pytest.fixture
-def test_document(
-    db: Session, current_user: UserProjectOrg
-) -> Tuple[Document, Project]:
+def test_document(db: Session, current_user: AuthContext) -> Tuple[Document, Project]:
     """Create a test document for the current user's project."""
-    store = DocumentStore(db, current_user.project_id)
-    project = get_project_by_id(session=db, project_id=current_user.project_id)
+    store = DocumentStore(db, current_user.project.id)
+    project = get_project_by_id(session=db, project_id=current_user.project.id)
     return store.put(), project

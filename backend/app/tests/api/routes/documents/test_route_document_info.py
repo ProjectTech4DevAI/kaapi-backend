@@ -23,7 +23,7 @@ class TestDocumentRouteInfo:
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         response = crawler.get(route.append(store.put()))
 
@@ -34,7 +34,7 @@ class TestDocumentRouteInfo:
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         document = store.put()
         source = DocumentComparator(document)
@@ -45,7 +45,7 @@ class TestDocumentRouteInfo:
 
     def test_cannot_info_unknown_document(
         self, db: Session, route: Route, crawler: WebCrawler
-    ):
+    ) -> None:
         DocumentStore.clear(db)
         maker = DocumentMaker(project_id=crawler.user_api_key.project_id, session=db)
         response = crawler.get(route.append(next(maker)))

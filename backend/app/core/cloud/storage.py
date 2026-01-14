@@ -14,7 +14,6 @@ from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 
 from app.crud import get_project_by_id
-from app.models import UserProjectOrg
 from app.core.config import settings
 from app.utils import mask_string
 

@@ -1,4 +1,4 @@
-name: AI Platform CI
+name: Kaapi CI
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.11.7"]
+        python-version: ["3.12"]
         redis-version: [6]
 
     steps:

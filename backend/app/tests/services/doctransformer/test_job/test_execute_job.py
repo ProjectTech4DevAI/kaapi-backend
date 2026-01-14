@@ -1,9 +1,6 @@
-"""
-Tests for the execute_job function in document transformation service.
-"""
 from typing import Any, Callable, Tuple
 from unittest.mock import patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 import pytest
 from moto import mock_aws

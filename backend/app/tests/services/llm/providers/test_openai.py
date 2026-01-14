@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import openai
 
 from app.models.llm import (
-    CompletionConfig,
+    NativeCompletionConfig,
     QueryParams,
 )
 from app.models.llm.request import ConversationConfig
@@ -31,8 +31,8 @@ class TestOpenAIProvider:
     @pytest.fixture
     def completion_config(self):
         """Create a basic completion config."""
-        return CompletionConfig(
-            provider="openai",
+        return NativeCompletionConfig(
+            provider="openai-native",
             params={"model": "gpt-4"},
         )
 
@@ -59,7 +59,7 @@ class TestOpenAIProvider:
         assert result is not None
         assert result.response.output.text == mock_response.output_text
         assert result.response.model == mock_response.model
-        assert result.response.provider == "openai"
+        assert result.response.provider == "openai-native"
         assert result.response.conversation_id is None
         assert result.usage.input_tokens == mock_response.usage.input_tokens
         assert result.usage.output_tokens == mock_response.usage.output_tokens
@@ -233,8 +233,8 @@ class TestOpenAIProvider:
     ):
         """Test that conversation param is removed if it exists in config but no conversation config."""
         # Create a config with conversation in params (should be removed)
-        completion_config = CompletionConfig(
-            provider="openai",
+        completion_config = NativeCompletionConfig(
+            provider="openai-native",
             params={"model": "gpt-4", "conversation": {"id": "old_conv"}},
         )
 
