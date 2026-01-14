@@ -98,7 +98,7 @@ class SpeechToTextService:
         prompt: str | None = None,
     ):
         if self.gemini_client is None:
-            raise ValueError("OpenAI client is not initialized")
+            raise ValueError("Gemini client is not initialized")
         try:
             # Upload file to Geminic
             gemini_file = self.gemini_client.files.upload(file=audio_file_path)

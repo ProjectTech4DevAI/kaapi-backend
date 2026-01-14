@@ -1,11 +1,11 @@
 import logging
-
-import openai
-from openai import OpenAI
+from typing import Dict, Any
+from openai import OpenAI, OpenAIError
 from openai.types.responses.response import Response
 
 from app.models.llm import (
     NativeCompletionConfig,
+    KaapiCompletionConfig,
     LLMCallResponse,
     QueryParams,
     LLMOutput,
@@ -28,9 +28,16 @@ class OpenAIProvider(BaseProvider):
         super().__init__(client)
         self.client = client
 
+    @staticmethod
+    def create_client(credentials: Dict[str, Any]) -> Any:
+        if "api_key" not in credentials:
+            return f"OpenAI API Key is not configured"
+
+        return OpenAI(api_key=credentials["api_key"])
+
     def execute(
         self,
-        completion_config: NativeCompletionConfig,
+        completion_config: KaapiCompletionConfig,
         query: QueryParams,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
@@ -39,7 +46,7 @@ class OpenAIProvider(BaseProvider):
 
         try:
             params = {
-                **completion_config.params,
+                **completion_config.params.model_dump(exclude_none=True),
             }
             params["input"] = query.input
 
@@ -69,7 +76,10 @@ class OpenAIProvider(BaseProvider):
                     conversation_id=conversation_id,
                     model=response.model,
                     provider=completion_config.provider,
-                    output=LLMOutput(text=response.output_text),
+                    output=LLMOutput(
+                        text=response.output_text,
+                        # reasoning=getattr(response, 'reasoning', None)
+                    ),
                 ),
                 usage=Usage(
                     input_tokens=response.usage.input_tokens,
@@ -91,7 +101,7 @@ class OpenAIProvider(BaseProvider):
             error_message = f"Invalid or unexpected parameter in Config: {str(e)}"
             return None, error_message
 
-        except openai.OpenAIError as e:
+        except OpenAIError as e:
             # imported here to avoid circular imports
             from app.utils import handle_openai_error
 

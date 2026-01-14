@@ -89,9 +89,12 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native"] = Field(
-        default="openai-native",
+    provider: Literal["openai-native", "google-native"] = Field(
+        # default="openai-native",
         description="Native provider type (e.g., openai-native)",
+    )
+    type: Literal["text", "stt", "tts"] = Field(
+        description="Native completion config type amongst txt, stt and tts"
     )
     params: dict[str, Any] = Field(
         ...,
@@ -106,7 +109,12 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai"] = Field(..., description="LLM provider (openai)")
+    provider: Literal["openai", "google"] = Field(
+        ..., description="LLM provider (openai)"
+    )
+    type: Literal["text", "stt", "tts"] = Field(
+        description="Native completion config type amongst txt, stt and tts"
+    )
     params: KaapiLLMParams = Field(
         ...,
         description="Kaapi-standardized parameters mapped to provider-specific API",

@@ -7,21 +7,24 @@ from sqlmodel import SQLModel, Field
 
 
 class Usage(SQLModel):
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
 
 
 class LLMOutput(SQLModel):
     """Standardized output format for LLM responses."""
 
     text: str = Field(..., description="Primary text content of the LLM response.")
+    reasoning: str | None = Field(
+        default=None, description="Reasoning if comes throught the response"
+    )
 
 
 class LLMResponse(SQLModel):
     """Normalized response format independent of provider."""
 
-    provider_response_id: str = Field(
+    provider_response_id: str | None = Field(
         ..., description="Unique response ID provided by the LLM provider."
     )
     conversation_id: str | None = Field(

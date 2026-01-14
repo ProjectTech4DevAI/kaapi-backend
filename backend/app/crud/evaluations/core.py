@@ -345,5 +345,5 @@ def resolve_model_from_config(
             f"(config_id={eval_run.config_id}, version={eval_run.config_version}): {error}"
         )
 
-    model = config.completion.params.get("model")
+    model = config.completion.params.model
     return model

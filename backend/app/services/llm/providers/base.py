@@ -5,7 +5,7 @@ It provides a provider-agnostic interface for executing LLM calls.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Dict
 
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 
@@ -30,6 +30,15 @@ class BaseProvider(ABC):
             client: Provider-specific client instance
         """
         self.client = client
+
+    @staticmethod
+    @abstractmethod
+    def create_client(credentials: Dict[str, Any]) -> Any:
+        """
+        Abstract method to create client of a provider
+
+        """
+        pass
 
     @abstractmethod
     def execute(

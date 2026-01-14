@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Dict
 
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
@@ -125,7 +125,7 @@ def get_provider_credential(
     project_id: int,
     provider: str,
     full: bool = False,
-) -> dict[str, Any] | Credential | None:
+) -> Dict[str, Any] | Credential | None:
     """
     Fetch credentials for a specific provider within a project.
 

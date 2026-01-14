@@ -11,7 +11,7 @@ from app.models.llm import (
     QueryParams,
 )
 from app.models.llm.request import ConversationConfig
-from app.services.llm.providers.openai import OpenAIProvider
+from app.services.llm.providers.oai import OpenAIProvider
 from app.tests.utils.openai import mock_openai_response
 
 
