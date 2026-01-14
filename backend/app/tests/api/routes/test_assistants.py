@@ -13,7 +13,7 @@ from app.tests.utils.auth import TestAuthContext
 
 
 @pytest.fixture
-def assistant_create_payload():
+def assistant_create_payload() -> dict[str, Any]:
     return {
         "name": "Test Assistant",
         "instructions": "This is a test instruction.",
@@ -25,7 +25,7 @@ def assistant_create_payload():
 
 
 @pytest.fixture
-def assistant_id():
+def assistant_id() -> str:
     return str(uuid4())
 
 
@@ -55,7 +55,7 @@ def test_ingest_assistant_success(
 def test_create_assistant_success(
     mock_verify_vector_ids: Any,
     client: TestClient,
-    assistant_create_payload: dict,
+    assistant_create_payload: dict[str, Any],
     user_api_key: TestAuthContext,
 ) -> None:
     """Test successful assistant creation with OpenAI vector store ID verification."""
@@ -94,7 +94,7 @@ def test_create_assistant_success(
 def test_create_assistant_invalid_vector_store(
     mock_verify_vector_ids: Any,
     client: TestClient,
-    assistant_create_payload: dict,
+    assistant_create_payload: dict[str, Any],
     user_api_key: TestAuthContext,
 ) -> None:
     """Test failure when one or more vector store IDs are invalid."""
@@ -220,7 +220,7 @@ def test_get_assistant_success(
 
 def test_get_assistant_not_found(
     client: TestClient,
-    user_api_key_header: dict,
+    user_api_key_header: dict[str, Any],
 ) -> None:
     """Test failure when fetching a non-existent assistant."""
     non_existent_id = str(uuid4())
@@ -261,7 +261,7 @@ def test_list_assistants_success(
 
 def test_list_assistants_invalid_pagination(
     client: TestClient,
-    user_api_key_header: dict,
+    user_api_key_header: dict[str, Any],
 ) -> None:
     """Test assistants list with invalid pagination parameters."""
     # Test negative skip
@@ -307,7 +307,7 @@ def test_delete_assistant_success(
 
 def test_delete_assistant_not_found(
     client: TestClient,
-    user_api_key_header: dict,
+    user_api_key_header: dict[str, Any],
 ) -> None:
     """Test failure when deleting a non-existent assistant."""
     non_existent_id = str(uuid4())

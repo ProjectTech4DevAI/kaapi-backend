@@ -188,7 +188,7 @@ class TestDocumentRouteUpload:
     @patch("app.services.doctransform.job.start_job")
     def test_upload_with_specific_transformer(
         self,
-        mock_start_job,
+        mock_start_job: Any,
         db: Session,
         route: Route,
         pdf_scratch: Path,
@@ -278,7 +278,7 @@ class TestDocumentRouteUpload:
     @patch("app.services.doctransform.job.start_job")
     def test_transformation_job_created_in_database(
         self,
-        mock_start_job,
+        mock_start_job: Any,
         db: Session,
         route: Route,
         pdf_scratch: Path,

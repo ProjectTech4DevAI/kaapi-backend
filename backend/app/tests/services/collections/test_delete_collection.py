@@ -253,8 +253,6 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
 
-        from app.services.collections.delete_collection import execute_job
-
         execute_job(
             request=req.model_dump(mode="json"),
             project_id=project.id,
@@ -333,8 +331,6 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
 
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
-
-        from app.services.collections.delete_collection import execute_job
 
         execute_job(
             request=req.model_dump(mode="json"),
