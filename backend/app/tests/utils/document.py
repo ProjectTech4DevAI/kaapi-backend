@@ -7,7 +7,6 @@ from datetime import datetime
 from dataclasses import dataclass
 from urllib.parse import ParseResult, urlunparse
 
-import pytest
 from httpx import Response
 from sqlmodel import Session, delete
 from fastapi.testclient import TestClient
@@ -164,8 +163,3 @@ class DocumentComparator:
             result[field] = self.to_string(value)
 
         return result
-
-
-@pytest.fixture
-def crawler(client: TestClient, user_api_key: TestAuthContext) -> WebCrawler:
-    return WebCrawler(client, user_api_key=user_api_key)
