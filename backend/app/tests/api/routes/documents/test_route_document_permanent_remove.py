@@ -16,11 +16,10 @@ from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.models import Document
 from app.tests.utils.document import (
-    DocumentStore,
     DocumentMaker,
+    DocumentStore,
     Route,
     WebCrawler,
-    crawler,
 )
 
 
