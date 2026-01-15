@@ -410,4 +410,134 @@ class TestUpdateDatasetLangfuseId:
         update_dataset_langfuse_id(
             session=db, dataset_id=99999, langfuse_dataset_id="langfuse_123"
         )
-        # No assertion needed, just ensuring it doesn't crash
+
+
+class TestDeleteDataset:
+    """Test deleting evaluation datasets."""
+
+    def test_delete_dataset_success(self, db: Session) -> None:
+        """Test successfully deleting a dataset."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_to_delete",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        dataset_id = dataset.id
+
+        # New signature: delete_dataset(session, dataset) returns str | None
+        error = delete_dataset(session=db, dataset=dataset)
+
+        assert error is None  # None means success
+
+        # Verify dataset is deleted
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset_id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is None
+
+    def test_delete_dataset_not_found(self, db: Session) -> None:
+        """Test deleting a non-existent dataset - dataset must be fetched first."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        # Try to fetch a non-existent dataset
+        dataset = get_dataset_by_id(
+            session=db,
+            dataset_id=99999,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        # The pattern now is: fetch dataset first, if not found, handle in caller
+        assert dataset is None
+
+    def test_delete_dataset_wrong_org(self, db: Session) -> None:
+        """Test that dataset cannot be fetched with wrong organization."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_to_delete",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        # Try to fetch with wrong org - should return None
+        fetched_wrong_org = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=99999,
+            project_id=project.id,
+        )
+        assert fetched_wrong_org is None
+
+        # Original dataset should still exist
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is not None
+
+    def test_delete_dataset_with_evaluation_runs(self, db: Session) -> None:
+        """Test that dataset cannot be deleted if it has evaluation runs."""
+
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_with_runs",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        eval_run = EvaluationRun(
+            run_name="test_run",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config={"model": "gpt-4o"},
+            status="pending",
+            organization_id=org.id,
+            project_id=project.id,
+            inserted_at=now(),
+            updated_at=now(),
+        )
+        db.add(eval_run)
+        db.commit()
+
+        # Attempt to delete - should return an error message
+        error = delete_dataset(session=db, dataset=dataset)
+
+        assert error is not None
+        assert "cannot delete" in error.lower() or "being used" in error.lower()
+        assert "evaluation run" in error.lower()
+
+        # Dataset should still exist
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is not None

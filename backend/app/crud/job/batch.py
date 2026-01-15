@@ -1,18 +1,19 @@
-"""Batch processing infrastructure for LLM providers."""
+"""
+Batch operations re-export layer.
 
-from .base import BatchProvider
-from .openai import OpenAIBatchProvider
-from .operations import (
+This module provides convenient imports for batch-related operations
+while the actual implementation lives in app.core.batch.
+"""
+
+from app.core.batch.operations import (
     download_batch_results,
     process_completed_batch,
     start_batch_job,
     upload_batch_results_to_object_store,
 )
-from .polling import poll_batch_status
+from app.core.batch.polling import poll_batch_status
 
 __all__ = [
-    "BatchProvider",
-    "OpenAIBatchProvider",
     "start_batch_job",
     "download_batch_results",
     "process_completed_batch",
