@@ -176,7 +176,7 @@ def delete_dataset(
         raise HTTPException(
             status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
         )
-
+    dataset_name = dataset.name
     error = delete_dataset_crud(session=_session, dataset=dataset)
 
     if error:
@@ -185,7 +185,7 @@ def delete_dataset(
     logger.info(f"[delete_dataset] Successfully deleted dataset | id={dataset_id}")
     return APIResponse.success_response(
         data={
-            "message": f"Successfully deleted dataset '{dataset.name}' (id={dataset_id})",
+            "message": f"Successfully deleted dataset '{dataset_name}' (id={dataset_id})",
             "dataset_id": dataset_id,
         }
     )

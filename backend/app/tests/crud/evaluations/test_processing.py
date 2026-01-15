@@ -583,7 +583,7 @@ class TestCheckAndProcessEvaluation:
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.get_batch_job")
-    @patch("app.crud.batch_operations.poll_batch_status")
+    @patch("app.crud.evaluations.processing.poll_batch_status")
     @patch("app.crud.evaluations.processing.process_completed_evaluation")
     async def test_check_and_process_evaluation_completed(
         self,
@@ -646,7 +646,7 @@ class TestCheckAndProcessEvaluation:
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.get_batch_job")
-    @patch("app.crud.batch_operations.poll_batch_status")
+    @patch("app.crud.evaluations.processing.poll_batch_status")
     async def test_check_and_process_evaluation_failed(
         self,
         mock_poll,

@@ -399,45 +399,42 @@ class TestDeleteDataset:
             organization_id=org.id,
             project_id=project.id,
         )
+        dataset_id = dataset.id
 
-        success, message = delete_dataset(
-            session=db,
-            dataset_id=dataset.id,
-            organization_id=org.id,
-            project_id=project.id,
-        )
+        # New signature: delete_dataset(session, dataset) returns str | None
+        error = delete_dataset(session=db, dataset=dataset)
 
-        assert success is True
-        assert "Successfully deleted" in message
-        assert dataset.name in message
+        assert error is None  # None means success
 
+        # Verify dataset is deleted
         fetched = get_dataset_by_id(
             session=db,
-            dataset_id=dataset.id,
+            dataset_id=dataset_id,
             organization_id=org.id,
             project_id=project.id,
         )
         assert fetched is None
 
     def test_delete_dataset_not_found(self, db: Session) -> None:
-        """Test deleting a non-existent dataset."""
+        """Test deleting a non-existent dataset - dataset must be fetched first."""
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        success, message = delete_dataset(
+        # Try to fetch a non-existent dataset
+        dataset = get_dataset_by_id(
             session=db,
             dataset_id=99999,
             organization_id=org.id,
             project_id=project.id,
         )
 
-        assert success is False
-        assert "not found" in message.lower() or "not accessible" in message.lower()
+        # The pattern now is: fetch dataset first, if not found, handle in caller
+        assert dataset is None
 
     def test_delete_dataset_wrong_org(self, db: Session) -> None:
-        """Test deleting a dataset with wrong organization."""
+        """Test that dataset cannot be fetched with wrong organization."""
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -451,16 +448,16 @@ class TestDeleteDataset:
             project_id=project.id,
         )
 
-        success, message = delete_dataset(
+        # Try to fetch with wrong org - should return None
+        fetched_wrong_org = get_dataset_by_id(
             session=db,
             dataset_id=dataset.id,
             organization_id=99999,
             project_id=project.id,
         )
+        assert fetched_wrong_org is None
 
-        assert success is False
-        assert "not found" in message.lower() or "not accessible" in message.lower()
-
+        # Original dataset should still exist
         fetched = get_dataset_by_id(
             session=db,
             dataset_id=dataset.id,
@@ -499,17 +496,14 @@ class TestDeleteDataset:
         db.add(eval_run)
         db.commit()
 
-        success, message = delete_dataset(
-            session=db,
-            dataset_id=dataset.id,
-            organization_id=org.id,
-            project_id=project.id,
-        )
+        # Attempt to delete - should return an error message
+        error = delete_dataset(session=db, dataset=dataset)
 
-        assert success is False
-        assert "cannot delete" in message.lower() or "being used" in message.lower()
-        assert "evaluation run" in message.lower()
+        assert error is not None
+        assert "cannot delete" in error.lower() or "being used" in error.lower()
+        assert "evaluation run" in error.lower()
 
+        # Dataset should still exist
         fetched = get_dataset_by_id(
             session=db,
             dataset_id=dataset.id,

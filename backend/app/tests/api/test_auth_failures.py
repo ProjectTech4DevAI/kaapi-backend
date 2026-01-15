@@ -25,8 +25,8 @@ PROTECTED_ENDPOINTS = [
         "GET",
     ),
     (f"{settings.API_V1_STR}/cron/evaluations", "GET"),
-    (f"{settings.API_V1_STR}/evaluations/datasets", "POST"),
-    (f"{settings.API_V1_STR}/evaluations/datasets", "GET"),
+    (f"{settings.API_V1_STR}/evaluations/datasets/", "POST"),
+    (f"{settings.API_V1_STR}/evaluations/datasets/", "GET"),
     (
         f"{settings.API_V1_STR}/evaluations/datasets/12345678-1234-5678-1234-567812345678",
         "GET",
