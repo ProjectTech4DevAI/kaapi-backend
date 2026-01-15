@@ -58,6 +58,12 @@ def evaluate(
         project_id=auth_context.project_.id,
     )
 
+    if eval_run.status == "failed":
+        return APIResponse.failure_response(
+            error=eval_run.error_message or "Evaluation failed to start",
+            data=eval_run,
+        )
+
     return APIResponse.success_response(data=eval_run)
 
 
