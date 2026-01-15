@@ -80,7 +80,7 @@ jobs:
           exit 1
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bench-${{ matrix.service }}-${{ matrix.dataset }}-${{ matrix.count }}.csv
           path: bench-${{ matrix.service }}-${{ matrix.dataset }}-${{ matrix.count }}.csv

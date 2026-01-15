@@ -1,27 +1,28 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from types import SimpleNamespace
 from uuid import uuid4
 
 from app.services.collections import helpers
 
 
-def test_extract_error_message_parses_json_and_strips_prefix():
+def test_extract_error_message_parses_json_and_strips_prefix() -> None:
     payload = {"error": {"message": "Inner JSON message"}}
     err = Exception(f"Error code: 400 - {json.dumps(payload)}")
     msg = helpers.extract_error_message(err)
     assert msg == "Inner JSON message"
 
 
-def test_extract_error_message_parses_python_dict_repr():
+def test_extract_error_message_parses_python_dict_repr() -> None:
     payload = {"error": {"message": "Dict-repr message"}}
     err = Exception(str(payload))
     msg = helpers.extract_error_message(err)
     assert msg == "Dict-repr message"
 
 
-def test_extract_error_message_falls_back_to_clean_text_and_truncates():
+def test_extract_error_message_falls_back_to_clean_text_and_truncates() -> None:
     long_text = "x" * 1500
     err = Exception(long_text)
     msg = helpers.extract_error_message(err)
@@ -29,7 +30,7 @@ def test_extract_error_message_falls_back_to_clean_text_and_truncates():
     assert msg == long_text[:1000]
 
 
-def test_extract_error_message_handles_non_matching_bodies():
+def test_extract_error_message_handles_non_matching_bodies() -> None:
     err = Exception("some random error without structure")
     msg = helpers.extract_error_message(err)
     assert msg == "some random error without structure"
@@ -52,7 +53,7 @@ class FakeDocumentCrud:
         ]
 
 
-def test_batch_documents_even_chunks():
+def test_batch_documents_even_chunks() -> None:
     crud = FakeDocumentCrud()
     ids = [uuid4() for _ in range(6)]
     batches = helpers.batch_documents(crud, ids, batch_size=3)
@@ -65,7 +66,7 @@ def test_batch_documents_even_chunks():
     assert [d.id for d in batches[1]] == ids[3:6]
 
 
-def test_batch_documents_ragged_last_chunk():
+def test_batch_documents_ragged_last_chunk() -> None:
     crud = FakeDocumentCrud()
     ids = [uuid4() for _ in range(5)]
     batches = helpers.batch_documents(crud, ids, batch_size=2)
@@ -76,7 +77,7 @@ def test_batch_documents_ragged_last_chunk():
     assert [d.id for d in batches[2]] == ids[4:5]
 
 
-def test_batch_documents_empty_input():
+def test_batch_documents_empty_input() -> None:
     crud = FakeDocumentCrud()
     batches = helpers.batch_documents(crud, [], batch_size=3)
     assert batches == []
@@ -86,7 +87,7 @@ def test_batch_documents_empty_input():
 # _backout
 
 
-def test_backout_calls_delete_and_swallows_openai_error(monkeypatch):
+def test_backout_calls_delete_and_swallows_openai_error(monkeypatch: Any) -> None:
     class Crud:
         def __init__(self):
             self.calls = 0

@@ -1,9 +1,9 @@
-import pytest
+from unittest.mock import patch
 
+import pytest
 from fastapi import HTTPException
 from sqlmodel import Session
 from openai import OpenAI
-from unittest.mock import patch
 
 from app.models.project import Project
 from app.models import AssistantCreate, AssistantUpdate
@@ -24,7 +24,7 @@ from app.tests.utils.utils import (
 
 
 class TestSyncAssistant:
-    def test_sync_assistant_success(self, db: Session):
+    def test_sync_assistant_success(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_success",
@@ -46,7 +46,7 @@ class TestSyncAssistant:
         assert result.temperature == openai_assistant.temperature
         assert result.max_num_results == 20
 
-    def test_sync_assistant_already_exists(self, db: Session):
+    def test_sync_assistant_already_exists(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_exists",
@@ -60,7 +60,7 @@ class TestSyncAssistant:
         assert exc_info.value.status_code == 409
         assert "already exists" in exc_info.value.detail
 
-    def test_sync_assistant_no_instructions(self, db: Session):
+    def test_sync_assistant_no_instructions(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_no_instructions",
@@ -73,7 +73,7 @@ class TestSyncAssistant:
         assert exc_info.value.status_code == 400
         assert "no instruction" in exc_info.value.detail
 
-    def test_sync_assistant_no_name(self, db: Session):
+    def test_sync_assistant_no_name(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_no_name",
@@ -88,7 +88,7 @@ class TestSyncAssistant:
         assert result.assistant_id == openai_assistant.id
         assert result.project_id == project.id
 
-    def test_sync_assistant_no_vector_stores(self, db: Session):
+    def test_sync_assistant_no_vector_stores(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_no_vectors", vector_store_ids=None
@@ -102,7 +102,7 @@ class TestSyncAssistant:
         assert result.assistant_id == openai_assistant.id
         assert result.project_id == project.id
 
-    def test_sync_assistant_no_tools(self, db: Session):
+    def test_sync_assistant_no_tools(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(assistant_id="asst_no_tools")
 
@@ -115,7 +115,7 @@ class TestSyncAssistant:
         assert result.assistant_id == openai_assistant.id
         assert result.project_id == project.id
 
-    def test_sync_assistant_no_tool_resources(self, db: Session):
+    def test_sync_assistant_no_tool_resources(self, db: Session) -> None:
         project = get_project(db)
         openai_assistant = mock_openai_assistant(
             assistant_id="asst_no_tool_resources",
@@ -133,7 +133,9 @@ class TestSyncAssistant:
 
 class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
-    def test_create_assistant_success(self, mock_vector_store_ids_exist, db: Session):
+    def test_create_assistant_success(
+        self, mock_vector_store_ids_exist, db: Session
+    ) -> None:
         """Assistant is created when vector store IDs are valid"""
         project = get_project(db)
         assistant_create = AssistantCreate(
@@ -160,7 +162,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_create_assistant_with_id_success(
         self, mock_vector_store_ids_exist, db: Session
-    ):
+    ) -> None:
         """Assistant is created with a specific ID when vector store IDs are valid"""
         project = get_project(db)
         assistant_create = AssistantCreate(
@@ -189,7 +191,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_create_assistant_duplicate_assistant_id(
         self, mock_vector_store_ids_exist, db: Session
-    ):
+    ) -> None:
         """Creating an assistant with a duplicate assistant_id should raise 409 Conflict"""
         project = get_project(db)
 
@@ -228,7 +230,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_create_assistant_vector_store_invalid(
         self, mock_vector_store_ids_exist, db: Session
-    ):
+    ) -> None:
         """Should raise HTTPException when vector store IDs are invalid"""
         project = get_project(db)
         assistant_create = AssistantCreate(
@@ -254,7 +256,9 @@ class TestAssistantCrud:
         assert error_message in exc_info.value.detail
 
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
-    def test_update_assistant_success(self, mock_verify_vector_store_ids, db: Session):
+    def test_update_assistant_success(
+        self, mock_verify_vector_store_ids, db: Session
+    ) -> None:
         """Assistant is updated successfully with valid data"""
         assistant = get_assistant(db)
 
@@ -279,7 +283,7 @@ class TestAssistantCrud:
         assert "vs_2" in result.vector_store_ids
         assert mock_verify_vector_store_ids.called
 
-    def test_update_assistant_not_found(self, db: Session):
+    def test_update_assistant_not_found(self, db: Session) -> None:
         """Should raise HTTPException when assistant is not found"""
         project = get_project(db)
         assistant_id = "non_existent_assistant_id"
@@ -295,7 +299,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_update_assistant_invalid_vector_store(
         self, mock_verify_vector_store_ids, db: Session
-    ):
+    ) -> None:
         """Should raise HTTPException when vector store IDs are invalid"""
         assistant = get_assistant(db)
         error_message = "Vector store ID vs_invalid not found in OpenAI."
@@ -317,7 +321,7 @@ class TestAssistantCrud:
         assert exc_info.value.status_code == 400
         assert error_message in exc_info.value.detail
 
-    def test_update_assistant_conflicting_vector_store_ids(self, db: Session):
+    def test_update_assistant_conflicting_vector_store_ids(self, db: Session) -> None:
         """Should raise HTTPException with 400 when vector store IDs are both added and removed"""
         assistant = get_assistant(db)
         conflicting_id = "vs_1"
@@ -346,7 +350,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_update_assistant_partial_update(
         self, mock_verify_vector_store_ids, db: Session
-    ):
+    ) -> None:
         """Assistant is updated successfully with partial fields"""
         assistant = get_assistant(db)
         mock_verify_vector_store_ids.return_value = None
@@ -366,7 +370,7 @@ class TestAssistantCrud:
         assert "vs_3" in result.vector_store_ids
         assert mock_verify_vector_store_ids.called
 
-    def test_delete_assistant_success(self, db: Session):
+    def test_delete_assistant_success(self, db: Session) -> None:
         """Assistant is soft deleted successfully"""
         assistant = get_assistant(db)
 
@@ -378,7 +382,7 @@ class TestAssistantCrud:
             get_assistant(db, name=assistant.name)
         assert "No active assistants found" in str(exc_info.value)
 
-    def test_delete_assistant_not_found(self, db: Session):
+    def test_delete_assistant_not_found(self, db: Session) -> None:
         """Should raise HTTPException when assistant is not found"""
         project = get_project(db)
         assistant_id = "non_existent_assistant_id"
@@ -389,7 +393,7 @@ class TestAssistantCrud:
         assert exc_info.value.status_code == 404
         assert "Assistant not found" in exc_info.value.detail
 
-    def test_get_assistant_by_id_success(self, db: Session):
+    def test_get_assistant_by_id_success(self, db: Session) -> None:
         """Assistant is retrieved successfully by ID and project ID"""
         assistant = get_assistant(db)
 
@@ -400,7 +404,7 @@ class TestAssistantCrud:
         assert result.project_id == assistant.project_id
         assert result.is_deleted is False
 
-    def test_get_assistant_by_id_not_found(self, db: Session):
+    def test_get_assistant_by_id_not_found(self, db: Session) -> None:
         """Returns None when assistant is not found"""
         project = get_project(db)
         non_existent_id = "NonExistentAssistantId"
@@ -409,7 +413,7 @@ class TestAssistantCrud:
 
         assert result is None
 
-    def test_get_assistant_by_id_deleted(self, db: Session):
+    def test_get_assistant_by_id_deleted(self, db: Session) -> None:
         """Returns None when assistant is soft deleted"""
         assistant = get_assistant(db)
         # Soft delete the assistant
@@ -422,7 +426,7 @@ class TestAssistantCrud:
     @patch("app.crud.assistants.verify_vector_store_ids_exist")
     def test_get_assistants_by_project_success(
         self, mock_vector_store_ids_exist, db: Session
-    ):
+    ) -> None:
         """Returns all assistants for a project"""
         project = get_project(db)
         client = OpenAI(api_key="test_key")
@@ -462,7 +466,7 @@ class TestAssistantCrud:
             assert assistant.project_id == project.id
             assert assistant.is_deleted is False
 
-    def test_get_assistants_by_project_empty(self, db: Session):
+    def test_get_assistants_by_project_empty(self, db: Session) -> None:
         """Returns empty list when project has no assistants"""
         project = get_project(db)
         non_existent_project_id = get_non_existent_id(db, Project)

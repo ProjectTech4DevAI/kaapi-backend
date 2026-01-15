@@ -1,7 +1,3 @@
-"""
-Tests for evaluation_dataset CRUD operations.
-"""
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,14 +14,16 @@ from app.crud.evaluations.dataset import (
     upload_csv_to_object_store,
 )
 from app.models import Organization, Project
+from app.core.util import now
+from app.models import EvaluationRun
+from app.crud.evaluations.dataset import delete_dataset
 
 
 class TestCreateEvaluationDataset:
     """Test creating evaluation datasets."""
 
-    def test_create_evaluation_dataset_minimal(self, db: Session):
+    def test_create_evaluation_dataset_minimal(self, db: Session) -> None:
         """Test creating a dataset with minimal required fields."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -49,9 +47,8 @@ class TestCreateEvaluationDataset:
         assert dataset.object_store_url is None
         assert dataset.langfuse_dataset_id is None
 
-    def test_create_evaluation_dataset_complete(self, db: Session):
+    def test_create_evaluation_dataset_complete(self, db: Session) -> None:
         """Test creating a dataset with all fields."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -85,15 +82,13 @@ class TestCreateEvaluationDataset:
 class TestGetDatasetById:
     """Test fetching datasets by ID."""
 
-    def test_get_dataset_by_id_success(self, db: Session):
+    def test_get_dataset_by_id_success(self, db: Session) -> None:
         """Test fetching an existing dataset by ID."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create a dataset
         dataset = create_evaluation_dataset(
             session=db,
             name="test_dataset",
@@ -102,7 +97,6 @@ class TestGetDatasetById:
             project_id=project.id,
         )
 
-        # Fetch it by ID
         fetched = get_dataset_by_id(
             session=db,
             dataset_id=dataset.id,
@@ -114,9 +108,8 @@ class TestGetDatasetById:
         assert fetched.id == dataset.id
         assert fetched.name == "test_dataset"
 
-    def test_get_dataset_by_id_not_found(self, db: Session):
+    def test_get_dataset_by_id_not_found(self, db: Session) -> None:
         """Test fetching a non-existent dataset."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -131,15 +124,13 @@ class TestGetDatasetById:
 
         assert fetched is None
 
-    def test_get_dataset_by_id_wrong_org(self, db: Session):
+    def test_get_dataset_by_id_wrong_org(self, db: Session) -> None:
         """Test that datasets from other orgs can't be fetched."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create a dataset
         dataset = create_evaluation_dataset(
             session=db,
             name="test_dataset",
@@ -148,11 +139,10 @@ class TestGetDatasetById:
             project_id=project.id,
         )
 
-        # Try to fetch it with wrong org_id
         fetched = get_dataset_by_id(
             session=db,
             dataset_id=dataset.id,
-            organization_id=99999,  # Wrong org
+            organization_id=99999,
             project_id=project.id,
         )
 
@@ -162,15 +152,13 @@ class TestGetDatasetById:
 class TestGetDatasetByName:
     """Test fetching datasets by name."""
 
-    def test_get_dataset_by_name_success(self, db: Session):
+    def test_get_dataset_by_name_success(self, db: Session) -> None:
         """Test fetching an existing dataset by name."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create a dataset
         create_evaluation_dataset(
             session=db,
             name="unique_dataset",
@@ -179,7 +167,6 @@ class TestGetDatasetByName:
             project_id=project.id,
         )
 
-        # Fetch it by name
         fetched = get_dataset_by_name(
             session=db,
             name="unique_dataset",
@@ -190,9 +177,8 @@ class TestGetDatasetByName:
         assert fetched is not None
         assert fetched.name == "unique_dataset"
 
-    def test_get_dataset_by_name_not_found(self, db: Session):
+    def test_get_dataset_by_name_not_found(self, db: Session) -> None:
         """Test fetching a non-existent dataset by name."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -211,9 +197,8 @@ class TestGetDatasetByName:
 class TestListDatasets:
     """Test listing datasets."""
 
-    def test_list_datasets_empty(self, db: Session):
+    def test_list_datasets_empty(self, db: Session) -> None:
         """Test listing datasets when none exist."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -225,15 +210,13 @@ class TestListDatasets:
 
         assert len(datasets) == 0
 
-    def test_list_datasets_multiple(self, db: Session):
+    def test_list_datasets_multiple(self, db: Session) -> None:
         """Test listing multiple datasets."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create multiple datasets
         for i in range(5):
             create_evaluation_dataset(
                 session=db,
@@ -248,19 +231,16 @@ class TestListDatasets:
         )
 
         assert len(datasets) == 5
-        # Should be ordered by most recent first
         assert datasets[0].name == "dataset_4"
         assert datasets[4].name == "dataset_0"
 
-    def test_list_datasets_pagination(self, db: Session):
+    def test_list_datasets_pagination(self, db: Session) -> None:
         """Test pagination of datasets."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create 10 datasets
         for i in range(10):
             create_evaluation_dataset(
                 session=db,
@@ -270,19 +250,16 @@ class TestListDatasets:
                 project_id=project.id,
             )
 
-        # Get first page
         page1 = list_datasets(
             session=db, organization_id=org.id, project_id=project.id, limit=5, offset=0
         )
 
-        # Get second page
         page2 = list_datasets(
             session=db, organization_id=org.id, project_id=project.id, limit=5, offset=5
         )
 
         assert len(page1) == 5
         assert len(page2) == 5
-        # Ensure no overlap
         page1_names = [d.name for d in page1]
         page2_names = [d.name for d in page2]
         assert len(set(page1_names) & set(page2_names)) == 0
@@ -291,7 +268,7 @@ class TestListDatasets:
 class TestUploadCsvToObjectStore:
     """Test CSV upload to object store."""
 
-    def test_upload_csv_to_object_store_success(self):
+    def test_upload_csv_to_object_store_success(self) -> None:
         """Test successful object store upload."""
         mock_storage = MagicMock()
         mock_storage.put.return_value = "s3://bucket/datasets/test_dataset.csv"
@@ -305,7 +282,7 @@ class TestUploadCsvToObjectStore:
         assert object_store_url == "s3://bucket/datasets/test_dataset.csv"
         mock_storage.put.assert_called_once()
 
-    def test_upload_csv_to_object_store_cloud_storage_error(self):
+    def test_upload_csv_to_object_store_cloud_storage_error(self) -> None:
         """Test object store upload with CloudStorageError."""
         mock_storage = MagicMock()
         mock_storage.put.side_effect = CloudStorageError(
@@ -314,21 +291,19 @@ class TestUploadCsvToObjectStore:
 
         csv_content = b"question,answer\nWhat is 2+2?,4\n"
 
-        # Should return None on error
         object_store_url = upload_csv_to_object_store(
             storage=mock_storage, csv_content=csv_content, dataset_name="test_dataset"
         )
 
         assert object_store_url is None
 
-    def test_upload_csv_to_object_store_unexpected_error(self):
+    def test_upload_csv_to_object_store_unexpected_error(self) -> None:
         """Test object store upload with unexpected error."""
         mock_storage = MagicMock()
         mock_storage.put.side_effect = Exception("Unexpected error")
 
         csv_content = b"question,answer\nWhat is 2+2?,4\n"
 
-        # Should return None on error
         object_store_url = upload_csv_to_object_store(
             storage=mock_storage, csv_content=csv_content, dataset_name="test_dataset"
         )
@@ -339,7 +314,7 @@ class TestUploadCsvToObjectStore:
 class TestDownloadCsvFromObjectStore:
     """Test CSV download from object store."""
 
-    def test_download_csv_from_object_store_success(self):
+    def test_download_csv_from_object_store_success(self) -> None:
         """Test successful object store download."""
         mock_storage = MagicMock()
         mock_body = MagicMock()
@@ -353,7 +328,7 @@ class TestDownloadCsvFromObjectStore:
         assert csv_content == b"question,answer\nWhat is 2+2?,4\n"
         mock_storage.stream.assert_called_once_with("s3://bucket/datasets/test.csv")
 
-    def test_download_csv_from_object_store_empty_url(self):
+    def test_download_csv_from_object_store_empty_url(self) -> None:
         """Test download with empty URL."""
         mock_storage = MagicMock()
 
@@ -362,7 +337,7 @@ class TestDownloadCsvFromObjectStore:
         ):
             download_csv_from_object_store(storage=mock_storage, object_store_url=None)
 
-    def test_download_csv_from_object_store_error(self):
+    def test_download_csv_from_object_store_error(self) -> None:
         """Test download with storage error."""
         mock_storage = MagicMock()
         mock_storage.stream.side_effect = Exception("Object store download failed")
@@ -376,15 +351,13 @@ class TestDownloadCsvFromObjectStore:
 class TestUpdateDatasetLangfuseId:
     """Test updating Langfuse ID."""
 
-    def test_update_dataset_langfuse_id(self, db: Session):
+    def test_update_dataset_langfuse_id(self, db: Session) -> None:
         """Test updating Langfuse dataset ID."""
-        # Get organization and project from seeded data
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        # Create a dataset without Langfuse ID
         dataset = create_evaluation_dataset(
             session=db,
             name="test_dataset",
@@ -395,19 +368,152 @@ class TestUpdateDatasetLangfuseId:
 
         assert dataset.langfuse_dataset_id is None
 
-        # Update Langfuse ID
         update_dataset_langfuse_id(
             session=db, dataset_id=dataset.id, langfuse_dataset_id="langfuse_123"
         )
 
-        # Refresh and verify
         db.refresh(dataset)
         assert dataset.langfuse_dataset_id == "langfuse_123"
 
-    def test_update_dataset_langfuse_id_nonexistent(self, db: Session):
+    def test_update_dataset_langfuse_id_nonexistent(self, db: Session) -> None:
         """Test updating Langfuse ID for non-existent dataset."""
-        # Should not raise an error, just do nothing
         update_dataset_langfuse_id(
             session=db, dataset_id=99999, langfuse_dataset_id="langfuse_123"
         )
-        # No assertion needed, just ensuring it doesn't crash
+
+
+class TestDeleteDataset:
+    """Test deleting evaluation datasets."""
+
+    def test_delete_dataset_success(self, db: Session) -> None:
+        """Test successfully deleting a dataset."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_to_delete",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        success, message = delete_dataset(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        assert success is True
+        assert "Successfully deleted" in message
+        assert dataset.name in message
+
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is None
+
+    def test_delete_dataset_not_found(self, db: Session) -> None:
+        """Test deleting a non-existent dataset."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        success, message = delete_dataset(
+            session=db,
+            dataset_id=99999,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        assert success is False
+        assert "not found" in message.lower() or "not accessible" in message.lower()
+
+    def test_delete_dataset_wrong_org(self, db: Session) -> None:
+        """Test deleting a dataset with wrong organization."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_to_delete",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        success, message = delete_dataset(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=99999,
+            project_id=project.id,
+        )
+
+        assert success is False
+        assert "not found" in message.lower() or "not accessible" in message.lower()
+
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is not None
+
+    def test_delete_dataset_with_evaluation_runs(self, db: Session) -> None:
+        """Test that dataset cannot be deleted if it has evaluation runs."""
+
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="dataset_with_runs",
+            dataset_metadata={"original_items_count": 5},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        eval_run = EvaluationRun(
+            run_name="test_run",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config={"model": "gpt-4o"},
+            status="pending",
+            organization_id=org.id,
+            project_id=project.id,
+            inserted_at=now(),
+            updated_at=now(),
+        )
+        db.add(eval_run)
+        db.commit()
+
+        success, message = delete_dataset(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        assert success is False
+        assert "cannot delete" in message.lower() or "being used" in message.lower()
+        assert "evaluation run" in message.lower()
+
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        assert fetched is not None

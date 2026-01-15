@@ -1,5 +1,7 @@
 from unittest.mock import patch
+
 from fastapi.testclient import TestClient
+
 from app.models import LLMCallRequest
 from app.models.llm.request import (
     QueryParams,
@@ -12,7 +14,9 @@ from app.models.llm.request import (
 )
 
 
-def test_llm_call_success(client: TestClient, user_api_key_header: dict[str, str]):
+def test_llm_call_success(
+    client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     """Test successful LLM call with mocked start_high_priority_job."""
     with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
@@ -50,7 +54,7 @@ def test_llm_call_success(client: TestClient, user_api_key_header: dict[str, str
 
 def test_llm_call_with_kaapi_config(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     """Test LLM call with Kaapi abstracted config."""
     with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
@@ -85,7 +89,7 @@ def test_llm_call_with_kaapi_config(
 
 def test_llm_call_with_native_config(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     """Test LLM call with native OpenAI config (pass-through mode)."""
     with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
@@ -121,7 +125,7 @@ def test_llm_call_with_native_config(
 
 def test_llm_call_missing_config(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     """Test LLM call with missing config fails validation."""
     payload = {
         "query": {"input": "Test query"},
@@ -134,12 +138,12 @@ def test_llm_call_missing_config(
         headers=user_api_key_header,
     )
 
-    assert response.status_code == 422  # Validation error
+    assert response.status_code == 422
 
 
 def test_llm_call_invalid_provider(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     """Test LLM call with invalid provider type."""
     payload = {
         "query": {"input": "Test query"},
@@ -159,4 +163,4 @@ def test_llm_call_invalid_provider(
         headers=user_api_key_header,
     )
 
-    assert response.status_code == 422  # Validation error
+    assert response.status_code == 422

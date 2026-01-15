@@ -15,7 +15,7 @@ def link_document_to_collection(
     db: Session,
     collection: Collection,
     document: Optional[Document] = None,
-):
+) -> Document:
     """
     Utility used in tests to associate a Document with a Collection so that
     DocumentCollectionCrud.read(...) will return something.
@@ -36,8 +36,8 @@ def link_document_to_collection(
 def test_collection_info_returns_assistant_collection_with_docs(
     client: TestClient,
     db: Session,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Happy path:
     - Assistant-style collection (get_collection)
@@ -76,8 +76,8 @@ def test_collection_info_returns_assistant_collection_with_docs(
 def test_collection_info_include_docs_false_returns_no_docs(
     client: TestClient,
     db: Session,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     When include_docs=false, the endpoint should not populate the documents list.
     """
@@ -106,8 +106,8 @@ def test_collection_info_include_docs_false_returns_no_docs(
 def test_collection_info_pagination_skip_and_limit(
     client: TestClient,
     db: Session,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Verify skip & limit are passed through to DocumentCollectionCrud.read.
     We create multiple document links and then request a paginated slice.
@@ -141,8 +141,8 @@ def test_collection_info_pagination_skip_and_limit(
 def test_collection_info_vector_store_collection(
     client: TestClient,
     db: Session,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Ensure the endpoint also works for vector-store-style collections created
     via get_vector_store_collection.
@@ -172,8 +172,8 @@ def test_collection_info_vector_store_collection(
 
 def test_collection_info_not_found_returns_404(
     client: TestClient,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     For a random UUID that doesn't correspond to any collection, we expect 404.
     """

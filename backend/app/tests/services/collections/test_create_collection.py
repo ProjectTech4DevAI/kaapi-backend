@@ -1,18 +1,19 @@
+from typing import Any
 import os
-import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from urllib.parse import urlparse
 import uuid
 from uuid import UUID, uuid4
 
+import pytest
 from moto import mock_aws
 from sqlmodel import Session
 
 from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.crud import CollectionCrud, CollectionJobCrud, DocumentCollectionCrud
-from app.models import CollectionJobStatus, CollectionJob, CollectionActionType
+from app.models import CollectionJobStatus, CollectionJob, CollectionActionType, Project
 from app.models.collection import CreationRequest
 from app.services.collections.create_collection import start_job, execute_job
 from app.tests.utils.openai import get_mock_openai_client_with_vector_store
@@ -22,7 +23,7 @@ from app.tests.utils.document import DocumentStore
 
 
 @pytest.fixture(scope="function")
-def aws_credentials():
+def aws_credentials() -> Any:
     os.environ["AWS_ACCESS_KEY_ID"] = "testing"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
     os.environ["AWS_SECURITY_TOKEN"] = "testing"
@@ -32,9 +33,9 @@ def aws_credentials():
 
 def create_collection_job_for_create(
     db: Session,
-    project,
+    project: Project,
     job_id: UUID,
-):
+) -> CollectionJob:
     """Pre-create a CREATE job with the given id so start_job can update it."""
     return CollectionJobCrud(db, project.id).create(
         CollectionJob(
@@ -47,7 +48,7 @@ def create_collection_job_for_create(
     )
 
 
-def test_start_job_creates_collection_job_and_schedules_task(db: Session):
+def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> None:
     """
     start_job should:
       - update an existing CollectionJob (status=PENDING, action=CREATE)
@@ -116,8 +117,8 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session):
 @mock_aws
 @patch("app.services.collections.create_collection.get_openai_client")
 def test_execute_job_success_flow_updates_job_and_creates_collection(
-    mock_get_openai_client, db: Session
-):
+    mock_get_openai_client: Any, db: Session
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -196,8 +197,8 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
 @mock_aws
 @patch("app.services.collections.create_collection.get_openai_client")
 def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
-    mock_get_openai_client, db
-):
+    mock_get_openai_client: Any, db: Session
+) -> None:
     project = get_project(db)
 
     job = get_collection_job(
@@ -261,10 +262,8 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
 @patch("app.services.collections.create_collection.get_openai_client")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_flow_callback_job_and_creates_collection(
-    mock_send_callback,
-    mock_get_openai_client,
-    db,
-):
+    mock_send_callback: Any, mock_get_openai_client: Any, db: Session
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -343,10 +342,8 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
 @patch("app.services.collections.create_collection.get_openai_client")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_creates_collection_with_callback(
-    mock_send_callback,
-    mock_get_openai_client,
-    db,
-):
+    mock_send_callback: Any, mock_get_openai_client: Any, db: Session
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -426,11 +423,11 @@ def test_execute_job_success_creates_collection_with_callback(
 @patch("app.services.collections.create_collection.send_callback")
 @patch("app.services.collections.create_collection.CollectionCrud")
 def test_execute_job_failure_flow_callback_job_and_marks_failed(
-    MockCollectionCrud,
-    mock_send_callback,
-    mock_get_openai_client,
+    MockCollectionCrud: Any,
+    mock_send_callback: Any,
+    mock_get_openai_client: Any,
     db: Session,
-):
+) -> None:
     """
     When creation fails, the job should be marked as FAILED, an error should be logged,
     and a failure callback with the error message should be triggered.

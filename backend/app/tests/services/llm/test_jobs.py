@@ -1,6 +1,3 @@
-"""
-Tests for the LLM job service functions.
-"""
 import pytest
 from unittest.mock import patch, MagicMock
 

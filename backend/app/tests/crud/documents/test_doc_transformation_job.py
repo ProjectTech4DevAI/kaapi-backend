@@ -8,8 +8,6 @@ from app.models import (
     DocTransformJobCreate,
     DocTransformJobUpdate,
 )
-from app.core.config import settings
-from app.tests.utils.auth import TestAuthContext
 from app.core.exception_handlers import HTTPException
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project, SequentialUuidGenerator
@@ -17,20 +15,20 @@ from app.tests.utils.test_data import create_test_project
 
 
 @pytest.fixture
-def store(db: Session):
+def store(db: Session) -> DocumentStore:
     project = get_project(db)
     return DocumentStore(db, project.id)
 
 
 @pytest.fixture
-def crud(db: Session, store: DocumentStore):
+def crud(db: Session, store: DocumentStore) -> DocTransformationJobCrud:
     return DocTransformationJobCrud(db, store.project.id)
 
 
 class TestDocTransformationJobCrudCreate:
     def test_can_create_job_with_valid_document(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         document = store.put()
 
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
@@ -45,7 +43,7 @@ class TestDocTransformationJobCrudCreate:
 
     def test_cannot_create_job_with_invalid_document(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         """With FK enforced, creating with a non-existent document should fail at commit."""
         invalid_id = next(SequentialUuidGenerator())
 
@@ -54,7 +52,7 @@ class TestDocTransformationJobCrudCreate:
 
     def test_cannot_create_job_with_deleted_document(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         """
         Creation itself will succeed (FK exists), but later reads should treat it as not found
         because read filters out deleted documents.
@@ -75,7 +73,7 @@ class TestDocTransformationJobCrudCreate:
 class TestDocTransformationJobCrudReadOne:
     def test_can_read_existing_job(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
 
@@ -87,7 +85,7 @@ class TestDocTransformationJobCrudReadOne:
 
     def test_cannot_read_nonexistent_job(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         invalid_id = next(SequentialUuidGenerator())
 
         with pytest.raises(HTTPException) as exc_info:
@@ -98,7 +96,7 @@ class TestDocTransformationJobCrudReadOne:
 
     def test_cannot_read_job_with_deleted_document(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
 
@@ -114,7 +112,7 @@ class TestDocTransformationJobCrudReadOne:
 
     def test_cannot_read_job_from_different_project(
         self, db: Session, store: DocumentStore
-    ):
+    ) -> None:
         document = store.put()
         job_crud = DocTransformationJobCrud(db, store.project.id)
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
@@ -132,7 +130,7 @@ class TestDocTransformationJobCrudReadOne:
 class TestDocTransformationJobCrudReadEach:
     def test_can_read_multiple_existing_jobs(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         documents = store.fill(3)
         jobs = [
             crud.create(DocTransformJobCreate(source_document_id=doc.id))
@@ -148,7 +146,7 @@ class TestDocTransformationJobCrudReadEach:
 
     def test_read_partial_existing_jobs(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         documents = store.fill(2)
         jobs = [
             crud.create(DocTransformJobCreate(source_document_id=doc.id))
@@ -165,13 +163,13 @@ class TestDocTransformationJobCrudReadEach:
 
     def test_read_empty_job_set(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         results = crud.read_each(set())
         assert len(results) == 0
 
     def test_cannot_read_jobs_from_different_project(
         self, db: Session, store: DocumentStore
-    ):
+    ) -> None:
         document = store.put()
         job_crud = DocTransformationJobCrud(db, store.project.id)
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
@@ -186,7 +184,7 @@ class TestDocTransformationJobCrudReadEach:
 class TestDocTransformationJobCrudUpdateStatus:
     def test_can_update_status_to_processing(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
 
@@ -201,7 +199,7 @@ class TestDocTransformationJobCrudUpdateStatus:
 
     def test_can_update_status_to_completed_with_result(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         source_document = store.put()
         transformed_document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=source_document.id))
@@ -220,7 +218,7 @@ class TestDocTransformationJobCrudUpdateStatus:
 
     def test_can_update_status_to_failed_with_error(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
         error_msg = "Transformation failed due to invalid format"
@@ -239,7 +237,7 @@ class TestDocTransformationJobCrudUpdateStatus:
 
     def test_cannot_update_nonexistent_job(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         invalid_id = next(SequentialUuidGenerator())
 
         with pytest.raises(HTTPException) as exc_info:
@@ -253,7 +251,7 @@ class TestDocTransformationJobCrudUpdateStatus:
 
     def test_update_preserves_existing_fields(
         self, db: Session, store: DocumentStore, crud: DocTransformationJobCrud
-    ):
+    ) -> None:
         """Fields not present in the patch must be preserved by `update`."""
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))

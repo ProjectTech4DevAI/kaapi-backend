@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -11,8 +13,8 @@ from app.models import (
 
 
 def test_collection_info_processing(
-    db: Session, client: "TestClient", user_api_key_header
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
@@ -34,8 +36,8 @@ def test_collection_info_processing(
 
 
 def test_collection_info_create_successful(
-    db: Session, client: "TestClient", user_api_key_header
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
@@ -64,8 +66,8 @@ def test_collection_info_create_successful(
 
 
 def test_collection_info_create_failed(
-    db: Session, client: "TestClient", user_api_key_header
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
@@ -94,8 +96,8 @@ def test_collection_info_create_failed(
 
 
 def test_collection_info_delete_successful(
-    db: Session, client: "TestClient", user_api_key_header
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
@@ -126,8 +128,8 @@ def test_collection_info_delete_successful(
 
 
 def test_collection_info_delete_failed(
-    db: Session, client: "TestClient", user_api_key_header
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 

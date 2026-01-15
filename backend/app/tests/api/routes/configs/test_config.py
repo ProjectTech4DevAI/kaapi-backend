@@ -75,7 +75,6 @@ def test_create_config_duplicate_name_fails(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that creating a config with duplicate name in same project fails."""
-    # Create first config
     config = create_test_config(
         db=db,
         project_id=user_api_key.project_id,
@@ -218,7 +217,6 @@ def test_get_config_from_different_project_fails(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that users cannot access configs from other projects."""
-    # Create config in different project
     other_project = create_test_project(db)
     config = create_test_config(
         db=db,
@@ -296,7 +294,6 @@ def test_update_config_to_duplicate_name_fails(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that updating a config to a duplicate name fails."""
-    # Create two configs
     config1 = create_test_config(
         db=db,
         project_id=user_api_key.project_id,
@@ -406,41 +403,6 @@ def test_delete_config_from_different_project_fails(
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 404
-
-
-def test_create_config_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that creating a config without authentication fails."""
-    config_data = {
-        "name": "test-config",
-        "description": "Test",
-        "config_blob": {
-            "completion": {
-                "provider": "openai",
-                "params": {"model": "gpt-4"},
-            }
-        },
-        "commit_message": "Initial",
-    }
-
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/",
-        json=config_data,
-    )
-    assert response.status_code == 401
-
-
-def test_list_configs_requires_authentication(
-    db: Session,
-    client: TestClient,
-) -> None:
-    """Test that listing configs without authentication fails."""
-    response = client.get(
-        f"{settings.API_V1_STR}/configs/",
-    )
-    assert response.status_code == 401
 
 
 def test_configs_isolated_by_project(

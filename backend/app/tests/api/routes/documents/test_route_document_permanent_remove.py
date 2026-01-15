@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
 from urllib.parse import urlparse
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 from botocore.exceptions import ClientError
 from moto import mock_aws
 from sqlmodel import Session, select
@@ -16,11 +16,10 @@ from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.models import Document
 from app.tests.utils.document import (
-    DocumentStore,
     DocumentMaker,
+    DocumentStore,
     Route,
     WebCrawler,
-    crawler,
 )
 
 
@@ -49,7 +48,7 @@ class TestDocumentRoutePermanentRemove:
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         openai_mock = OpenAIMock()
         with openai_mock.router:
             client = OpenAI(api_key="sk-test-key")
@@ -90,7 +89,7 @@ class TestDocumentRoutePermanentRemove:
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         DocumentStore.clear(db)
 
         maker = DocumentMaker(project_id=crawler.user_api_key.project_id, session=db)

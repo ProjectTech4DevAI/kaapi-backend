@@ -1,5 +1,6 @@
 import os
 import mimetypes
+from typing import Any
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
@@ -99,7 +100,7 @@ class TestDocumentRouteUpload:
         route: Route,
         scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         aws = AmazonCloudStorageClient()
         aws.create()
 
@@ -116,7 +117,7 @@ class TestDocumentRouteUpload:
         route: Route,
         scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         aws = AmazonCloudStorageClient()
         aws.create()
 
@@ -139,7 +140,7 @@ class TestDocumentRouteUpload:
         route: Route,
         scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test basic upload without any transformation parameters."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -154,12 +155,12 @@ class TestDocumentRouteUpload:
     @patch("app.services.doctransform.job.start_job")
     def test_upload_with_transformation(
         self,
-        mock_start_job,
+        mock_start_job: Any,
         db: Session,
         route: Route,
         pdf_scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test upload with valid transformation parameters."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -187,12 +188,12 @@ class TestDocumentRouteUpload:
     @patch("app.services.doctransform.job.start_job")
     def test_upload_with_specific_transformer(
         self,
-        mock_start_job,
+        mock_start_job: Any,
         db: Session,
         route: Route,
         pdf_scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test upload with specific transformer specified."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -216,7 +217,7 @@ class TestDocumentRouteUpload:
         route: Route,
         scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test upload with unsupported transformation returns error."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -233,7 +234,7 @@ class TestDocumentRouteUpload:
         route: Route,
         pdf_scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test upload with invalid transformer name returns error."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -255,7 +256,7 @@ class TestDocumentRouteUpload:
         db: Session,
         route: Route,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test upload with unsupported file extension returns error."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -277,12 +278,12 @@ class TestDocumentRouteUpload:
     @patch("app.services.doctransform.job.start_job")
     def test_transformation_job_created_in_database(
         self,
-        mock_start_job,
+        mock_start_job: Any,
         db: Session,
         route: Route,
         pdf_scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test that transformation job is properly stored in the database."""
         aws = AmazonCloudStorageClient()
         aws.create()
@@ -306,7 +307,7 @@ class TestDocumentRouteUpload:
         route: Route,
         scratch: Path,
         uploader: WebUploader,
-    ):
+    ) -> None:
         """Test the response structure for upload without transformation."""
         aws = AmazonCloudStorageClient()
         aws.create()
