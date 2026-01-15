@@ -1,9 +1,9 @@
-"""Tests for callback SSRF protection in utils.py"""
+import socket
+from typing import Any
+import requests
+from unittest.mock import patch, MagicMock
 
 import pytest
-from unittest.mock import patch, MagicMock
-import socket
-import requests
 
 from app.utils import _is_private_ip, validate_callback_url, send_callback
 
@@ -11,7 +11,7 @@ from app.utils import _is_private_ip, validate_callback_url, send_callback
 class TestIsPrivateIP:
     """Test suite for _is_private_ip function."""
 
-    def test_private_ipv4_addresses(self):
+    def test_private_ipv4_addresses(self) -> None:
         """Test that private IPv4 addresses are correctly identified."""
         private_ips = [
             "10.0.0.1",
@@ -26,7 +26,7 @@ class TestIsPrivateIP:
             assert is_blocked is True, f"{ip} should be identified as private"
             assert reason == "private", f"{ip} should have reason 'private'"
 
-    def test_localhost_addresses(self):
+    def test_localhost_addresses(self) -> None:
         """Test that localhost/loopback addresses are blocked."""
         localhost_ips = [
             "127.0.0.1",
@@ -41,7 +41,7 @@ class TestIsPrivateIP:
                 reason == "loopback/localhost"
             ), f"{ip} should have reason 'loopback/localhost'"
 
-    def test_link_local_addresses(self):
+    def test_link_local_addresses(self) -> None:
         """Test that link-local addresses are blocked."""
         link_local_ips = [
             "169.254.0.1",
@@ -53,7 +53,7 @@ class TestIsPrivateIP:
             assert is_blocked is True, f"{ip} should be identified as link-local"
             assert reason == "link-local", f"{ip} should have reason 'link-local'"
 
-    def test_multicast_addresses(self):
+    def test_multicast_addresses(self) -> None:
         """Test that multicast addresses are blocked."""
         multicast_ips = [
             "224.0.0.1",
@@ -64,7 +64,7 @@ class TestIsPrivateIP:
             assert is_blocked is True, f"{ip} should be identified as multicast"
             assert reason == "multicast", f"{ip} should have reason 'multicast'"
 
-    def test_public_ipv4_addresses(self):
+    def test_public_ipv4_addresses(self) -> None:
         """Test that public IPv4 addresses are not blocked."""
         public_ips = [
             "8.8.8.8",
@@ -77,7 +77,7 @@ class TestIsPrivateIP:
             assert is_blocked is False, f"{ip} should be identified as public"
             assert reason == "", f"{ip} should have empty reason"
 
-    def test_public_ipv6_addresses(self):
+    def test_public_ipv6_addresses(self) -> None:
         """Test that public IPv6 addresses are not blocked."""
         public_ipv6 = [
             "2001:4860:4860::8888",
@@ -88,7 +88,7 @@ class TestIsPrivateIP:
             assert is_blocked is False, f"{ip} should be identified as public"
             assert reason == "", f"{ip} should have empty reason"
 
-    def test_invalid_ip_addresses(self):
+    def test_invalid_ip_addresses(self) -> None:
         """Test that invalid IP addresses return False."""
         invalid_ips = [
             "not_an_ip",
@@ -104,7 +104,7 @@ class TestIsPrivateIP:
 class TestValidateCallbackURL:
     """Test suite for validate_callback_url function."""
 
-    def test_reject_non_https_schemes(self):
+    def test_reject_non_https_schemes(self) -> None:
         """Test that non-HTTPS URL schemes are rejected."""
         non_https_urls = [
             "http://example.com/callback",
@@ -116,7 +116,7 @@ class TestValidateCallbackURL:
                 validate_callback_url(url)
 
     @patch("socket.getaddrinfo")
-    def test_reject_localhost_by_name(self, mock_getaddrinfo):
+    def test_reject_localhost_by_name(self, mock_getaddrinfo: Any) -> None:
         """Test that localhost is rejected."""
         mock_getaddrinfo.return_value = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))
@@ -126,7 +126,7 @@ class TestValidateCallbackURL:
             validate_callback_url("https://localhost/callback")
 
     @patch("socket.getaddrinfo")
-    def test_reject_private_ip_addresses(self, mock_getaddrinfo):
+    def test_reject_private_ip_addresses(self, mock_getaddrinfo: Any) -> None:
         """Test that private IPs in all RFC 1918 ranges are rejected."""
         private_ips = [
             ("10.0.0.1", "https://internal.company.com/callback"),
@@ -143,7 +143,7 @@ class TestValidateCallbackURL:
                 validate_callback_url(url)
 
     @patch("socket.getaddrinfo")
-    def test_reject_link_local_addresses(self, mock_getaddrinfo):
+    def test_reject_link_local_addresses(self, mock_getaddrinfo: Any) -> None:
         """Test that link-local addresses are rejected (including cloud metadata endpoints)."""
         link_local_ips = [
             (
@@ -162,7 +162,7 @@ class TestValidateCallbackURL:
                 validate_callback_url(url)
 
     @patch("socket.getaddrinfo")
-    def test_accept_public_ip_addresses(self, mock_getaddrinfo):
+    def test_accept_public_ip_addresses(self, mock_getaddrinfo: Any) -> None:
         """Test that valid HTTPS URLs with public IP addresses are accepted."""
         public_ips = [
             ("8.8.8.8", "https://api.example.com/callback"),
@@ -176,18 +176,18 @@ class TestValidateCallbackURL:
 
             validate_callback_url(url)
 
-    def test_reject_url_without_hostname(self):
+    def test_reject_url_without_hostname(self) -> None:
         """Test that URLs without hostname are rejected."""
         with pytest.raises(ValueError, match="URL must have a valid hostname"):
             validate_callback_url("https:///callback")
 
-    def test_reject_invalid_url_format(self):
+    def test_reject_invalid_url_format(self) -> None:
         """Test that invalid URL formats are rejected."""
         with pytest.raises(ValueError, match="Only HTTPS URLs are allowed"):
             validate_callback_url("not a url at all")
 
     @patch("socket.getaddrinfo")
-    def test_check_all_resolved_ips(self, mock_getaddrinfo):
+    def test_check_all_resolved_ips(self, mock_getaddrinfo: Any) -> None:
         """Test that all resolved IPs are checked (DNS round-robin)."""
         mock_getaddrinfo.return_value = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443)),
@@ -198,7 +198,7 @@ class TestValidateCallbackURL:
             validate_callback_url("https://malicious-dns.example/callback")
 
     @patch("socket.getaddrinfo")
-    def test_ipv6_public_address_accepted(self, mock_getaddrinfo):
+    def test_ipv6_public_address_accepted(self, mock_getaddrinfo: Any) -> None:
         """Test that public IPv6 addresses are accepted."""
         mock_getaddrinfo.return_value = [
             (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:4860:4860::8888", 443))
@@ -207,7 +207,7 @@ class TestValidateCallbackURL:
         validate_callback_url("https://ipv6.example.com/callback")
 
     @patch("socket.getaddrinfo")
-    def test_ipv6_localhost_rejected(self, mock_getaddrinfo):
+    def test_ipv6_localhost_rejected(self, mock_getaddrinfo: Any) -> None:
         """Test that IPv6 localhost is rejected."""
         mock_getaddrinfo.return_value = [
             (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 443))
@@ -222,7 +222,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_successful_callback(self, mock_session_class, mock_validate):
+    def test_successful_callback(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test successful callback execution."""
         mock_session = MagicMock()
         mock_response = MagicMock()
@@ -241,7 +243,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_callback_network_error(self, mock_session_class, mock_validate):
+    def test_callback_network_error(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test that callback returns False on network errors."""
         mock_session = MagicMock()
         mock_session.post.side_effect = requests.RequestException("Connection refused")
@@ -253,7 +257,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_callback_http_error(self, mock_session_class, mock_validate):
+    def test_callback_http_error(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test that callback returns False on HTTP errors."""
         mock_session = MagicMock()
         mock_response = MagicMock()
@@ -267,7 +273,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_callback_disables_redirects(self, mock_session_class, mock_validate):
+    def test_callback_disables_redirects(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test that redirects are disabled to prevent redirect-based SSRF."""
         mock_session = MagicMock()
         mock_response = MagicMock()
@@ -283,7 +291,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_callback_uses_timeout(self, mock_session_class, mock_validate):
+    def test_callback_uses_timeout(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test that callback uses configured timeouts."""
         mock_session = MagicMock()
         mock_response = MagicMock()
@@ -301,7 +311,9 @@ class TestSendCallback:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_callback_sends_json_data(self, mock_session_class, mock_validate):
+    def test_callback_sends_json_data(
+        self, mock_session_class: Any, mock_validate: Any
+    ) -> None:
         """Test that callback sends data as JSON."""
         mock_session = MagicMock()
         mock_response = MagicMock()

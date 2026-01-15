@@ -1,7 +1,11 @@
 import io
+from typing import Any
+from unittest.mock import patch, MagicMock
+
 import pytest
 from moto import mock_aws
-from unittest.mock import patch, MagicMock
+from sqlmodel import Session
+from fastapi.testclient import TestClient
 import boto3
 
 from app.tests.utils.test_data import create_test_fine_tuning_jobs
@@ -35,10 +39,10 @@ class TestCreateFineTuningJobAPI:
     @mock_aws
     def test_finetune_from_csv_multiple_split_ratio(
         self,
-        client,
-        db,
-        user_api_key_header,
-    ):
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         # Setup S3 bucket for moto
         s3 = boto3.client("s3", region_name=settings.AWS_DEFAULT_REGION)
         bucket_name = settings.AWS_S3_BUCKET_PREFIX
@@ -69,18 +73,15 @@ class TestCreateFineTuningJobAPI:
                 with patch(
                     "app.api.routes.fine_tuning.process_fine_tuning_job"
                 ) as mock_process_job:
-                    # Mock cloud storage
                     mock_storage = MagicMock()
                     mock_storage.put.return_value = (
                         f"s3://{settings.AWS_S3_BUCKET_PREFIX}/test.csv"
                     )
                     mock_get_cloud_storage.return_value = mock_storage
 
-                    # Mock OpenAI client (for validation only)
                     mock_openai = MagicMock()
                     mock_get_openai_client.return_value = mock_openai
 
-                    # Create file upload data
                     csv_file = io.BytesIO(csv_content.encode())
                     response = client.post(
                         "/api/v1/fine_tuning/fine_tune",
@@ -119,8 +120,12 @@ class TestCreateFineTuningJobAPI:
 @patch("app.api.routes.fine_tuning.get_openai_client")
 class TestRetriveFineTuningJobAPI:
     def test_retrieve_fine_tuning_job(
-        self, mock_get_openai_client, client, db, user_api_key_header
-    ):
+        self,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         jobs, _ = create_test_fine_tuning_jobs(db, [0.3])
         job = jobs[0]
         job.provider_job_id = "ftjob-mock_job_123"
@@ -148,8 +153,12 @@ class TestRetriveFineTuningJobAPI:
         assert json_data["data"]["id"] == job.id
 
     def test_retrieve_fine_tuning_job_failed(
-        self, mock_get_openai_client, client, db, user_api_key_header
-    ):
+        self,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         jobs, _ = create_test_fine_tuning_jobs(db, [0.3])
         job = jobs[0]
         job.provider_job_id = "ftjob-mock_job_123"
@@ -181,7 +190,9 @@ class TestRetriveFineTuningJobAPI:
 
 @pytest.mark.usefixtures("client", "db", "user_api_key_header")
 class TestFetchJob:
-    def test_fetch_jobs_document(self, client, db, user_api_key_header):
+    def test_fetch_jobs_document(
+        self, client: TestClient, db: Session, user_api_key_header: dict[str, str]
+    ) -> None:
         jobs, _ = create_test_fine_tuning_jobs(db, [0.3, 0.4])
         document = get_document(db, "dalgo_sample.json")
 
@@ -212,15 +223,14 @@ class TestAutoEvaluationTrigger:
 
     def test_successful_auto_evaluation_trigger(
         self,
-        mock_run_model_evaluation,
-        mock_get_cloud_storage,
-        mock_get_openai_client,
-        client,
-        db,
-        user_api_key_header,
-    ):
+        mock_run_model_evaluation: Any,
+        mock_get_cloud_storage: Any,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         """Test that evaluation is automatically triggered when job status changes from running to completed."""
-        # Setup: Create a fine-tuning job with running status
         jobs, _ = create_test_fine_tuning_jobs(db, [0.7])
         job = jobs[0]
         job.status = FineTuningStatus.running
@@ -232,14 +242,12 @@ class TestAutoEvaluationTrigger:
         db.commit()
         db.refresh(job)
 
-        # Mock cloud storage
         mock_storage = MagicMock()
         mock_storage.get_signed_url.return_value = (
             "https://test.s3.amazonaws.com/signed-url"
         )
         mock_get_cloud_storage.return_value = mock_storage
 
-        # Mock OpenAI response indicating job completion
         mock_openai_job = MagicMock(
             status="succeeded",
             fine_tuned_model="ft:gpt-4:custom-model:12345",
@@ -249,23 +257,19 @@ class TestAutoEvaluationTrigger:
         mock_openai.fine_tuning.jobs.retrieve.return_value = mock_openai_job
         mock_get_openai_client.return_value = mock_openai
 
-        # Action: Refresh the fine-tuning job status
         response = client.get(
             f"/api/v1/fine_tuning/{job.id}/refresh", headers=user_api_key_header
         )
 
-        # Verify response
         assert response.status_code == 200
         json_data = response.json()
         assert json_data["data"]["status"] == "completed"
         assert json_data["data"]["fine_tuned_model"] == "ft:gpt-4:custom-model:12345"
 
-        # Verify that model evaluation was triggered
         mock_run_model_evaluation.assert_called_once()
         call_args = mock_run_model_evaluation.call_args[0]
         eval_id = call_args[0]
 
-        # Verify evaluation was created in database
         model_eval = (
             db.query(ModelEvaluation).filter(ModelEvaluation.id == eval_id).first()
         )
@@ -275,26 +279,23 @@ class TestAutoEvaluationTrigger:
 
     def test_skip_evaluation_when_already_exists(
         self,
-        mock_run_model_evaluation,
-        mock_get_cloud_storage,
-        mock_get_openai_client,
-        client,
-        db,
-        user_api_key_header,
-    ):
+        mock_run_model_evaluation: Any,
+        mock_get_cloud_storage: Any,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         """Test that evaluation is skipped when an active evaluation already exists."""
-        # Setup: Create a fine-tuning job with running status
         jobs, _ = create_test_fine_tuning_jobs(db, [0.7])
         job = jobs[0]
         job.status = FineTuningStatus.running
         job.provider_job_id = "ftjob-mock_job_123"
-        # Add required fields for model evaluation
         job.test_data_s3_object = f"{settings.AWS_S3_BUCKET_PREFIX}/test-data.csv"
         job.system_prompt = "You are a helpful assistant"
         db.add(job)
         db.commit()
 
-        # Create an existing active evaluation
         existing_eval = ModelEvaluation(
             fine_tuning_id=job.id,
             status=ModelEvaluationStatus.pending,
@@ -310,14 +311,12 @@ class TestAutoEvaluationTrigger:
         db.add(existing_eval)
         db.commit()
 
-        # Mock cloud storage
         mock_storage = MagicMock()
         mock_storage.get_signed_url.return_value = (
             "https://test.s3.amazonaws.com/signed-url"
         )
         mock_get_cloud_storage.return_value = mock_storage
 
-        # Mock OpenAI response indicating job completion
         mock_openai_job = MagicMock(
             status="succeeded",
             fine_tuned_model="ft:gpt-4:custom-model:12345",
@@ -327,20 +326,16 @@ class TestAutoEvaluationTrigger:
         mock_openai.fine_tuning.jobs.retrieve.return_value = mock_openai_job
         mock_get_openai_client.return_value = mock_openai
 
-        # Action: Refresh the fine-tuning job status
         response = client.get(
             f"/api/v1/fine_tuning/{job.id}/refresh", headers=user_api_key_header
         )
 
-        # Verify response
         assert response.status_code == 200
         json_data = response.json()
         assert json_data["data"]["status"] == "completed"
 
-        # Verify that no new evaluation was triggered
         mock_run_model_evaluation.assert_not_called()
 
-        # Verify only one evaluation exists in database
         evaluations = (
             db.query(ModelEvaluation)
             .filter(ModelEvaluation.fine_tuning_id == job.id)
@@ -351,13 +346,13 @@ class TestAutoEvaluationTrigger:
 
     def test_evaluation_not_triggered_for_non_completion_status_changes(
         self,
-        mock_run_model_evaluation,
-        mock_get_cloud_storage,
-        mock_get_openai_client,
-        client,
-        db,
-        user_api_key_header,
-    ):
+        mock_run_model_evaluation: Any,
+        mock_get_cloud_storage: Any,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         """Test that evaluation is not triggered for status changes other than to completed."""
         # Test Case 1: pending to running
         jobs, _ = create_test_fine_tuning_jobs(db, [0.7])
@@ -392,7 +387,6 @@ class TestAutoEvaluationTrigger:
         assert json_data["data"]["status"] == "running"
         mock_run_model_evaluation.assert_not_called()
 
-        # Test Case 2: running to failed
         job.status = FineTuningStatus.running
         db.add(job)
         db.commit()
@@ -411,15 +405,14 @@ class TestAutoEvaluationTrigger:
 
     def test_evaluation_not_triggered_for_already_completed_jobs(
         self,
-        mock_run_model_evaluation,
-        mock_get_cloud_storage,
-        mock_get_openai_client,
-        client,
-        db,
-        user_api_key_header,
-    ):
+        mock_run_model_evaluation: Any,
+        mock_get_cloud_storage: Any,
+        mock_get_openai_client: Any,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+    ) -> None:
         """Test that evaluation is not triggered when refreshing an already completed job."""
-        # Setup: Create a fine-tuning job that's already completed
         jobs, _ = create_test_fine_tuning_jobs(db, [0.7])
         job = jobs[0]
         job.status = FineTuningStatus.completed
@@ -445,17 +438,14 @@ class TestAutoEvaluationTrigger:
         mock_openai.fine_tuning.jobs.retrieve.return_value = mock_openai_job
         mock_get_openai_client.return_value = mock_openai
 
-        # Action: Refresh the fine-tuning job status
         response = client.get(
             f"/api/v1/fine_tuning/{job.id}/refresh", headers=user_api_key_header
         )
 
-        # Verify response
         assert response.status_code == 200
         json_data = response.json()
         assert json_data["data"]["status"] == "completed"
 
-        # Verify that no evaluation was triggered (since it wasn't newly completed)
         mock_run_model_evaluation.assert_not_called()
 
         # Verify no evaluations exist in database for this job

@@ -6,7 +6,6 @@ from app.tests.utils.document import (
     DocumentStore,
     Route,
     WebCrawler,
-    crawler,
     httpx_to_standard,
 )
 
@@ -27,7 +26,7 @@ def route():
 class TestDocumentRouteList:
     _ndocs = 10
 
-    def test_response_is_success(self, route: QueryRoute, crawler: WebCrawler):
+    def test_response_is_success(self, route: QueryRoute, crawler: WebCrawler) -> None:
         response = crawler.get(route)
         assert response.is_success
 
@@ -36,7 +35,7 @@ class TestDocumentRouteList:
         db: Session,
         route: QueryRoute,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         DocumentStore.clear(db)
         response = httpx_to_standard(crawler.get(route))
 
@@ -47,7 +46,7 @@ class TestDocumentRouteList:
         db: Session,
         route: QueryRoute,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         source = DocumentComparator(store.put())
 
@@ -60,7 +59,7 @@ class TestDocumentRouteList:
         self,
         route: QueryRoute,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         response = crawler.get(route.pushq("skip", -1))
         assert response.is_error
 
@@ -68,7 +67,7 @@ class TestDocumentRouteList:
         self,
         route: QueryRoute,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         response = crawler.get(route.pushq("limit", -1))
         assert response.is_error
 
@@ -77,7 +76,7 @@ class TestDocumentRouteList:
         db: Session,
         route: QueryRoute,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         limit = len(store.fill(self._ndocs))
         skip = limit // 2

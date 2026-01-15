@@ -1,4 +1,8 @@
+from typing import Any
 from unittest.mock import patch
+
+from sqlmodel import Session
+from fastapi.testclient import TestClient
 
 from app.tests.utils.test_data import (
     create_test_finetuning_job_with_extra_fields,
@@ -7,7 +11,12 @@ from app.tests.utils.test_data import (
 
 
 @patch("app.api.routes.model_evaluation.run_model_evaluation")
-def test_evaluate_model(mock_run_eval, client, db, user_api_key_header):
+def test_evaluate_model(
+    mock_run_eval: Any,
+    client: TestClient,
+    db: Session,
+    user_api_key_header: dict[str, str],
+) -> None:
     fine_tuned, _ = create_test_finetuning_job_with_extra_fields(db, [0.5])
     body = {"fine_tuning_ids": [fine_tuned[0].id]}
 
@@ -27,7 +36,9 @@ def test_evaluate_model(mock_run_eval, client, db, user_api_key_header):
     assert mock_run_eval.call_args[0][0] == evals[0]["id"]
 
 
-def test_evaluate_model_finetuning_not_found(client, user_api_key_header):
+def test_evaluate_model_finetuning_not_found(
+    client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     invalid_fine_tune_id = 9999
 
     body = {"fine_tuning_ids": [invalid_fine_tune_id]}
@@ -43,7 +54,9 @@ def test_evaluate_model_finetuning_not_found(client, user_api_key_header):
     assert json_data["error"] == f"Job not found"
 
 
-def test_top_model_by_doc(client, db, user_api_key_header):
+def test_top_model_by_doc(
+    client: TestClient, db: Session, user_api_key_header: dict[str, str]
+) -> None:
     model_evals = create_test_model_evaluation(db)
     model_eval = model_evals[0]
 
@@ -69,7 +82,9 @@ def test_top_model_by_doc(client, db, user_api_key_header):
     assert json_data["data"]["id"] == model_eval.id
 
 
-def test_get_top_model_by_doc_id_no_score(client, db, user_api_key_header):
+def test_get_top_model_by_doc_id_no_score(
+    client: TestClient, db: Session, user_api_key_header: dict[str, str]
+) -> None:
     model_evals = create_test_model_evaluation(db)
 
     document_id = model_evals[0].document_id
@@ -84,7 +99,9 @@ def test_get_top_model_by_doc_id_no_score(client, db, user_api_key_header):
     assert json_data["error"] == "No top model found"
 
 
-def test_get_evals_by_doc_id(client, db, user_api_key_header):
+def test_get_evals_by_doc_id(
+    client: TestClient, db: Session, user_api_key_header: dict[str, str]
+) -> None:
     model_evals = create_test_model_evaluation(db)
     document_id = model_evals[0].document_id
 

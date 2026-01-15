@@ -1,9 +1,11 @@
+from unittest.mock import patch
+from typing import Any
+
 import pytest
 import openai_responses
 from openai_responses import OpenAIMock
 from openai import OpenAI
 from sqlmodel import Session, select
-from unittest.mock import patch
 
 from app.models import Document
 from app.tests.utils.document import (
@@ -11,7 +13,6 @@ from app.tests.utils.document import (
     DocumentStore,
     Route,
     WebCrawler,
-    crawler,
 )
 
 
@@ -25,11 +26,11 @@ class TestDocumentRouteRemove:
     @patch("app.api.routes.documents.get_openai_client")
     def test_response_is_success(
         self,
-        mock_get_openai_client,
+        mock_get_openai_client: Any,
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         openai_mock = OpenAIMock()
         with openai_mock.router:
             client = OpenAI(api_key="sk-test-key")
@@ -44,11 +45,11 @@ class TestDocumentRouteRemove:
     @patch("app.api.routes.documents.get_openai_client")
     def test_item_is_soft_removed(
         self,
-        mock_get_openai_client,
+        mock_get_openai_client: Any,
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         openai_mock = OpenAIMock()
         with openai_mock.router:
             client = OpenAI(api_key="sk-test-key")
@@ -68,11 +69,11 @@ class TestDocumentRouteRemove:
     @patch("app.api.routes.documents.get_openai_client")
     def test_cannot_remove_unknown_document(
         self,
-        mock_get_openai_client,
+        mock_get_openai_client: Any,
         db: Session,
         route: Route,
         crawler: WebCrawler,
-    ):
+    ) -> None:
         openai_mock = OpenAIMock()
         with openai_mock.router:
             client = OpenAI(api_key="sk-test-key")

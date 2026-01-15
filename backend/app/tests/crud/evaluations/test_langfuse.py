@@ -1,7 +1,4 @@
-"""
-Tests for evaluation_langfuse CRUD operations.
-"""
-
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,13 +13,11 @@ from app.crud.evaluations.langfuse import (
 class TestCreateLangfuseDatasetRun:
     """Test creating Langfuse dataset runs."""
 
-    def test_create_langfuse_dataset_run_success(self):
+    def test_create_langfuse_dataset_run_success(self) -> None:
         """Test successfully creating a dataset run with traces."""
-        # Mock Langfuse client
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
 
-        # Mock dataset items
         mock_item1 = MagicMock()
         mock_item1.id = "item_1"
         mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
@@ -34,7 +29,6 @@ class TestCreateLangfuseDatasetRun:
         mock_dataset.items = [mock_item1, mock_item2]
         mock_langfuse.get_dataset.return_value = mock_dataset
 
-        # Test data with usage and response_id
         results = [
             {
                 "item_id": "item_1",
@@ -62,7 +56,6 @@ class TestCreateLangfuseDatasetRun:
             },
         ]
 
-        # Call function
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=mock_langfuse,
             dataset_name="test_dataset",
@@ -70,22 +63,19 @@ class TestCreateLangfuseDatasetRun:
             results=results,
         )
 
-        # Verify results
         assert len(trace_id_mapping) == 2
         assert trace_id_mapping["item_1"] == "trace_id_1"
         assert trace_id_mapping["item_2"] == "trace_id_2"
 
-        # Verify Langfuse calls
         mock_langfuse.get_dataset.assert_called_once_with("test_dataset")
         mock_langfuse.flush.assert_called_once()
         assert mock_langfuse.trace.call_count == 2
 
-    def test_create_langfuse_dataset_run_skips_missing_items(self):
+    def test_create_langfuse_dataset_run_skips_missing_items(self) -> None:
         """Test that missing dataset items are skipped."""
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
 
-        # Only one item exists
         mock_item1 = MagicMock()
         mock_item1.id = "item_1"
         mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
@@ -93,7 +83,6 @@ class TestCreateLangfuseDatasetRun:
         mock_dataset.items = [mock_item1]
         mock_langfuse.get_dataset.return_value = mock_dataset
 
-        # Results include an item that doesn't exist in dataset
         results = [
             {
                 "item_id": "item_1",
@@ -128,22 +117,19 @@ class TestCreateLangfuseDatasetRun:
             results=results,
         )
 
-        # Only the valid item should be in the mapping
         assert len(trace_id_mapping) == 1
         assert "item_1" in trace_id_mapping
         assert "item_nonexistent" not in trace_id_mapping
 
-    def test_create_langfuse_dataset_run_handles_trace_error(self):
+    def test_create_langfuse_dataset_run_handles_trace_error(self) -> None:
         """Test that trace creation errors are handled gracefully."""
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
 
-        # First item succeeds
         mock_item1 = MagicMock()
         mock_item1.id = "item_1"
         mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
 
-        # Second item fails
         mock_item2 = MagicMock()
         mock_item2.id = "item_2"
         mock_item2.observe.side_effect = Exception("Trace creation failed")
@@ -185,12 +171,11 @@ class TestCreateLangfuseDatasetRun:
             results=results,
         )
 
-        # Only successful item should be in mapping
         assert len(trace_id_mapping) == 1
         assert "item_1" in trace_id_mapping
         assert "item_2" not in trace_id_mapping
 
-    def test_create_langfuse_dataset_run_empty_results(self):
+    def test_create_langfuse_dataset_run_empty_results(self) -> None:
         """Test with empty results list."""
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
@@ -207,14 +192,12 @@ class TestCreateLangfuseDatasetRun:
         assert len(trace_id_mapping) == 0
         mock_langfuse.flush.assert_called_once()
 
-    def test_create_langfuse_dataset_run_with_cost_tracking(self):
+    def test_create_langfuse_dataset_run_with_cost_tracking(self) -> None:
         """Test that generation() is called with usage when model and usage are provided."""
-        # Mock Langfuse client
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
         mock_generation = MagicMock()
 
-        # Mock dataset items
         mock_item1 = MagicMock()
         mock_item1.id = "item_1"
         mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
@@ -227,7 +210,6 @@ class TestCreateLangfuseDatasetRun:
         mock_langfuse.get_dataset.return_value = mock_dataset
         mock_langfuse.generation.return_value = mock_generation
 
-        # Test data with usage and model
         results = [
             {
                 "item_id": "item_1",
@@ -255,7 +237,6 @@ class TestCreateLangfuseDatasetRun:
             },
         ]
 
-        # Call function with model parameter
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=mock_langfuse,
             dataset_name="test_dataset",
@@ -264,15 +245,12 @@ class TestCreateLangfuseDatasetRun:
             model="gpt-4o",
         )
 
-        # Verify results
         assert len(trace_id_mapping) == 2
         assert trace_id_mapping["item_1"] == "trace_id_1"
         assert trace_id_mapping["item_2"] == "trace_id_2"
 
-        # Verify generation() was called for cost tracking
         assert mock_langfuse.generation.call_count == 2
 
-        # Verify the first generation call
         first_call = mock_langfuse.generation.call_args_list[0]
         assert first_call.kwargs["name"] == "evaluation-response"
         assert first_call.kwargs["trace_id"] == "trace_id_1"
@@ -280,7 +258,6 @@ class TestCreateLangfuseDatasetRun:
         assert first_call.kwargs["metadata"]["ground_truth"] == "4"
         assert first_call.kwargs["metadata"]["response_id"] == "resp_123"
 
-        # Verify generation.end() was called with usage
         assert mock_generation.end.call_count == 2
 
         first_end_call = mock_generation.end.call_args_list[0]
@@ -293,7 +270,6 @@ class TestCreateLangfuseDatasetRun:
             "unit": "TOKENS",
         }
 
-        # Verify Langfuse calls
         mock_langfuse.get_dataset.assert_called_once_with("test_dataset")
         mock_langfuse.flush.assert_called_once()
         assert mock_langfuse.trace.call_count == 2
@@ -302,7 +278,7 @@ class TestCreateLangfuseDatasetRun:
 class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""
 
-    def test_update_traces_with_cosine_scores_success(self):
+    def test_update_traces_with_cosine_scores_success(self) -> None:
         """Test successfully updating traces with scores."""
         mock_langfuse = MagicMock()
 
@@ -316,10 +292,8 @@ class TestUpdateTracesWithCosineScores:
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
-        # Verify score was called for each item
         assert mock_langfuse.score.call_count == 3
 
-        # Verify the score calls
         calls = mock_langfuse.score.call_args_list
         assert calls[0].kwargs["trace_id"] == "trace_1"
         assert calls[0].kwargs["name"] == "cosine_similarity"
@@ -331,13 +305,13 @@ class TestUpdateTracesWithCosineScores:
 
         mock_langfuse.flush.assert_called_once()
 
-    def test_update_traces_with_cosine_scores_missing_trace_id(self):
+    def test_update_traces_with_cosine_scores_missing_trace_id(self) -> None:
         """Test that items without trace_id are skipped."""
         mock_langfuse = MagicMock()
 
         per_item_scores = [
             {"trace_id": "trace_1", "cosine_similarity": 0.95},
-            {"cosine_similarity": 0.87},  # Missing trace_id
+            {"cosine_similarity": 0.87},
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 
@@ -345,14 +319,12 @@ class TestUpdateTracesWithCosineScores:
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
-        # Should only call score for items with trace_id
         assert mock_langfuse.score.call_count == 2
 
-    def test_update_traces_with_cosine_scores_error_handling(self):
+    def test_update_traces_with_cosine_scores_error_handling(self) -> None:
         """Test that score errors don't stop processing."""
         mock_langfuse = MagicMock()
 
-        # First call succeeds, second fails, third succeeds
         mock_langfuse.score.side_effect = [None, Exception("Score failed"), None]
 
         per_item_scores = [
@@ -361,16 +333,14 @@ class TestUpdateTracesWithCosineScores:
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 
-        # Should not raise exception
         update_traces_with_cosine_scores(
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
-        # All three should have been attempted
         assert mock_langfuse.score.call_count == 3
         mock_langfuse.flush.assert_called_once()
 
-    def test_update_traces_with_cosine_scores_empty_list(self):
+    def test_update_traces_with_cosine_scores_empty_list(self) -> None:
         """Test with empty scores list."""
         mock_langfuse = MagicMock()
 
@@ -384,7 +354,7 @@ class TestUploadDatasetToLangfuse:
     """Test uploading datasets to Langfuse from pre-parsed items."""
 
     @pytest.fixture
-    def valid_items(self):
+    def valid_items(self) -> Any:
         """Valid parsed items."""
         return [
             {"question": "What is 2+2?", "answer": "4"},
@@ -407,15 +377,12 @@ class TestUploadDatasetToLangfuse:
         )
 
         assert langfuse_id == "dataset_123"
-        assert total_items == 15  # 3 items * 5 duplication
+        assert total_items == 15
 
-        # Verify dataset creation
         mock_langfuse.create_dataset.assert_called_once_with(name="test_dataset")
 
-        # Verify dataset items were created (3 original * 5 duplicates = 15)
         assert mock_langfuse.create_dataset_item.call_count == 15
 
-        # Verify flush was called once (final flush)
         assert mock_langfuse.flush.call_count == 1
 
     def test_upload_dataset_to_langfuse_duplication_metadata(self, valid_items):
@@ -432,22 +399,19 @@ class TestUploadDatasetToLangfuse:
             duplication_factor=3,
         )
 
-        # Check metadata in create_dataset_item calls
         calls = mock_langfuse.create_dataset_item.call_args_list
 
-        # Each original item should have 3 duplicates
         duplicate_numbers = []
         for call_args in calls:
             metadata = call_args.kwargs.get("metadata", {})
             duplicate_numbers.append(metadata.get("duplicate_number"))
             assert metadata.get("duplication_factor") == 3
 
-        # Should have 3 sets of duplicates (1, 2, 3)
-        assert duplicate_numbers.count(1) == 3  # 3 original items, each with dup #1
-        assert duplicate_numbers.count(2) == 3  # 3 original items, each with dup #2
-        assert duplicate_numbers.count(3) == 3  # 3 original items, each with dup #3
+        assert duplicate_numbers.count(1) == 3
+        assert duplicate_numbers.count(2) == 3
+        assert duplicate_numbers.count(3) == 3
 
-    def test_upload_dataset_to_langfuse_empty_items(self):
+    def test_upload_dataset_to_langfuse_empty_items(self) -> None:
         """Test with empty items list."""
         mock_langfuse = MagicMock()
         mock_dataset = MagicMock()
@@ -464,7 +428,6 @@ class TestUploadDatasetToLangfuse:
         assert langfuse_id == "dataset_123"
         assert total_items == 0
         mock_langfuse.create_dataset_item.assert_not_called()
-        # Only final flush
         assert mock_langfuse.flush.call_count == 1
 
     def test_upload_dataset_to_langfuse_single_duplication(self, valid_items):
@@ -481,9 +444,8 @@ class TestUploadDatasetToLangfuse:
             duplication_factor=1,
         )
 
-        assert total_items == 3  # 3 items * 1 duplication
+        assert total_items == 3
         assert mock_langfuse.create_dataset_item.call_count == 3
-        # final flush once
         assert mock_langfuse.flush.call_count == 1
 
     def test_upload_dataset_to_langfuse_item_creation_error(self, valid_items):
@@ -493,11 +455,10 @@ class TestUploadDatasetToLangfuse:
         mock_dataset.id = "dataset_123"
         mock_langfuse.create_dataset.return_value = mock_dataset
 
-        # First item succeeds, second fails, third succeeds
         mock_langfuse.create_dataset_item.side_effect = [
-            None,  # Item 1 success
-            Exception("API error"),  # Item 2 fails
-            None,  # Item 3 success
+            None,
+            Exception("API error"),
+            None,
         ]
 
         langfuse_id, total_items = upload_dataset_to_langfuse(
@@ -507,6 +468,5 @@ class TestUploadDatasetToLangfuse:
             duplication_factor=1,
         )
 
-        # 2 succeeded out of 3
         assert total_items == 2
         assert mock_langfuse.create_dataset_item.call_count == 3

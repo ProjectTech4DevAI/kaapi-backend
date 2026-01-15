@@ -1,9 +1,11 @@
-import pytest
 from unittest.mock import patch
-from sqlmodel import Session, select
+
+import pytest
+from sqlmodel import Session
 from fastapi import HTTPException
+
 from app.services.response.jobs import start_job
-from app.models import ResponsesAPIRequest, JobType, JobStatus, Job
+from app.models import ResponsesAPIRequest, JobType, JobStatus
 from app.crud import JobCrud
 from app.tests.utils.utils import get_project
 

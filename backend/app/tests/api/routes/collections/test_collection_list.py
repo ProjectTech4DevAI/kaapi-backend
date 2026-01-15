@@ -11,8 +11,8 @@ from app.tests.utils.collection import (
 
 def test_list_collections_returns_api_response(
     client: TestClient,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Basic sanity check:
     - Endpoint returns 200
@@ -36,8 +36,8 @@ def test_list_collections_returns_api_response(
 def test_list_collections_includes_assistant_collection(
     db: Session,
     client: TestClient,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Ensure that a newly created assistant-style collection (get_collection)
     appears in the list for the current project.
@@ -75,8 +75,8 @@ def test_list_collections_includes_assistant_collection(
 def test_list_collections_includes_vector_store_collection_with_fields(
     db: Session,
     client: TestClient,
-    user_api_key_header,
-):
+    user_api_key_header: dict[str, str],
+) -> None:
     """
     Ensure that vector-store-style collections created via get_vector_store_collection
     appear in the list and expose the expected LLM fields.
@@ -106,10 +106,8 @@ def test_list_collections_includes_vector_store_collection_with_fields(
 
 
 def test_list_collections_does_not_error_with_no_collections(
-    db: Session,
-    client: TestClient,
-    user_api_key_header,
-):
+    db: Session, client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
     """
     If the project has no collections yet, the endpoint should still return
     200 and an empty list (or at least a list).
