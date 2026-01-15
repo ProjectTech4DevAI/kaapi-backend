@@ -507,6 +507,7 @@ class TestDatasetUploadErrors:
 
         assert response.status_code == 401  # Unauthorized
 
+
 class TestBatchEvaluation:
     """Test batch evaluation endpoint using OpenAI Batch API."""
 
@@ -587,6 +588,7 @@ class TestBatchEvaluation:
         )
 
         assert response.status_code == 401  # Unauthorized
+
 
 class TestBatchEvaluationJSONLBuilding:
     """Test JSONL building logic for batch evaluation."""
