@@ -165,20 +165,27 @@ def delete_dataset(
         f"project_id={auth_context.project_.id}"
     )
 
-    success, message = delete_dataset_crud(
+    dataset = get_dataset_by_id(
         session=_session,
         dataset_id=dataset_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 
-    if not success:
-        if "not found" in message.lower():
-            raise HTTPException(status_code=404, detail=message)
-        else:
-            raise HTTPException(status_code=400, detail=message)
+    if not dataset:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
+        )
+
+    error = delete_dataset_crud(session=_session, dataset=dataset)
+
+    if error:
+        raise HTTPException(status_code=400, detail=error)
 
     logger.info(f"[delete_dataset] Successfully deleted dataset | id={dataset_id}")
     return APIResponse.success_response(
-        data={"message": message, "dataset_id": dataset_id}
+        data={
+            "message": f"Successfully deleted dataset '{dataset.name}' (id={dataset_id})",
+            "dataset_id": dataset_id,
+        }
     )

@@ -320,68 +320,51 @@ def update_dataset_langfuse_id(
         )
 
 
-def delete_dataset(
-    session: Session, dataset_id: int, organization_id: int, project_id: int
-) -> tuple[bool, str]:
+def delete_dataset(session: Session, dataset: EvaluationDataset) -> str | None:
     """
-    Delete an evaluation dataset by ID.
+    Delete an evaluation dataset.
 
     This performs a hard delete from the database. The CSV file in object store (if exists)
     will remain for audit purposes.
 
     Args:
         session: Database session
-        dataset_id: Dataset ID to delete
-        organization_id: Organization ID for validation
-        project_id: Project ID for validation
+        dataset: The dataset to delete (must be fetched beforehand)
 
     Returns:
-        Tuple of (success: bool, message: str)
+        None on success, error message string on failure
     """
-    # First, fetch the dataset to ensure it exists and belongs to the org/project
-    dataset = get_dataset_by_id(
-        session=session,
-        dataset_id=dataset_id,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
-
-    if not dataset:
-        return (
-            False,
-            f"Dataset {dataset_id} not found or not accessible",
-        )
-
     # Check if dataset is being used by any evaluation runs
-    statement = select(EvaluationRun).where(EvaluationRun.dataset_id == dataset_id)
+    statement = select(EvaluationRun).where(EvaluationRun.dataset_id == dataset.id)
     evaluation_runs = session.exec(statement).all()
 
     if evaluation_runs:
         return (
-            False,
-            f"Cannot delete dataset {dataset_id}: it is being used by "
+            f"Cannot delete dataset {dataset.id}: it is being used by "
             f"{len(evaluation_runs)} evaluation run(s). Please delete "
-            f"the evaluation runs first.",
+            f"the evaluation runs first."
         )
 
     # Delete the dataset
     try:
+        dataset_id = dataset.id
+        dataset_name = dataset.name
+        organization_id = dataset.organization_id
+        project_id = dataset.project_id
+
         session.delete(dataset)
         session.commit()
 
         logger.info(
-            f"[delete_dataset] Deleted dataset | id={dataset_id} | name={dataset.name} | org_id={organization_id} | project_id={project_id}"
+            f"[delete_dataset] Deleted dataset | id={dataset_id} | name={dataset_name} | org_id={organization_id} | project_id={project_id}"
         )
 
-        return (
-            True,
-            f"Successfully deleted dataset '{dataset.name}' (id={dataset_id})",
-        )
+        return None
 
     except Exception as e:
         session.rollback()
         logger.error(
-            f"[delete_dataset] Failed to delete dataset | dataset_id={dataset_id} | {e}",
+            f"[delete_dataset] Failed to delete dataset | dataset_id={dataset.id} | {e}",
             exc_info=True,
         )
-        return (False, f"Failed to delete dataset: {e}")
+        return f"Failed to delete dataset: {e}"
