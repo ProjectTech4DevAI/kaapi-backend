@@ -2,6 +2,8 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+import openai
+from openai import OpenAIError
 from sqlmodel import select
 
 from app.api.routes.threads import (
@@ -15,8 +17,6 @@ from app.api.routes.threads import (
 from app.models import OpenAI_Thread
 from app.crud import get_thread_result
 from app.core.langfuse.langfuse import LangfuseTracer
-import openai
-from openai import OpenAIError
 
 
 @patch("app.api.routes.threads.configure_openai")

@@ -25,7 +25,7 @@ from app.crud import (
 )
 
 
-def test_create_model_evaluation(db: Session):
+def test_create_model_evaluation(db: Session) -> None:
     project = get_project(db, "Dalgo")
 
     fine_tune_jobs, _ = create_test_finetuning_job_with_extra_fields(db, [0.5])
@@ -55,7 +55,7 @@ def test_create_model_evaluation(db: Session):
     assert created_eval.test_data_s3_object == fine_tune.test_data_s3_object
 
 
-def test_fetch_by_eval_id_success(db: Session):
+def test_fetch_by_eval_id_success(db: Session) -> None:
     model_evals = create_test_model_evaluation(db)
     model_eval = model_evals[0]
     result = fetch_by_eval_id(
@@ -64,7 +64,7 @@ def test_fetch_by_eval_id_success(db: Session):
     assert result.id == model_eval.id
 
 
-def test_fetch_by_eval_id_not_found(db: Session):
+def test_fetch_by_eval_id_not_found(db: Session) -> None:
     with pytest.raises(HTTPException) as exc:
         fetch_by_eval_id(
             db, eval_id=get_non_existent_id(db, ModelEvaluation), project_id=1
@@ -72,7 +72,7 @@ def test_fetch_by_eval_id_not_found(db: Session):
     assert exc.value.status_code == 404
 
 
-def test_fetch_eval_by_doc_id_success(db: Session):
+def test_fetch_eval_by_doc_id_success(db: Session) -> None:
     model_evals = create_test_model_evaluation(db)
     doc_id = model_evals[0].document_id
 
@@ -82,14 +82,14 @@ def test_fetch_eval_by_doc_id_success(db: Session):
     assert len(result) > 0
 
 
-def test_fetch_eval_by_doc_id_not_found(db: Session):
+def test_fetch_eval_by_doc_id_not_found(db: Session) -> None:
     valid_uuid = UUID("c5d479e2-66a5-40b8-aa76-4a2290b6d1f3")
     with pytest.raises(HTTPException) as exc:
         fetch_eval_by_doc_id(db, document_id=valid_uuid, project_id=1)
     assert exc.value.status_code == 404
 
 
-def test_fetch_top_model_by_doc_id_success(db: Session):
+def test_fetch_top_model_by_doc_id_success(db: Session) -> None:
     model_evals = create_test_model_evaluation(db)
     model_eval = model_evals[0]
     model_eval.score = {"mcc_score": 0.8}
@@ -103,14 +103,14 @@ def test_fetch_top_model_by_doc_id_success(db: Session):
     assert result.id == model_eval.id
 
 
-def test_fetch_top_model_by_doc_id_not_found(db: Session):
+def test_fetch_top_model_by_doc_id_not_found(db: Session) -> None:
     valid_uuid = UUID("c5d479e2-66a5-40b8-aa76-4a2290b6d1f3")
     with pytest.raises(HTTPException) as exc:
         fetch_top_model_by_doc_id(db, document_id=valid_uuid, project_id=1)
     assert exc.value.status_code == 404
 
 
-def test_fetch_active_model_evals(db: Session):
+def test_fetch_active_model_evals(db: Session) -> None:
     model_evals = create_test_model_evaluation(db)
     active_evals = fetch_active_model_evals(
         db,
@@ -121,7 +121,7 @@ def test_fetch_active_model_evals(db: Session):
     assert all(eval.status != "failed" for eval in active_evals)
 
 
-def test_update_model_eval_success(db: Session):
+def test_update_model_eval_success(db: Session) -> None:
     model_evals = create_test_model_evaluation(db)
     model_eval = model_evals[0]
 
@@ -134,7 +134,7 @@ def test_update_model_eval_success(db: Session):
     assert updated_eval.updated_at is not None
 
 
-def test_update_model_eval_not_found(db: Session):
+def test_update_model_eval_not_found(db: Session) -> None:
     project = get_project(db)
 
     with pytest.raises(HTTPException) as exc:

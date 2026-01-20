@@ -1,80 +1,46 @@
-Start an evaluation using OpenAI Batch API.
+Start an evaluation run using the OpenAI Batch API.
 
-This endpoint:
-1. Fetches the dataset from database and validates it has Langfuse dataset ID
-2. Creates an EvaluationRun record in the database
-3. Fetches dataset items from Langfuse
-4. Builds JSONL for batch processing (config is used as-is)
-5. Creates a batch job via the generic batch infrastructure
-6. Returns the evaluation run details with batch_job_id
+Evaluations allow you to systematically test LLM configurations against
+predefined datasets with automatic progress tracking and result collection.
 
-The batch will be processed asynchronously by Celery Beat (every 60s).
-Use GET /evaluations/{evaluation_id} to check progress.
+**Key Features:**
+* Fetches dataset items from Langfuse and creates batch processing job via OpenAI Batch API
+* Asynchronous processing with automatic progress tracking (checks every 60s)
+* Supports configuration from direct parameters or existing assistants
+* Stores results for comparison and analysis
+* Use `GET /evaluations/{evaluation_id}` to monitor progress and retrieve results of evaluation.
 
-## Request Body
-
-- **dataset_id** (required): ID of the evaluation dataset (from /evaluations/datasets)
-- **experiment_name** (required): Name for this evaluation experiment/run
-- **config** (optional): Configuration dict that will be used as-is in JSONL generation. Can include any OpenAI Responses API parameters like:
-  - model: str (e.g., "gpt-4o", "gpt-5")
-  - instructions: str
-  - tools: list (e.g., [{"type": "file_search", "vector_store_ids": [...]}])
-  - reasoning: dict (e.g., {"effort": "low"})
-  - text: dict (e.g., {"verbosity": "low"})
-  - temperature: float
-  - include: list (e.g., ["file_search_call.results"])
-  - Note: "input" will be added automatically from the dataset
-- **assistant_id** (optional): Assistant ID to fetch configuration from. If provided, configuration will be fetched from the assistant in the database. Config can be passed as empty dict {} when using assistant_id.
-
-## Example with config
+**Example: Using Direct Configuration**
 
 ```json
 {
-    "dataset_id": 123,
-    "experiment_name": "test_run",
-    "config": {
-        "model": "gpt-4.1",
-        "instructions": "You are a helpful FAQ assistant.",
-        "tools": [
-            {
-                "type": "file_search",
-                "vector_store_ids": ["vs_12345"],
-                "max_num_results": 3
-            }
-        ],
-        "include": ["file_search_call.results"]
-    }
+  "dataset_id": 123,
+  "experiment_name": "gpt4_file_search_test",
+  "config": {
+    "model": "gpt-4o",
+    "instructions": "You are a helpful FAQ assistant for farmers.",
+    "tools": [
+      {
+        "type": "file_search",
+        "vector_store_ids": ["vs_abc123"],
+        "max_num_results": 5
+      }
+    ],
+    "temperature": 0.7,
+    "include": ["file_search_call.results"]
+  }
 }
 ```
 
-## Example with assistant_id
+**Example: Using Existing Assistant**
 
 ```json
 {
-    "dataset_id": 123,
-    "experiment_name": "test_run",
-    "config": {},
-    "assistant_id": "asst_xyz"
+  "dataset_id": 123,
+  "experiment_name": "production_assistant_eval",
+  "config": {},
+  "assistant_id": "asst_xyz789"
 }
 ```
 
-## Returns
-
-EvaluationRunPublic with batch details and status:
-- id: Evaluation run ID
-- run_name: Name of the evaluation run
-- dataset_name: Name of the dataset used
-- dataset_id: ID of the dataset used
-- config: Configuration used for the evaluation
-- batch_job_id: ID of the batch job processing this evaluation
-- status: Current status (pending, running, completed, failed)
-- total_items: Total number of items being evaluated
-- completed_items: Number of items completed so far
-- results: Evaluation results (when completed)
-- error_message: Error message if failed
-
-## Error Responses
-
-- **404**: Dataset or assistant not found or not accessible
-- **400**: Missing required credentials (OpenAI or Langfuse), dataset missing Langfuse ID, or config missing required fields
-- **500**: Failed to configure API clients or start batch evaluation
+**Note:** When using `assistant_id`, configuration is fetched from the assistant in the database. You can pass `config` as an empty object `{}`.

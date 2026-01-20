@@ -1,21 +1,22 @@
-import pytest
+from typing import Any
 from uuid import uuid4
 
+import pytest
 from sqlmodel import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.models import CollectionJob, CollectionJobStatus, CollectionActionType
+from app.models import CollectionJob, CollectionJobStatus, CollectionActionType, Project
 from app.crud import CollectionJobCrud
 from app.core.util import now
 from app.tests.utils.utils import get_project
 
 
 def create_sample_collection_job(
-    db,
-    project_id,
-    action_type=CollectionActionType.CREATE,
-    status=CollectionJobStatus.PENDING,
-):
+    db: Session,
+    project_id: int,
+    action_type: CollectionActionType = CollectionActionType.CREATE,
+    status: CollectionJobStatus = CollectionJobStatus.PENDING,
+) -> CollectionJob:
     collection_job = CollectionJob(
         id=uuid4(),
         project_id=project_id,
@@ -32,12 +33,12 @@ def create_sample_collection_job(
 
 
 @pytest.fixture
-def sample_project(db: Session):
+def sample_project(db: Session) -> Project:
     """Fixture to create a sample project."""
     return get_project(db)
 
 
-def test_create_collection_job(db: Session, sample_project):
+def test_create_collection_job(db: Session, sample_project: Project) -> None:
     """Test case to create a CollectionJob."""
     collection_job = CollectionJob(
         id=uuid4(),
@@ -59,7 +60,7 @@ def test_create_collection_job(db: Session, sample_project):
     assert created_job.updated_at is not None
 
 
-def test_read_one_collection_job(db: Session, sample_project):
+def test_read_one_collection_job(db: Session, sample_project: Project) -> None:
     """Test case to read a single CollectionJob by ID."""
     collection_job = create_sample_collection_job(db, sample_project.id)
 
@@ -74,7 +75,7 @@ def test_read_one_collection_job(db: Session, sample_project):
     assert retrieved_job.inserted_at == collection_job.inserted_at
 
 
-def test_read_all_collection_jobs(db: Session, sample_project):
+def test_read_all_collection_jobs(db: Session, sample_project: Project) -> None:
     """Test case to retrieve all collection jobs for a project."""
     collection_job1 = create_sample_collection_job(db, sample_project.id)
     collection_job2 = create_sample_collection_job(db, sample_project.id)
@@ -91,7 +92,7 @@ def test_read_all_collection_jobs(db: Session, sample_project):
     assert str(collection_job2.id) in job_ids
 
 
-def test_update_collection_job(db: Session, sample_project):
+def test_update_collection_job(db: Session, sample_project: Project) -> None:
     """Test case to update a CollectionJob."""
     collection_job = create_sample_collection_job(db, sample_project.id)
 
@@ -108,7 +109,9 @@ def test_update_collection_job(db: Session, sample_project):
     assert updated_job.updated_at is not None
 
 
-def test_create_collection_job_with_invalid_data(db: Session, sample_project):
+def test_create_collection_job_with_invalid_data(
+    db: Session, sample_project: Project
+) -> None:
     """Test case to handle invalid data during job creation."""
     collection_job = CollectionJob(
         id=uuid4(),

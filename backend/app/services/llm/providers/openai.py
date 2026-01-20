@@ -5,7 +5,7 @@ from openai import OpenAI
 from openai.types.responses.response import Response
 
 from app.models.llm import (
-    CompletionConfig,
+    NativeCompletionConfig,
     LLMCallResponse,
     QueryParams,
     LLMOutput,
@@ -30,7 +30,7 @@ class OpenAIProvider(BaseProvider):
 
     def execute(
         self,
-        completion_config: CompletionConfig,
+        completion_config: NativeCompletionConfig,
         query: QueryParams,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:

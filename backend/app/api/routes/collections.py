@@ -2,10 +2,11 @@ import logging
 from uuid import UUID
 from typing import List
 
-from fastapi import APIRouter, Query, Body
+from fastapi import APIRouter, Query, Body, Depends
 from fastapi import Path as FastPath
 
-from app.api.deps import SessionDep, CurrentUserOrgProject
+from app.api.deps import SessionDep, AuthContextDep
+from app.api.permissions import Permission, require_permission
 from app.crud import (
     CollectionCrud,
     CollectionJobCrud,
@@ -35,7 +36,7 @@ from app.services.collections import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/collections", tags=["collections"])
+router = APIRouter(prefix="/collections", tags=["Collections"])
 collection_callback_router = APIRouter()
 
 
@@ -59,12 +60,13 @@ def collection_callback_notification(body: APIResponse[CollectionJobPublic]):
     "/",
     description=load_description("collections/list.md"),
     response_model=APIResponse[List[CollectionPublic]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_collections(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
 ):
-    collection_crud = CollectionCrud(session, current_user.project_id)
+    collection_crud = CollectionCrud(session, current_user.project_.id)
     rows = collection_crud.read_all()
 
     return APIResponse.success_response(rows)
@@ -75,20 +77,21 @@ def list_collections(
     description=load_description("collections/create.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def create_collection(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     request: CreationRequest,
 ):
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
 
-    collection_job_crud = CollectionJobCrud(session, current_user.project_id)
+    collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.create(
         CollectionJobCreate(
             action_type=CollectionActionType.CREATE,
-            project_id=current_user.project_id,
+            project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
         )
     )
@@ -102,8 +105,8 @@ def create_collection(
         db=session,
         request=request,
         collection_job_id=collection_job.id,
-        project_id=current_user.project_id,
-        organization_id=current_user.organization_id,
+        project_id=current_user.project_.id,
+        organization_id=current_user.organization_.id,
         with_assistant=with_assistant,
     )
 
@@ -126,28 +129,29 @@ def create_collection(
     description=load_description("collections/delete.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def delete_collection(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     collection_id: UUID = FastPath(description="Collection to delete"),
     request: CallbackRequest | None = Body(default=None),
 ):
     if request and request.callback_url:
         validate_callback_url(str(request.callback_url))
 
-    _ = CollectionCrud(session, current_user.project_id).read_one(collection_id)
+    _ = CollectionCrud(session, current_user.project_.id).read_one(collection_id)
 
     deletion_request = DeletionRequest(
         collection_id=collection_id,
         callback_url=request.callback_url if request else None,
     )
 
-    collection_job_crud = CollectionJobCrud(session, current_user.project_id)
+    collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.create(
         CollectionJobCreate(
             action_type=CollectionActionType.DELETE,
-            project_id=current_user.project_id,
+            project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
             collection_id=collection_id,
         )
@@ -157,8 +161,8 @@ def delete_collection(
         db=session,
         request=deletion_request,
         collection_job_id=collection_job.id,
-        project_id=current_user.project_id,
-        organization_id=current_user.organization_id,
+        project_id=current_user.project_.id,
+        organization_id=current_user.organization_.id,
     )
 
     return APIResponse.success_response(
@@ -170,10 +174,11 @@ def delete_collection(
     "/{collection_id}",
     description=load_description("collections/info.md"),
     response_model=APIResponse[CollectionWithDocsPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def collection_info(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     collection_id: UUID = FastPath(description="Collection to retrieve"),
     include_docs: bool = Query(
         True,
@@ -182,7 +187,7 @@ def collection_info(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, gt=0, le=100),
 ):
-    collection_crud = CollectionCrud(session, current_user.project_id)
+    collection_crud = CollectionCrud(session, current_user.project_.id)
     collection = collection_crud.read_one(collection_id)
 
     collection_with_docs = CollectionWithDocsPublic.model_validate(collection)

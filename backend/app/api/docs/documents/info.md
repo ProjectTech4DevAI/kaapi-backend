@@ -1,1 +1,3 @@
-Retrieve all information about a given document. If you set the ``include_url`` parameter to true, a signed URL will be included in the response, which is a clickable link to access the retrieved document. If you don't set it to true, the URL will not be included in the response.
+Retrieve all information about a given document.
+
+If you set the ``include_url`` parameter to true, a signed URL will be included in the response, which is a clickable link to access the retrieved document. If you don't set it to true, the URL will not be included in the response.

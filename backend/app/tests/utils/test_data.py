@@ -3,13 +3,11 @@ from sqlmodel import Session
 from app.models import (
     Organization,
     Project,
-    APIKey,
     APIKeyCreateResponse,
     Credential,
     OrganizationCreate,
     ProjectCreate,
     ConfigBlob,
-    CompletionConfig,
     CredsCreate,
     FineTuningJobCreate,
     Fine_Tuning,
@@ -20,8 +18,9 @@ from app.models import (
     ConfigCreate,
     ConfigVersion,
     ConfigVersionCreate,
-    ConfigBase,
+    EvaluationDataset,
 )
+from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
 from app.crud import (
     create_organization,
     create_project,
@@ -208,7 +207,7 @@ def create_test_finetuning_job_with_extra_fields(
     return jobs, True
 
 
-def create_test_model_evaluation(db) -> list[ModelEvaluation]:
+def create_test_model_evaluation(db: Session) -> list[ModelEvaluation]:
     fine_tune_jobs, _ = create_test_finetuning_job_with_extra_fields(db, [0.5, 0.7])
 
     model_evaluations = []
@@ -242,11 +241,20 @@ def create_test_config(
     name: str | None = None,
     description: str | None = None,
     config_blob: ConfigBlob | None = None,
+    use_kaapi_schema: bool = False,
 ) -> Config:
     """
     Creates and returns a test configuration with an initial version.
 
     Persists the config and version to the database.
+
+    Args:
+        db: Database session
+        project_id: Project ID (creates new project if None)
+        name: Config name (generates random if None)
+        description: Config description
+        config_blob: Config blob (creates default if None)
+        use_kaapi_schema: If True, creates Kaapi-format config; if False, creates native format
     """
     if project_id is None:
         project = create_test_project(db)
@@ -256,16 +264,29 @@ def create_test_config(
         name = f"test-config-{random_lower_string()}"
 
     if config_blob is None:
-        config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
-                params={
-                    "model": "gpt-4",
-                    "temperature": 0.7,
-                    "max_tokens": 1000,
-                },
+        if use_kaapi_schema:
+            # Create Kaapi-format config
+            config_blob = ConfigBlob(
+                completion=KaapiCompletionConfig(
+                    provider="openai",
+                    params=KaapiLLMParams(
+                        model="gpt-4",
+                        temperature=0.7,
+                    ),
+                )
             )
-        )
+        else:
+            # Create native-format config
+            config_blob = ConfigBlob(
+                completion=NativeCompletionConfig(
+                    provider="openai-native",
+                    params={
+                        "model": "gpt-4",
+                        "temperature": 0.7,
+                        "max_tokens": 1000,
+                    },
+                )
+            )
 
     config_create = ConfigCreate(
         name=name,
@@ -282,7 +303,7 @@ def create_test_config(
 
 def create_test_version(
     db: Session,
-    config_id,
+    config_id: int,
     project_id: int,
     config_blob: ConfigBlob | None = None,
     commit_message: str | None = None,
@@ -294,8 +315,8 @@ def create_test_version(
     """
     if config_blob is None:
         config_blob = ConfigBlob(
-            completion=CompletionConfig(
-                provider="openai",
+            completion=NativeCompletionConfig(
+                provider="openai-native",
                 params={
                     "model": "gpt-4",
                     "temperature": 0.8,
@@ -315,3 +336,41 @@ def create_test_version(
     version = version_crud.create_or_raise(version_create=version_create)
 
     return version
+
+
+def create_test_evaluation_dataset(
+    db: Session,
+    organization_id: int,
+    project_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    original_items_count: int = 3,
+    duplication_factor: int = 1,
+) -> EvaluationDataset:
+    """
+    Creates and returns a test evaluation dataset.
+
+    Persists the dataset to the database.
+    """
+    if name is None:
+        name = f"test_dataset_{random_lower_string()}"
+
+    total_items_count = original_items_count * duplication_factor
+
+    dataset = EvaluationDataset(
+        name=name,
+        description=description or "Test evaluation dataset",
+        dataset_metadata={
+            "original_items_count": original_items_count,
+            "total_items_count": total_items_count,
+            "duplication_factor": duplication_factor,
+        },
+        langfuse_dataset_id=f"langfuse_{random_lower_string()}",
+        object_store_url=f"s3://test/{name}.csv",
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return dataset

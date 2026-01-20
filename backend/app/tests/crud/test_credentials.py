@@ -1,6 +1,5 @@
 import pytest
 from sqlmodel import Session
-from fastapi import HTTPException
 
 from app.crud import (
     set_creds_for_org,
@@ -23,7 +22,6 @@ def test_set_credentials_for_org(db: Session) -> None:
     """Test setting credentials for an organization."""
     project = create_test_project(db)
 
-    # Test credentials for supported providers
     credentials_data = {
         "openai": {"api_key": "test-openai-key"},
         "langfuse": {
@@ -57,7 +55,6 @@ def test_get_creds_by_org(db: Session) -> None:
     """Test retrieving all credentials for an organization."""
     project = create_test_project(db)
 
-    # Set up test credentials
     credentials_data = {
         "openai": {"api_key": "test-openai-key"},
         "langfuse": {
@@ -78,7 +75,6 @@ def test_get_creds_by_org(db: Session) -> None:
         project_id=project.id,
     )
 
-    # Test retrieving credentials
     retrieved_creds = get_creds_by_org(
         session=db, org_id=project.organization_id, project_id=project.id
     )
@@ -102,7 +98,6 @@ def test_get_provider_credential(db: Session) -> None:
         organization_id=project.organization_id,
         project_id=project.id,
     )
-    # Test retrieving specific provider credentials
     retrieved_cred = get_provider_credential(
         session=db,
         org_id=project.organization_id,
@@ -126,7 +121,6 @@ def test_update_creds_for_org(db: Session) -> None:
         project_id=project.id,
         full=True,
     )
-    # Update credentials
     updated_creds = {"api_key": "updated-key"}
     creds_update = CredsUpdate(provider="openai", credential=updated_creds)
 
@@ -160,7 +154,6 @@ def test_remove_provider_credential(db: Session) -> None:
         full=True,
     )
 
-    # Remove one provider's credentials
     remove_provider_credential(
         session=db,
         org_id=credential.organization_id,
@@ -181,7 +174,6 @@ def test_remove_creds_for_org(db: Session) -> None:
     """Test removing all credentials for an organization."""
     project = create_test_project(db)
 
-    # Set up test credentials
     credentials_data = {
         "openai": {"api_key": "test-openai-key"},
         "langfuse": {
@@ -202,7 +194,6 @@ def test_remove_creds_for_org(db: Session) -> None:
         project_id=project.id,
     )
 
-    # Remove all credentials
     remove_creds_for_org(
         session=db, org_id=project.organization_id, project_id=project.id
     )
@@ -217,7 +208,6 @@ def test_invalid_provider(db: Session) -> None:
     """Test handling of invalid provider names."""
     project = create_test_project(db)
 
-    # Test with unsupported provider
     credentials_data = {"gemini": {"api_key": "test-key"}}
     credentials_create = CredsCreate(
         is_active=True,
@@ -237,7 +227,6 @@ def test_duplicate_provider_credentials(db: Session) -> None:
     """Test handling of duplicate provider credentials."""
     project = create_test_project(db)
 
-    # Set up initial credentials
     credentials_data = {"openai": {"api_key": "test-key"}}
 
     credentials_create = CredsCreate(
@@ -251,7 +240,6 @@ def test_duplicate_provider_credentials(db: Session) -> None:
         project_id=project.id,
     )
 
-    # Verify credentials exist and are active
     existing_creds = get_provider_credential(
         session=db,
         org_id=project.organization_id,
@@ -288,7 +276,6 @@ def test_langfuse_credential_validation(db: Session) -> None:
             project_id=project.id,
         )
 
-    # Test with valid Langfuse credentials
     valid_credentials = {
         "langfuse": {
             "public_key": "test-public-key",

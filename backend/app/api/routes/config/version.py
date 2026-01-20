@@ -33,7 +33,7 @@ def create_version(
     The version number is automatically incremented.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project.id, config_id=config_id
+        session=session, project_id=current_user.project_.id, config_id=config_id
     )
     version = version_crud.create_or_raise(version_create=version_create)
 
@@ -61,7 +61,7 @@ def list_versions(
     Ordered by version number in descending order.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project.id, config_id=config_id
+        session=session, project_id=current_user.project_.id, config_id=config_id
     )
     versions = version_crud.read_all(
         skip=skip,
@@ -91,7 +91,7 @@ def get_version(
     Get a specific version of a config.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project.id, config_id=config_id
+        session=session, project_id=current_user.project_.id, config_id=config_id
     )
     version = version_crud.exists_or_raise(version_number=version_number)
     return APIResponse.success_response(
@@ -118,7 +118,7 @@ def delete_version(
     Delete a specific version of a config.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project.id, config_id=config_id
+        session=session, project_id=current_user.project_.id, config_id=config_id
     )
     version_crud.delete_or_raise(version_number=version_number)
 

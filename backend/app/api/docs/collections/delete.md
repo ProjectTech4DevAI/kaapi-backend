@@ -1,6 +1,6 @@
 Remove a collection from the platform. This is a two step process:
 
-1. Delete all OpenAI resources that were allocated: file(s), the Vector
+1. Delete all resources that were allocated: file(s), the Vector
    Store, and the Assistant.
 2. Delete the collection entry from the kaapi database.
 

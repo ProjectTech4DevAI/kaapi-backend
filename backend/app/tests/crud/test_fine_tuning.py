@@ -15,7 +15,7 @@ from app.tests.utils.test_data import create_test_fine_tuning_jobs
 from app.tests.utils.utils import get_project, get_document
 
 
-def test_create_fine_tuning_job(db: Session):
+def test_create_fine_tuning_job(db: Session) -> None:
     project = get_project(db, "Dalgo")
     document = get_document(db, "dalgo_sample.json")
 
@@ -42,7 +42,7 @@ def test_create_fine_tuning_job(db: Session):
     assert created_job.provider_job_id is None
 
 
-def test_fetch_by_provider_job_id_success(db: Session):
+def test_fetch_by_provider_job_id_success(db: Session) -> None:
     jobs, _ = create_test_fine_tuning_jobs(db, ratios=[0.3])
     job = jobs[0]
 
@@ -52,13 +52,13 @@ def test_fetch_by_provider_job_id_success(db: Session):
     assert result.id == job.id
 
 
-def test_fetch_by_provider_job_id_not_found(db: Session):
+def test_fetch_by_provider_job_id_not_found(db: Session) -> None:
     with pytest.raises(HTTPException) as exc:
         fetch_by_provider_job_id(db, "invalid_id", project_id=999)
     assert exc.value.status_code == 404
 
 
-def test_fetch_by_id_success(db: Session):
+def test_fetch_by_id_success(db: Session) -> None:
     jobs, _ = create_test_fine_tuning_jobs(db, ratios=[0.3, 0.4])
     job = jobs[0]
 
@@ -66,13 +66,13 @@ def test_fetch_by_id_success(db: Session):
     assert result.id == job.id
 
 
-def test_fetch_by_id_not_found(db: Session):
+def test_fetch_by_id_not_found(db: Session) -> None:
     with pytest.raises(HTTPException) as exc:
         fetch_by_id(db, job_id=9999, project_id=1)
     assert exc.value.status_code == 404
 
 
-def test_fetch_by_document_id_filters(db: Session):
+def test_fetch_by_document_id_filters(db: Session) -> None:
     jobs, _ = create_test_fine_tuning_jobs(db, ratios=[0.3, 0.4])
     job = jobs[0]
 
@@ -87,7 +87,7 @@ def test_fetch_by_document_id_filters(db: Session):
     assert results[0].id == job.id
 
 
-def test_update_finetune_job(db: Session):
+def test_update_finetune_job(db: Session) -> None:
     jobs, _ = create_test_fine_tuning_jobs(db, ratios=[0.3, 0.4])
     job = jobs[0]
 
@@ -98,7 +98,7 @@ def test_update_finetune_job(db: Session):
     assert updated_job.fine_tuned_model == "ft:gpt-4:custom"
 
 
-def test_fetch_active_jobs_by_document_id(db: Session):
+def test_fetch_active_jobs_by_document_id(db: Session) -> None:
     project = get_project(db, "Dalgo")
     document = get_document(db, "dalgo_sample.json")
 

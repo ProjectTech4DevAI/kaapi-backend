@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends
 from pydantic.networks import EmailStr
 
-from app.api.deps import get_current_active_superuser
 from app.models import Message
 from app.utils import generate_test_email, send_email
+from app.api.permissions import Permission, require_permission
 
 router = APIRouter(prefix="/utils", tags=["utils"])
 
 
 @router.post(
     "/test-email/",
-    dependencies=[Depends(get_current_active_superuser)],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     status_code=201,
     include_in_schema=False,
 )

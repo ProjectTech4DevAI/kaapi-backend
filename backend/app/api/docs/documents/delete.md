@@ -1,4 +1,4 @@
-Perform a soft delete of the document. A soft delete makes the
+Perform a delete of the document. This makes the
 document invisible. It does not delete the document from cloud storage
 or its information from the database.
 

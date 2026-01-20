@@ -1,10 +1,12 @@
 from uuid import UUID, uuid4
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.tests.utils.auth import TestAuthContext
 from app.models import CollectionJobStatus
 from app.tests.utils.utils import get_project
 from app.tests.utils.collection import get_collection
@@ -12,12 +14,12 @@ from app.tests.utils.collection import get_collection
 
 @patch("app.api.routes.collections.delete_service.start_job")
 def test_delete_collection_calls_start_job_and_returns_job(
-    mock_start_job,
+    mock_start_job: Any,
     db: Session,
     client: TestClient,
     user_api_key_header: dict[str, str],
-    user_api_key,
-):
+    user_api_key: TestAuthContext,
+) -> None:
     """
     Happy path:
     - Existing collection for the current project
@@ -59,12 +61,12 @@ def test_delete_collection_calls_start_job_and_returns_job(
 
 @patch("app.api.routes.collections.delete_service.start_job")
 def test_delete_collection_with_callback_url_passes_it_to_start_job(
-    mock_start_job,
+    mock_start_job: Any,
     db: Session,
     client: TestClient,
     user_api_key_header: dict[str, str],
-    user_api_key,
-):
+    user_api_key: TestAuthContext,
+) -> None:
     """
     When a callback_url is provided in the request body, ensure it is passed
     into the DeletionRequest and then into delete_service.start_job.
@@ -103,10 +105,10 @@ def test_delete_collection_with_callback_url_passes_it_to_start_job(
 
 @patch("app.api.routes.collections.delete_service.start_job")
 def test_delete_collection_not_found_returns_404_and_does_not_start_job(
-    mock_start_job,
+    mock_start_job: Any,
     client: TestClient,
     user_api_key_header: dict[str, str],
-):
+) -> None:
     """
     For a random UUID that doesn't correspond to any collection, we expect:
     - 404 response

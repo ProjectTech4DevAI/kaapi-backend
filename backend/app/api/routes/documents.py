@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     Query,
@@ -13,7 +14,8 @@ from fastapi import (
 from pydantic import HttpUrl
 from fastapi import Path as FastPath
 
-from app.api.deps import CurrentUserOrgProject, SessionDep
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud import CollectionCrud, DocumentCrud
 from app.crud.rag import OpenAIAssistantCrud, OpenAIVectorStoreCrud
@@ -42,7 +44,7 @@ from app.utils import (
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/documents", tags=["documents"])
+router = APIRouter(prefix="/documents", tags=["Documents"])
 doctransformation_callback_router = APIRouter()
 
 
@@ -68,21 +70,22 @@ def doctransformation_callback_notification(
     "/",
     description=load_description("documents/list.md"),
     response_model=APIResponse[list[Union[DocumentPublic, TransformedDocumentPublic]]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_docs(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, gt=0, le=100),
     include_url: bool = Query(
         False, description="Include a signed URL to access each document"
     ),
 ):
-    crud = DocumentCrud(session, current_user.project_id)
+    crud = DocumentCrud(session, current_user.project_.id)
     documents = crud.read_many(skip, limit)
 
     storage = (
-        get_cloud_storage(session=session, project_id=current_user.project_id)
+        get_cloud_storage(session=session, project_id=current_user.project_.id)
         if include_url and documents
         else None
     )
@@ -100,10 +103,11 @@ def list_docs(
     description=load_description("documents/upload.md"),
     response_model=APIResponse[DocumentUploadResponse],
     callbacks=doctransformation_callback_router.routes,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 async def upload_doc(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     src: UploadFile = File(...),
     target_format: str
     | None = Form(
@@ -126,11 +130,11 @@ async def upload_doc(
         transformer=transformer,
     )
 
-    storage = get_cloud_storage(session=session, project_id=current_user.project_id)
+    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
     object_store_url = storage.put(src, Path(str(document_id)))
 
-    crud = DocumentCrud(session, current_user.project_id)
+    crud = DocumentCrud(session, current_user.project_.id)
     document = Document(
         id=document_id,
         fname=src.filename,
@@ -140,8 +144,7 @@ async def upload_doc(
 
     job_info: TransformationJobInfo | None = schedule_transformation(
         session=session,
-        project_id=current_user.project_id,
-        current_user=current_user,
+        project_id=current_user.project_.id,
         source_format=source_format,
         target_format=target_format,
         actual_transformer=actual_transformer,
@@ -167,20 +170,21 @@ async def upload_doc(
     "/{doc_id}",
     description=load_description("documents/delete.md"),
     response_model=APIResponse[Message],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def remove_doc(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to delete"),
 ):
     client = get_openai_client(
-        session, current_user.organization_id, current_user.project_id
+        session, current_user.organization_.id, current_user.project_.id
     )
 
     a_crud = OpenAIAssistantCrud(client)
     v_crud = OpenAIVectorStoreCrud(client)
-    d_crud = DocumentCrud(session, current_user.project_id)
-    c_crud = CollectionCrud(session, current_user.project_id)
+    d_crud = DocumentCrud(session, current_user.project_.id)
+    c_crud = CollectionCrud(session, current_user.project_.id)
     document = d_crud.read_one(doc_id)
 
     remote = pick_service_for_documennt(
@@ -198,20 +202,21 @@ def remove_doc(
     "/{doc_id}/permanent",
     description=load_description("documents/permanent_delete.md"),
     response_model=APIResponse[Message],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def permanent_delete_doc(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to permanently delete"),
 ):
     client = get_openai_client(
-        session, current_user.organization_id, current_user.project_id
+        session, current_user.organization_.id, current_user.project_.id
     )
     a_crud = OpenAIAssistantCrud(client)
     v_crud = OpenAIVectorStoreCrud(client)
-    d_crud = DocumentCrud(session, current_user.project_id)
-    c_crud = CollectionCrud(session, current_user.project_id)
-    storage = get_cloud_storage(session=session, project_id=current_user.project_id)
+    d_crud = DocumentCrud(session, current_user.project_.id)
+    c_crud = CollectionCrud(session, current_user.project_.id)
+    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
 
     document = d_crud.read_one(doc_id)
 
@@ -232,20 +237,21 @@ def permanent_delete_doc(
     "/{doc_id}",
     description=load_description("documents/info.md"),
     response_model=APIResponse[Union[DocumentPublic, TransformedDocumentPublic]],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def doc_info(
     session: SessionDep,
-    current_user: CurrentUserOrgProject,
+    current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to retrieve"),
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
 ):
-    crud = DocumentCrud(session, current_user.project_id)
+    crud = DocumentCrud(session, current_user.project_.id)
     document = crud.read_one(doc_id)
 
     storage = (
-        get_cloud_storage(session=session, project_id=current_user.project_id)
+        get_cloud_storage(session=session, project_id=current_user.project_.id)
         if include_url
         else None
     )

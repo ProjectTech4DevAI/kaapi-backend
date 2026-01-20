@@ -19,10 +19,10 @@ from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session, select
 
-from app.core.batch.openai import OpenAIBatchProvider
-from app.crud.batch_job import get_batch_job
-from app.crud.batch_operations import (
+from app.core.batch import (
+    OpenAIBatchProvider,
     download_batch_results,
+    poll_batch_status,
     upload_batch_results_to_object_store,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
@@ -36,6 +36,7 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
+from app.crud.job import get_batch_job
 from app.models import EvaluationRun
 from app.utils import get_langfuse_client, get_openai_client
 
@@ -484,10 +485,6 @@ async def check_and_process_evaluation(
             if embedding_batch_job:
                 # Poll embedding batch status
                 provider = OpenAIBatchProvider(client=openai_client)
-
-                # Local import to avoid circular dependency with batch_operations
-                from app.crud.batch_operations import poll_batch_status
-
                 poll_batch_status(
                     session=session, provider=provider, batch_job=embedding_batch_job
                 )
@@ -560,8 +557,6 @@ async def check_and_process_evaluation(
 
         # IMPORTANT: Poll OpenAI to get the latest status before checking
         provider = OpenAIBatchProvider(client=openai_client)
-        from app.crud.batch_operations import poll_batch_status
-
         poll_batch_status(session=session, provider=provider, batch_job=batch_job)
 
         # Refresh batch_job to get the updated provider_status

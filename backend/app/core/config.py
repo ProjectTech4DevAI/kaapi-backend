@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ] = "development"
 
     PROJECT_NAME: str
+    API_VERSION: str = "0.5.0"
     SENTRY_DSN: HttpUrl | None = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432

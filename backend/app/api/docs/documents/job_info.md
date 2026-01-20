@@ -1,1 +1,3 @@
-Get the status and details of a document transformation job. If you set the ``include_url`` parameter to true, a signed URL will be included in the response, which is a clickable link to access the transformed document if the job has been successful. If you don't set it to true, the URL will not be included in the response.
+Get the status and details of a document transformation job.
+
+If you set the ``include_url`` parameter to true, a signed URL will be included in the response, which is a clickable link to access the transformed document if the job has been successful. If you don't set it to true, the URL will not be included in the response.

@@ -1,11 +1,12 @@
 from unittest.mock import patch
 from fastapi.testclient import TestClient
+
 from app.models import ResponsesAPIRequest
 
 
 def test_responses_async_success(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     with patch("app.api.routes.responses.start_job") as mock_start_job:
         payload = ResponsesAPIRequest(
             assistant_id="assistant_123",

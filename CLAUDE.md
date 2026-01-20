@@ -20,8 +20,8 @@ fastapi run --reload app/main.py
 # Run pre-commit hooks
 uv run pre-commit run --all-files
 
-# Generate database migration
-alembic revision --autogenerate -m 'Description'
+# Generate database migration (rev-id should be latest existing revision ID + 1)
+alembic revision --autogenerate -m "Description" --rev-id 040
 
 # Seed database with test data
 uv run python -m app.seed_data.seed_data
@@ -90,3 +90,50 @@ The application uses different environment files:
 
 - Python 3.11+ with type hints
 - Pre-commit hooks for linting and formatting
+
+## Coding Conventions
+
+### Type Hints
+
+Always add type hints to all function parameters and return values.
+
+### Logging Format
+
+Prefix all log messages with the function name in square brackets.
+
+```python
+logger.info(f"[function_name] Message {mask_string(sensitive_value)}")
+```
+
+### Database Column Comments
+
+Use sa_column_kwargs["comment"] to describe database columns, especially when the purpose isn’t obvious. This helps non-developers understand column purposes directly from the database schema:
+
+```python
+field_name: int = Field(
+    foreign_key="table.id",
+    nullable=False,
+    ondelete="CASCADE",
+    sa_column_kwargs={"comment": "What this column represents"}
+)
+```
+
+Prioritize comments for:
+- Columns with non-obvious purposes
+- Status/type fields (document valid values)
+- JSON/metadata columns (describe expected structure)
+- Foreign keys (clarify the relationship)
+
+### Endpoint Documentation
+
+Load Swagger descriptions from external markdown files instead of inline strings:
+
+```python
+@router.post(
+    "/endpoint",
+    description=load_description("domain/action.md"),
+    response_model=APIResponse[ResponseModel],
+)
+```
+
+Store documentation files in `backend/app/api/docs/<domain>/<action>.md`

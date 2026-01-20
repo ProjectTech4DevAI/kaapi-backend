@@ -1,4 +1,4 @@
-name: Deploy AI Platform to ECS
+name: Deploy Kaapi to ECS
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    if: false
     runs-on: ubuntu-latest
     environment: AWS_ENV_VARS
 

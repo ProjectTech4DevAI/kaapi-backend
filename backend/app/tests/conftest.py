@@ -7,7 +7,7 @@ os.environ["ENVIRONMENT"] = "testing"
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 from sqlalchemy import event
-from collections.abc import Generator
+from typing import Any, Generator
 
 # Now import after setting environment
 from app.core.config import settings
@@ -21,7 +21,7 @@ from app.tests.utils.auth import (
     get_user_test_auth_context,
     TestAuthContext,
 )
-from app.seed_data.seed_data import seed_database
+from app.tests.seed_data.seed_data import seed_database
 
 
 @pytest.fixture(scope="function")
@@ -46,7 +46,7 @@ def db() -> Generator[Session, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def seed_baseline():
+def seed_baseline() -> Generator[None, None, None]:
     """
     Seeds the database with baseline test data including credentials.
 
@@ -62,7 +62,7 @@ def seed_baseline():
 
 
 @pytest.fixture(scope="function")
-def client(db: Session):
+def client(db: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app) as c:
         yield c

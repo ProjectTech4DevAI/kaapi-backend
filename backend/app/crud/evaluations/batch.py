@@ -14,8 +14,7 @@ from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session
 
-from app.core.batch.openai import OpenAIBatchProvider
-from app.crud.batch_operations import start_batch_job
+from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.models import EvaluationRun
 
 logger = logging.getLogger(__name__)

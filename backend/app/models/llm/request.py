@@ -1,8 +1,44 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from uuid import UUID
 from sqlmodel import Field, SQLModel
-from pydantic import model_validator, HttpUrl
+from pydantic import Discriminator, model_validator, HttpUrl
+
+
+class KaapiLLMParams(SQLModel):
+    """
+    Kaapi-abstracted parameters for LLM providers.
+    These parameters are mapped internally to provider-specific API parameters.
+    Provides a unified contract across all LLM providers (OpenAI, Claude, Gemini, etc.).
+    Provider-specific mappings are handled at the mapper level.
+    """
+
+    model: str = Field(
+        description="Model identifier to use for completion (e.g., 'gpt-4o', 'gpt-5')",
+    )
+    instructions: str | None = Field(
+        default=None,
+        description="System instructions to guide the model's behavior",
+    )
+    knowledge_base_ids: list[str] | None = Field(
+        default=None,
+        description="List of vector store IDs to use for knowledge retrieval",
+    )
+    reasoning: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Reasoning configuration or instructions",
+    )
+    temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature between 0 and 2",
+    )
+    max_num_results: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of results to return",
+    )
 
 
 class ConversationConfig(SQLModel):
@@ -46,16 +82,42 @@ class QueryParams(SQLModel):
     )
 
 
-class CompletionConfig(SQLModel):
-    """Completion configuration with provider and parameters."""
+class NativeCompletionConfig(SQLModel):
+    """
+    Native provider configuration (pass-through).
+    All parameters are forwarded as-is to the provider's API without transformation.
+    Supports any LLM provider's native API format.
+    """
 
-    provider: Literal["openai"] = Field(
-        default="openai", description="LLM provider to use"
+    provider: Literal["openai-native"] = Field(
+        default="openai-native",
+        description="Native provider type (e.g., openai-native)",
     )
     params: dict[str, Any] = Field(
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
+
+
+class KaapiCompletionConfig(SQLModel):
+    """
+    Kaapi abstraction for LLM completion providers.
+    Uses standardized Kaapi parameters that are mapped to provider-specific APIs internally.
+    Supports multiple providers: OpenAI, Claude, Gemini, etc.
+    """
+
+    provider: Literal["openai"] = Field(..., description="LLM provider (openai)")
+    params: KaapiLLMParams = Field(
+        ...,
+        description="Kaapi-standardized parameters mapped to provider-specific API",
+    )
+
+
+# Discriminated union for completion configs based on provider field
+CompletionConfig = Annotated[
+    Union[NativeCompletionConfig, KaapiCompletionConfig],
+    Field(discriminator="provider"),
+]
 
 
 class ConfigBlob(SQLModel):

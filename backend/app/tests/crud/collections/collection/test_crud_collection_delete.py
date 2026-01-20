@@ -1,10 +1,7 @@
-import pytest
-
 import openai_responses
 from openai import OpenAI
 from sqlmodel import Session, select
 
-from app.core.config import settings
 from app.crud import CollectionCrud
 from app.models import APIKey, Collection
 from app.crud.rag import OpenAIAssistantCrud
@@ -38,7 +35,7 @@ class TestCollectionDelete:
     _n_collections = 5
 
     @openai_responses.mock()
-    def test_delete_marks_deleted(self, db: Session):
+    def test_delete_marks_deleted(self, db: Session) -> None:
         project = get_project(db)
         client = OpenAI(api_key="sk-test-key")
 
@@ -51,7 +48,7 @@ class TestCollectionDelete:
         assert collection_.deleted_at is not None
 
     @openai_responses.mock()
-    def test_delete_follows_insert(self, db: Session):
+    def test_delete_follows_insert(self, db: Session) -> None:
         client = OpenAI(api_key="sk-test-key")
 
         assistant = OpenAIAssistantCrud(client)
@@ -64,7 +61,7 @@ class TestCollectionDelete:
         assert collection_.inserted_at <= collection_.deleted_at
 
     @openai_responses.mock()
-    def test_delete_document_deletes_collections(self, db: Session):
+    def test_delete_document_deletes_collections(self, db: Session) -> None:
         project = get_project(db)
         store = DocumentStore(db, project_id=project.id)
         documents = store.fill(1)

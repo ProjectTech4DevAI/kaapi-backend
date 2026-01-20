@@ -1,309 +1,236 @@
-# AI Platform - Deployment
+# Kaapi - Deployment
 
-You can deploy the project using Docker Compose to a remote server.
+Kaapi uses a modern cloud-native deployment architecture built on AWS services with automated CI/CD pipelines.
 
-This project expects you to have a Traefik proxy handling communication to the outside world and HTTPS certificates.
+## Deployment Architecture
 
-You can use CI/CD (continuous integration and continuous deployment) systems to deploy automatically, there are already configurations to do it with GitHub Actions.
+### Overview
 
-But you have to configure a couple things first. 🤓
+The deployment follows a containerized approach where:
+- Application code is packaged into Docker images
+- Images are stored in AWS ECR (Elastic Container Registry)
+- ECS (Elastic Container Service) runs and manages the containers
+- GitHub Actions automates the build and deployment process
 
-## Preparation
+### CI/CD Pipeline
 
-* Have a remote server ready and available.
-* Configure the DNS records of your domain to point to the IP of the server you just created.
-* Configure a wildcard subdomain for your domain, so that you can have multiple subdomains for different services, e.g. `*.fastapi-project.example.com`. This will be useful for accessing different components, like `dashboard.fastapi-project.example.com`, `api.fastapi-project.example.com`, `traefik.fastapi-project.example.com`, `adminer.fastapi-project.example.com`, etc. And also for `staging`, like `dashboard.staging.fastapi-project.example.com`, `adminer.staging..fastapi-project.example.com`, etc.
-* Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).
+The deployment pipeline is triggered automatically:
+1. **Code Push**: Developer pushes code to GitHub
+2. **Build**: GitHub Actions builds Docker image
+3. **Push**: Image is pushed to ECR
+4. **Deploy**: ECS pulls new image and updates running tasks
 
-## Public Traefik
+### Environments
 
-We need a Traefik proxy to handle incoming connections and HTTPS certificates.
+Two deployment environments are configured:
+- **Staging**: Deployed on every push to `main` branch for testing
+- **Production**: Deployed only on version tags for stable releases
 
-You need to do these next steps only once.
+## Prerequisites
 
-### Traefik Docker Compose
+Before deploying, ensure the following AWS infrastructure exists:
 
-* Create a remote directory to store your Traefik Docker Compose file:
+### AWS Infrastructure
 
-```bash
-mkdir -p /root/code/traefik-public/
-```
+1. **ECS Clusters**: Separate clusters for staging and production environments
+2. **ECR Repositories**: Container image repositories for each environment
+3. **ECS Task Definitions**: Define container configurations, resource limits, and environment variables
+4. **ECS Services**: Manage the desired number of running tasks
+5. **IAM Role for GitHub**: Allows GitHub Actions to authenticate via OIDC (no long-lived credentials)
+6. **RDS PostgreSQL**: Managed database service (recommended for production)
+7. **ElastiCache Redis**: Managed Redis for caching (optional)
+8. **Amazon MQ RabbitMQ**: Managed message broker for Celery (optional)
 
-Copy the Traefik Docker Compose file to your server. You could do it by running the command `rsync` in your local terminal:
+### GitHub Setup
 
-```bash
-rsync -a docker-compose.traefik.yml root@your-server.example.com:/root/code/traefik-public/
-```
+Configure GitHub to allow automated deployments:
 
-### Traefik Public Network
+1. **Environment**: Create `AWS_ENV_VARS` environment for deployment protection
+2. **Variable**: Set `AWS_RESOURCE_PREFIX` to identify your AWS resources
 
-This Traefik will expect a Docker "public network" named `traefik-public` to communicate with your stack(s).
+## AWS Resource Naming Convention
 
-This way, there will be a single public Traefik proxy that handles the communication (HTTP and HTTPS) with the outside world, and then behind that, you could have one or more stacks with different domains, even if they are on the same single server.
+All AWS resources follow a consistent naming pattern using `AWS_RESOURCE_PREFIX` as the base identifier.
 
-To create a Docker "public network" named `traefik-public` run the following command in your remote server:
+This naming convention ensures clear separation between environments and easy identification of resources.
 
-```bash
-docker network create traefik-public
-```
+## Deployment Workflows
 
-### Traefik Environment Variables
+### Staging Deployment
 
-The Traefik Docker Compose file expects some environment variables to be set in your terminal before starting it. You can do it by running the following commands in your remote server.
+**Purpose**: Automatically deploy changes to a testing environment for validation before production.
 
-* Create the username for HTTP Basic Auth, e.g.:
-
-```bash
-export USERNAME=admin
-```
-
-* Create an environment variable with the password for HTTP Basic Auth, e.g.:
-
-```bash
-export PASSWORD=changethis
-```
-
-* Use openssl to generate the "hashed" version of the password for HTTP Basic Auth and store it in an environment variable:
+**Trigger**: Push to `main` branch
 
 ```bash
-export HASHED_PASSWORD=$(openssl passwd -apr1 $PASSWORD)
+git push origin main
 ```
 
-To verify that the hashed password is correct, you can print it:
+**Workflow Steps** (`.github/workflows/cd-staging.yml`):
+1. **Checkout**: Clone the repository code
+2. **AWS Authentication**: Use OIDC to authenticate (no stored credentials)
+3. **ECR Login**: Authenticate to container registry
+4. **Build**: Create Docker image from `./backend` directory
+5. **Push**: Upload image to staging ECR repository with `latest` tag
+6. **Deploy**: Force ECS to pull and deploy the new image
+
+The deployment typically completes in 5-10 minutes depending on image size and ECS configuration.
+
+### Production Deployment
+
+**Purpose**: Deploy stable, tested versions to the production environment.
+
+**Trigger**: Create and push a version tag
 
 ```bash
-echo $HASHED_PASSWORD
+# Create a version tag
+git tag v1.0.0
+
+# Push the tag to trigger deployment
+git push origin v1.0.0
 ```
 
-* Create an environment variable with the domain name for your server, e.g.:
+**Workflow Steps** (`.github/workflows/cd-production.yml`):
+1. **Checkout**: Clone the repository at the tagged version
+2. **AWS Authentication**: Use OIDC to authenticate
+3. **ECR Login**: Authenticate to container registry
+4. **Build**: Create Docker image from `./backend` directory
+5. **Push**: Upload image to production ECR repository with `latest` tag
+6. **Deploy**: Force ECS to pull and deploy the new image
 
-```bash
-export DOMAIN=fastapi-project.example.com
+**Best Practice**: Use semantic versioning (e.g., `v1.0.0`, `v1.2.3`) to clearly identify releases.
+
+## GitHub Configuration
+
+### Step 1: Create Environment
+
+Environments in GitHub provide deployment protection and organization.
+
+1. Go to repository **Settings → Environments**
+2. Click **New environment**
+3. Name it: `AWS_ENV_VARS`
+4. Optionally, add protection rules (e.g., required reviewers)
+
+### Step 2: Set Repository Variable
+
+Variables store non-sensitive configuration that workflows need.
+
+1. Go to **Settings → Secrets and variables → Actions → Variables tab**
+2. Click **New repository variable**
+3. Add:
+   - **Name**: `AWS_RESOURCE_PREFIX`
+   - **Value**: Your AWS resource prefix (e.g., `kaapi`)
+
+### Step 3: AWS Authentication Setup
+
+The workflows use **AWS OIDC authentication**, which is more secure than storing AWS access keys:
+- No long-lived credentials stored in GitHub
+- AWS IAM role assumes identity based on GitHub's OIDC token
+- Permissions are scoped to specific actions
+
+The IAM role ARN is configured in workflow files:
+
+```yaml
+role-to-assume: arn:aws:iam::{YOUR_AWS_ACCOUNT_ID}:role/github-action-role
+aws-region: {YOUR_AWS_REGION}
 ```
 
-* Create an environment variable with the email for Let's Encrypt, e.g.:
+**Note**: Replace `{YOUR_AWS_ACCOUNT_ID}` with your AWS account ID and `{YOUR_AWS_REGION}` with your chosen region (e.g., `ap-south-1`, `us-east-1`).
 
-```bash
-export EMAIL=admin@example.com
-```
+## Environment Variables in AWS ECS
 
-**Note**: you need to set a different email, an email `@example.com` won't work.
+Application configuration is managed through environment variables set in **ECS Task Definitions**. These are injected into containers at runtime.
 
-### Start the Traefik Docker Compose
+### Configuring Environment Variables
 
-Go to the directory where you copied the Traefik Docker Compose file in your remote server:
+Environment variables in ECS Task Definitions include database credentials, AWS credentials, API keys, and service endpoints. Refer to `.env.example` in the repository for a complete list of required and optional variables.
 
-```bash
-cd /root/code/traefik-public/
-```
+Key categories:
+- **Authentication & Security**: JWT keys, admin credentials
+- **Database**: PostgreSQL connection details
+- **AWS Services**: S3 access credentials
+- **Background Tasks**: RabbitMQ and Redis endpoints
+- **Optional**: OpenAI API key, Sentry DSN
 
-Now with the environment variables set and the `docker-compose.traefik.yml` in place, you can start the Traefik Docker Compose running the following command:
+### Generate Secure Keys
 
-```bash
-docker compose -f docker-compose.traefik.yml up -d
-```
-
-## Deploy the FastAPI Project
-
-Now that you have Traefik in place you can deploy your FastAPI project with Docker Compose.
-
-**Note**: You might want to jump ahead to the section about Continuous Deployment with GitHub Actions.
-
-## Environment Variables
-
-You need to set some environment variables first.
-
-Set the `ENVIRONMENT`, by default `local` (for development), but when deploying to a server you would put something like `staging` or `production`:
-
-```bash
-export ENVIRONMENT=production
-```
-
-Set the `DOMAIN`, by default `localhost` (for development), but when deploying you would use your own domain, for example:
-
-```bash
-export DOMAIN=fastapi-project.example.com
-```
-
-You can set several variables, like:
-
-* `PROJECT_NAME`: The name of the project, used in the API for the docs and emails.
-* `STACK_NAME`: The name of the stack used for Docker Compose labels and project name, this should be different for `staging`, `production`, etc. You could use the same domain replacing dots with dashes, e.g. `fastapi-project-example-com` and `staging-fastapi-project-example-com`.
-* `BACKEND_CORS_ORIGINS`: A list of allowed CORS origins separated by commas.
-* `SECRET_KEY`: The secret key for the FastAPI project, used to sign tokens.
-* `FIRST_SUPERUSER`: The email of the first superuser, this superuser will be the one that can create new users.
-* `FIRST_SUPERUSER_PASSWORD`: The password of the first superuser.
-* `SMTP_HOST`: The SMTP server host to send emails, this would come from your email provider (E.g. Mailgun, Sparkpost, Sendgrid, etc).
-* `SMTP_USER`: The SMTP server user to send emails.
-* `SMTP_PASSWORD`: The SMTP server password to send emails.
-* `EMAILS_FROM_EMAIL`: The email account to send emails from.
-* `POSTGRES_SERVER`: The hostname of the PostgreSQL server. You can leave the default of `db`, provided by the same Docker Compose. You normally wouldn't need to change this unless you are using a third-party provider.
-* `POSTGRES_PORT`: The port of the PostgreSQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
-* `POSTGRES_PASSWORD`: The Postgres password.
-* `POSTGRES_USER`: The Postgres user, you can leave the default.
-* `POSTGRES_DB`: The database name to use for this application. You can leave the default of `app`.
-* `SENTRY_DSN`: The DSN for Sentry, if you are using it.
-
-## GitHub Actions Environment Variables
-
-There are some environment variables only used by GitHub Actions that you can configure:
-
-* `LATEST_CHANGES`: Used by the GitHub Action [latest-changes](https://github.com/tiangolo/latest-changes) to automatically add release notes based on the PRs merged. It's a personal access token, read the docs for details.
-* `SMOKESHOW_AUTH_KEY`: Used to handle and publish the code coverage using [Smokeshow](https://github.com/samuelcolvin/smokeshow), follow their instructions to create a (free) Smokeshow key.
-
-### Generate secret keys
-
-Some environment variables in the `.env` file have a default value of `changethis`.
-
-You have to change them with a secret key, to generate secret keys you can run the following command:
+Use Python to generate cryptographically secure keys:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Copy the content and use that as password / secret key. And run that again to generate another secure key.
+Run this multiple times to generate different keys for `SECRET_KEY`, passwords, etc.
 
-### Deploy with Docker Compose
+## Database Migrations
 
-With the environment variables in place, you can deploy with Docker Compose:
+Database schema changes must be applied before deploying new application versions. This ensures the database structure matches what the code expects.
 
-```bash
-docker compose -f docker-compose.yml up -d
-```
+### Using ECS Run Task (Recommended for Production)
 
-For production you wouldn't want to have the overrides in `docker-compose.override.yml`, that's why we explicitly specify `docker-compose.yml` as the file to use.
-
-## Continuous Deployment (CD)
-
-You can use GitHub Actions to deploy your project automatically. 😎
-
-You can have multiple environment deployments.
-
-There are already two environments configured, `staging` and `production`. 🚀
-
-### Install GitHub Actions Runner
-
-* On your remote server, create a user for your GitHub Actions:
+Run migrations as a one-time ECS task:
 
 ```bash
-sudo adduser github
+aws ecs run-task \
+  --cluster {prefix}-cluster \
+  --task-definition {migration-task-def} \
+  --region {YOUR_AWS_REGION}
 ```
 
-* Add Docker permissions to the `github` user:
+This runs the migration in the same environment as your application, ensuring consistency.
+
+### Local Migration (Development/Testing)
+
+For testing migrations locally:
 
 ```bash
-sudo usermod -aG docker github
+cd backend
+uv run alembic upgrade head
 ```
 
-* Temporarily switch to the `github` user:
+**Important**: Always test migrations in staging before applying to production.
+
+## Monitoring & Observability
+
+### AWS CloudWatch
+
+**Logs**: View application logs from ECS tasks
+```bash
+aws logs tail /ecs/{cluster}/{service} --follow
+```
+
+**Metrics**: Monitor CPU, memory, request count, error rates
+
+### ECS Console
+
+- View running tasks and their health status
+- Check deployment status and history
+- Monitor service events and errors
+
+### Health Checks
+
+ECS performs health checks on the `/api/v1/utils/health/` endpoint. If this fails, tasks are replaced automatically.
+
+## Rollback Procedures
+
+If a deployment introduces issues, rollback to a previous stable version.
+
+### List Previous Versions
 
 ```bash
-sudo su - github
+aws ecs list-task-definitions --family-prefix {prefix}
 ```
 
-* Go to the `github` user's home directory:
+### Rollback to Previous Version
 
 ```bash
-cd
+aws ecs update-service \
+  --cluster {prefix}-cluster \
+  --service {prefix}-service \
+  --task-definition {previous-task-def-arn} \
+  --region {YOUR_AWS_REGION}
 ```
 
-* [Install a GitHub Action self-hosted runner following the official guide](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-a-repository).
+ECS will perform a rolling update back to the specified task definition.
 
-* When asked about labels, add a label for the environment, e.g. `production`. You can also add labels later.
-
-After installing, the guide would tell you to run a command to start the runner. Nevertheless, it would stop once you terminate that process or if your local connection to your server is lost.
-
-To make sure it runs on startup and continues running, you can install it as a service. To do that, exit the `github` user and go back to the `root` user:
-
-```bash
-exit
-```
-
-After you do it, you will be on the previous user again. And you will be on the previous directory, belonging to that user.
-
-Before being able to go the `github` user directory, you need to become the `root` user (you might already be):
-
-```bash
-sudo su
-```
-
-* As the `root` user, go to the `actions-runner` directory inside of the `github` user's home directory:
-
-```bash
-cd /home/github/actions-runner
-```
-
-* Install the self-hosted runner as a service with the user `github`:
-
-```bash
-./svc.sh install github
-```
-
-* Start the service:
-
-```bash
-./svc.sh start
-```
-
-* Check the status of the service:
-
-```bash
-./svc.sh status
-```
-
-You can read more about it in the official guide: [Configuring the self-hosted runner application as a service](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service).
-
-### Set Secrets
-
-On your repository, configure secrets for the environment variables you need, the same ones described above, including `SECRET_KEY`, etc. Follow the [official GitHub guide for setting repository secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#creating-secrets-for-a-repository).
-
-The current Github Actions workflows expect these secrets:
-
-* `DOMAIN_PRODUCTION`
-* `DOMAIN_STAGING`
-* `STACK_NAME_PRODUCTION`
-* `STACK_NAME_STAGING`
-* `EMAILS_FROM_EMAIL`
-* `FIRST_SUPERUSER`
-* `FIRST_SUPERUSER_PASSWORD`
-* `POSTGRES_PASSWORD`
-* `SECRET_KEY`
-* `LATEST_CHANGES`
-* `SMOKESHOW_AUTH_KEY`
-
-## GitHub Action Deployment Workflows
-
-There are GitHub Action workflows in the `.github/workflows` directory already configured for deploying to the environments (GitHub Actions runners with the labels):
-
-* `staging`: after pushing (or merging) to the branch `master`.
-* `production`: after publishing a release.
-
-If you need to add extra environments you could use those as a starting point.
-
-## URLs
-
-Replace `fastapi-project.example.com` with your domain.
-
-### Main Traefik Dashboard
-
-Traefik UI: `https://traefik.fastapi-project.example.com`
-
-### Production
-
-Frontend: `https://dashboard.fastapi-project.example.com`
-
-Backend API docs: `https://api.fastapi-project.example.com/docs`
-
-Backend API base URL: `https://api.fastapi-project.example.com`
-
-Adminer: `https://adminer.fastapi-project.example.com`
-
-### Staging
-
-Frontend: `https://dashboard.staging.fastapi-project.example.com`
-
-Backend API docs: `https://api.staging.fastapi-project.example.com/docs`
-
-Backend API base URL: `https://api.staging.fastapi-project.example.com`
-
-Adminer: `https://adminer.staging.fastapi-project.example.com`
+**Tip**: Keep track of stable task definition ARNs for quick rollbacks.
