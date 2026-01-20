@@ -11,7 +11,7 @@ pipeline:
   created from the documents given.
 
 If any one of the LLM service interactions fail, all service resources are
-cleaned up. If an Openai vector Store is unable to be created, for example,
+cleaned up. If an OpenAI vector Store is unable to be created, for example,
 all file(s) that were uploaded to OpenAI are removed from
 OpenAI. Failure can occur from OpenAI being down, or some parameter
 value being invalid. It can also fail due to document types not being

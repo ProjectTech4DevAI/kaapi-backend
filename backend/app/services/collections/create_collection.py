@@ -151,6 +151,7 @@ def execute_job(
     # Keeping the references for potential backout/cleanup on failure
     collection_job = None
     result = None
+    creation_request = None
     provider = None
 
     try:
