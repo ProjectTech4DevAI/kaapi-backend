@@ -74,9 +74,6 @@ class Organization(OrganizationBase, table=True):
     assistants: list["Assistant"] = Relationship(
         back_populates="organization", cascade_delete=True
     )
-    collections: list["Collection"] = Relationship(
-        back_populates="organization", cascade_delete=True
-    )
     openai_conversations: list["OpenAIConversation"] = Relationship(
         back_populates="organization", cascade_delete=True
     )

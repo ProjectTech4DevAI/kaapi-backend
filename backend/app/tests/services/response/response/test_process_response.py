@@ -17,7 +17,7 @@ from app.models import (
 )
 from app.utils import APIResponse
 from app.tests.utils.test_data import create_test_credential
-from app.tests.utils.openai import mock_openai_response, generate_openai_id
+from app.tests.utils.llm_provider import mock_openai_response, generate_openai_id
 from app.crud import JobCrud, create_assistant
 
 

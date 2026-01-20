@@ -8,7 +8,7 @@ from app.crud import CollectionCrud
 from app.models import Collection
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_collection
+from app.tests.utils.collection import get_assistant_collection
 
 
 def mk_collection(db: Session) -> Collection:
@@ -16,7 +16,7 @@ def mk_collection(db: Session) -> Collection:
     project = get_project(db)
     with openai_mock.router:
         client = OpenAI(api_key="sk-test-key")
-        collection = get_collection(db, project=project)
+        collection = get_assistant_collection(db, project=project)
         store = DocumentStore(db, project_id=collection.project_id)
         documents = store.fill(1)
         crud = CollectionCrud(db, collection.project_id)

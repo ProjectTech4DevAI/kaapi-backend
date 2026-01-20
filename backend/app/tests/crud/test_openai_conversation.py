@@ -15,7 +15,7 @@ from app.crud.openai_conversation import (
 )
 from app.models import OpenAIConversationCreate, Project
 from app.tests.utils.utils import get_project, get_organization
-from app.tests.utils.openai import generate_openai_id
+from app.tests.utils.llm_provider import generate_openai_id
 
 
 def test_get_conversation_by_id_success(db: Session) -> None:

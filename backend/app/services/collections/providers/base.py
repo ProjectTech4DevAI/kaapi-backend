@@ -3,7 +3,7 @@ from typing import Any
 
 from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
-from app.models import CreationRequest, CreateCollectionResult, Collection
+from app.models import CreationRequest, Collection
 
 
 class BaseProvider(ABC):
@@ -12,8 +12,8 @@ class BaseProvider(ABC):
     All provider implementations (OpenAI, Bedrock, etc.) must inherit from
     this class and implement the required methods.
 
-    Providers handle creation of knowledge bases (vector stores) and
-    optional assistant/agent creation backed by those knowledge bases.
+    Providers handle creation of collection and
+    optional assistant/agent creation backed by those collections.
 
     Attributes:
         client: The provider-specific client instance
@@ -33,11 +33,11 @@ class BaseProvider(ABC):
         collection_request: CreationRequest,
         storage: CloudStorage,
         document_crud: DocumentCrud,
-    ) -> CreateCollectionResult:
+    ) -> Collection:
         """Create collection with documents and optionally an assistant.
 
         Args:
-            collection_params: Collection parameters (name, description, chunking_params, etc.)
+            collection_request: Collection parameters (name, description, document list, etc.)
             storage: Cloud storage instance for file access
             document_crud: DocumentCrud instance for fetching documents
             batch_size: Number of documents to process per batch
@@ -45,10 +45,8 @@ class BaseProvider(ABC):
             assistant_options: Options for assistant creation (provider-specific)
 
         Returns:
-            CreateCollectionresult containing:
-            - llm_service_id: ID of the created resource (vector store or assistant)
-            - llm_service_name: Name of the service
-            - kb_blob: All collection params except documents
+            llm_service_id: ID of the resource to delete
+            llm_service_name: Name of the service (determines resource type)
         """
         raise NotImplementedError("Providers must implement execute method")
 
@@ -65,7 +63,7 @@ class BaseProvider(ABC):
         raise NotImplementedError("Providers must implement delete method")
 
     @abstractmethod
-    def cleanup(self, collection_result: CreateCollectionResult) -> None:
+    def cleanup(self, collection: Collection) -> None:
         """Clean up/rollback resources created during execute.
 
         Called when collection creation fails and remote resources need to be deleted.

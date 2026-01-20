@@ -15,7 +15,7 @@ from app.crud.assistants import (
     get_assistant_by_id,
     get_assistants_by_project,
 )
-from app.tests.utils.openai import mock_openai_assistant
+from app.tests.utils.llm_provider import mock_openai_assistant
 from app.tests.utils.utils import (
     get_project,
     get_assistant,

@@ -172,7 +172,7 @@ def execute_job(
 
             provider = get_llm_provider(
                 session=session,
-                provider=deletion_request.provider,
+                provider=collection.provider.lower(),
                 project_id=project_id,
                 organization_id=organization_id,
             )

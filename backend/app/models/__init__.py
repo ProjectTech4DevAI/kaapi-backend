@@ -8,13 +8,12 @@ from .assistants import Assistant, AssistantBase, AssistantCreate, AssistantUpda
 
 from .collection import (
     Collection,
-    CreateCollectionParams,
-    CreateCollectionResult,
     CreationRequest,
     CollectionPublic,
     CollectionIDPublic,
     CollectionWithDocsPublic,
     DeletionRequest,
+    ProviderType,
 )
 from .collection_job import (
     CollectionActionType,

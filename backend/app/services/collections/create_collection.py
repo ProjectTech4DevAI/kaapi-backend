@@ -20,8 +20,8 @@ from app.models import (
     CollectionJobUpdate,
     CollectionPublic,
     CollectionJobPublic,
+    CreationRequest,
 )
-from app.models.collection import CreationRequest
 from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_low_priority_job
@@ -51,8 +51,8 @@ def start_job(
         project_id=project_id,
         job_id=str(collection_job_id),
         trace_id=trace_id,
-        with_assistant=with_assistant,
         request=request.model_dump(mode="json"),
+        with_assistant=with_assistant,
         organization_id=organization_id,
     )
 
@@ -134,11 +134,11 @@ def _mark_job_failed(
 
 def execute_job(
     request: dict,
+    with_assistant: bool,
     project_id: int,
     organization_id: int,
     task_id: str,
     job_id: str,
-    with_assistant: bool,
     task_instance,
 ) -> None:
     """
@@ -155,6 +155,11 @@ def execute_job(
 
     try:
         creation_request = CreationRequest(**request)
+        if (
+            with_assistant == True
+        ):  # this will be removed once dalgo switches to vector store creation only
+            creation_request.provider = "openai"
+
         job_uuid = UUID(job_id)
 
         with Session(engine) as session:
@@ -186,15 +191,10 @@ def execute_job(
 
         llm_service_id = result.llm_service_id
         llm_service_name = result.llm_service_name
-        # Storing collection params (name, description, chunking_params, etc.) in DB
-        # for future reference and to support different providers with varying configurations
-        collection_blob = result.collection_blob
 
         with Session(engine) as session:
             document_crud = DocumentCrud(session, project_id)
-            flat_docs = document_crud.read_many_by_ids(
-                [doc.id for doc in creation_request.collection_params.documents]
-            )
+            flat_docs = document_crud.read_each(creation_request.documents)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
         file_sizes_kb = [
@@ -208,15 +208,15 @@ def execute_job(
             collection = Collection(
                 id=collection_id,
                 project_id=project_id,
-                organization_id=organization_id,
                 llm_service_id=llm_service_id,
                 llm_service_name=llm_service_name,
-                collection_blob=collection_blob,
+                provider=creation_request.provider.upper(),
+                name=creation_request.name,
+                description=creation_request.description,
             )
             collection_crud.create(collection)
             collection = collection_crud.read_one(collection.id)
 
-            # Link documents to the new collection
             if flat_docs:
                 DocumentCollectionCrud(session).create(collection, flat_docs)
 
