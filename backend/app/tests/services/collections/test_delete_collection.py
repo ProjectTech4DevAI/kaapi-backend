@@ -1,10 +1,9 @@
-from typing import Any
 from unittest.mock import patch, MagicMock
 from uuid import uuid4, UUID
 
+from sqlmodel import Session
 
 from app.models.collection import DeletionRequest
-
 from app.tests.utils.utils import get_project
 from app.crud import CollectionJobCrud
 from app.models import CollectionJobStatus, CollectionActionType
