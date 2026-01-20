@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from app.api.routes.evaluations import dataset, evaluation
 
-router = APIRouter(prefix="/evaluations", tags=["evaluation"])
+router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
 
 # Include dataset routes under /evaluations/datasets
 router.include_router(dataset.router, prefix="/datasets")
