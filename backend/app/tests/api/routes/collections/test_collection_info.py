@@ -201,7 +201,7 @@ def test_collection_info_include_docs_and_url(
     the endpoint returns documents with their URLs.
     """
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     document = link_document_to_collection(db, collection)
 
