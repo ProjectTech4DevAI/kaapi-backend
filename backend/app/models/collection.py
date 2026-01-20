@@ -32,7 +32,7 @@ class Collection(SQLModel, table=True):
         Field(
             nullable=False,
             description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'gemini', etc)",
-            sa_column_kwargs={"LLM provider used for this collection"},
+            sa_column_kwargs={"comment": "LLM provider used for this collection"},
         ),
     )
     llm_service_id: str = Field(

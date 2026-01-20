@@ -33,11 +33,12 @@ def upgrade():
         sa.Column(
             "provider",
             provider_type,
-            nullable=False,
+            nullable=True,
             comment="LLM provider used for this collection",
         ),
     )
     op.execute("UPDATE collection SET provider = 'OPENAI' WHERE provider IS NULL")
+    op.alter_column("collection", "provider", nullable=False)
     op.add_column(
         "collection",
         sa.Column(

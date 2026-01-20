@@ -19,7 +19,7 @@ class BaseProvider(ABC):
         client: The provider-specific client instance
     """
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any) -> None:
         """Initialize provider with client.
 
         Args:
@@ -61,17 +61,6 @@ class BaseProvider(ABC):
             llm_service_name: Name of the service (determines resource type)
         """
         raise NotImplementedError("Providers must implement delete method")
-
-    @abstractmethod
-    def cleanup(self, collection: Collection) -> None:
-        """Clean up/rollback resources created during execute.
-
-        Called when collection creation fails and remote resources need to be deleted.
-
-        Args:
-            collection_result: The CreateCollectionresult returned from execute, containing resource IDs
-        """
-        raise NotImplementedError("Providers must implement cleanup method")
 
     def get_provider_name(self) -> str:
         """Get the name of the provider.

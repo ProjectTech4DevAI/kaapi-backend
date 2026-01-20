@@ -15,7 +15,6 @@ def mk_collection(db: Session) -> Collection:
     openai_mock = OpenAIMock()
     project = get_project(db)
     with openai_mock.router:
-        client = OpenAI(api_key="sk-test-key")
         collection = get_assistant_collection(db, project=project)
         store = DocumentStore(db, project_id=collection.project_id)
         documents = store.fill(1)

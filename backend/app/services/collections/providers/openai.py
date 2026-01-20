@@ -6,7 +6,7 @@ from app.services.collections.providers import BaseProvider
 from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import batch_documents, get_service_name, _backout
+from app.services.collections.helpers import batch_documents, get_service_name
 from app.models import CreationRequest, Collection
 
 
@@ -42,7 +42,7 @@ class OpenAIProvider(BaseProvider):
             list(vector_store_crud.update(vector_store.id, storage, docs_batches))
 
             logger.info(
-                "[OpenAIProvider.execute] Vector store created | "
+                "[OpenAIProvider.create] Vector store created | "
                 f"vector_store_id={vector_store.id}, batches={len(docs_batches)}"
             )
 
@@ -66,7 +66,7 @@ class OpenAIProvider(BaseProvider):
                 assistant = assistant_crud.create(vector_store.id, **filtered_options)
 
                 logger.info(
-                    "[OpenAIProvider.execute] Assistant created | "
+                    "[OpenAIProvider.create] Assistant created | "
                     f"assistant_id={assistant.id}, vector_store_id={vector_store.id}"
                 )
 
@@ -76,7 +76,7 @@ class OpenAIProvider(BaseProvider):
                 )
             else:
                 logger.info(
-                    "[OpenAIProvider.execute] Skipping assistant creation | with_assistant=False"
+                    "[OpenAIProvider.create] Skipping assistant creation | with_assistant=False"
                 )
 
                 return Collection(
@@ -86,7 +86,7 @@ class OpenAIProvider(BaseProvider):
 
         except Exception as e:
             logger.error(
-                f"[OpenAIProvider.execute] Failed to create collection: {str(e)}",
+                f"[OpenAIProvider.create] Failed to create collection: {str(e)}",
                 exc_info=True,
             )
             raise
@@ -116,9 +116,3 @@ class OpenAIProvider(BaseProvider):
                 exc_info=True,
             )
             raise
-
-    def cleanup(self, result: Collection) -> None:
-        """
-        Clean up OpenAI resources (assistant or vector store).
-        """
-        _backout(result.llm_service_id, result.llm_service_name)

@@ -115,8 +115,8 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 @mock_aws
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_job_success_flow_updates_job_and_creates_collection(
-    mock_get_llm_provider, db: Session
-):
+    mock_get_llm_provider: MagicMock, db: Session
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -191,8 +191,8 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
 @mock_aws
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collection(
-    mock_get_llm_provider, db
-):
+    mock_get_llm_provider: MagicMock, db
+) -> None:
     project = get_project(db)
 
     job = get_collection_job(
@@ -242,10 +242,10 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collectio
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_flow_callback_job_and_creates_collection(
-    mock_send_callback,
-    mock_get_llm_provider,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db,
-):
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -323,10 +323,10 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_creates_collection_with_callback(
-    mock_send_callback,
-    mock_get_llm_provider,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db,
-):
+) -> None:
     """
     execute_job should:
       - set task_id on the CollectionJob
@@ -406,8 +406,8 @@ def test_execute_job_success_creates_collection_with_callback(
 @patch("app.services.collections.create_collection.CollectionCrud")
 def test_execute_job_failure_flow_callback_job_and_marks_failed(
     MockCollectionCrud,
-    mock_send_callback,
-    mock_get_llm_provider,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db: Session,
 ) -> None:
     """

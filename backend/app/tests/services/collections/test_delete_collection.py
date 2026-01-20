@@ -72,8 +72,8 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 
 @patch("app.services.collections.delete_collection.get_llm_provider")
 def test_execute_job_delete_success_updates_job_and_calls_delete(
-    mock_get_llm_provider, db
-):
+    mock_get_llm_provider: MagicMock, db
+) -> None:
     """
     - execute_job should set task_id on the CollectionJob
     - call provider.delete() to delete remote resources
@@ -137,7 +137,9 @@ def test_execute_job_delete_success_updates_job_and_calls_delete(
 
 
 @patch("app.services.collections.delete_collection.get_llm_provider")
-def test_execute_job_delete_failure_marks_job_failed(mock_get_llm_provider, db):
+def test_execute_job_delete_failure_marks_job_failed(
+    mock_get_llm_provider: MagicMock, db
+) -> None:
     """
     When provider.delete() raises an exception:
     - Job should be marked FAILED
@@ -209,10 +211,10 @@ def test_execute_job_delete_failure_marks_job_failed(mock_get_llm_provider, db):
 @patch("app.services.collections.delete_collection.get_llm_provider")
 @patch("app.services.collections.delete_collection.send_callback")
 def test_execute_job_delete_success_with_callback_sends_success_payload(
-    mock_send_callback,
-    mock_get_llm_provider,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db,
-):
+) -> None:
     """
     When deletion succeeds and a callback_url is provided:
     - job is marked SUCCESSFUL
@@ -291,10 +293,10 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
 @patch("app.services.collections.delete_collection.get_llm_provider")
 @patch("app.services.collections.delete_collection.send_callback")
 def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
-    mock_send_callback,
-    mock_get_llm_provider,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db,
-):
+) -> None:
     """
     When provider.delete() raises AND a callback_url is provided:
     - job is marked FAILED with error_message set

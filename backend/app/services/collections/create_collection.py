@@ -156,7 +156,7 @@ def execute_job(
     try:
         creation_request = CreationRequest(**request)
         if (
-            with_assistant == True
+            with_assistant
         ):  # this will be removed once dalgo switches to vector store creation only
             creation_request.provider = "openai"
 
@@ -254,7 +254,7 @@ def execute_job(
 
         if provider is not None and result is not None:
             try:
-                provider.cleanup(result)
+                provider.delete(result)
             except Exception:
                 logger.warning(
                     "[create_collection.execute_job] Provider cleanup failed"
