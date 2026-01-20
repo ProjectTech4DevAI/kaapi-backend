@@ -5,10 +5,12 @@ import re
 from uuid import UUID
 from typing import List
 
+from fastapi import HTTPException
 from sqlmodel import select
 from openai import OpenAIError
 
-from app.crud.document.document import DocumentCrud
+from app.crud import DocumentCrud, CollectionCrud
+from app.api.deps import SessionDep
 from app.models import DocumentCollection, Collection
 
 
@@ -109,3 +111,22 @@ def pick_service_for_documennt(session, doc_id: UUID, a_crud, v_crud):
         (getattr(coll, "llm_service_name", "") or "").strip().lower() if coll else ""
     )
     return v_crud if service == get_service_name("openai") else a_crud
+
+
+def ensure_unique_name(
+    session: SessionDep,
+    project_id: int,
+    requested_name: str,
+) -> str:
+    """
+    Ensure collection name is unique based on strategy.
+
+    """
+    existing = CollectionCrud(session, project_id).exists_by_name(requested_name)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Collection '{requested_name}' already exists. Choose a different name.",
+        )
+
+    return requested_name

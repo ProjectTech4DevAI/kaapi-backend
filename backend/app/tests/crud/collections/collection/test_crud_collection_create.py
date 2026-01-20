@@ -18,9 +18,9 @@ class TestCollectionCreate:
         collection = Collection(
             id=uuid4(),
             project_id=project.id,
-            organization_id=project.organization_id,
             llm_service_id="asst_dummy",
             llm_service_name="gpt-4o",
+            provider="OPENAI",
         )
 
         store = DocumentStore(db, project_id=collection.project_id)

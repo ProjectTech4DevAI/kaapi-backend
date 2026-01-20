@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.crud.openai_conversation import create_conversation
 from app.models import OpenAIConversationCreate
-from app.tests.utils.openai import generate_openai_id
+from app.tests.utils.llm_provider import generate_openai_id
 from app.tests.utils.auth import TestAuthContext
 
 

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.tests.utils.utils import get_project
 from app.tests.utils.collection import (
-    get_collection,
+    get_assistant_collection,
     get_vector_store_collection,
 )
 from app.services.collections.helpers import get_service_name
@@ -40,7 +40,7 @@ def test_list_collections_includes_assistant_collection(
     user_api_key_header,
 ):
     """
-    Ensure that a newly created assistant-style collection (get_collection)
+    Ensure that a newly created assistant-style collection (get_assistant_collection)
     appears in the list for the current project.
     """
 
@@ -52,7 +52,7 @@ def test_list_collections_includes_assistant_collection(
     )
     assert response_before.status_code == 200
 
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     response_after = client.get(
         f"{settings.API_V1_STR}/collections/",
@@ -83,7 +83,7 @@ def test_list_collections_includes_vector_store_collection_with_fields(
     appear in the list and expose the expected LLM fields.
     """
     project = get_project(db, "Dalgo")
-    collection = get_vector_store_collection(db, project)
+    collection = get_vector_store_collection(db, project, provider="openai")
 
     response = client.get(
         f"{settings.API_V1_STR}/collections/",

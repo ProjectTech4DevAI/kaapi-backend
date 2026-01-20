@@ -24,7 +24,7 @@ def uuid_increment(value: UUID):
     return UUID(int=inc)
 
 
-def get_collection(
+def get_assistant_collection(
     db: Session,
     project,
     *,
@@ -56,6 +56,7 @@ def get_vector_store_collection(
     *,
     vector_store_id: Optional[str] = None,
     collection_id: Optional[UUID] = None,
+    provider: str,
 ) -> Collection:
     """
     Create a Collection configured for the Vector Store path.
@@ -67,10 +68,9 @@ def get_vector_store_collection(
     collection = Collection(
         id=collection_id or uuid4(),
         project_id=project.id,
-        organization_id=project.organization_id,
         llm_service_name=get_service_name("openai"),
         llm_service_id=vector_store_id,
-        provider=ProviderType.OPENAI,
+        provider=provider.upper(),
     )
     return CollectionCrud(db, project.id).create(collection)
 

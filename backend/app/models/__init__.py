@@ -8,8 +8,6 @@ from .assistants import Assistant, AssistantBase, AssistantCreate, AssistantUpda
 
 from .collection import (
     Collection,
-    CreateCollectionParams,
-    CreateCollectionResult,
     CreationRequest,
     CollectionPublic,
     CollectionIDPublic,

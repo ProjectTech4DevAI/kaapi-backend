@@ -6,7 +6,10 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.tests.utils.utils import get_project, get_document
-from app.tests.utils.collection import get_collection, get_vector_store_collection
+from app.tests.utils.collection import (
+    get_assistant_collection,
+    get_vector_store_collection,
+)
 from app.crud import DocumentCollectionCrud
 from app.models import Collection, Document
 from app.services.collections.helpers import get_service_name
@@ -41,13 +44,13 @@ def test_collection_info_returns_assistant_collection_with_docs(
 ):
     """
     Happy path:
-    - Assistant-style collection (get_collection)
+    - Assistant-style collection (get_assistant_collection)
     - include_docs = True (default)
     - At least one document linked
     """
 
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     document = link_document_to_collection(db, collection)
 
@@ -83,7 +86,7 @@ def test_collection_info_include_docs_false_returns_no_docs(
     When include_docs=false, the endpoint should not populate the documents list.
     """
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     link_document_to_collection(db, collection)
 
@@ -114,7 +117,7 @@ def test_collection_info_pagination_skip_and_limit(
     We create multiple document links and then request a paginated slice.
     """
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     documents = db.exec(
         select(Document).where(Document.deleted_at.is_(None)).limit(2)
@@ -149,7 +152,7 @@ def test_collection_info_vector_store_collection(
     via get_vector_store_collection.
     """
     project = get_project(db, "Dalgo")
-    collection = get_vector_store_collection(db, project)
+    collection = get_vector_store_collection(db, project, provider="openai")
 
     link_document_to_collection(db, collection)
 

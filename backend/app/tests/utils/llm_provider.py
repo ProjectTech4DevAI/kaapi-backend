@@ -114,12 +114,10 @@ def mock_openai_response(
 def get_mock_openai_client_with_vector_store():
     mock_client = MagicMock()
 
-    # Vector store
     mock_vector_store = MagicMock()
     mock_vector_store.id = "mock_vector_store_id"
     mock_client.vector_stores.create.return_value = mock_vector_store
 
-    # File upload + polling
     mock_file_batch = MagicMock()
     mock_file_batch.file_counts.completed = 2
     mock_file_batch.file_counts.total = 2
@@ -127,10 +125,8 @@ def get_mock_openai_client_with_vector_store():
         mock_file_batch
     )
 
-    # File list
     mock_client.vector_stores.files.list.return_value = {"data": []}
 
-    # Assistant
     mock_assistant = MagicMock()
     mock_assistant.id = "mock_assistant_id"
     mock_assistant.name = "Mock Assistant"
@@ -139,3 +135,28 @@ def get_mock_openai_client_with_vector_store():
     mock_client.beta.assistants.create.return_value = mock_assistant
 
     return mock_client
+
+
+def get_mock_provider(
+    llm_service_id: str = "mock_service_id",
+    llm_service_name: str = "mock_service_name",
+):
+    """
+    Create a properly configured mock provider for tests.
+
+    Returns a mock that mimics BaseProvider with:
+    - create() method returning result with llm_service_id and llm_service_name
+    - cleanup() method for cleanup on failure
+    - delete() method for deletion
+    """
+    mock_provider = MagicMock()
+
+    mock_result = MagicMock()
+    mock_result.llm_service_id = llm_service_id
+    mock_result.llm_service_name = llm_service_name
+
+    mock_provider.create.return_value = mock_result
+    mock_provider.cleanup = MagicMock()
+    mock_provider.delete = MagicMock()
+
+    return mock_provider
