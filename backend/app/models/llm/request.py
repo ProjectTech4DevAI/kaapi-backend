@@ -97,6 +97,9 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
+    type: Literal["text", "stt", "tts"] = Field(
+        None, description="Completion config type. Params schema varies by type"
+    )
 
 
 class KaapiCompletionConfig(SQLModel):

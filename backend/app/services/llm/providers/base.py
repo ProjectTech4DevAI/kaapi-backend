@@ -31,6 +31,14 @@ class BaseProvider(ABC):
         """
         self.client = client
 
+    @staticmethod
+    @abstractmethod
+    def create_client(credentials: dict[str, Any]) -> Any:
+        """
+        Static method to instantiate a client instance of the provider
+        """
+        raise NotImplementedError("Providers must implement create_client method")
+
     @abstractmethod
     def execute(
         self,

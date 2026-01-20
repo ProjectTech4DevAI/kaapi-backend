@@ -4,6 +4,7 @@ import openai
 from openai import OpenAI
 from openai.types.responses.response import Response
 
+from typing import Any
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -27,6 +28,12 @@ class OpenAIProvider(BaseProvider):
         """
         super().__init__(client)
         self.client = client
+
+    @staticmethod
+    def create_client(credentials: dict[str, Any]) -> Any:
+        if "api_key" not in credentials:
+            return f"OpenAI API Key is not configured"
+        return OpenAI(api_key=credentials["api_key"])
 
     def execute(
         self,
