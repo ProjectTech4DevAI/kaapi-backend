@@ -152,7 +152,7 @@ def test_collection_info_vector_store_collection(
     via get_vector_store_collection.
     """
     project = get_project(db, "Dalgo")
-    collection = get_vector_store_collection(db, project, provider="openai")
+    collection = get_vector_store_collection(db, project)
 
     link_document_to_collection(db, collection)
 

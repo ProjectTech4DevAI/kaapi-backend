@@ -205,12 +205,13 @@ def execute_job(
             collection_crud = CollectionCrud(session, project_id)
 
             collection_id = uuid4()
+
             collection = Collection(
                 id=collection_id,
                 project_id=project_id,
                 llm_service_id=llm_service_id,
                 llm_service_name=llm_service_name,
-                provider=creation_request.provider.upper(),
+                provider=creation_request.provider,
                 name=creation_request.name,
                 description=creation_request.description,
             )

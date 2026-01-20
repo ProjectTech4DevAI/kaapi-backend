@@ -18,7 +18,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     - return the same job_id (UUID)
     """
     project = get_project(db)
-    created_collection = get_vector_store_collection(db, project, provider="OPENAI")
+    created_collection = get_vector_store_collection(db, project)
 
     req = DeletionRequest(collection_id=created_collection.id)
 
@@ -82,9 +82,7 @@ def test_execute_job_delete_success_updates_job_and_calls_delete(
     """
     project = get_project(db)
 
-    collection = get_vector_store_collection(
-        db, project, vector_store_id="asst_123", provider="OPENAI"
-    )
+    collection = get_vector_store_collection(db, project, vector_store_id="asst_123")
 
     job = get_collection_job(
         db,
@@ -152,7 +150,6 @@ def test_execute_job_delete_failure_marks_job_failed(
         db,
         project,
         vector_store_id="vector_123",
-        provider="OPENAI",
     )
 
     job = get_collection_job(
@@ -227,7 +224,6 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
         db,
         project,
         vector_store_id="vector 123",
-        provider="OPENAI",
     )
 
     job = get_collection_job(
@@ -309,7 +305,6 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
         db,
         project,
         vector_store_id="vector_123",
-        provider="OPENAI",
     )
 
     job = get_collection_job(

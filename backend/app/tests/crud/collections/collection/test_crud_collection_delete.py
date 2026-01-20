@@ -3,7 +3,7 @@ from openai import OpenAI
 from sqlmodel import Session, select
 
 from app.crud import CollectionCrud
-from app.models import APIKey, Collection
+from app.models import APIKey, Collection, ProviderType
 from app.crud.rag import OpenAIAssistantCrud
 from app.tests.utils.utils import get_project
 from app.tests.utils.document import DocumentStore
@@ -27,7 +27,7 @@ def get_assistant_collection_for_delete(
         project_id=project_id,
         llm_service_id=assistant.id,
         llm_service_name="gpt-4o",
-        provider="OPENAI",
+        provider=ProviderType.openai,
     )
 
 

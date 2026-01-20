@@ -83,7 +83,7 @@ def test_list_collections_includes_vector_store_collection_with_fields(
     appear in the list and expose the expected LLM fields.
     """
     project = get_project(db, "Dalgo")
-    collection = get_vector_store_collection(db, project, provider="openai")
+    collection = get_vector_store_collection(db, project)
 
     response = client.get(
         f"{settings.API_V1_STR}/collections/",

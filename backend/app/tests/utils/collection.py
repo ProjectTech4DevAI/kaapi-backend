@@ -46,7 +46,7 @@ def get_assistant_collection(
         organization_id=project.organization_id,
         llm_service_name=model,
         llm_service_id=assistant_id,
-        provider=ProviderType.OPENAI,
+        provider=ProviderType.openai,
     )
     return CollectionCrud(db, project.id).create(collection)
 
@@ -57,7 +57,6 @@ def get_vector_store_collection(
     *,
     vector_store_id: Optional[str] = None,
     collection_id: Optional[UUID] = None,
-    provider: str,
 ) -> Collection:
     """
     Create a Collection configured for the Vector Store path.
@@ -71,7 +70,7 @@ def get_vector_store_collection(
         project_id=project.id,
         llm_service_name=get_service_name("openai"),
         llm_service_id=vector_store_id,
-        provider=provider.upper(),
+        provider=ProviderType.openai,
     )
     return CollectionCrud(db, project.id).create(collection)
 

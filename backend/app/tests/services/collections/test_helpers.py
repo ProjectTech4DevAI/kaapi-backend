@@ -111,7 +111,6 @@ def test_ensure_unique_name_conflict_with_vector_store_collection(db: Session) -
     collection = get_vector_store_collection(
         db=db,
         project=project,
-        provider="openai",
     )
 
     collection.name = existing_name

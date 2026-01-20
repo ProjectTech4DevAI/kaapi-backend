@@ -18,7 +18,7 @@ branch_labels = None
 depends_on = None
 
 provider_type = postgresql.ENUM(
-    "OPENAI",
+    "openai",
     # aws
     # gemini
     name="providertype",
@@ -37,7 +37,7 @@ def upgrade():
             comment="LLM provider used for this collection",
         ),
     )
-    op.execute("UPDATE collection SET provider = 'OPENAI' WHERE provider IS NULL")
+    op.execute("UPDATE collection SET provider = 'openai' WHERE provider IS NULL")
     op.alter_column("collection", "provider", nullable=False)
     op.add_column(
         "collection",
@@ -65,7 +65,9 @@ def upgrade():
         existing_comment="Name of the LLM service provider",
         existing_nullable=False,
     )
-    op.create_unique_constraint(None, "collection", ["project_id", "name"])
+    op.create_unique_constraint(
+        "uq_collection_project_id_name", "collection", ["project_id", "name"]
+    )
     op.drop_constraint(
         op.f("collection_organization_id_fkey"), "collection", type_="foreignkey"
     )
@@ -96,7 +98,7 @@ def downgrade():
         ["id"],
         ondelete="CASCADE",
     )
-    op.drop_constraint("collection_name_key", "collection", type_="unique")
+    op.drop_constraint("uq_collection_project_id_name", "collection", type_="unique")
     op.alter_column(
         "collection",
         "llm_service_name",

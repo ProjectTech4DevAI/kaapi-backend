@@ -15,7 +15,7 @@ from .project import Project
 class ProviderType(str, Enum):
     """Supported LLM providers for collections."""
 
-    OPENAI = "OPENAI"
+    openai = "openai"
     # BEDROCK = "bedrock"
     # GEMINI = "gemini"
 
