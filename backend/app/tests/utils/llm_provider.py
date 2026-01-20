@@ -192,7 +192,6 @@ def get_mock_provider(
     mock_result.llm_service_name = llm_service_name
 
     mock_provider.create.return_value = mock_result
-    mock_provider.cleanup = MagicMock()
     mock_provider.delete = MagicMock()
 
     return mock_provider

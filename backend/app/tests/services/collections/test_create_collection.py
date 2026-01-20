@@ -234,7 +234,7 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collectio
             task_instance=None,
         )
 
-    mock_provider.cleanup.assert_called_once()
+    mock_provider.delete.assert_called_once()
 
 
 @pytest.mark.usefixtures("aws_credentials")
