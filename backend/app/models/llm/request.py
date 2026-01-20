@@ -114,6 +114,9 @@ class KaapiCompletionConfig(SQLModel):
         ...,
         description="Kaapi-standardized parameters mapped to provider-specific API",
     )
+    type: Literal["text", "stt", "tts"] = Field(
+        None, description="Completion config type. Params schema varies by type"
+    )
 
 
 # Discriminated union for completion configs based on provider field
