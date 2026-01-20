@@ -207,7 +207,7 @@ def get_or_fetch_score(
 
     This function implements a cache-on-first-request pattern:
     - If score already has 'traces' key, return it
-    - Otherwise, fetch from Langfuse, update score column, and return
+    - Otherwise, fetch from Langfuse, merge with existing summary_scores, and return
     - If force_refetch is True, always fetch fresh data from Langfuse
 
     Args:
@@ -224,8 +224,8 @@ def get_or_fetch_score(
         Exception: If Langfuse API calls fail
     """
     # Check if score already exists with traces
-    has_score = eval_run.score is not None and "traces" in eval_run.score
-    if not force_refetch and has_score:
+    has_traces = eval_run.score is not None and "traces" in eval_run.score
+    if not force_refetch and has_traces:
         logger.info(
             f"[get_or_fetch_score] Returning existing score | evaluation_id={eval_run.id}"
         )
@@ -237,12 +237,30 @@ def get_or_fetch_score(
         f"run={eval_run.run_name} | force_refetch={force_refetch}"
     )
 
+    # Get existing summary_scores if any (e.g., cosine_similarity from cron job)
+    existing_summary_scores = []
+    if eval_run.score and "summary_scores" in eval_run.score:
+        existing_summary_scores = eval_run.score.get("summary_scores", [])
+
     # Fetch from Langfuse
-    score = fetch_trace_scores_from_langfuse(
+    langfuse_score = fetch_trace_scores_from_langfuse(
         langfuse=langfuse,
         dataset_name=eval_run.dataset_name,
         run_name=eval_run.run_name,
     )
+
+    # Merge summary_scores: existing scores + new scores from Langfuse
+    existing_scores_map = {s["name"]: s for s in existing_summary_scores}
+    for langfuse_summary in langfuse_score.get("summary_scores", []):
+        existing_scores_map[langfuse_summary["name"]] = langfuse_summary
+
+    merged_summary_scores = list(existing_scores_map.values())
+
+    # Build final score with merged summary_scores and traces
+    score: dict[str, Any] = {
+        "summary_scores": merged_summary_scores,
+        "traces": langfuse_score.get("traces", []),
+    }
 
     # Update score column using existing helper
     update_evaluation_run(session=session, eval_run=eval_run, score=score)
