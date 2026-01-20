@@ -102,6 +102,8 @@ def test_delete_openai_assistant() -> None:
     collection = Collection(
         llm_service_id=generate_openai_id("asst_"),
         llm_service_name="gpt-4o",
+        provider="openai",
+        project_id=1,
     )
 
     with patch(

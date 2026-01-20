@@ -65,7 +65,7 @@ def upgrade():
         existing_comment="Name of the LLM service provider",
         existing_nullable=False,
     )
-    op.create_unique_constraint(None, "collection", ["name"])
+    op.create_unique_constraint(None, "collection", ["project_id", "name"])
     op.drop_constraint(
         op.f("collection_organization_id_fkey"), "collection", type_="foreignkey"
     )

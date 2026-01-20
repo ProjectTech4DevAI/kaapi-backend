@@ -4,6 +4,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now
@@ -21,6 +22,14 @@ class ProviderType(str, Enum):
 
 class Collection(SQLModel, table=True):
     """Database model for Collection operations."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "name",
+            name="uq_collection_project_id_name",
+        ),
+    )
 
     id: UUID = Field(
         default_factory=uuid4,
@@ -49,7 +58,6 @@ class Collection(SQLModel, table=True):
     )
     name: str = Field(
         nullable=True,
-        unique=True,
         description="Name of the collection",
         sa_column_kwargs={"comment": "Name of the collection"},
     )
