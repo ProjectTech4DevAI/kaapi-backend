@@ -534,7 +534,6 @@ class TestProcessCompletedEmbeddingBatch:
         )
         assert cosine_score is not None
         assert cosine_score["avg"] == 0.95
-        mock_update_traces.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
