@@ -185,3 +185,42 @@ def test_collection_info_not_found_returns_404(
     )
 
     assert response.status_code == 404
+
+
+def test_collection_info_include_docs_and_url(
+    client: TestClient,
+    db: Session,
+    user_api_key_header,
+) -> None:
+    """
+    Test that when include_docs=true and include_url=true,
+    the endpoint returns documents with their URLs.
+    """
+    project = get_project(db, "Dalgo")
+    collection = get_collection(db, project)
+
+    document = link_document_to_collection(db, collection)
+
+    response = client.get(
+        f"{settings.API_V1_STR}/collections/{collection.id}",
+        headers=user_api_key_header,
+        params={"include_docs": "true", "include_url": "true"},
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    payload = data["data"]
+
+    assert payload["id"] == str(collection.id)
+
+    docs = payload.get("documents", [])
+    assert isinstance(docs, list)
+    assert len(docs) >= 1
+
+    doc_ids = {d["id"] for d in docs}
+    assert str(document.id) in doc_ids
+
+    doc = next(d for d in docs if d["id"] == str(document.id))
+    assert "signed_url" in doc
+    assert doc["signed_url"].startswith("https://")
