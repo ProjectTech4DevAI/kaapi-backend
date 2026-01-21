@@ -91,6 +91,7 @@ from .llm import (
     CompletionConfig,
     LLMCallRequest,
     LLMCallResponse,
+    LlmCall,
 )
 
 from .message import Message

@@ -1,8 +1,14 @@
 from typing import Annotated, Any, Literal, Union
 
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel
 from pydantic import Discriminator, model_validator, HttpUrl
+from datetime import datetime
+from app.core.util import now
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Field, SQLModel, Index, text
 
 
 class KaapiLLMParams(SQLModel):
@@ -38,6 +44,20 @@ class KaapiLLMParams(SQLModel):
         default=None,
         ge=1,
         description="Maximum number of results to return",
+    )
+    input_language: str | None = Field(
+        default=None, description="Source audio language code (e.g., 'hi' for Hindi)"
+    )
+    output_language: str | None = Field(
+        default=None,
+        description=(
+            "Target transcription language code (e.g., 'en' for English)"
+            "When different from input_language, enables translation during transcription."
+        ),
+    )
+    response_format: Literal["text"] | None = Field(
+        default="text",
+        description="Output format. Currently supports only 'text' (string) type.",
     )
 
 
@@ -228,4 +248,173 @@ class LLMCallRequest(SQLModel):
             "Use this to correlate responses with requests or track request state. "
             "The exact dictionary provided here will be returned in the response metadata field."
         ),
+    )
+
+
+class LlmCall(SQLModel, table=True):
+    """
+    Database model for tracking LLM API call requests and responses.
+
+    Stores both request inputs and response outputs for traceability,
+    supporting multimodal inputs (text, audio, image) and various completion types.
+    """
+
+    __tablename__ = "llm_call"
+    __table_args__ = (
+        Index(
+            "idx_llm_call_job_id",
+            "job_id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "idx_llm_call_conversation_id",
+            "conversation_id",
+            postgresql_where=text("conversation_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        primary_key=True,
+        sa_column_kwargs={"comment": "Unique identifier for the LLM call record"},
+    )
+
+    job_id: UUID = Field(
+        foreign_key="job.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the parent job (status tracked in job table)"
+        },
+    )
+
+    project_id: int = Field(
+        foreign_key="project.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the project this LLM call belongs to"
+        },
+    )
+
+    organization_id: int = Field(
+        foreign_key="organization.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the organization this LLM call belongs to"
+        },
+    )
+
+    # Request fields
+    input: str = Field(
+        ...,
+        sa_column_kwargs={
+            "comment": "User input - text string, binary data, or file path for multimodal"
+        },
+    )
+
+    input_type: Literal["text", "audio", "image"] = Field(
+        ...,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=False,
+            comment="Input type: text, audio, image",
+        ),
+    )
+
+    output_type: Literal["text", "audio", "image"] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=True,
+            comment="Expected output type: text, audio, image",
+        ),
+    )
+
+    # Provider and model info
+    provider: Literal["openai", "google", "anthropic"] = Field(
+        ...,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=False,
+            comment="AI provider: openai, google, anthropic",
+        ),
+    )
+
+    model: str = Field(
+        ...,
+        sa_column_kwargs={
+            "comment": "Specific model used e.g. 'gpt-4o', 'gemini-2.5-pro'"
+        },
+    )
+
+    # Response fields
+    provider_response_id: str | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Original response ID from the provider (e.g., OpenAI's response ID)"
+        },
+    )
+
+    content: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Response content: {text: '...'}, {audio_bytes: '...'}, or {image: '...'}",
+        ),
+    )
+
+    usage: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Token usage: {input_tokens, output_tokens, reasoning_tokens}",
+        ),
+    )
+
+    # Conversation tracking
+    conversation_id: str | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Identifier linking this response to its conversation thread"
+        },
+    )
+
+    auto_create: bool | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Whether to auto-create conversation if conversation_id doesn't exist (OpenAI specific)"
+        },
+    )
+
+    # Configuration - stores either {config_id, config_version} or {config_blob}
+    config: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Configuration: {config_id, config_version} for stored config OR {config_blob} for ad-hoc config",
+        ),
+    )
+
+    # Timestamps
+    created_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the LLM call was created"},
+    )
+
+    updated_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the LLM call was last updated"},
+    )
+
+    deleted_at: datetime | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Timestamp when the record was soft-deleted"},
     )

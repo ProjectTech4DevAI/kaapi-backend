@@ -10,6 +10,8 @@ from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.gai import GoogleAIProvider
 
+from google.genai.types import GenerateContentConfig
+
 # temporary import
 
 from app.models.llm import (
@@ -106,9 +108,7 @@ if __name__ == "__main__":
 
     # This block mimics the core logic of your get_llm_provider function
     ProviderClass = LLMProvider.get_provider_class(provider_type)
-    client = ProviderClass.create_client(
-        credentials=mock_credentials
-    )  # <--- Invocation
+    client = ProviderClass.create_client(credentials=mock_credentials)
     instance = ProviderClass(client=client)
 
     # 3. Setup Config and Query

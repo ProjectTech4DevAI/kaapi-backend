@@ -10,6 +10,7 @@ class Usage(SQLModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    reasoning_tokens: int | None
 
 
 class LLMOutput(SQLModel):

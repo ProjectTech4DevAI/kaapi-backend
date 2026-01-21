@@ -3,6 +3,7 @@ import logging
 import openai
 from openai import OpenAI
 from google import genai
+from google.genai.types import GenerateContentResponse
 from typing import Any, Tuple
 from openai.types.responses.response import Response
 
@@ -20,6 +21,7 @@ from app.services.llm.providers.base import BaseProvider
 logger = logging.getLogger(__name__)
 
 
+# TODO fix circular import issue with GoogleAIProvider and OpenAIProvider
 class GoogleAIProvider(BaseProvider):
     def __init__(self, client: genai.Client):
         """Initialize OpenAI provider with client.
@@ -80,10 +82,33 @@ class GoogleAIProvider(BaseProvider):
                 if instructions:
                     contents.append(instructions)
                 contents.append(gemini_file)
-                response = self.client.models.generate_content(
+                response: GenerateContentResponse = self.client.models.generate_content(
                     model=model, contents=contents
                 )
-                return response.text, None
+
+                llm_response = LLMCallResponse(
+                    response=LLMResponse(
+                        provider_response_id=response.response_id,
+                        model=response.model_version,
+                        provider=provider,
+                        output=LLMOutput(text=response.text),
+                    ),
+                    usage=Usage(
+                        input_tokens=response.usage_metadata.prompt_token_count,
+                        output_tokens=response.usage_metadata.candidates_token_count,
+                        total_tokens=response.usage_metadata.total_token_count,
+                        reasoning_tokens=response.usage_metadata.thoughts_token_count,
+                    ),
+                )
+
+                if include_provider_raw_response:
+                    llm_response.provider_raw_response = response.model_dump()
+
+                logger.info(
+                    f"[OpenAIProvider.execute] Successfully generated response: {response.response_id}"
+                )
+
+                return llm_response, None
 
         except TypeError as e:
             # handle unexpected arguments gracefully
