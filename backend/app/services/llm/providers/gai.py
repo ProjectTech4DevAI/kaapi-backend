@@ -52,12 +52,11 @@ class GoogleAIProvider(BaseProvider):
         response: Response | None = None
         error_message: str | None = None
 
-        completion_type = completion_config.type
-        provider = completion_config.provider
-
-        generation_params = completion_config.params
-
         try:
+            completion_type = completion_config.type
+            provider = completion_config.provider
+
+            generation_params = completion_config.params
             if completion_type == "stt":
                 # query.input would be an audio_file object, or pathname
 

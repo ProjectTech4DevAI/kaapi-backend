@@ -89,7 +89,7 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native"] = Field(
+    provider: Literal["openai-native", "google-native"] = Field(
         default="openai-native",
         description="Native provider type (e.g., openai-native)",
     )
