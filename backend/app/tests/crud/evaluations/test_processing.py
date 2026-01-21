@@ -52,6 +52,7 @@ class TestParseEvaluationOutput:
                 "id": "item1",
                 "input": {"question": "What is 2+2?"},
                 "expected_output": {"answer": "4"},
+                "metadata": {"question_id": 1},
             }
         ]
 
@@ -64,6 +65,36 @@ class TestParseEvaluationOutput:
         assert results[0]["ground_truth"] == "4"
         assert results[0]["response_id"] == "resp_123"
         assert results[0]["usage"]["total_tokens"] == 15
+        assert results[0]["question_id"] == 1
+
+    def test_parse_evaluation_output_without_question_id(self) -> None:
+        """Test parsing dataset items without question_id (backwards compatibility)."""
+        raw_results = [
+            {
+                "custom_id": "item1",
+                "response": {
+                    "body": {
+                        "id": "resp_123",
+                        "output": "Answer text",
+                        "usage": {"total_tokens": 10},
+                    }
+                },
+            }
+        ]
+
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question?"},
+                "expected_output": {"answer": "Test answer"},
+                # No metadata / question_id
+            }
+        ]
+
+        results = parse_evaluation_output(raw_results, dataset_items)
+
+        assert len(results) == 1
+        assert results[0]["question_id"] is None
 
     def test_parse_evaluation_output_simple_string(self) -> None:
         """Test parsing with simple string output."""

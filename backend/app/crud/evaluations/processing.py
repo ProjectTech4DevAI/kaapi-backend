@@ -154,6 +154,9 @@ def parse_evaluation_output(
             question = dataset_item["input"].get("question", "")
             ground_truth = dataset_item["expected_output"].get("answer", "")
 
+            # Extract question_id from dataset item metadata
+            question_id = dataset_item.get("metadata", {}).get("question_id")
+
             results.append(
                 {
                     "item_id": item_id,
@@ -162,6 +165,7 @@ def parse_evaluation_output(
                     "ground_truth": ground_truth,
                     "response_id": response_id,
                     "usage": usage,
+                    "question_id": question_id,
                 }
             )
 

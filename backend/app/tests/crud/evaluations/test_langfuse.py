@@ -274,6 +274,91 @@ class TestCreateLangfuseDatasetRun:
         mock_langfuse.flush.assert_called_once()
         assert mock_langfuse.trace.call_count == 2
 
+    def test_create_langfuse_dataset_run_with_question_id(self) -> None:
+        """Test that question_id is included in trace metadata."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+        mock_generation = MagicMock()
+
+        mock_item1 = MagicMock()
+        mock_item1.id = "item_1"
+        mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
+
+        mock_dataset.items = [mock_item1]
+        mock_langfuse.get_dataset.return_value = mock_dataset
+        mock_langfuse.generation.return_value = mock_generation
+
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "What is 2+2?",
+                "generated_output": "4",
+                "ground_truth": "4",
+                "response_id": "resp_123",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "question_id": 1,
+            },
+        ]
+
+        trace_id_mapping = create_langfuse_dataset_run(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+            results=results,
+            model="gpt-4o",
+        )
+
+        assert len(trace_id_mapping) == 1
+
+        # Verify trace was called with question_id in metadata
+        trace_call = mock_langfuse.trace.call_args
+        assert trace_call.kwargs["metadata"]["question_id"] == 1
+
+        # Verify generation was called with question_id in metadata
+        generation_call = mock_langfuse.generation.call_args
+        assert generation_call.kwargs["metadata"]["question_id"] == 1
+
+    def test_create_langfuse_dataset_run_without_question_id(self) -> None:
+        """Test that traces work without question_id (backwards compatibility)."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+
+        mock_item1 = MagicMock()
+        mock_item1.id = "item_1"
+        mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
+
+        mock_dataset.items = [mock_item1]
+        mock_langfuse.get_dataset.return_value = mock_dataset
+
+        # Results without question_id
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "What is 2+2?",
+                "generated_output": "4",
+                "ground_truth": "4",
+                "response_id": "resp_123",
+                "usage": None,
+            },
+        ]
+
+        trace_id_mapping = create_langfuse_dataset_run(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+            results=results,
+        )
+
+        assert len(trace_id_mapping) == 1
+
+        # Verify trace was called without question_id in metadata
+        trace_call = mock_langfuse.trace.call_args
+        assert "question_id" not in trace_call.kwargs["metadata"]
+
 
 class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""
@@ -410,6 +495,80 @@ class TestUploadDatasetToLangfuse:
         assert duplicate_numbers.count(1) == 3
         assert duplicate_numbers.count(2) == 3
         assert duplicate_numbers.count(3) == 3
+
+    def test_upload_dataset_to_langfuse_question_id_in_metadata(self, valid_items):
+        """Test that question_id is included in metadata as integer."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+        mock_dataset.id = "dataset_123"
+        mock_langfuse.create_dataset.return_value = mock_dataset
+
+        upload_dataset_to_langfuse(
+            langfuse=mock_langfuse,
+            items=valid_items,
+            dataset_name="test_dataset",
+            duplication_factor=1,
+        )
+
+        calls = mock_langfuse.create_dataset_item.call_args_list
+        assert len(calls) == 3
+
+        question_ids = []
+        for call_args in calls:
+            metadata = call_args.kwargs.get("metadata", {})
+            assert "question_id" in metadata
+            assert metadata["question_id"] is not None
+            # Verify it's an integer (1-based index)
+            assert isinstance(metadata["question_id"], int)
+            question_ids.append(metadata["question_id"])
+
+        # Verify sequential IDs starting from 1
+        assert sorted(question_ids) == [1, 2, 3]
+
+    def test_upload_dataset_to_langfuse_same_question_id_for_duplicates(
+        self, valid_items
+    ):
+        """Test that all duplicates of the same question share the same question_id."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+        mock_dataset.id = "dataset_123"
+        mock_langfuse.create_dataset.return_value = mock_dataset
+
+        upload_dataset_to_langfuse(
+            langfuse=mock_langfuse,
+            items=valid_items,
+            dataset_name="test_dataset",
+            duplication_factor=3,
+        )
+
+        calls = mock_langfuse.create_dataset_item.call_args_list
+        assert len(calls) == 9  # 3 items * 3 duplicates
+
+        # Group calls by original_question
+        question_ids_by_question: dict[str, set[int]] = {}
+        for call_args in calls:
+            metadata = call_args.kwargs.get("metadata", {})
+            original_question = metadata.get("original_question")
+            question_id = metadata.get("question_id")
+
+            # Verify question_id is an integer
+            assert isinstance(question_id, int)
+
+            if original_question not in question_ids_by_question:
+                question_ids_by_question[original_question] = set()
+            question_ids_by_question[original_question].add(question_id)
+
+        # Verify each question has exactly one unique question_id across all duplicates
+        for question, question_ids in question_ids_by_question.items():
+            assert (
+                len(question_ids) == 1
+            ), f"Question '{question}' has multiple question_ids: {question_ids}"
+
+        # Verify different questions have different question_ids (1, 2, 3)
+        all_unique_ids: set[int] = set()
+        for qid_set in question_ids_by_question.values():
+            all_unique_ids.update(qid_set)
+        assert all_unique_ids == {1, 2, 3}  # 3 unique questions = IDs 1, 2, 3
 
     def test_upload_dataset_to_langfuse_empty_items(self) -> None:
         """Test with empty items list."""
