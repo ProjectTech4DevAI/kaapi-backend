@@ -12,8 +12,8 @@ from app.crud import (
     CollectionJobCrud,
     DocumentCollectionCrud,
 )
+from app.core.cloud import get_cloud_storage
 from app.models import (
-    DocumentPublic,
     CollectionJobStatus,
     CollectionActionType,
     CollectionJobCreate,
@@ -32,6 +32,7 @@ from app.services.collections import (
     create_collection as create_service,
     delete_collection as delete_service,
 )
+from app.services.documents.helpers import build_document_schemas
 
 
 logger = logging.getLogger(__name__)
@@ -184,8 +185,16 @@ def collection_info(
         True,
         description="If true, include documents linked to this collection",
     ),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, gt=0, le=100),
+    include_url: bool = Query(
+        True, description="Include a signed URL to access the document"
+    ),
+    limit: int
+    | None = Query(
+        None,
+        gt=0,
+        le=500,
+        description="Limit number of documents returned (default: all, max: 500)",
+    ),
 ):
     collection_crud = CollectionCrud(session, current_user.project_.id)
     collection = collection_crud.read_one(collection_id)
@@ -194,9 +203,16 @@ def collection_info(
 
     if include_docs:
         document_collection_crud = DocumentCollectionCrud(session)
-        docs = document_collection_crud.read(collection, skip, limit)
-        collection_with_docs.documents = [
-            DocumentPublic.model_validate(doc) for doc in docs
-        ]
+        documents = document_collection_crud.read(collection, skip=None, limit=limit)
+
+        storage = None
+        if include_url and documents:
+            storage = get_cloud_storage(
+                session=session, project_id=current_user.project_.id
+            )
+
+        collection_with_docs.documents = build_document_schemas(
+            documents=documents, storage=storage, include_url=include_url
+        )
 
     return APIResponse.success_response(collection_with_docs)
