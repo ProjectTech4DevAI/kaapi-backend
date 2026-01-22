@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 from langfuse import Langfuse
 
+from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
+
 logger = logging.getLogger(__name__)
 
 
@@ -319,7 +321,7 @@ def fetch_trace_scores_from_langfuse(
     langfuse: Langfuse,
     dataset_name: str,
     run_name: str,
-) -> dict[str, Any]:
+) -> EvaluationScore:
     """
     Fetch trace scores from Langfuse for an evaluation run.
 
@@ -402,14 +404,14 @@ def fetch_trace_scores_from_langfuse(
         )
 
         # 3. Fetch trace details with scores for each trace
-        traces = []
+        traces: list[TraceData] = []
         # Track score aggregations by name: {name: {"data_type": str, "values": list}}
         score_aggregations: dict[str, dict[str, Any]] = {}
 
         for trace_id in trace_ids:
             try:
                 trace = langfuse.api.trace.get(trace_id)
-                trace_data: dict[str, Any] = {
+                trace_data: TraceData = {
                     "trace_id": trace_id,
                     "question": "",
                     "llm_answer": "",
@@ -453,7 +455,7 @@ def fetch_trace_scores_from_langfuse(
                         ):
                             score_value = round(float(score_value), 2)
 
-                        score_entry: dict[str, Any] = {
+                        score_entry: TraceScore = {
                             "name": score_name,
                             "value": score_value,
                             "data_type": data_type,
@@ -534,7 +536,7 @@ def fetch_trace_scores_from_langfuse(
                     }
                 )
 
-        result: dict[str, Any] = {
+        result: EvaluationScore = {
             "summary_scores": summary_scores,
             "traces": traces,
         }

@@ -1,11 +1,11 @@
 import logging
-from typing import Any
 
 from langfuse import Langfuse
 from sqlmodel import Session, select
 
 from app.core.util import now
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
+from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ def get_or_fetch_score(
     eval_run: EvaluationRun,
     langfuse: Langfuse,
     force_refetch: bool = False,
-) -> dict[str, Any]:
+) -> EvaluationScore:
     """
     Get cached score with trace info or fetch from Langfuse and update.
 
@@ -257,7 +257,7 @@ def get_or_fetch_score(
     merged_summary_scores = list(existing_scores_map.values())
 
     # Build final score with merged summary_scores and traces
-    score: dict[str, Any] = {
+    score: EvaluationScore = {
         "summary_scores": merged_summary_scores,
         "traces": langfuse_score.get("traces", []),
     }
@@ -278,7 +278,7 @@ def save_score(
     eval_run_id: int,
     organization_id: int,
     project_id: int,
-    score: dict[str, Any],
+    score: EvaluationScore,
 ) -> EvaluationRun | None:
     """
     Save score to evaluation run with its own session.
