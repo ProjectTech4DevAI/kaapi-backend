@@ -11,20 +11,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Index, text
 
 
-class KaapiLLMParams(SQLModel):
-    """
-    Kaapi-abstracted parameters for LLM providers.
-    These parameters are mapped internally to provider-specific API parameters.
-    Provides a unified contract across all LLM providers (OpenAI, Claude, Gemini, etc.).
-    Provider-specific mappings are handled at the mapper level.
-    """
-
-    model: str = Field(
-        description="Model identifier to use for completion (e.g., 'gpt-4o', 'gpt-5')",
-    )
+class TextLLMParams(SQLModel):
+    type: Literal["text"] = "text"
+    model: str
     instructions: str | None = Field(
         default=None,
-        description="System instructions to guide the model's behavior",
     )
     knowledge_base_ids: list[str] | None = Field(
         default=None,
@@ -38,27 +29,37 @@ class KaapiLLMParams(SQLModel):
         default=None,
         ge=0.0,
         le=2.0,
-        description="Sampling temperature between 0 and 2",
     )
     max_num_results: int | None = Field(
         default=None,
         ge=1,
-        description="Maximum number of results to return",
+        description="Maximum number of candidate results to return",
     )
-    input_language: str | None = Field(
-        default=None, description="Source audio language code (e.g., 'hi' for Hindi)"
-    )
-    output_language: str | None = Field(
-        default=None,
-        description=(
-            "Target transcription language code (e.g., 'en' for English)"
-            "When different from input_language, enables translation during transcription."
-        ),
-    )
+
+
+class STTLLMParams(SQLModel):
+    type: Literal["stt"] = "stt"
+    model = str
+    input_language: str | None = None
+    output_language: str | None = None
     response_format: Literal["text"] | None = Field(
-        default="text",
-        description="Output format. Currently supports only 'text' (string) type.",
+        None,
+        description="Can take multiple response_format like text, json, verbose_json.",
     )
+
+
+class TTSLLMParams(SQLModel):
+    type: Literal["tts"] = "tts"
+    model: str
+    voice: str
+    language: str
+    response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
+    speed: float | None = Field(None, ge=0.25, le=4.0)
+
+
+KaapiLLMParams = Annotated[
+    Union[TextLLMParams, STTLLMParams, TTSLLMParams], Field(discriminator="type")
+]
 
 
 class ConversationConfig(SQLModel):
