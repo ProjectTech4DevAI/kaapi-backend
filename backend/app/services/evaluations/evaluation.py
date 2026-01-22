@@ -263,19 +263,27 @@ def get_evaluation_with_scores(
     if not eval_run:
         return None, None
 
+    # Only fetch trace info for completed evaluations
+    if eval_run.status != "completed":
+        if get_trace_info:
+            return eval_run, (
+                f"Trace info is only available for completed evaluations. "
+                f"Current status: {eval_run.status}"
+            )
+        return eval_run, None
+
+    # Check if we already have cached summary_scores
+    has_summary_scores = (
+        eval_run.score is not None and "summary_scores" in eval_run.score
+    )
+
+    # If not requesting trace info, return existing score (with summary_scores)
     if not get_trace_info:
         return eval_run, None
 
-    # Only fetch trace info for completed evaluations
-    if eval_run.status != "completed":
-        return eval_run, (
-            f"Trace info is only available for completed evaluations. "
-            f"Current status: {eval_run.status}"
-        )
-
-    # Check if we already have cached scores
-    has_cached_score = eval_run.score is not None and "traces" in eval_run.score
-    if not resync_score and has_cached_score:
+    # Check if we already have cached traces
+    has_cached_traces = eval_run.score is not None and "traces" in eval_run.score
+    if not resync_score and has_cached_traces:
         return eval_run, None
 
     langfuse = get_langfuse_client(
@@ -288,9 +296,12 @@ def get_evaluation_with_scores(
     dataset_name = eval_run.dataset_name
     run_name = eval_run.run_name
     eval_run_id = eval_run.id
+    existing_summary_scores = (
+        eval_run.score.get("summary_scores", []) if has_summary_scores else []
+    )
 
     try:
-        score = fetch_trace_scores_from_langfuse(
+        langfuse_score = fetch_trace_scores_from_langfuse(
             langfuse=langfuse,
             dataset_name=dataset_name,
             run_name=run_name,
@@ -308,6 +319,23 @@ def get_evaluation_with_scores(
             exc_info=True,
         )
         return eval_run, f"Failed to fetch trace info from Langfuse: {str(e)}"
+
+    # Merge summary_scores: existing scores + new scores from Langfuse
+    # Create a map of existing scores by name
+    existing_scores_map = {s["name"]: s for s in existing_summary_scores}
+    langfuse_summary_scores = langfuse_score.get("summary_scores", [])
+
+    # Merge: Langfuse scores take precedence (more up-to-date)
+    for langfuse_summary in langfuse_summary_scores:
+        existing_scores_map[langfuse_summary["name"]] = langfuse_summary
+
+    merged_summary_scores = list(existing_scores_map.values())
+
+    # Build final score with merged summary_scores and traces
+    score = {
+        "summary_scores": merged_summary_scores,
+        "traces": langfuse_score.get("traces", []),
+    }
 
     eval_run = save_score(
         eval_run_id=eval_run_id,
