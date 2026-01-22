@@ -31,7 +31,7 @@ from app.utils import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/evaluations/datasets", tags=["Evaluation"])
 
 
 def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:

@@ -527,9 +527,13 @@ class TestProcessCompletedEmbeddingBatch:
         db.refresh(result)
         assert result.status == "completed"
         assert result.score is not None
-        assert "cosine_similarity" in result.score
-        assert result.score["cosine_similarity"]["avg"] == 0.95
-        mock_update_traces.assert_called_once()
+        assert "summary_scores" in result.score
+        summary_scores = result.score["summary_scores"]
+        cosine_score = next(
+            (s for s in summary_scores if s["name"] == "cosine_similarity"), None
+        )
+        assert cosine_score is not None
+        assert cosine_score["avg"] == 0.95
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")

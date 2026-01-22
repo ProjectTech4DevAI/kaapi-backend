@@ -382,21 +382,19 @@ async def process_completed_embedding_batch(
         # Step 4: Calculate similarity scores
         similarity_stats = calculate_average_similarity(embedding_pairs=embedding_pairs)
 
-        # Step 5: Update evaluation_run with scores
-        if eval_run.score is None:
-            eval_run.score = {}
-
-        eval_run.score["cosine_similarity"] = {
-            "avg": similarity_stats["cosine_similarity_avg"],
-            "std": similarity_stats["cosine_similarity_std"],
-            "total_pairs": similarity_stats["total_pairs"],
-        }
-
-        # Optionally store per-item scores if not too large
-        if len(similarity_stats.get("per_item_scores", [])) <= 100:
-            eval_run.score["cosine_similarity"]["per_item_scores"] = similarity_stats[
-                "per_item_scores"
+        # Step 5: Update evaluation_run with scores in summary_scores format
+        # This format is consistent with what Langfuse returns when fetching traces
+        eval_run.score = {
+            "summary_scores": [
+                {
+                    "name": "cosine_similarity",
+                    "avg": round(float(similarity_stats["cosine_similarity_avg"]), 2),
+                    "std": round(float(similarity_stats["cosine_similarity_std"]), 2),
+                    "total_pairs": similarity_stats["total_pairs"],
+                    "data_type": "NUMERIC",
+                }
             ]
+        }
 
         # Step 6: Update Langfuse traces with cosine similarity scores
         logger.info(
