@@ -39,7 +39,7 @@ class TextLLMParams(SQLModel):
 
 class STTLLMParams(SQLModel):
     type: Literal["stt"] = "stt"
-    model = str
+    model: str
     input_language: str | None = None
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
