@@ -35,3 +35,11 @@ from app.crud.evaluations.processing import (
     process_completed_embedding_batch,
     process_completed_evaluation,
 )
+from app.crud.evaluations.score import (
+    CategoricalSummaryScore,
+    EvaluationScore,
+    NumericSummaryScore,
+    SummaryScore,
+    TraceData,
+    TraceScore,
+)
