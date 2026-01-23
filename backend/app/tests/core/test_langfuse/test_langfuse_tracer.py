@@ -13,27 +13,35 @@ from app.services.response.response import generate_response, process_response
 
 @pytest.fixture
 def valid_credentials() -> dict:
-    return {
-        "public_key": "pk-test-123",
-        "secret_key": "sk-test-456",
-        "host": "https://langfuse.example.com",
-    }
+    def _create(**overrides) -> dict:
+        defaults = {
+            "public_key": "pk-test-123",
+            "secret_key": "sk-test-456",
+            "host": "https://langfuse.example.com",
+        }
+        return {**defaults, **overrides}
+
+    return _create()
 
 
 @pytest.fixture
 def assistant_mock() -> Assistant:
-    return Assistant(
-        id=123,
-        assistant_id="asst_test123",
-        name="Test Assistant",
-        model="gpt-4",
-        temperature=0.7,
-        instructions="You are a helpful assistant.",
-        vector_store_ids=["vs1"],
-        max_num_results=5,
-        project_id=1,
-        organization_id=1,
-    )
+    def _create(**overrides) -> Assistant:
+        defaults = {
+            "id": 123,
+            "assistant_id": "asst_test123",
+            "name": "Test Assistant",
+            "model": "gpt-4",
+            "temperature": 0.7,
+            "instructions": "You are a helpful assistant.",
+            "vector_store_ids": ["vs1"],
+            "max_num_results": 5,
+            "project_id": 1,
+            "organization_id": 1,
+        }
+        return Assistant(**{**defaults, **overrides})
+
+    return _create()
 
 
 class TestLangfuseTracerInit:
@@ -50,11 +58,15 @@ class TestLangfuseTracerInit:
         assert tracer.langfuse is None
 
     def test_missing_public_key_sets_langfuse_to_none(self) -> None:
-        tracer = LangfuseTracer(credentials={"secret_key": "sk", "host": "https://x.com"})
+        tracer = LangfuseTracer(
+            credentials={"secret_key": "sk", "host": "https://x.com"}
+        )
         assert tracer.langfuse is None
 
     def test_missing_secret_key_sets_langfuse_to_none(self) -> None:
-        tracer = LangfuseTracer(credentials={"public_key": "pk", "host": "https://x.com"})
+        tracer = LangfuseTracer(
+            credentials={"public_key": "pk", "host": "https://x.com"}
+        )
         assert tracer.langfuse is None
 
     def test_missing_host_sets_langfuse_to_none(self) -> None:
@@ -239,7 +251,9 @@ class TestGenerateResponseWithTracer:
         mock_client = MagicMock()
         tracer = LangfuseTracer(credentials=None)
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="What is 2+2?")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="What is 2+2?"
+        )
         response, error = generate_response(
             tracer=tracer,
             client=mock_client,
@@ -255,7 +269,9 @@ class TestGenerateResponseWithTracer:
         mock_client = MagicMock()
         tracer = LangfuseTracer(credentials={"incomplete": True})
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="What is 2+2?")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="What is 2+2?"
+        )
         response, error = generate_response(
             tracer=tracer,
             client=mock_client,
@@ -272,7 +288,9 @@ class TestGenerateResponseWithTracer:
         mock_client.responses.create.side_effect = OpenAIError("API failed")
         tracer = LangfuseTracer(credentials=None)
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="What is 2+2?")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="What is 2+2?"
+        )
         response, error = generate_response(
             tracer=tracer,
             client=mock_client,
@@ -379,7 +397,9 @@ class TestGenerateResponseWithEnabledTracer:
         mock_client.responses.create.side_effect = OpenAIError("API failed")
 
         tracer = LangfuseTracer(credentials=valid_credentials)
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="What is 2+2?")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="What is 2+2?"
+        )
 
         response, error = generate_response(
             tracer=tracer,
@@ -422,7 +442,9 @@ class TestGenerateResponseWithEnabledTracer:
         mock_client.responses.create.return_value = mock_response
 
         tracer = LangfuseTracer(credentials=valid_credentials)
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="What is 2+2?")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="What is 2+2?"
+        )
 
         response, error = generate_response(
             tracer=tracer,
@@ -478,7 +500,9 @@ class TestProcessResponseIntegration:
         mock_client.responses.create.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="Test question")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="Test question"
+        )
         result = process_response(
             request=request,
             project_id=1,
@@ -530,7 +554,9 @@ class TestProcessResponseIntegration:
         mock_client.responses.create.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="Test question")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="Test question"
+        )
         result = process_response(
             request=request,
             project_id=1,
@@ -567,7 +593,9 @@ class TestProcessResponseIntegration:
         mock_get_client.return_value = mock_client
         mock_fail_job.return_value = MagicMock(success=False, error="API failed")
 
-        request = ResponsesAPIRequest(assistant_id="asst_test123", question="Test question")
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="Test question"
+        )
         result = process_response(
             request=request,
             project_id=1,

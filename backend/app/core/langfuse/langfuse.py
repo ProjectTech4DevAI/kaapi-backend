@@ -65,7 +65,9 @@ class LangfuseTracer:
         try:
             return fn(*args, **kwargs)
         except Exception as e:
-            logger.warning(f"[LangfuseTracer] {getattr(fn, '__name__', 'operation')} failed: {e}")
+            logger.warning(
+                f"[LangfuseTracer] {getattr(fn, '__name__', 'operation')} failed: {e}"
+            )
             self._failed = True
             return None
 
@@ -113,7 +115,9 @@ class LangfuseTracer:
     ):
         if self._failed or not self.generation:
             return
-        self._langfuse_call(self.generation.end, output=output, usage=usage, model=model)
+        self._langfuse_call(
+            self.generation.end, output=output, usage=usage, model=model
+        )
 
     def update_trace(self, tags: list[str], output: Dict[str, Any]):
         if self._failed or not self.trace:
@@ -188,7 +192,9 @@ def observe_llm_execution(
                 try:
                     return fn(*args, **kwargs)
                 except Exception as e:
-                    logger.warning(f"[Langfuse] {getattr(fn, '__name__', 'operation')} failed: {e}")
+                    logger.warning(
+                        f"[Langfuse] {getattr(fn, '__name__', 'operation')} failed: {e}"
+                    )
                     failed = True
                     return None
 
@@ -217,7 +223,10 @@ def observe_llm_execution(
                 if generation:
                     langfuse_call(
                         generation.end,
-                        output={"status": "success", "output": response.response.output.text},
+                        output={
+                            "status": "success",
+                            "output": response.response.output.text,
+                        },
                         usage_details={
                             "input": response.usage.input_tokens,
                             "output": response.usage.output_tokens,
@@ -227,7 +236,10 @@ def observe_llm_execution(
                 if trace:
                     langfuse_call(
                         trace.update,
-                        output={"status": "success", "output": response.response.output.text},
+                        output={
+                            "status": "success",
+                            "output": response.response.output.text,
+                        },
                         session_id=session_id or response.response.conversation_id,
                     )
             else:
