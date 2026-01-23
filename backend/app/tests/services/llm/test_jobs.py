@@ -121,9 +121,10 @@ class TestHandleJobError:
         callback_url = "https://example.com/callback"
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -158,9 +159,10 @@ class TestHandleJobError:
 
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -189,9 +191,10 @@ class TestHandleJobError:
             error="Test error with callback failure"
         )
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 

@@ -1,11 +1,9 @@
 import logging
+import os
 
-import openai
-from openai import OpenAI
 from google import genai
 from google.genai.types import GenerateContentResponse
-from typing import Any, Tuple
-from openai.types.responses.response import Response
+from typing import Any
 
 from app.models.llm import (
     NativeCompletionConfig,
@@ -21,22 +19,33 @@ from app.services.llm.providers.base import BaseProvider
 logger = logging.getLogger(__name__)
 
 
-# TODO fix circular import issue with GoogleAIProvider and OpenAIProvider
 class GoogleAIProvider(BaseProvider):
     def __init__(self, client: genai.Client):
-        """Initialize OpenAI provider with client.
+        """Initialize Google AI provider with client.
 
         Args:
-            client: OpenAI client instance
+            client: Google AI client instance
         """
         super().__init__(client)
         self.client = client
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        if "api_key" not in credentials:
-            return f"Gemini API Key not configured."
-        return genai.Client(api_key=credentials["api_key"])
+        """Create Google AI client using GEMINI_API_KEY from environment.
+
+        Note: Currently uses os.getenv("GEMINI_API_KEY") directly.
+        The credentials parameter is kept for interface compatibility but not used.
+
+        Returns:
+            genai.Client instance
+
+        Raises:
+            ValueError: If GEMINI_API_KEY is not set in environment
+        """
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        return genai.Client(api_key=api_key)
 
     def _parse_input(self, query_input, completion_type, provider) -> str:
         if completion_type == "stt":
@@ -50,8 +59,8 @@ class GoogleAIProvider(BaseProvider):
         completion_config: NativeCompletionConfig,
         query: QueryParams,
         include_provider_raw_response: bool = False,
-    ) -> tuple[Any, str | None]:
-        response: Response | None = None
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        response: GenerateContentResponse | None = None
         error_message: str | None = None
 
         try:
@@ -105,7 +114,7 @@ class GoogleAIProvider(BaseProvider):
                     llm_response.provider_raw_response = response.model_dump()
 
                 logger.info(
-                    f"[OpenAIProvider.execute] Successfully generated response: {response.response_id}"
+                    f"[GoogleAIProvider.execute] Successfully generated STT response: {response.response_id}"
                 )
 
                 return llm_response, None

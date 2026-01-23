@@ -3,6 +3,7 @@ LLM response models.
 
 This module contains structured response models for LLM API calls.
 """
+
 from sqlmodel import SQLModel, Field
 
 

@@ -130,7 +130,9 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai"] = Field(..., description="LLM provider (openai)")
+    provider: Literal["openai", "google"] = Field(
+        ..., description="LLM provider (openai)"
+    )
     params: KaapiLLMParams = Field(
         ...,
         description="Kaapi-standardized parameters mapped to provider-specific API",

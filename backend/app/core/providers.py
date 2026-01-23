@@ -12,6 +12,7 @@ class Provider(str, Enum):
     OPENAI = "openai"
     AWS = "aws"
     LANGFUSE = "langfuse"
+    GOOGLE = "google"
 
 
 @dataclass

@@ -36,12 +36,16 @@ class TestExecuteJobIntegration(DocTransformTestBase):
         job_crud = DocTransformationJobCrud(session=db, project_id=project.id)
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
 
-        with patch(
-            "app.services.doctransform.job.start_low_priority_job",
-            return_value="fake-task-id",
-        ), patch("app.services.doctransform.job.Session") as mock_session_class, patch(
-            "app.services.doctransform.registry.TRANSFORMERS",
-            {"test": MockTestTransformer},
+        with (
+            patch(
+                "app.services.doctransform.job.start_low_priority_job",
+                return_value="fake-task-id",
+            ),
+            patch("app.services.doctransform.job.Session") as mock_session_class,
+            patch(
+                "app.services.doctransform.registry.TRANSFORMERS",
+                {"test": MockTestTransformer},
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -94,11 +98,12 @@ class TestExecuteJobIntegration(DocTransformTestBase):
             jobs.append(job)
 
         for job in jobs:
-            with patch(
-                "app.services.doctransform.job.Session"
-            ) as mock_session_class, patch(
-                "app.services.doctransform.registry.TRANSFORMERS",
-                {"test": MockTestTransformer},
+            with (
+                patch("app.services.doctransform.job.Session") as mock_session_class,
+                patch(
+                    "app.services.doctransform.registry.TRANSFORMERS",
+                    {"test": MockTestTransformer},
+                ),
             ):
                 mock_session_class.return_value.__enter__.return_value = db
                 mock_session_class.return_value.__exit__.return_value = None
@@ -138,11 +143,12 @@ class TestExecuteJobIntegration(DocTransformTestBase):
             jobs.append((job, target_format))
 
         for job, target_format in jobs:
-            with patch(
-                "app.services.doctransform.job.Session"
-            ) as mock_session_class, patch(
-                "app.services.doctransform.registry.TRANSFORMERS",
-                {"test": MockTestTransformer},
+            with (
+                patch("app.services.doctransform.job.Session") as mock_session_class,
+                patch(
+                    "app.services.doctransform.registry.TRANSFORMERS",
+                    {"test": MockTestTransformer},
+                ),
             ):
                 mock_session_class.return_value.__enter__.return_value = db
                 mock_session_class.return_value.__exit__.return_value = None

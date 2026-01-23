@@ -1,6 +1,7 @@
 """
 Celery worker management script.
 """
+
 import logging
 import multiprocessing
 from celery.bin import worker

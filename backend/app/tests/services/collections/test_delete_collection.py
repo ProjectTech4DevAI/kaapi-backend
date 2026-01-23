@@ -95,13 +95,15 @@ def test_execute_job_delete_success_updates_job_and_calls_delete(
 
     mock_get_openai_client.return_value = MagicMock()
 
-    with patch(
-        "app.services.collections.delete_collection.Session"
-    ) as SessionCtor, patch(
-        "app.services.collections.delete_collection.OpenAIAssistantCrud"
-    ) as MockAssistantCrud, patch(
-        "app.services.collections.delete_collection.CollectionCrud"
-    ) as MockCollectionCrud:
+    with (
+        patch("app.services.collections.delete_collection.Session") as SessionCtor,
+        patch(
+            "app.services.collections.delete_collection.OpenAIAssistantCrud"
+        ) as MockAssistantCrud,
+        patch(
+            "app.services.collections.delete_collection.CollectionCrud"
+        ) as MockCollectionCrud,
+    ):
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 
@@ -159,13 +161,15 @@ def test_execute_job_delete_failure_marks_job_failed(
 
     mock_get_openai_client.return_value = MagicMock()
 
-    with patch(
-        "app.services.collections.delete_collection.Session"
-    ) as SessionCtor, patch(
-        "app.services.collections.delete_collection.OpenAIAssistantCrud"
-    ) as MockAssistantCrud, patch(
-        "app.services.collections.delete_collection.CollectionCrud"
-    ) as MockCollectionCrud:
+    with (
+        patch("app.services.collections.delete_collection.Session") as SessionCtor,
+        patch(
+            "app.services.collections.delete_collection.OpenAIAssistantCrud"
+        ) as MockAssistantCrud,
+        patch(
+            "app.services.collections.delete_collection.CollectionCrud"
+        ) as MockCollectionCrud,
+    ):
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 
@@ -233,15 +237,18 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
 
     callback_url = "https://example.com/collections/delete-success"
 
-    with patch(
-        "app.services.collections.delete_collection.Session"
-    ) as SessionCtor, patch(
-        "app.services.collections.delete_collection.OpenAIAssistantCrud"
-    ) as MockAssistantCrud, patch(
-        "app.services.collections.delete_collection.CollectionCrud"
-    ) as MockCollectionCrud, patch(
-        "app.services.collections.delete_collection.send_callback"
-    ) as mock_send_callback:
+    with (
+        patch("app.services.collections.delete_collection.Session") as SessionCtor,
+        patch(
+            "app.services.collections.delete_collection.OpenAIAssistantCrud"
+        ) as MockAssistantCrud,
+        patch(
+            "app.services.collections.delete_collection.CollectionCrud"
+        ) as MockCollectionCrud,
+        patch(
+            "app.services.collections.delete_collection.send_callback"
+        ) as mock_send_callback,
+    ):
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 
@@ -310,15 +317,18 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
     mock_get_openai_client.return_value = MagicMock()
     callback_url = "https://example.com/collections/delete-failed"
 
-    with patch(
-        "app.services.collections.delete_collection.Session"
-    ) as SessionCtor, patch(
-        "app.services.collections.delete_collection.OpenAIAssistantCrud"
-    ) as MockAssistantCrud, patch(
-        "app.services.collections.delete_collection.CollectionCrud"
-    ) as MockCollectionCrud, patch(
-        "app.services.collections.delete_collection.send_callback"
-    ) as mock_send_callback:
+    with (
+        patch("app.services.collections.delete_collection.Session") as SessionCtor,
+        patch(
+            "app.services.collections.delete_collection.OpenAIAssistantCrud"
+        ) as MockAssistantCrud,
+        patch(
+            "app.services.collections.delete_collection.CollectionCrud"
+        ) as MockCollectionCrud,
+        patch(
+            "app.services.collections.delete_collection.send_callback"
+        ) as mock_send_callback,
+    ):
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 

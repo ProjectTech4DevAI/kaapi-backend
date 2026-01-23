@@ -1,6 +1,7 @@
 """
 Tests for the OpenAI provider.
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 

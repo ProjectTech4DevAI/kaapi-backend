@@ -221,13 +221,15 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
 
     _ = mock_get_openai_client.return_value
 
-    with patch(
-        "app.services.collections.create_collection.Session"
-    ) as SessionCtor, patch(
-        "app.services.collections.create_collection.OpenAIVectorStoreCrud"
-    ) as MockVS, patch(
-        "app.services.collections.create_collection.OpenAIAssistantCrud"
-    ) as MockAsst:
+    with (
+        patch("app.services.collections.create_collection.Session") as SessionCtor,
+        patch(
+            "app.services.collections.create_collection.OpenAIVectorStoreCrud"
+        ) as MockVS,
+        patch(
+            "app.services.collections.create_collection.OpenAIAssistantCrud"
+        ) as MockAsst,
+    ):
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 

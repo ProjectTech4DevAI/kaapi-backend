@@ -1,6 +1,7 @@
 """
 Celery beat scheduler for cron jobs.
 """
+
 import logging
 from celery import Celery
 from app.celery.celery_app import celery_app

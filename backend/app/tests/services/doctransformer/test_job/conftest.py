@@ -1,6 +1,7 @@
 """
 Pytest fixtures for document transformation service tests.
 """
+
 import os
 from typing import Any, Callable, Generator, Tuple
 from unittest.mock import patch

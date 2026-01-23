@@ -210,7 +210,7 @@ def send_benchmark_request(
         )
     else:
         typer.echo(response.text)
-        typer.echo(f"[{i+1}/{total}] FAILED - Status: {response.status_code}")
+        typer.echo(f"[{i + 1}/{total}] FAILED - Status: {response.status_code}")
         raise Exception(f"Request failed with status code {response.status_code}")
 
 

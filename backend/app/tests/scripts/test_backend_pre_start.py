@@ -8,8 +8,9 @@ def test_init_success():
     mock_session.exec.return_value = None
 
     fake_select = MagicMock()
-    with patch("app.backend_pre_start.Session", return_value=mock_session), patch(
-        "app.backend_pre_start.select", return_value=fake_select
+    with (
+        patch("app.backend_pre_start.Session", return_value=mock_session),
+        patch("app.backend_pre_start.select", return_value=fake_select),
     ):
         try:
             init(MagicMock())

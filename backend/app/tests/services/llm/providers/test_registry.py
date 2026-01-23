@@ -1,6 +1,7 @@
 """
 Tests for the LLM provider registry.
 """
+
 import pytest
 from unittest.mock import patch
 

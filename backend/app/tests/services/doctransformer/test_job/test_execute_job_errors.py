@@ -41,13 +41,15 @@ class TestExecuteJobRetryAndErrors(DocTransformTestBase):
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
 
         # Mock storage.put to raise an error
-        with patch(
-            "app.services.doctransform.job.Session"
-        ) as mock_session_class, patch(
-            "app.services.doctransform.job.get_cloud_storage"
-        ) as mock_storage_class, patch(
-            "app.services.doctransform.registry.TRANSFORMERS",
-            {"test": MockTestTransformer},
+        with (
+            patch("app.services.doctransform.job.Session") as mock_session_class,
+            patch(
+                "app.services.doctransform.job.get_cloud_storage"
+            ) as mock_storage_class,
+            patch(
+                "app.services.doctransform.registry.TRANSFORMERS",
+                {"test": MockTestTransformer},
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -95,14 +97,16 @@ class TestExecuteJobRetryAndErrors(DocTransformTestBase):
         # Create a side effect that fails once then succeeds (fast retry will only try 2 times)
         failing_convert_document = create_failing_convert_document(fail_count=1)
 
-        with patch(
-            "app.services.doctransform.job.Session"
-        ) as mock_session_class, patch(
-            "app.services.doctransform.job.convert_document",
-            side_effect=failing_convert_document,
-        ), patch(
-            "app.services.doctransform.registry.TRANSFORMERS",
-            {"test": MockTestTransformer},
+        with (
+            patch("app.services.doctransform.job.Session") as mock_session_class,
+            patch(
+                "app.services.doctransform.job.convert_document",
+                side_effect=failing_convert_document,
+            ),
+            patch(
+                "app.services.doctransform.registry.TRANSFORMERS",
+                {"test": MockTestTransformer},
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -144,14 +148,16 @@ class TestExecuteJobRetryAndErrors(DocTransformTestBase):
             create_persistent_failing_convert_document("Persistent error")
         )
 
-        with patch(
-            "app.services.doctransform.job.Session"
-        ) as mock_session_class, patch(
-            "app.services.doctransform.job.convert_document",
-            side_effect=persistent_failing_convert_document,
-        ), patch(
-            "app.services.doctransform.registry.TRANSFORMERS",
-            {"test": MockTestTransformer},
+        with (
+            patch("app.services.doctransform.job.Session") as mock_session_class,
+            patch(
+                "app.services.doctransform.job.convert_document",
+                side_effect=persistent_failing_convert_document,
+            ),
+            patch(
+                "app.services.doctransform.registry.TRANSFORMERS",
+                {"test": MockTestTransformer},
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -190,11 +196,12 @@ class TestExecuteJobRetryAndErrors(DocTransformTestBase):
         job_crud = DocTransformationJobCrud(session=db, project_id=project.id)
         job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
 
-        with patch(
-            "app.services.doctransform.job.Session"
-        ) as mock_session_class, patch(
-            "app.services.doctransform.registry.TRANSFORMERS",
-            {"test": MockTestTransformer},
+        with (
+            patch("app.services.doctransform.job.Session") as mock_session_class,
+            patch(
+                "app.services.doctransform.registry.TRANSFORMERS",
+                {"test": MockTestTransformer},
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
