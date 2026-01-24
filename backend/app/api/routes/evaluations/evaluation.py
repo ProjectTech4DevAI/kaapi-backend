@@ -30,7 +30,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("evaluation/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -66,7 +66,7 @@ def evaluate(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("evaluation/list_evaluations.md"),
     response_model=APIResponse[list[EvaluationRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
