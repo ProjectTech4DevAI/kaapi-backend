@@ -1,9 +1,11 @@
 from uuid import UUID, uuid4
 from unittest.mock import patch
+from typing import Any
 
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.tests.utils.auth import TestAuthContext
 from app.models import CollectionJobStatus
 from app.models.collection import CreationRequest
 
@@ -14,11 +16,11 @@ def _extract_metadata(body: dict) -> dict | None:
 
 @patch("app.api.routes.collections.create_service.start_job")
 def test_collection_creation_with_assistant_calls_start_job_and_returns_job(
-    mock_start_job,
+    mock_start_job: Any,
     client: TestClient,
     user_api_key_header: dict[str, str],
-    user_api_key,
-):
+    user_api_key: TestAuthContext,
+) -> None:
     creation_data = CreationRequest(
         model="gpt-4o",
         instructions="string",
@@ -61,11 +63,11 @@ def test_collection_creation_with_assistant_calls_start_job_and_returns_job(
 
 @patch("app.api.routes.collections.create_service.start_job")
 def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_false(
-    mock_start_job,
+    mock_start_job: Any,
     client: TestClient,
     user_api_key_header: dict[str, str],
-    user_api_key,
-):
+    user_api_key: TestAuthContext,
+) -> None:
     creation_data = CreationRequest(
         temperature=0.000001,
         documents=[str(uuid4())],
@@ -102,7 +104,7 @@ def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_f
 
 def test_collection_creation_vector_only_request_validation_error(
     client: TestClient, user_api_key_header: dict[str, str]
-):
+) -> None:
     payload = {
         "model": "gpt-4o",
         "temperature": 0.000001,

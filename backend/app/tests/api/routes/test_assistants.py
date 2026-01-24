@@ -1,16 +1,19 @@
-import pytest
+from unittest.mock import patch
+from typing import Any
 from uuid import uuid4
+
+import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+
 from app.tests.utils.openai import mock_openai_assistant
 from app.tests.utils.utils import get_assistant
 from app.tests.utils.auth import TestAuthContext
 
 
 @pytest.fixture
-def assistant_create_payload():
+def assistant_create_payload() -> dict[str, Any]:
     return {
         "name": "Test Assistant",
         "instructions": "This is a test instruction.",
@@ -22,16 +25,16 @@ def assistant_create_payload():
 
 
 @pytest.fixture
-def assistant_id():
+def assistant_id() -> str:
     return str(uuid4())
 
 
 @patch("app.api.routes.assistants.fetch_assistant_from_openai")
 def test_ingest_assistant_success(
-    mock_fetch_assistant,
+    mock_fetch_assistant: Any,
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful assistant ingestion from OpenAI."""
     mock_assistant = mock_openai_assistant()
 
@@ -50,11 +53,11 @@ def test_ingest_assistant_success(
 
 @patch("app.crud.assistants.verify_vector_store_ids_exist")
 def test_create_assistant_success(
-    mock_verify_vector_ids,
+    mock_verify_vector_ids: Any,
     client: TestClient,
-    assistant_create_payload: dict,
+    assistant_create_payload: dict[str, Any],
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful assistant creation with OpenAI vector store ID verification."""
 
     mock_verify_vector_ids.return_value = None
@@ -89,11 +92,11 @@ def test_create_assistant_success(
 
 @patch("app.crud.assistants.verify_vector_store_ids_exist")
 def test_create_assistant_invalid_vector_store(
-    mock_verify_vector_ids,
+    mock_verify_vector_ids: Any,
     client: TestClient,
-    assistant_create_payload: dict,
+    assistant_create_payload: dict[str, Any],
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test failure when one or more vector store IDs are invalid."""
 
     mock_verify_vector_ids.side_effect = HTTPException(
@@ -118,7 +121,7 @@ def test_update_assistant_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful assistant update."""
     update_payload = {
         "name": "Updated Assistant",
@@ -148,11 +151,11 @@ def test_update_assistant_success(
 
 @patch("app.crud.assistants.verify_vector_store_ids_exist")
 def test_update_assistant_invalid_vector_store(
-    mock_verify_vector_ids,
+    mock_verify_vector_ids: Any,
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test failure when updating assistant with invalid vector store IDs."""
     mock_verify_vector_ids.side_effect = HTTPException(
         status_code=400, detail="Vector store ID vs_invalid not found in OpenAI."
@@ -176,7 +179,7 @@ def test_update_assistant_invalid_vector_store(
 def test_update_assistant_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test failure when updating a non-existent assistant."""
     update_payload = {"name": "Updated Assistant"}
 
@@ -197,7 +200,7 @@ def test_get_assistant_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful retrieval of a single assistant."""
     assistant = get_assistant(db, project_id=user_api_key.project_id)
 
@@ -217,8 +220,8 @@ def test_get_assistant_success(
 
 def test_get_assistant_not_found(
     client: TestClient,
-    user_api_key_header: dict,
-):
+    user_api_key_header: dict[str, Any],
+) -> None:
     """Test failure when fetching a non-existent assistant."""
     non_existent_id = str(uuid4())
 
@@ -236,7 +239,7 @@ def test_list_assistants_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful retrieval of assistants list."""
     assistant = get_assistant(db, project_id=user_api_key.project_id)
 
@@ -258,8 +261,8 @@ def test_list_assistants_success(
 
 def test_list_assistants_invalid_pagination(
     client: TestClient,
-    user_api_key_header: dict,
-):
+    user_api_key_header: dict[str, Any],
+) -> None:
     """Test assistants list with invalid pagination parameters."""
     # Test negative skip
     response = client.get(
@@ -287,7 +290,7 @@ def test_delete_assistant_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful soft deletion of an assistant."""
     assistant = get_assistant(db, project_id=user_api_key.project_id)
 
@@ -304,8 +307,8 @@ def test_delete_assistant_success(
 
 def test_delete_assistant_not_found(
     client: TestClient,
-    user_api_key_header: dict,
-):
+    user_api_key_header: dict[str, Any],
+) -> None:
     """Test failure when deleting a non-existent assistant."""
     non_existent_id = str(uuid4())
 

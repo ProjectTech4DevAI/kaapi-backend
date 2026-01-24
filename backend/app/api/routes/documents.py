@@ -11,12 +11,10 @@ from fastapi import (
     Query,
     UploadFile,
 )
-from pydantic import HttpUrl
 from fastapi import Path as FastPath
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.core.cloud import get_cloud_storage
 from app.crud import CollectionCrud, DocumentCrud
 from app.crud.rag import OpenAIAssistantCrud, OpenAIVectorStoreCrud
 from app.models import (
@@ -28,6 +26,7 @@ from app.models import (
     TransformationJobInfo,
     DocTransformationJobPublic,
 )
+from app.core.cloud import get_cloud_storage
 from app.services.collections.helpers import pick_service_for_documennt
 from app.services.documents.helpers import (
     schedule_transformation,
@@ -261,4 +260,5 @@ def doc_info(
         include_url=include_url,
         storage=storage,
     )
+
     return APIResponse.success_response(doc_schema)

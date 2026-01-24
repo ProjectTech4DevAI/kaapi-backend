@@ -1,17 +1,17 @@
 import pytest
-
 from openai import OpenAI
 from openai_responses import OpenAIMock
 from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud import CollectionCrud
+from app.models import Collection
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 from app.tests.utils.collection import get_collection
 
 
-def mk_collection(db: Session):
+def mk_collection(db: Session) -> Collection:
     openai_mock = OpenAIMock()
     project = get_project(db)
     with openai_mock.router:
@@ -24,7 +24,7 @@ def mk_collection(db: Session):
 
 
 class TestDatabaseReadOne:
-    def test_can_select_valid_id(self, db: Session):
+    def test_can_select_valid_id(self, db: Session) -> None:
         collection = mk_collection(db)
 
         crud = CollectionCrud(db, collection.project_id)
@@ -32,7 +32,7 @@ class TestDatabaseReadOne:
 
         assert result.id == collection.id
 
-    def test_cannot_select_others_collections(self, db: Session):
+    def test_cannot_select_others_collections(self, db: Session) -> None:
         collection = mk_collection(db)
         other = collection.project_id + 1
         crud = CollectionCrud(db, other)

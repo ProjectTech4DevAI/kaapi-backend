@@ -15,9 +15,8 @@ import numpy as np
 from openai import OpenAI
 from sqlmodel import Session
 
-from app.core.batch.openai import OpenAIBatchProvider
+from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.core.util import now
-from app.crud.batch_operations import start_batch_job
 from app.models import EvaluationRun
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,7 @@ def validate_embedding_model(model: str) -> None:
     if model not in VALID_EMBEDDING_MODELS:
         valid_models = ", ".join(VALID_EMBEDDING_MODELS.keys())
         raise ValueError(
-            f"Invalid embedding model '{model}'. " f"Supported models: {valid_models}"
+            f"Invalid embedding model '{model}'. Supported models: {valid_models}"
         )
 
 
@@ -82,7 +81,7 @@ def build_embedding_jsonl(
     validate_embedding_model(embedding_model)
 
     logger.info(
-        f"Building embedding JSONL for {len(results)} items with model {embedding_model}"
+        f"[build_embedding_jsonl] Building JSONL | items={len(results)} | model={embedding_model}"
     )
 
     jsonl_data = []
@@ -253,7 +252,7 @@ def calculate_cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
 
 
 def calculate_average_similarity(
-    embedding_pairs: list[dict[str, Any]]
+    embedding_pairs: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
     Calculate cosine similarity statistics for all embedding pairs.

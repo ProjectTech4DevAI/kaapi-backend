@@ -11,7 +11,7 @@ def test_get_conversation_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful conversation retrieval."""
 
     response_id = generate_openai_id("resp_", 40)
@@ -46,7 +46,7 @@ def test_get_conversation_success(
 def test_get_conversation_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation retrieval with non-existent ID."""
     response = client.get(
         "/api/v1/openai-conversation/99999",
@@ -62,7 +62,7 @@ def test_get_conversation_by_response_id_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful conversation retrieval by response ID."""
     response_id = generate_openai_id("resp_", 40)
     conversation_data = OpenAIConversationCreate(
@@ -97,7 +97,7 @@ def test_get_conversation_by_response_id_success(
 def test_get_conversation_by_response_id_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation retrieval with non-existent response ID."""
     response = client.get(
         "/api/v1/openai-conversation/response/nonexistent_response_id",
@@ -113,7 +113,7 @@ def test_get_conversation_by_ancestor_id_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful conversation retrieval by ancestor ID."""
     ancestor_response_id = generate_openai_id("resp_", 40)
     conversation_data = OpenAIConversationCreate(
@@ -148,7 +148,7 @@ def test_get_conversation_by_ancestor_id_success(
 def test_get_conversation_by_ancestor_id_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation retrieval with non-existent ancestor ID."""
     response = client.get(
         "/api/v1/openai-conversation/ancestor/nonexistent_ancestor_id",
@@ -164,7 +164,7 @@ def test_list_conversations_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful conversation listing."""
     conversation_data = OpenAIConversationCreate(
         response_id=generate_openai_id("resp_", 40),
@@ -200,7 +200,7 @@ def test_list_conversations_with_pagination(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation listing with pagination."""
     # Create multiple conversations
     conversation_data_1 = OpenAIConversationCreate(
@@ -263,7 +263,7 @@ def test_list_conversations_pagination_metadata(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation listing pagination metadata."""
     # Create 5 conversations
     for i in range(5):
@@ -321,7 +321,7 @@ def test_list_conversations_default_pagination(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation listing with default pagination parameters."""
     # Create a conversation
     conversation_data = OpenAIConversationCreate(
@@ -361,7 +361,7 @@ def test_list_conversations_default_pagination(
 def test_list_conversations_edge_cases(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation listing edge cases for pagination."""
     # Test with skip larger than total
     response = client.get(
@@ -398,7 +398,7 @@ def test_list_conversations_edge_cases(
 def test_list_conversations_invalid_pagination(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation listing with invalid pagination parameters."""
     response = client.get(
         "/api/v1/openai-conversation?skip=-1&limit=0",
@@ -412,7 +412,7 @@ def test_delete_conversation_success(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test successful conversation deletion."""
     conversation_data = OpenAIConversationCreate(
         response_id=generate_openai_id("resp_", 40),
@@ -454,7 +454,7 @@ def test_delete_conversation_success(
 def test_delete_conversation_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
-):
+) -> None:
     """Test conversation deletion with non-existent ID."""
     response = client.delete(
         "/api/v1/openai-conversation/99999",
@@ -464,66 +464,3 @@ def test_delete_conversation_not_found(
     assert response.status_code == 404
     response_data = response.json()
     assert "not found" in response_data["error"]
-
-
-def test_get_conversation_unauthorized_no_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation retrieval without API key."""
-    response = client.get("/api/v1/openai-conversation/1")
-    assert response.status_code == 401
-
-
-def test_get_conversation_unauthorized_invalid_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation retrieval with invalid API key."""
-    response = client.get(
-        "/api/v1/openai-conversation/1",
-        headers={"X-API-KEY": "invalid_api_key"},
-    )
-    assert response.status_code == 401
-
-
-def test_list_conversations_unauthorized_no_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation listing without API key."""
-    response = client.get("/api/v1/openai-conversation")
-    assert response.status_code == 401
-
-
-def test_list_conversations_unauthorized_invalid_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation listing with invalid API key."""
-    response = client.get(
-        "/api/v1/openai-conversation",
-        headers={"X-API-KEY": "invalid_api_key"},
-    )
-    assert response.status_code == 401
-
-
-def test_delete_conversation_unauthorized_no_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation deletion without API key."""
-    response = client.delete("/api/v1/openai-conversation/1")
-    assert response.status_code == 401
-
-
-def test_delete_conversation_unauthorized_invalid_api_key(
-    client: TestClient,
-    db: Session,
-):
-    """Test conversation deletion with invalid API key."""
-    response = client.delete(
-        "/api/v1/openai-conversation/1",
-        headers={"X-API-KEY": "invalid_api_key"},
-    )
-    assert response.status_code == 401

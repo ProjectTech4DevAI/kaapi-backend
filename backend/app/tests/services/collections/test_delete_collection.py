@@ -1,11 +1,11 @@
+from typing import Any
 from unittest.mock import patch, MagicMock
 from uuid import uuid4, UUID
 
+from sqlmodel import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.models.collection import (
-    DeletionRequest,
-)
+from app.models.collection import DeletionRequest
 from app.tests.utils.utils import get_project
 from app.crud import CollectionJobCrud
 from app.models import CollectionJobStatus, CollectionActionType
@@ -13,7 +13,7 @@ from app.tests.utils.collection import get_collection, get_collection_job
 from app.services.collections.delete_collection import start_job, execute_job
 
 
-def test_start_job_creates_collection_job_and_schedules_task(db):
+def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> None:
     """
     - start_job should update an existing CollectionJob (status=PENDING, action=DELETE)
     - schedule the task with the provided job_id and collection_id
@@ -74,8 +74,8 @@ def test_start_job_creates_collection_job_and_schedules_task(db):
 
 @patch("app.services.collections.delete_collection.get_openai_client")
 def test_execute_job_delete_success_updates_job_and_calls_delete(
-    mock_get_openai_client, db
-):
+    mock_get_openai_client: Any, db: Session
+) -> None:
     """
     - execute_job should set task_id on the CollectionJob
     - call remote delete via OpenAIAssistantCrud.delete(...)
@@ -139,7 +139,9 @@ def test_execute_job_delete_success_updates_job_and_calls_delete(
 
 
 @patch("app.services.collections.delete_collection.get_openai_client")
-def test_execute_job_delete_failure_marks_job_failed(mock_get_openai_client, db):
+def test_execute_job_delete_failure_marks_job_failed(
+    mock_get_openai_client: Any, db: Session
+) -> None:
     """
     When the remote delete (OpenAIAssistantCrud.delete) raises,
     the job should be marked FAILED and error_message set.
@@ -207,9 +209,9 @@ def test_execute_job_delete_failure_marks_job_failed(mock_get_openai_client, db)
 
 @patch("app.services.collections.delete_collection.get_openai_client")
 def test_execute_job_delete_success_with_callback_sends_success_payload(
-    mock_get_openai_client,
-    db,
-):
+    mock_get_openai_client: Any,
+    db: Session,
+) -> None:
     """
     When deletion succeeds and a callback_url is provided:
     - job is marked SUCCESSFUL
@@ -251,8 +253,6 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
 
-        from app.services.collections.delete_collection import execute_job
-
         execute_job(
             request=req.model_dump(mode="json"),
             project_id=project.id,
@@ -287,9 +287,9 @@ def test_execute_job_delete_success_with_callback_sends_success_payload(
 
 @patch("app.services.collections.delete_collection.get_openai_client")
 def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
-    mock_get_openai_client,
-    db,
-):
+    mock_get_openai_client: Any,
+    db: Session,
+) -> None:
     """
     When the remote delete raises AND a callback_url is provided:
     - job is marked FAILED with error_message set
@@ -331,8 +331,6 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
 
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
-
-        from app.services.collections.delete_collection import execute_job
 
         execute_job(
             request=req.model_dump(mode="json"),

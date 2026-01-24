@@ -1,5 +1,6 @@
-import pytest
 from uuid import uuid4
+
+import pytest
 from sqlmodel import Session
 
 from app.crud.openai_conversation import (
@@ -12,12 +13,12 @@ from app.crud.openai_conversation import (
     create_conversation,
     delete_conversation,
 )
-from app.models import OpenAIConversationCreate
+from app.models import OpenAIConversationCreate, Project
 from app.tests.utils.utils import get_project, get_organization
 from app.tests.utils.openai import generate_openai_id
 
 
-def test_get_conversation_by_id_success(db: Session):
+def test_get_conversation_by_id_success(db: Session) -> None:
     """Test successful conversation retrieval by ID."""
     project = get_project(db)
     organization = get_organization(db)
@@ -32,7 +33,6 @@ def test_get_conversation_by_id_success(db: Session):
         assistant_id=generate_openai_id("asst_", 20),
     )
 
-    # Create the conversation in the database
     conversation = create_conversation(
         session=db,
         conversation=conversation_data,
@@ -51,7 +51,7 @@ def test_get_conversation_by_id_success(db: Session):
     assert retrieved_conversation.response_id == conversation.response_id
 
 
-def test_get_conversation_by_id_not_found(db: Session):
+def test_get_conversation_by_id_not_found(db: Session) -> None:
     """Test conversation retrieval by non-existent ID."""
     project = get_project(db)
 
@@ -64,7 +64,7 @@ def test_get_conversation_by_id_not_found(db: Session):
     assert retrieved_conversation is None
 
 
-def test_get_conversation_by_response_id_success(db: Session):
+def test_get_conversation_by_response_id_success(db: Session) -> None:
     """Test successful conversation retrieval by response ID."""
     project = get_project(db)
     organization = get_organization(db)
@@ -79,7 +79,6 @@ def test_get_conversation_by_response_id_success(db: Session):
         assistant_id=generate_openai_id("asst_", 20),
     )
 
-    # Create the conversation in the database
     conversation = create_conversation(
         session=db,
         conversation=conversation_data,
@@ -97,7 +96,7 @@ def test_get_conversation_by_response_id_success(db: Session):
     assert retrieved_conversation.response_id == conversation.response_id
 
 
-def test_get_conversation_by_response_id_not_found(db: Session):
+def test_get_conversation_by_response_id_not_found(db: Session) -> None:
     """Test conversation retrieval by non-existent response ID."""
     project = get_project(db)
 
@@ -110,12 +109,11 @@ def test_get_conversation_by_response_id_not_found(db: Session):
     assert retrieved_conversation is None
 
 
-def test_get_conversation_by_ancestor_id_success(db: Session):
+def test_get_conversation_by_ancestor_id_success(db: Session) -> None:
     """Test successful conversation retrieval by ancestor ID."""
     project = get_project(db)
     organization = get_organization(db)
 
-    # Create a conversation with an ancestor
     ancestor_response_id = generate_openai_id("resp_", 40)
     conversation_data = OpenAIConversationCreate(
         response_id=generate_openai_id("resp_", 40),
@@ -145,7 +143,7 @@ def test_get_conversation_by_ancestor_id_success(db: Session):
     assert retrieved_conversation.ancestor_response_id == ancestor_response_id
 
 
-def test_get_conversation_by_ancestor_id_not_found(db: Session):
+def test_get_conversation_by_ancestor_id_not_found(db: Session) -> None:
     """Test conversation retrieval by non-existent ancestor ID."""
     project = get_project(db)
 
@@ -158,7 +156,7 @@ def test_get_conversation_by_ancestor_id_not_found(db: Session):
     assert retrieved_conversation is None
 
 
-def test_get_conversations_by_project_success(db: Session):
+def test_get_conversations_by_project_success(db: Session) -> None:
     """Test successful conversation listing by project."""
     project = get_project(db)
     organization = get_organization(db)
@@ -192,7 +190,7 @@ def test_get_conversations_by_project_success(db: Session):
         assert conversation.is_deleted is False
 
 
-def test_get_conversations_by_project_with_pagination(db: Session):
+def test_get_conversations_by_project_with_pagination(db: Session) -> None:
     """Test conversation listing by project with pagination."""
     project = get_project(db)
     organization = get_organization(db)
@@ -225,7 +223,7 @@ def test_get_conversations_by_project_with_pagination(db: Session):
     assert len(conversations) <= 2
 
 
-def test_delete_conversation_success(db: Session):
+def test_delete_conversation_success(db: Session) -> None:
     """Test successful conversation deletion."""
     project = get_project(db)
     organization = get_organization(db)
@@ -240,7 +238,6 @@ def test_delete_conversation_success(db: Session):
         assistant_id=generate_openai_id("asst_", 20),
     )
 
-    # Create the conversation in the database first
     conversation = create_conversation(
         session=db,
         conversation=conversation_data,
@@ -260,7 +257,7 @@ def test_delete_conversation_success(db: Session):
     assert deleted_conversation.deleted_at is not None
 
 
-def test_delete_conversation_not_found(db: Session):
+def test_delete_conversation_not_found(db: Session) -> None:
     """Test conversation deletion with non-existent ID."""
     project = get_project(db)
 
@@ -273,7 +270,7 @@ def test_delete_conversation_not_found(db: Session):
     assert deleted_conversation is None
 
 
-def test_conversation_soft_delete_behavior(db: Session):
+def test_conversation_soft_delete_behavior(db: Session) -> None:
     """Test that deleted conversations are not returned by get functions."""
     project = get_project(db)
     organization = get_organization(db)
@@ -288,7 +285,6 @@ def test_conversation_soft_delete_behavior(db: Session):
         assistant_id=generate_openai_id("asst_", 20),
     )
 
-    # Create the conversation in the database first
     conversation = create_conversation(
         session=db,
         conversation=conversation_data,
@@ -296,14 +292,12 @@ def test_conversation_soft_delete_behavior(db: Session):
         organization_id=organization.id,
     )
 
-    # Delete the conversation
     delete_conversation(
         session=db,
         conversation_id=conversation.id,
         project_id=project.id,
     )
 
-    # Verify it's not returned by get functions
     retrieved_conversation = get_conversation_by_id(
         session=db,
         conversation_id=conversation.id,
@@ -325,7 +319,7 @@ def test_conversation_soft_delete_behavior(db: Session):
     assert conversation.id not in [c.id for c in conversations]
 
 
-def test_get_ancestor_id_from_response_no_previous_response(db: Session):
+def test_get_ancestor_id_from_response_no_previous_response(db: Session) -> None:
     """Test get_ancestor_id_from_response when previous_response_id is None."""
     project = get_project(db)
     current_response_id = generate_openai_id("resp_", 40)
@@ -340,7 +334,7 @@ def test_get_ancestor_id_from_response_no_previous_response(db: Session):
     assert ancestor_id == current_response_id
 
 
-def test_get_ancestor_id_from_response_previous_not_found(db: Session):
+def test_get_ancestor_id_from_response_previous_not_found(db: Session) -> None:
     """Test get_ancestor_id_from_response when previous_response_id is not found in DB."""
     project = get_project(db)
     current_response_id = generate_openai_id("resp_", 40)
@@ -357,7 +351,9 @@ def test_get_ancestor_id_from_response_previous_not_found(db: Session):
     assert ancestor_id == previous_response_id
 
 
-def test_get_ancestor_id_from_response_previous_found_with_ancestor(db: Session):
+def test_get_ancestor_id_from_response_previous_found_with_ancestor(
+    db: Session,
+) -> None:
     """Test get_ancestor_id_from_response when previous_response_id is found and has an ancestor."""
     project = get_project(db)
     organization = get_organization(db)
@@ -365,7 +361,6 @@ def test_get_ancestor_id_from_response_previous_found_with_ancestor(db: Session)
     # Create a conversation chain: ancestor -> previous -> current
     ancestor_response_id = generate_openai_id("resp_", 40)
 
-    # Create the ancestor conversation
     ancestor_conversation_data = OpenAIConversationCreate(
         response_id=ancestor_response_id,
         ancestor_response_id=ancestor_response_id,  # Self-referencing
@@ -383,7 +378,6 @@ def test_get_ancestor_id_from_response_previous_found_with_ancestor(db: Session)
         organization_id=organization.id,
     )
 
-    # Create the previous conversation
     previous_response_id = generate_openai_id("resp_", 40)
     previous_conversation_data = OpenAIConversationCreate(
         response_id=previous_response_id,
@@ -415,18 +409,16 @@ def test_get_ancestor_id_from_response_previous_found_with_ancestor(db: Session)
     assert ancestor_id == ancestor_response_id
 
 
-def test_get_conversations_count_by_project_success(db: Session):
+def test_get_conversations_count_by_project_success(db: Session) -> None:
     """Test successful conversation count retrieval by project."""
     project = get_project(db)
     organization = get_organization(db)
 
-    # Get initial count
     initial_count = get_conversations_count_by_project(
         session=db,
         project_id=project.id,
     )
 
-    # Create multiple conversations
     for i in range(3):
         conversation_data = OpenAIConversationCreate(
             response_id=generate_openai_id("resp_", 40),
@@ -444,7 +436,6 @@ def test_get_conversations_count_by_project_success(db: Session):
             organization_id=organization.id,
         )
 
-    # Get updated count
     updated_count = get_conversations_count_by_project(
         session=db,
         project_id=project.id,
@@ -453,7 +444,9 @@ def test_get_conversations_count_by_project_success(db: Session):
     assert updated_count == initial_count + 3
 
 
-def test_get_ancestor_id_from_response_previous_found_without_ancestor(db: Session):
+def test_get_ancestor_id_from_response_previous_found_without_ancestor(
+    db: Session,
+) -> None:
     """Test get_ancestor_id_from_response when previous_response_id is found but has no ancestor."""
     project = get_project(db)
     organization = get_organization(db)
@@ -477,7 +470,6 @@ def test_get_ancestor_id_from_response_previous_found_without_ancestor(db: Sessi
         organization_id=organization.id,
     )
 
-    # Test the current conversation
     current_response_id = generate_openai_id("resp_", 40)
     ancestor_id = get_ancestor_id_from_response(
         session=db,
@@ -490,13 +482,10 @@ def test_get_ancestor_id_from_response_previous_found_without_ancestor(db: Sessi
     assert ancestor_id == previous_response_id
 
 
-def test_get_ancestor_id_from_response_different_project(db: Session):
+def test_get_ancestor_id_from_response_different_project(db: Session) -> None:
     """Test get_ancestor_id_from_response respects project scoping."""
     project1 = get_project(db)
     organization = get_organization(db)
-
-    # Create a second project with a different name
-    from app.models import Project
 
     project2 = Project(
         name=f"test_project_{uuid4()}",
@@ -540,7 +529,7 @@ def test_get_ancestor_id_from_response_different_project(db: Session):
     assert ancestor_id == previous_response_id
 
 
-def test_get_ancestor_id_from_response_complex_chain(db: Session):
+def test_get_ancestor_id_from_response_complex_chain(db: Session) -> None:
     """Test get_ancestor_id_from_response with a complex conversation chain."""
     project = get_project(db)
     organization = get_organization(db)
@@ -616,7 +605,7 @@ def test_get_ancestor_id_from_response_complex_chain(db: Session):
     assert ancestor_id == response_a
 
 
-def test_create_conversation_success(db: Session):
+def test_create_conversation_success(db: Session) -> None:
     """Test successful conversation creation."""
     project = get_project(db)
     organization = get_organization(db)
@@ -647,12 +636,11 @@ def test_create_conversation_success(db: Session):
     assert conversation.organization_id == organization.id
 
 
-def test_delete_conversation_excludes_from_count(db: Session):
+def test_delete_conversation_excludes_from_count(db: Session) -> None:
     """Test that deleted conversations are excluded from count."""
     project = get_project(db)
     organization = get_organization(db)
 
-    # Create a conversation
     conversation_data = OpenAIConversationCreate(
         response_id=generate_openai_id("resp_", 40),
         ancestor_response_id=generate_openai_id("resp_", 40),
@@ -670,20 +658,17 @@ def test_delete_conversation_excludes_from_count(db: Session):
         organization_id=organization.id,
     )
 
-    # Get count before deletion
     count_before = get_conversations_count_by_project(
         session=db,
         project_id=project.id,
     )
 
-    # Delete the conversation
     delete_conversation(
         session=db,
         conversation_id=conversation.id,
         project_id=project.id,
     )
 
-    # Get count after deletion
     count_after = get_conversations_count_by_project(
         session=db,
         project_id=project.id,
@@ -692,7 +677,7 @@ def test_delete_conversation_excludes_from_count(db: Session):
     assert count_after == count_before - 1
 
 
-def test_get_conversations_count_by_project_different_projects(db: Session):
+def test_get_conversations_count_by_project_different_projects(db: Session) -> None:
     """Test that count is isolated by project."""
     project1 = get_project(db)
     organization = get_organization(db)
@@ -748,7 +733,7 @@ def test_get_conversations_count_by_project_different_projects(db: Session):
     assert count2 >= 3
 
 
-def test_response_id_validation_pattern(db: Session):
+def test_response_id_validation_pattern(db: Session) -> None:
     """Test that response ID validation pattern is enforced."""
     project = get_project(db)
     organization = get_organization(db)
@@ -765,7 +750,6 @@ def test_response_id_validation_pattern(db: Session):
         assistant_id=generate_openai_id("asst_", 20),
     )
 
-    # This should work
     conversation = create_conversation(
         session=db,
         conversation=conversation_data,
@@ -784,7 +768,7 @@ def test_response_id_validation_pattern(db: Session):
     assert conversation.deleted_at is None
 
 
-def test_create_conversation_with_ancestor(db: Session):
+def test_create_conversation_with_ancestor(db: Session) -> None:
     """Test conversation creation with ancestor and previous response IDs."""
     project = get_project(db)
     organization = get_organization(db)
@@ -814,7 +798,6 @@ def test_create_conversation_with_ancestor(db: Session):
     assert conversation.previous_response_id == previous_response_id
     assert conversation.response_id == conversation_data.response_id
 
-    # Test invalid response ID (too short)
     invalid_response_id = "resp_123"
     with pytest.raises(ValueError, match="String should have at least 10 characters"):
         OpenAIConversationCreate(
@@ -827,7 +810,6 @@ def test_create_conversation_with_ancestor(db: Session):
             assistant_id=generate_openai_id("asst_", 20),
         )
 
-    # Test invalid response ID (wrong prefix but long enough)
     invalid_response_id2 = "msg_1234567890abcdef"
     with pytest.raises(ValueError, match="response_id fields must follow pattern"):
         OpenAIConversationCreate(

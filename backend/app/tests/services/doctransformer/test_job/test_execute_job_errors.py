@@ -1,6 +1,3 @@
-"""
-Tests for retry mechanisms and error handling in document transformation service.
-"""
 from io import BytesIO
 from uuid import uuid4
 from typing import Any, Callable, Tuple

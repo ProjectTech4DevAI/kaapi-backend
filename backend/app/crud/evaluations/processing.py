@@ -19,10 +19,10 @@ from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session, select
 
-from app.core.batch.openai import OpenAIBatchProvider
-from app.crud.batch_job import get_batch_job
-from app.crud.batch_operations import (
+from app.core.batch import (
+    OpenAIBatchProvider,
     download_batch_results,
+    poll_batch_status,
     upload_batch_results_to_object_store,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
@@ -36,6 +36,7 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
+from app.crud.job import get_batch_job
 from app.models import EvaluationRun
 from app.utils import get_langfuse_client, get_openai_client
 
@@ -381,21 +382,19 @@ async def process_completed_embedding_batch(
         # Step 4: Calculate similarity scores
         similarity_stats = calculate_average_similarity(embedding_pairs=embedding_pairs)
 
-        # Step 5: Update evaluation_run with scores
-        if eval_run.score is None:
-            eval_run.score = {}
-
-        eval_run.score["cosine_similarity"] = {
-            "avg": similarity_stats["cosine_similarity_avg"],
-            "std": similarity_stats["cosine_similarity_std"],
-            "total_pairs": similarity_stats["total_pairs"],
-        }
-
-        # Optionally store per-item scores if not too large
-        if len(similarity_stats.get("per_item_scores", [])) <= 100:
-            eval_run.score["cosine_similarity"]["per_item_scores"] = similarity_stats[
-                "per_item_scores"
+        # Step 5: Update evaluation_run with scores in summary_scores format
+        # This format is consistent with what Langfuse returns when fetching traces
+        eval_run.score = {
+            "summary_scores": [
+                {
+                    "name": "cosine_similarity",
+                    "avg": round(float(similarity_stats["cosine_similarity_avg"]), 2),
+                    "std": round(float(similarity_stats["cosine_similarity_std"]), 2),
+                    "total_pairs": similarity_stats["total_pairs"],
+                    "data_type": "NUMERIC",
+                }
             ]
+        }
 
         # Step 6: Update Langfuse traces with cosine similarity scores
         logger.info(
@@ -484,10 +483,6 @@ async def check_and_process_evaluation(
             if embedding_batch_job:
                 # Poll embedding batch status
                 provider = OpenAIBatchProvider(client=openai_client)
-
-                # Local import to avoid circular dependency with batch_operations
-                from app.crud.batch_operations import poll_batch_status
-
                 poll_batch_status(
                     session=session, provider=provider, batch_job=embedding_batch_job
                 )
@@ -560,8 +555,6 @@ async def check_and_process_evaluation(
 
         # IMPORTANT: Poll OpenAI to get the latest status before checking
         provider = OpenAIBatchProvider(client=openai_client)
-        from app.crud.batch_operations import poll_batch_status
-
         poll_batch_status(session=session, provider=provider, batch_job=batch_job)
 
         # Refresh batch_job to get the updated provider_status
