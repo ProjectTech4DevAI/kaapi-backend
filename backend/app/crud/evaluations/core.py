@@ -9,10 +9,40 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun
-from app.models.llm.request import LLMCallConfig
+from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.services.llm.jobs import resolve_config_blob
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_evaluation_config(
+    session: Session,
+    config_id: UUID,
+    config_version: int,
+    project_id: int,
+) -> tuple[ConfigBlob | None, str | None]:
+    """
+    Resolve config blob from stored config management.
+
+    Args:
+        session: Database session
+        config_id: UUID of the stored config
+        config_version: Version number of the config
+        project_id: Project ID for access control
+
+    Returns:
+        Tuple of (ConfigBlob or None, error_message or None)
+    """
+    config_version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=config_id,
+        project_id=project_id,
+    )
+
+    return resolve_config_blob(
+        config_crud=config_version_crud,
+        config=LLMCallConfig(id=config_id, version=config_version),
+    )
 
 
 def create_evaluation_run(
@@ -346,15 +376,11 @@ def resolve_model_from_config(
             f"(config_id={eval_run.config_id}, config_version={eval_run.config_version})"
         )
 
-    config_version_crud = ConfigVersionCrud(
+    config, error = resolve_evaluation_config(
         session=session,
         config_id=eval_run.config_id,
+        config_version=eval_run.config_version,
         project_id=eval_run.project_id,
-    )
-
-    config, error = resolve_config_blob(
-        config_crud=config_version_crud,
-        config=LLMCallConfig(id=eval_run.config_id, version=eval_run.config_version),
     )
 
     if error or config is None:

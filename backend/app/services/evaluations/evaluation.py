@@ -6,18 +6,16 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations import (
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
+    resolve_evaluation_config,
     save_score,
     start_evaluation_batch,
 )
 from app.models.evaluation import EvaluationRun
-from app.models.llm.request import LLMCallConfig
-from app.services.llm.jobs import resolve_config_blob
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
 
@@ -94,13 +92,11 @@ def start_evaluation(
         )
 
     # Step 2: Resolve config from stored config management
-    config_version_crud = ConfigVersionCrud(
-        session=session, config_id=config_id, project_id=project_id
-    )
-
-    config, error = resolve_config_blob(
-        config_crud=config_version_crud,
-        config=LLMCallConfig(id=config_id, version=config_version),
+    config, error = resolve_evaluation_config(
+        session=session,
+        config_id=config_id,
+        config_version=config_version,
+        project_id=project_id,
     )
     if error:
         raise HTTPException(

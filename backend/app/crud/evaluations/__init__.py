@@ -5,6 +5,7 @@ from app.crud.evaluations.core import (
     create_evaluation_run,
     get_evaluation_run_by_id,
     list_evaluation_runs,
+    resolve_evaluation_config,
     resolve_model_from_config,
     save_score,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "create_evaluation_run",
     "get_evaluation_run_by_id",
     "list_evaluation_runs",
+    "resolve_evaluation_config",
     "resolve_model_from_config",
     "save_score",
     # Cron
