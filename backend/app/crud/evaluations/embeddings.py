@@ -21,6 +21,9 @@ from app.models import EvaluationRun
 
 logger = logging.getLogger(__name__)
 
+# Default embedding model
+EMBEDDING_MODEL = "text-embedding-3-large"
+
 # Valid embedding models with their dimensions
 VALID_EMBEDDING_MODELS = {
     "text-embedding-3-small": 1536,
@@ -49,7 +52,7 @@ def validate_embedding_model(model: str) -> None:
 def build_embedding_jsonl(
     results: list[dict[str, Any]],
     trace_id_mapping: dict[str, str],
-    embedding_model: str = "text-embedding-3-large",
+    embedding_model: str = EMBEDDING_MODEL,
 ) -> list[dict[str, Any]]:
     """
     Build JSONL data for embedding batch using OpenAI Embeddings API.
@@ -362,8 +365,8 @@ def start_embedding_batch(
     try:
         logger.info(f"Starting embedding batch for evaluation run {eval_run.id}")
 
-        # Get embedding model from config (default: text-embedding-3-large)
-        embedding_model = "text-embedding-3-large"
+        # Get embedding model from config
+        embedding_model = EMBEDDING_MODEL
 
         # Step 1: Build embedding JSONL with trace_ids
         jsonl_data = build_embedding_jsonl(
