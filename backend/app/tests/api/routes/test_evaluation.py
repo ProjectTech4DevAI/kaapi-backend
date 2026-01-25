@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.crud.evaluations.batch import build_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
+from app.models.llm.request import KaapiLLMParams
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
@@ -606,11 +607,11 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {
-            "model": "gpt-4o",
-            "temperature": 0.2,
-            "instructions": "You are a helpful assistant",
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o",
+            temperature=0.2,
+            instructions="You are a helpful assistant",
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -637,16 +638,11 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {
-            "model": "gpt-4o-mini",
-            "instructions": "Search documents",
-            "tools": [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": ["vs_abc123"],
-                }
-            ],
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o-mini",
+            instructions="Search documents",
+            knowledge_base_ids=["vs_abc123"],
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -666,7 +662,7 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {"model": "gpt-4o"}  # Only model provided
+        config = KaapiLLMParams(model="gpt-4o")  # Only model provided
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -698,7 +694,7 @@ class TestBatchEvaluationJSONLBuilding:
             },
         ]
 
-        config = {"model": "gpt-4o", "instructions": "Test"}
+        config = KaapiLLMParams(model="gpt-4o", instructions="Test")
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -718,10 +714,10 @@ class TestBatchEvaluationJSONLBuilding:
             for i in range(5)
         ]
 
-        config = {
-            "model": "gpt-4o",
-            "instructions": "Answer questions",
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o",
+            instructions="Answer questions",
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
