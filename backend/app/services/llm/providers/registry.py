@@ -20,7 +20,7 @@ class LLMProvider:
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI_NATIVE: OpenAIProvider,
-        OPENAI: OpenAIProvider
+        OPENAI: OpenAIProvider,
         # Future native providers:
         # CLAUDE_NATIVE: ClaudeProvider,
         # GEMINI_NATIVE: GeminiProvider,

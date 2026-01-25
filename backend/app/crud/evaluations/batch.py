@@ -113,7 +113,7 @@ def build_evaluation_jsonl(
                 "tools": [
                     {
                         "type": "file_search",
-                        "vector_store_ids": config.knowledge_base_ids,
+                        "vector_store_ids": config.knowledge_base_ids or [],
                         "max_num_results": config.max_num_results or 20,
                     }
                 ],
