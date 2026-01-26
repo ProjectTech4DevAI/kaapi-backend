@@ -63,6 +63,33 @@ class TTSLLMParams(SQLModel):
 KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams]
 
 
+# Input type models for discriminated union
+class TextInput(SQLModel):
+    type: Literal["text"] = "text"
+    content: str = Field(..., min_length=1, description="Text content")
+
+
+class AudioBase64Input(SQLModel):
+    type: Literal["audio_base64"] = "audio_base64"
+    data: str = Field(..., min_length=1, description="Base64-encoded audio data")
+    mime_type: str = Field(
+        default="audio/wav",
+        description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
+    )
+
+
+class AudioUrlInput(SQLModel):
+    type: Literal["audio_url"] = "audio_url"
+    url: HttpUrl = Field(..., description="URL to fetch audio from")
+
+
+# Discriminated union for query input types
+QueryInput = Annotated[
+    Union[TextInput, AudioBase64Input, AudioUrlInput],
+    Field(discriminator="type"),
+]
+
+
 class ConversationConfig(SQLModel):
     id: str | None = Field(
         default=None,
@@ -93,15 +120,29 @@ class ConversationConfig(SQLModel):
 class QueryParams(SQLModel):
     """Query-specific parameters for each LLM call."""
 
-    input: str = Field(
+    input: str | QueryInput = Field(
         ...,
-        min_length=1,
-        description="User input question/query/prompt, used to generate a response.",
+        description=(
+            "User input - either a plain string (text) or a structured input object. "
+            "Accepts: string, {type: 'text', content: '...'}, "
+            "{type: 'audio_base64', data: '...', mime_type: '...'}, "
+            "or {type: 'audio_url', url: '...'}."
+        ),
     )
     conversation: ConversationConfig | None = Field(
         default=None,
         description="Conversation control configuration for context handling.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_input(cls, data: Any) -> Any:
+        """Normalize plain string input to TextInput for consistency."""
+        if isinstance(data, dict) and "input" in data:
+            input_val = data["input"]
+            if isinstance(input_val, str):
+                data["input"] = {"type": "text", "content": input_val}
+        return data
 
 
 class NativeCompletionConfig(SQLModel):

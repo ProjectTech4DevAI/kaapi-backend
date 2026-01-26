@@ -46,6 +46,7 @@ class GoogleAIProvider(BaseProvider):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
+        resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         response: GenerateContentResponse | None = None
@@ -57,27 +58,42 @@ class GoogleAIProvider(BaseProvider):
 
             generation_params = completion_config.params
             if completion_type == "stt":
-                # query.input would be an audio_file object, or pathname
+                # resolved_input is a file path for audio inputs
 
                 parsed_input = self._parse_input(
-                    query_input=query.input,
+                    query_input=resolved_input,
                     completion_type=completion_type,
                     provider=provider,
                 )
 
                 model = generation_params.get("model")
-                instructions = generation_params.get("instructions")
+                instructions = generation_params.get("instructions", "")
+                input_language = generation_params.get("input_language") or "auto"
+                output_language = generation_params.get("output_language")
 
+                # Build transcription/translation instruction
+                if input_language == "auto":
+                    lang_instruction = f"Detect the spoken language automatically and transcribe the audio"
+                else:
+                    lang_instruction = f"Transcribe the audio from {input_language}"
+
+                if output_language and output_language != input_language:
+                    lang_instruction += f" and translate to {output_language}"
+
+                # Merge user instructions with language instructions
+                if instructions:
+                    merged_instruction = f"{instructions}. {lang_instruction}."
+                else:
+                    merged_instruction = f"{lang_instruction}."
                 if not model:
                     return None, "Missing 'model' in native params"
-                parsed_input = self._parse_input(query.input, completion_type, provider)
 
                 gemini_file = self.client.files.upload(file=parsed_input)
 
                 contents = []
 
-                if instructions:
-                    contents.append(instructions)
+                if merged_instruction:
+                    contents.append(merged_instruction)
                 contents.append(gemini_file)
                 response: GenerateContentResponse = self.client.models.generate_content(
                     model=model, contents=contents

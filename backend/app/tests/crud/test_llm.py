@@ -20,9 +20,6 @@ from app.models.llm import (
 from app.models.llm.request import (
     KaapiCompletionConfig,
     LLMCallConfig,
-    STTLLMParams,
-    TTSLLMParams,
-    TextLLMParams,
 )
 
 
@@ -55,12 +52,11 @@ def text_config_blob() -> ConfigBlob:
     return ConfigBlob(
         completion=KaapiCompletionConfig(
             provider="openai",
-            params=TextLLMParams(
-                type="text",
-                model="gpt-4o",
-                instructions="You are a helpful assistant",
-                temperature=0.7,
-            ),
+            params={
+                "model": "gpt-4o",
+                "instructions": "You are a helpful assistant",
+                "temperature": 0.7,
+            },
             type="text",
         )
     )
@@ -72,11 +68,11 @@ def stt_config_blob() -> ConfigBlob:
     return ConfigBlob(
         completion=KaapiCompletionConfig(
             provider="openai",
-            params=STTLLMParams(
-                type="stt",
-                model="whisper-1",
-                input_language="en",
-            ),
+            params={
+                "model": "whisper-1",
+                "instructions": "Transcribe",
+                "input_language": "en",
+            },
             type="stt",
         )
     )
@@ -88,12 +84,11 @@ def tts_config_blob() -> ConfigBlob:
     return ConfigBlob(
         completion=KaapiCompletionConfig(
             provider="openai",
-            params=TTSLLMParams(
-                type="tts",
-                model="tts-1",
-                voice="alloy",
-                language="en",
-            ),
+            params={
+                "model": "tts-1",
+                "voice": "alloy",
+                "language": "en",
+            },
             type="tts",
         )
     )

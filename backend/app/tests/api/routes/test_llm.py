@@ -6,9 +6,7 @@ from app.models import LLMCallRequest
 from app.models.llm.request import (
     QueryParams,
     LLMCallConfig,
-    CompletionConfig,
     ConfigBlob,
-    KaapiLLMParams,
     KaapiCompletionConfig,
     NativeCompletionConfig,
 )
@@ -66,11 +64,12 @@ def test_llm_call_with_kaapi_config(
                 blob=ConfigBlob(
                     completion=KaapiCompletionConfig(
                         provider="openai",
-                        params=KaapiLLMParams(
-                            model="gpt-4o",
-                            instructions="You are a physics expert",
-                            temperature=0.5,
-                        ),
+                        type="text",
+                        params={
+                            "model": "gpt-4o",
+                            "instructions": "You are a physics expert",
+                            "temperature": 0.5,
+                        },
                     )
                 )
             ),

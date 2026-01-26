@@ -14,9 +14,44 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.core.util import now
+import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
+from app.models.llm.request import (
+    TextInput,
+    AudioBase64Input,
+    AudioUrlInput,
+    QueryInput,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def serialize_input(query_input: QueryInput) -> str:
+    """Serialize query input for database storage.
+
+    For text: stores the actual content
+    For audio_base64: stores metadata (type, mime_type, size)
+    For audio_url: stores the URL
+    """
+    if isinstance(query_input, TextInput):
+        return query_input.content
+    elif isinstance(query_input, AudioBase64Input):
+        return json.dumps(
+            {
+                "type": "audio_base64",
+                "mime_type": query_input.mime_type,
+                "size_bytes": len(query_input.data),
+            }
+        )
+    elif isinstance(query_input, AudioUrlInput):
+        return json.dumps(
+            {
+                "type": "audio_url",
+                "url": str(query_input.url),
+            }
+        )
+    else:
+        return str(query_input)
 
 
 def create_llm_call(
@@ -92,7 +127,7 @@ def create_llm_call(
         job_id=job_id,
         project_id=project_id,
         organization_id=organization_id,
-        input=request.query.input,
+        input=serialize_input(request.query.input),
         input_type=input_type,
         output_type=output_type,
         provider=provider,

@@ -17,6 +17,7 @@ from app.celery.utils import start_high_priority_job
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
+from app.services.llm.input_resolver import resolve_input, cleanup_temp_file
 
 
 logger = logging.getLogger(__name__)
@@ -272,17 +273,32 @@ def execute_job(
         if request.query.conversation and request.query.conversation.id:
             conversation_id = request.query.conversation.id
 
+        # Resolve input (handles text, audio_base64, audio_url)
+        resolved_input, resolve_error = resolve_input(request.query.input)
+        if resolve_error:
+            callback_response = APIResponse.failure_response(
+                error=resolve_error,
+                metadata=request.request_metadata,
+            )
+            return handle_job_error(job_id, request.callback_url, callback_response)
+
         # Apply Langfuse observability decorator to provider execute method
         decorated_execute = observe_llm_execution(
             credentials=langfuse_credentials,
             session_id=conversation_id,
         )(provider_instance.execute)
 
-        response, error = decorated_execute(
-            completion_config=completion_config,
-            query=request.query,
-            include_provider_raw_response=request.include_provider_raw_response,
-        )
+        try:
+            response, error = decorated_execute(
+                completion_config=completion_config,
+                query=request.query,
+                resolved_input=resolved_input,
+                include_provider_raw_response=request.include_provider_raw_response,
+            )
+        finally:
+            # Clean up temp files for audio inputs
+            if resolved_input and resolved_input != request.query.input:
+                cleanup_temp_file(resolved_input)
 
         if response:
             callback_response = APIResponse.success_response(

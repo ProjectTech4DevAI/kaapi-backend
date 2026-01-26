@@ -39,6 +39,7 @@ class OpenAIProvider(BaseProvider):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
+        resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         response: Response | None = None
@@ -48,7 +49,7 @@ class OpenAIProvider(BaseProvider):
             params = {
                 **completion_config.params,
             }
-            params["input"] = query.input
+            params["input"] = resolved_input
 
             conversation_cfg = query.conversation
 

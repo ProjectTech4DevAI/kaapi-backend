@@ -11,7 +11,7 @@ class Usage(SQLModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
-    reasoning_tokens: int | None
+    reasoning_tokens: int | None = None
 
 
 class LLMOutput(SQLModel):
