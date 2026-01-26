@@ -31,21 +31,9 @@ class GoogleAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        """Create Google AI client using GEMINI_API_KEY from environment.
-
-        Note: Currently uses os.getenv("GEMINI_API_KEY") directly.
-        The credentials parameter is kept for interface compatibility but not used.
-
-        Returns:
-            genai.Client instance
-
-        Raises:
-            ValueError: If GEMINI_API_KEY is not set in environment
-        """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        return genai.Client(api_key=api_key)
+        if "api_key" not in credentials:
+            raise ValueError("API Key for Google Gemini Not Set")
+        return genai.Client(api_key=credentials["api_key"])
 
     def _parse_input(self, query_input, completion_type, provider) -> str:
         if completion_type == "stt":

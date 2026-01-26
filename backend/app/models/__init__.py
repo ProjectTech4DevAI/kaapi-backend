@@ -31,6 +31,7 @@ from .config import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
+    ConfigVersionCreatePartial,
     ConfigVersionPublic,
     ConfigVersionItems,
 )

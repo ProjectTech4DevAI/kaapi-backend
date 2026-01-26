@@ -1,17 +1,17 @@
 """Parameter mappers for converting Kaapi-abstracted parameters to provider-specific formats."""
 
 import litellm
-from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
+from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 
 
-def map_kaapi_to_openai_params(kaapi_params: KaapiLLMParams) -> tuple[dict, list[str]]:
+def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
     This mapper transforms standardized Kaapi parameters into OpenAI-specific
     parameter format, enabling provider-agnostic interface design.
 
     Args:
-        kaapi_params: KaapiLLMParams instance with standardized parameters
+        kaapi_params: Dictionary with standardized Kaapi parameters
 
     Supported Mapping:
         - model → model
@@ -29,56 +29,61 @@ def map_kaapi_to_openai_params(kaapi_params: KaapiLLMParams) -> tuple[dict, list
     openai_params = {}
     warnings = []
 
-    support_reasoning = litellm.supports_reasoning(
-        model="openai/" + f"{kaapi_params.model}"
-    )
+    model = kaapi_params.get("model")
+    reasoning = kaapi_params.get("reasoning")
+    temperature = kaapi_params.get("temperature")
+    instructions = kaapi_params.get("instructions")
+    knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
+    max_num_results = kaapi_params.get("max_num_results")
+
+    support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
 
     # Handle reasoning vs temperature mutual exclusivity
     if support_reasoning:
-        if kaapi_params.reasoning is not None:
-            openai_params["reasoning"] = {"effort": kaapi_params.reasoning}
+        if reasoning is not None:
+            openai_params["reasoning"] = {"effort": reasoning}
 
-        if kaapi_params.temperature is not None:
+        if temperature is not None:
             warnings.append(
                 "Parameter 'temperature' was suppressed because the selected model "
                 "supports reasoning, and temperature is ignored when reasoning is enabled."
             )
     else:
-        if kaapi_params.reasoning is not None:
+        if reasoning is not None:
             warnings.append(
                 "Parameter 'reasoning' was suppressed because the selected model "
                 "does not support reasoning."
             )
 
-        if kaapi_params.temperature is not None:
-            openai_params["temperature"] = kaapi_params.temperature
+        if temperature is not None:
+            openai_params["temperature"] = temperature
 
-    if kaapi_params.model:
-        openai_params["model"] = kaapi_params.model
+    if model:
+        openai_params["model"] = model
 
-    if kaapi_params.instructions:
-        openai_params["instructions"] = kaapi_params.instructions
+    if instructions:
+        openai_params["instructions"] = instructions
 
-    if kaapi_params.knowledge_base_ids:
+    if knowledge_base_ids:
         openai_params["tools"] = [
             {
                 "type": "file_search",
-                "vector_store_ids": kaapi_params.knowledge_base_ids,
-                "max_num_results": kaapi_params.max_num_results or 20,
+                "vector_store_ids": knowledge_base_ids,
+                "max_num_results": max_num_results or 20,
             }
         ]
 
     return openai_params, warnings
 
 
-def map_kaapi_to_google_params(kaapi_params: KaapiLLMParams) -> tuple[dict, list[str]]:
+def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
     This mapper transforms standardized Kaapi parameters into Google-specific
     parameter format for the Gemini API.
 
     Args:
-        kaapi_params: KaapiLLMParams instance with standardized parameters
+        kaapi_params: Dictionary with standardized Kaapi parameters
 
     Supported Mapping:
         - model → model
@@ -93,25 +98,25 @@ def map_kaapi_to_google_params(kaapi_params: KaapiLLMParams) -> tuple[dict, list
     warnings = []
 
     # Model is present in all param types
-    google_params["model"] = kaapi_params.model
+    google_params["model"] = kaapi_params.get("model")
 
-    # Instructions only exists in TextLLMParams, use getattr for optional access
-    instructions = getattr(kaapi_params, "instructions", None)
+    # Instructions for STT prompts
+    instructions = kaapi_params.get("instructions")
     if instructions:
         google_params["instructions"] = instructions
 
-    # Warn about unsupported parameters that may be present in TextLLMParams
-    if getattr(kaapi_params, "knowledge_base_ids", None):
+    # Warn about unsupported parameters
+    if kaapi_params.get("knowledge_base_ids"):
         warnings.append(
             "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
         )
 
-    if getattr(kaapi_params, "temperature", None) is not None:
+    if kaapi_params.get("temperature") is not None:
         warnings.append(
             "Parameter 'temperature' is not applicable for Google AI STT and was ignored."
         )
 
-    if getattr(kaapi_params, "reasoning", None) is not None:
+    if kaapi_params.get("reasoning") is not None:
         warnings.append(
             "Parameter 'reasoning' is not applicable for Google AI and was ignored."
         )

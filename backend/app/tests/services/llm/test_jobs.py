@@ -41,6 +41,7 @@ class TestStartJob:
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={"model": "gpt-4"},
                     )
                 )
@@ -403,6 +404,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.7},
             )
         )
@@ -452,6 +454,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -500,6 +503,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -733,6 +737,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.8},
             )
         )
@@ -759,6 +764,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -784,6 +790,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -821,6 +828,7 @@ class TestResolveConfigBlob:
         config_blob_v1 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -836,6 +844,7 @@ class TestResolveConfigBlob:
         config_blob_v2 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.9},
             )
         )
@@ -911,6 +920,7 @@ class TestResolveConfigBlob:
         native_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )

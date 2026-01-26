@@ -1,8 +1,8 @@
-"""add llm call table
+"""add_llm_call_table
 
-Revision ID: 9ca4b67c5226
+Revision ID: 041
 Revises: 040
-Create Date: 2026-01-23 13:36:23.023444
+Create Date: 2026-01-26 15:20:23.873332
 
 """
 from alembic import op

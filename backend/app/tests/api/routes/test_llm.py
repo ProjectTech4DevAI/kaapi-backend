@@ -27,6 +27,7 @@ def test_llm_call_success(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,
@@ -100,6 +101,7 @@ def test_llm_call_with_native_config(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.9,

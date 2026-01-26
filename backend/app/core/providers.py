@@ -31,21 +31,11 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.LANGFUSE: ProviderConfig(
         required_fields=["secret_key", "public_key", "host"]
     ),
+    Provider.GOOGLE: ProviderConfig(required_fields=["api_key"]),
 }
 
 
 def validate_provider(provider: str) -> Provider:
-    """Validate that the provider name is supported and return the Provider enum.
-
-    Args:
-        provider: The provider name to validate
-
-    Returns:
-        Provider: The validated provider enum
-
-    Raises:
-        ValueError: If the provider is not supported
-    """
     try:
         return Provider(provider.lower())
     except ValueError:

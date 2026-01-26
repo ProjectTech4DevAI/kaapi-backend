@@ -12,7 +12,6 @@ from sqlmodel import Field, SQLModel, Index, text
 
 
 class TextLLMParams(SQLModel):
-    type: Literal["text"] = "text"
     model: str
     instructions: str | None = Field(
         default=None,
@@ -38,18 +37,22 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
-    type: Literal["stt"] = "stt"
     model: str
+    instructions: str
     input_language: str | None = None
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
         description="Can take multiple response_format like text, json, verbose_json.",
     )
+    temperature: float | None = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+    )
 
 
 class TTSLLMParams(SQLModel):
-    type: Literal["tts"] = "tts"
     model: str
     voice: str
     language: str
@@ -57,9 +60,7 @@ class TTSLLMParams(SQLModel):
     speed: float | None = Field(None, ge=0.25, le=4.0)
 
 
-KaapiLLMParams = Annotated[
-    Union[TextLLMParams, STTLLMParams, TTSLLMParams], Field(discriminator="type")
-]
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams]
 
 
 class ConversationConfig(SQLModel):
@@ -111,7 +112,7 @@ class NativeCompletionConfig(SQLModel):
     """
 
     provider: Literal["openai-native", "google-native"] = Field(
-        default="openai-native",
+        ...,
         description="Native provider type (e.g., openai-native)",
     )
     params: dict[str, Any] = Field(
@@ -119,7 +120,7 @@ class NativeCompletionConfig(SQLModel):
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
     type: Literal["text", "stt", "tts"] = Field(
-        None, description="Completion config type. Params schema varies by type"
+        ..., description="Completion config type. Params schema varies by type"
     )
 
 
@@ -133,13 +134,27 @@ class KaapiCompletionConfig(SQLModel):
     provider: Literal["openai", "google"] = Field(
         ..., description="LLM provider (openai)"
     )
-    params: KaapiLLMParams = Field(
+
+    type: Literal["text", "stt", "tts"] = Field(
+        ..., description="Completion config type. Params schema varies by type"
+    )
+    params: dict[str, Any] = Field(
         ...,
         description="Kaapi-standardized parameters mapped to provider-specific API",
     )
-    type: Literal["text", "stt", "tts"] = Field(
-        None, description="Completion config type. Params schema varies by type"
-    )
+
+    # validate all these 3 config types
+    @model_validator(mode="after")
+    def validate_params(self):
+        param_models = {
+            "text": TextLLMParams,
+            "stt": STTLLMParams,
+            "tts": TTSLLMParams,
+        }
+        model_class = param_models[self.type]
+        validated = model_class.model_validate(self.params)
+        self.params = validated.model_dump()
+        return self
 
 
 # Discriminated union for completion configs based on provider field

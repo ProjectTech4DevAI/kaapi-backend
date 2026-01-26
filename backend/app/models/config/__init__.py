@@ -10,6 +10,7 @@ from .version import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
+    ConfigVersionCreatePartial,
     ConfigVersionPublic,
     ConfigVersionItems,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "ConfigVersion",
     "ConfigVersionBase",
     "ConfigVersionCreate",
+    "ConfigVersionCreatePartial",
     "ConfigVersionItems",
     "ConfigVersionPublic",
     "ConfigWithVersion",

@@ -34,6 +34,7 @@ class TestOpenAIProvider:
         """Create a basic completion config."""
         return NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={"model": "gpt-4"},
         )
 
@@ -236,6 +237,7 @@ class TestOpenAIProvider:
         # Create a config with conversation in params (should be removed)
         completion_config = NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={"model": "gpt-4", "conversation": {"id": "old_conv"}},
         )
 
