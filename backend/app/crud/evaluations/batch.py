@@ -108,7 +108,9 @@ def build_evaluation_jsonl(
                 # Use config as-is
                 "model": config.model,
                 "instructions": config.instructions,
-                "temperature": config.temperature,
+                "temperature": config.temperature
+                if config.temperature is not None
+                else 0.01,
                 "reasoning": {"effort": config.reasoning} if config.reasoning else None,
                 "tools": [
                     {
