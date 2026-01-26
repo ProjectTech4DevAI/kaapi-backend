@@ -19,7 +19,8 @@ def test_create_config_success(
         "description": "A test LLM configuration",
         "config_blob": {
             "completion": {
-                "provider": "openai-native",
+                "provider": "openai",
+                "type": "text",
                 "params": {
                     "model": "gpt-4",
                     "temperature": 0.8,
@@ -88,6 +89,7 @@ def test_create_config_duplicate_name_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
+                "type": "text",
                 "params": {"model": "gpt-4"},
             }
         },

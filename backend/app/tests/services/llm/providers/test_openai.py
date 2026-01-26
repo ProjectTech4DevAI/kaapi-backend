@@ -55,7 +55,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -84,7 +84,7 @@ class TestOpenAIProvider:
         )
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -95,7 +95,11 @@ class TestOpenAIProvider:
         assert call_args[1]["conversation"] == {"id": conversation_id}
 
     def test_execute_with_auto_create_conversation(
-        self, provider, mock_client, completion_config, query_params
+        self,
+        provider,
+        mock_client,
+        completion_config,
+        query_params,
     ):
         """Test execution with auto-create conversation."""
         new_conversation_id = "conv_auto_456"
@@ -112,7 +116,7 @@ class TestOpenAIProvider:
         )
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -135,7 +139,10 @@ class TestOpenAIProvider:
         mock_client.responses.create.return_value = mock_response
 
         result, error = provider.execute(
-            completion_config, query_params, include_provider_raw_response=True
+            completion_config,
+            query_params,
+            "Test query",
+            include_provider_raw_response=True,
         )
 
         assert error is None
@@ -152,7 +159,7 @@ class TestOpenAIProvider:
             "unexpected keyword argument 'invalid_param'"
         )
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
@@ -172,7 +179,9 @@ class TestOpenAIProvider:
         with patch("app.utils.handle_openai_error") as mock_handler:
             mock_handler.return_value = "API request failed: rate limit exceeded"
 
-            result, error = provider.execute(completion_config, query_params)
+            result, error = provider.execute(
+                completion_config, query_params, "Test query"
+            )
 
             assert result is None
             assert error is not None
@@ -185,7 +194,7 @@ class TestOpenAIProvider:
         """Test handling of unexpected exceptions."""
         mock_client.responses.create.side_effect = Exception("Timeout occurred")
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
@@ -200,7 +209,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -218,7 +227,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -244,7 +253,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None

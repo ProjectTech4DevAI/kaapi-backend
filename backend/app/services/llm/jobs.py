@@ -209,6 +209,7 @@ def execute_job(
                     completion_config, warnings = transform_kaapi_config_to_native(
                         completion_config
                     )
+                    print(f"The completion_config transformed is {completion_config}")
                     if request.request_metadata is None:
                         request.request_metadata = {}
                     request.request_metadata.setdefault("warnings", []).extend(warnings)
@@ -250,7 +251,7 @@ def execute_job(
             try:
                 provider_instance = get_llm_provider(
                     session=session,
-                    provider_type=completion_config.provider,  # Now always native provider type
+                    provider_type=completion_config.provider,  # Now always native provider type i.e openai-native, google-native regardless
                     project_id=project_id,
                     organization_id=organization_id,
                 )

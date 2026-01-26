@@ -88,6 +88,7 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     Supported Mapping:
         - model → model
         - instructions → instructions (for STT prompts, if available)
+        - temperature -> temperature parameter (0-2)
 
     Returns:
         Tuple of:
@@ -105,15 +106,15 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     if instructions:
         google_params["instructions"] = instructions
 
+    temperature = kaapi_params.get("temperature")
+
+    if temperature is not None:
+        google_params["temperature"] = temperature
+
     # Warn about unsupported parameters
     if kaapi_params.get("knowledge_base_ids"):
         warnings.append(
             "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
-        )
-
-    if kaapi_params.get("temperature") is not None:
-        warnings.append(
-            "Parameter 'temperature' is not applicable for Google AI STT and was ignored."
         )
 
     if kaapi_params.get("reasoning") is not None:

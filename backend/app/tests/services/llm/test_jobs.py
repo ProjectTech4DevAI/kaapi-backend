@@ -16,7 +16,7 @@ from app.models.llm import (
     LLMResponse,
     LLMOutput,
     Usage,
-    KaapiLLMParams,
+    # KaapiLLMParams,
     KaapiCompletionConfig,
 )
 from app.models.llm.request import ConfigBlob, LLMCallConfig
@@ -229,6 +229,7 @@ class TestExecuteJob:
             "config": {
                 "blob": {
                     "completion": {
+                        "type": "text",
                         "provider": "openai-native",
                         "params": {"model": "gpt-4"},
                     }
@@ -539,11 +540,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -585,10 +587,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-3.5-turbo",
-                    temperature=0.5,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-3.5-turbo",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -635,10 +639,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="o1",  # Reasoning model
-                    temperature=0.7,  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "o1",  # Reasoning model
+                    "temperature": 0.7,  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -684,10 +689,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",  # Non-reasoning model
-                    reasoning="high",  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",  # Non-reasoning model
+                    "reasoning": "high",  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -884,11 +890,12 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.8,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.8,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -932,10 +939,11 @@ class TestResolveConfigBlob:
         kaapi_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                },
             )
         )
         kaapi_config = create_test_config(

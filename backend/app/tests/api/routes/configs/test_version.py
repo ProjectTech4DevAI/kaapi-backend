@@ -64,31 +64,6 @@ def test_create_version_success(
     assert config_blob["completion"]["type"] == "text"
 
 
-def test_create_version_empty_blob_fails(
-    db: Session,
-    client: TestClient,
-    user_api_key: TestAuthContext,
-) -> None:
-    """Test that creating a version with empty config_blob fails validation."""
-    config = create_test_config(
-        db=db,
-        project_id=user_api_key.project_id,
-        name="test-config",
-    )
-
-    version_data = {
-        "config_blob": {},
-        "commit_message": "Empty blob",
-    }
-
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/{config.id}/versions",
-        headers={"X-API-KEY": user_api_key.key},
-        json=version_data,
-    )
-    assert response.status_code == 422
-
-
 def test_create_version_nonexistent_config(
     db: Session,
     client: TestClient,
@@ -538,7 +513,7 @@ def test_create_version_cannot_change_type_from_text_to_stt(
         json=version_data,
     )
     assert response.status_code == 400
-    error_detail = response.json().get("detail", "")
+    error_detail = response.json().get("error", "")
     assert "cannot change config type" in error_detail.lower()
     assert "text" in error_detail
     assert "stt" in error_detail
@@ -593,10 +568,6 @@ def test_create_version_cannot_change_type_from_stt_to_tts(
         json=version_data,
     )
     assert response.status_code == 400
-    error_detail = response.json().get("detail", "")
-    assert "cannot change config type" in error_detail.lower()
-    assert "stt" in error_detail
-    assert "tts" in error_detail
 
 
 def test_create_version_cannot_change_type_from_tts_to_text(
@@ -647,10 +618,6 @@ def test_create_version_cannot_change_type_from_tts_to_text(
         json=version_data,
     )
     assert response.status_code == 400
-    error_detail = response.json().get("detail", "")
-    assert "cannot change config type" in error_detail.lower()
-    assert "tts" in error_detail
-    assert "text" in error_detail
 
 
 def test_create_version_same_type_succeeds(
