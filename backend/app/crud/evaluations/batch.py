@@ -114,7 +114,7 @@ def build_evaluation_jsonl(
             body["reasoning"] = {"effort": config.reasoning}
 
         # Add tools only if knowledge_base_ids are provided
-        if config.knowledge_base_ids and len(config.knowledge_base_ids) > 0:
+        if config.knowledge_base_ids:
             body["tools"] = [
                 {
                     "type": "file_search",
@@ -152,7 +152,7 @@ def start_evaluation_batch(
         openai_client: Configured OpenAI client
         session: Database session
         eval_run: EvaluationRun database object (with run_name, dataset_name, config)
-        config: Evaluation configuration dict with llm, instructions, vector_store_ids
+        config: KaapiLLMParams with model, instructions, knowledge_base_ids, etc.
 
     Returns:
         Updated EvaluationRun with batch_job_id populated
