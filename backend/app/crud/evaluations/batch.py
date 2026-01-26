@@ -100,27 +100,34 @@ def build_evaluation_jsonl(
 
         # Build the batch request object for Responses API
         # Use config as-is and only add the input field
+        body: dict[str, Any] = {
+            "model": config.model,
+            "instructions": config.instructions,
+            "temperature": config.temperature
+            if config.temperature is not None
+            else 0.01,
+            "input": question,  # Add input from dataset
+        }
+
+        # Add reasoning only if provided
+        if config.reasoning:
+            body["reasoning"] = {"effort": config.reasoning}
+
+        # Add tools only if knowledge_base_ids are provided
+        if config.knowledge_base_ids and len(config.knowledge_base_ids) > 0:
+            body["tools"] = [
+                {
+                    "type": "file_search",
+                    "vector_store_ids": config.knowledge_base_ids,
+                    "max_num_results": config.max_num_results or 20,
+                }
+            ]
+
         batch_request = {
             "custom_id": item["id"],
             "method": "POST",
             "url": "/v1/responses",
-            "body": {
-                # Use config as-is
-                "model": config.model,
-                "instructions": config.instructions,
-                "temperature": config.temperature
-                if config.temperature is not None
-                else 0.01,
-                "reasoning": {"effort": config.reasoning} if config.reasoning else None,
-                "tools": [
-                    {
-                        "type": "file_search",
-                        "vector_store_ids": config.knowledge_base_ids or [],
-                        "max_num_results": config.max_num_results or 20,
-                    }
-                ],
-                "input": question,  # Add input from dataset
-            },
+            "body": body,
         }
 
         jsonl_data.append(batch_request)
