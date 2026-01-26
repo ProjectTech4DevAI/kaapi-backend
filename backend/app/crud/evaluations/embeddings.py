@@ -365,7 +365,7 @@ def start_embedding_batch(
     try:
         logger.info(f"Starting embedding batch for evaluation run {eval_run.id}")
 
-        # Get embedding model from config
+        # Use default embedding model
         embedding_model = EMBEDDING_MODEL
 
         # Step 1: Build embedding JSONL with trace_ids

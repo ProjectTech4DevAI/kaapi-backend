@@ -94,10 +94,9 @@ def create_evaluation_run(
         raise
 
     logger.info(
-        f"Created EvaluationRun record: id={eval_run.id}, run_name={run_name}, "
-        f"config_id={config_id}, config_version={config_version}"
+        f"[create_evaluation_run] Created EvaluationRun record: id={eval_run.id}, "
+        f"run_name={run_name}, config_id={config_id}, config_version={config_version}"
     )
-
     return eval_run
 
 

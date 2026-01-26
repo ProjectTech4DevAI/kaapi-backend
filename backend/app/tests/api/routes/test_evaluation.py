@@ -552,7 +552,7 @@ class TestBatchEvaluation:
         )
         assert "not found" in error_str.lower() or "not accessible" in error_str.lower()
 
-    def test_start_batch_evaluation_missing_model(
+    def test_start_batch_evaluation_invalid_config_id(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
         """Test batch evaluation fails with invalid config_id."""
