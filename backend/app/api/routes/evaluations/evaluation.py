@@ -123,12 +123,25 @@ def get_evaluation_run_status(
             "Requires get_trace_info=true."
         ),
     ),
+    export_format: str = Query(
+        "row",
+        description=(
+            "Controls the Traces structure."
+            "'grouped' collates repeated questions horizontally using Parent Question ID."
+        ),
+        enum=["row", "grouped"]
+    )
 ) -> APIResponse[EvaluationRunPublic]:
     """Get evaluation run status with optional trace info."""
     if resync_score and not get_trace_info:
         raise HTTPException(
             status_code=400,
             detail="resync_score=true requires get_trace_info=true",
+        )
+    if export_format == "grouped" and not get_trace_info:
+        raise HTTPException(
+            status_code = 400,
+            detail="export_format=grouped requires get_trace_info=true"
         )
 
     eval_run, error = get_evaluation_with_scores(
@@ -148,6 +161,14 @@ def get_evaluation_run_status(
                 "to this organization"
             ),
         )
+    # Formatter = grouped
+    if export_format == "grouped" and eval_run.score and "traces" in eval_run.score:
+        from app.crud.evaluations.core import group_traces_by_question_id
+        try:
+            grouped_traces = group_traces_by_question_id(eval_run.score["traces"])
+            eval_run.score["traces"] = grouped_traces
+        except ValueError as e:
+            return APIResponse.failure_response(error=str(e), data=eval_run)
 
     if error:
         return APIResponse.failure_response(error=error, data=eval_run)
