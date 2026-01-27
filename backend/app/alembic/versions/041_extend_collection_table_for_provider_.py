@@ -65,8 +65,12 @@ def upgrade():
         existing_comment="Name of the LLM service provider",
         existing_nullable=False,
     )
-    op.create_unique_constraint(
-        "uq_collection_project_id_name", "collection", ["project_id", "name"]
+    op.create_index(
+        "uq_collection_project_id_name_active",
+        "collection",
+        ["project_id", "name"],
+        unique=True,
+        postgresql_where="deleted_at IS NULL",
     )
     op.drop_constraint(
         op.f("collection_organization_id_fkey"), "collection", type_="foreignkey"
@@ -98,7 +102,7 @@ def downgrade():
         ["id"],
         ondelete="CASCADE",
     )
-    op.drop_constraint("uq_collection_project_id_name", "collection", type_="unique")
+    op.drop_index("uq_collection_project_id_name_active", "collection", type_="unique")
     op.alter_column(
         "collection",
         "llm_service_name",

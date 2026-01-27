@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now
@@ -24,10 +24,12 @@ class Collection(SQLModel, table=True):
     """Database model for Collection operations."""
 
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_collection_project_id_name_active",
             "project_id",
             "name",
-            name="uq_collection_project_id_name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
