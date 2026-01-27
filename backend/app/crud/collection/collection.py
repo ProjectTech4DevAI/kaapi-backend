@@ -96,6 +96,7 @@ class CollectionCrud:
     def exists_by_name(self, collection_name: str) -> bool:
         statement = (
             select(Collection.id)
+            .where(Collection.project_id == self.project_id)
             .where(Collection.name == collection_name)
             .where(Collection.deleted_at.is_(None))
         )

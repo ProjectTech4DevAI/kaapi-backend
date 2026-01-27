@@ -58,12 +58,12 @@ class Collection(SQLModel, table=True):
         description="Name of the LLM service",
         sa_column_kwargs={"comment": "Name of the LLM service"},
     )
-    name: str = Field(
+    name: str | None = Field(
         nullable=True,
         description="Name of the collection",
         sa_column_kwargs={"comment": "Name of the collection"},
     )
-    description: str = Field(
+    description: str | None = Field(
         nullable=True,
         description="Description of the collection",
         sa_column_kwargs={"comment": "Description of the collection"},
