@@ -84,6 +84,9 @@ def get_llm_provider(
     try:
         client = provider_class.create_client(credentials=credentials)
         return provider_class(client=client)
+    except ValueError:
+        # Re-raise ValueError for credential/configuration errors
+        raise
     except Exception as e:
         logger.error(f"Failed to initialize {provider_type} client: {e}", exc_info=True)
         raise RuntimeError(f"Could not connect to {provider_type} services.")

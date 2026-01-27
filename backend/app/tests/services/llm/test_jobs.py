@@ -912,10 +912,10 @@ class TestResolveConfigBlob:
         assert resolved_blob is not None
         assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
         assert resolved_blob.completion.provider == "openai"
-        assert resolved_blob.completion.params.model == "gpt-4"
-        assert resolved_blob.completion.params.temperature == 0.8
+        assert resolved_blob.completion.params["model"] == "gpt-4"
+        assert resolved_blob.completion.params["temperature"] == 0.8
         assert (
-            resolved_blob.completion.params.instructions
+            resolved_blob.completion.params["instructions"]
             == "You are a helpful assistant"
         )
 

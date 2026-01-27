@@ -194,7 +194,7 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
         validated = model_class.model_validate(self.params)
-        self.params = validated.model_dump()
+        self.params = validated.model_dump(exclude_none=True)
         return self
 
 

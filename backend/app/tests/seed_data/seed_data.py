@@ -18,6 +18,8 @@ from app.models import (
     Credential,
     Assistant,
     Document,
+    Config,
+    ConfigVersion,
 )
 
 
@@ -348,6 +350,7 @@ def clear_database(session: Session) -> None:
     session.exec(delete(Assistant))
     session.exec(delete(Document))
     session.exec(delete(APIKey))
+    # ConfigVersion and Config are cascade-deleted when Project is deleted
     session.exec(delete(Project))
     session.exec(delete(Organization))
     session.exec(delete(User))
