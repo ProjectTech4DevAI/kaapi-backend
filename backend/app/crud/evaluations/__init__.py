@@ -5,6 +5,8 @@ from app.crud.evaluations.core import (
     create_evaluation_run,
     get_evaluation_run_by_id,
     list_evaluation_runs,
+    resolve_evaluation_config,
+    resolve_model_from_config,
     save_score,
 )
 from app.crud.evaluations.cron import (
@@ -43,3 +45,45 @@ from app.crud.evaluations.score import (
     TraceData,
     TraceScore,
 )
+
+__all__ = [
+    # Core
+    "create_evaluation_run",
+    "get_evaluation_run_by_id",
+    "list_evaluation_runs",
+    "resolve_evaluation_config",
+    "resolve_model_from_config",
+    "save_score",
+    # Cron
+    "process_all_pending_evaluations",
+    "process_all_pending_evaluations_sync",
+    # Dataset
+    "create_evaluation_dataset",
+    "delete_dataset",
+    "get_dataset_by_id",
+    "list_datasets",
+    "upload_csv_to_object_store",
+    # Batch
+    "start_evaluation_batch",
+    # Processing
+    "check_and_process_evaluation",
+    "poll_all_pending_evaluations",
+    "process_completed_embedding_batch",
+    "process_completed_evaluation",
+    # Embeddings
+    "calculate_average_similarity",
+    "calculate_cosine_similarity",
+    "start_embedding_batch",
+    # Langfuse
+    "create_langfuse_dataset_run",
+    "fetch_trace_scores_from_langfuse",
+    "update_traces_with_cosine_scores",
+    "upload_dataset_to_langfuse",
+    # Score types
+    "CategoricalSummaryScore",
+    "EvaluationScore",
+    "NumericSummaryScore",
+    "SummaryScore",
+    "TraceData",
+    "TraceScore",
+]
