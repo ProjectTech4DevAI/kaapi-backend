@@ -352,16 +352,16 @@ def save_score(
             )
         return eval_run
 
+
 def group_traces_by_question_id(
     traces: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Docstring for group_traces_by_question_id
-    
-    :param traces: Description
-    :type traces: list[dict[str, Any]]
-    :return: Description
-    :rtype: list[dict[str, Any]]
+    Group evaluation traces by question_id for horizontal comparison
+
+    Args:
+        traces: List of trace dicts, each containing question_id, question,
+            ground_truth_answer, llm_answer, trace_id, and scores.
 
     Returns:
         List of grouped traces sorted by question_id:
@@ -375,13 +375,17 @@ def group_traces_by_question_id(
                 "scores": [[...], [...]]
             }
         ]
+    
+    Raises:
+        ValueError: If traces lack question_id (required for grouping).
     """
 
     # weather question_id exists in the traces
-    if traces and (traces[0].get("question_id") is None or traces[0].get("question_id") ==  ""):
-        raise ValueError(
-            "Grouped export format is not available for this evaluation.")
-    
+    if traces and (
+        traces[0].get("question_id") is None or traces[0].get("question_id") == ""
+    ):
+        raise ValueError("Grouped export format is not available for this evaluation.")
+
     groups: dict[int, list[dict[str, Any]]] = {}
 
     for trace in traces:
@@ -389,22 +393,25 @@ def group_traces_by_question_id(
         if question_id not in groups:
             groups[question_id] = []
         groups[question_id].append(trace)
-    
+
     result: list[dict[str, Any]] = []
     for question_id in sorted(groups.keys()):
         group_traces = groups[question_id]
         first = group_traces[0]
-        result.append({
-            "question_id": question_id,
-            "question": first.get("question", ""),
-            "ground_truth_answer": first.get("ground_truth_answer", ""),
-            "llm_answers": [t.get("llm_answer", "") for t in group_traces],
-            "trace_ids": [t.get("trace_id", "") for t in group_traces],
-            "scores": [t.get("scores", []) for t in group_traces],
-        })
+        result.append(
+            {
+                "question_id": question_id,
+                "question": first.get("question", ""),
+                "ground_truth_answer": first.get("ground_truth_answer", ""),
+                "llm_answers": [t.get("llm_answer", "") for t in group_traces],
+                "trace_ids": [t.get("trace_id", "") for t in group_traces],
+                "scores": [t.get("scores", []) for t in group_traces],
+            }
+        )
 
     logger.info(f"[group_traces_by_question_id] Created {len(result)} groups")
     return result
+
 
 def resolve_model_from_config(
     session: Session,

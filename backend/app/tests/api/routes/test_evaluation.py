@@ -1070,6 +1070,7 @@ class TestGetEvaluationRunStatus:
             and isinstance(traces[0]["trace_ids"], list)
         )
 
+
 class TestGetDataset:
     """Test GET /evaluations/datasets/{dataset_id} endpoint."""
 
