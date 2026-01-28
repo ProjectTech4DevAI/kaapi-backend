@@ -26,7 +26,7 @@ from app.core.batch import (
     upload_batch_results_to_object_store,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.core import update_evaluation_run, resolve_model_from_config
 from app.crud.evaluations.embeddings import (
     calculate_average_similarity,
     parse_embedding_results,
@@ -154,6 +154,9 @@ def parse_evaluation_output(
             question = dataset_item["input"].get("question", "")
             ground_truth = dataset_item["expected_output"].get("answer", "")
 
+            # Extract question_id from dataset item metadata
+            question_id = dataset_item.get("metadata", {}).get("question_id")
+
             results.append(
                 {
                     "item_id": item_id,
@@ -162,6 +165,7 @@ def parse_evaluation_output(
                     "ground_truth": ground_truth,
                     "response_id": response_id,
                     "usage": usage,
+                    "question_id": question_id,
                 }
             )
 
@@ -254,16 +258,16 @@ async def process_completed_evaluation(
         if not results:
             raise ValueError("No valid results found in batch output")
 
-        # Extract model from config for cost tracking
-        model = eval_run.config.get("model") if eval_run.config else None
-
         # Step 5: Create Langfuse dataset run with traces
+        # Use model stored at creation time for cost tracking
+        model = resolve_model_from_config(session=session, eval_run=eval_run)
+
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
             dataset_name=eval_run.dataset_name,
+            model=model,
             run_name=eval_run.run_name,
             results=results,
-            model=model,
         )
 
         # Store object store URL in database

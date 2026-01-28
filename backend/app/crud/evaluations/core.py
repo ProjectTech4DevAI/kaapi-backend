@@ -1,15 +1,49 @@
 import logging
 from typing import Any
+from uuid import UUID
 
 from langfuse import Langfuse
 from sqlmodel import Session, select
 
 from app.core.util import now
+from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun
+from app.models.llm.request import ConfigBlob, LLMCallConfig
+from app.services.llm.jobs import resolve_config_blob
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_evaluation_config(
+    session: Session,
+    config_id: UUID,
+    config_version: int,
+    project_id: int,
+) -> tuple[ConfigBlob | None, str | None]:
+    """
+    Resolve config blob from stored config management.
+
+    Args:
+        session: Database session
+        config_id: UUID of the stored config
+        config_version: Version number of the config
+        project_id: Project ID for access control
+
+    Returns:
+        Tuple of (ConfigBlob or None, error_message or None)
+    """
+    config_version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=config_id,
+        project_id=project_id,
+    )
+
+    return resolve_config_blob(
+        config_crud=config_version_crud,
+        config=LLMCallConfig(id=config_id, version=config_version),
+    )
 
 
 def create_evaluation_run(
@@ -17,7 +51,8 @@ def create_evaluation_run(
     run_name: str,
     dataset_name: str,
     dataset_id: int,
-    config: dict,
+    config_id: UUID,
+    config_version: int,
     organization_id: int,
     project_id: int,
 ) -> EvaluationRun:
@@ -29,7 +64,8 @@ def create_evaluation_run(
         run_name: Name of the evaluation run/experiment
         dataset_name: Name of the dataset being used
         dataset_id: ID of the dataset
-        config: Configuration dict for the evaluation
+        config_id: UUID of the stored config
+        config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
 
@@ -40,7 +76,8 @@ def create_evaluation_run(
         run_name=run_name,
         dataset_name=dataset_name,
         dataset_id=dataset_id,
-        config=config,
+        config_id=config_id,
+        config_version=config_version,
         status="pending",
         organization_id=organization_id,
         project_id=project_id,
@@ -57,8 +94,10 @@ def create_evaluation_run(
         logger.error(f"Failed to create EvaluationRun: {e}", exc_info=True)
         raise
 
-    logger.info(f"Created EvaluationRun record: id={eval_run.id}, run_name={run_name}")
-
+    logger.info(
+        f"[create_evaluation_run] Created EvaluationRun record: id={eval_run.id}, "
+        f"run_name={run_name}, config_id={config_id}, config_version={config_version}"
+    )
     return eval_run
 
 
@@ -366,3 +405,42 @@ def group_traces_by_question_id(
 
     logger.info(f"[group_traces_by_question_id] Created {len(result)} groups")
     return result
+
+def resolve_model_from_config(
+    session: Session,
+    eval_run: EvaluationRun,
+) -> str:
+    """
+    Resolve the model name from the evaluation run's config.
+
+    Args:
+        session: Database session
+        eval_run: EvaluationRun instance
+
+    Returns:
+        Model name from config
+
+    Raises:
+        ValueError: If config is missing, invalid, or has no model
+    """
+    if not eval_run.config_id or not eval_run.config_version:
+        raise ValueError(
+            f"Evaluation run {eval_run.id} has no config reference "
+            f"(config_id={eval_run.config_id}, config_version={eval_run.config_version})"
+        )
+
+    config, error = resolve_evaluation_config(
+        session=session,
+        config_id=eval_run.config_id,
+        config_version=eval_run.config_version,
+        project_id=eval_run.project_id,
+    )
+
+    if error or config is None:
+        raise ValueError(
+            f"Config resolution failed for evaluation {eval_run.id} "
+            f"(config_id={eval_run.config_id}, version={eval_run.config_version}): {error}"
+        )
+
+    model = config.completion.params.model
+    return model
