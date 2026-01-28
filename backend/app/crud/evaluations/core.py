@@ -375,7 +375,7 @@ def group_traces_by_question_id(
                 "scores": [[...], [...]]
             }
         ]
-    
+
     Raises:
         ValueError: If traces lack question_id (required for grouping).
     """
