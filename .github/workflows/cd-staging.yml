@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    if: false
     runs-on: ubuntu-latest
     environment: AWS_ENV_VARS
 
