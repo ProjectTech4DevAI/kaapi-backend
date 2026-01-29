@@ -5,7 +5,7 @@ Returns comprehensive evaluation information including processing status, config
 **Query Parameters:**
 * `get_trace_info` (optional, default: false) - Include Langfuse trace scores with Q&A context. Data is fetched from Langfuse on first request and cached for subsequent calls. Only available for completed evaluations.
 * `resync_score` (optional, default: false) - Clear cached scores and re-fetch from Langfuse. Useful when evaluators have been updated. Requires `get_trace_info=true`.
-* `export_format` (optional, default: row) -  Controls the structure of traces in the response. Requires `get_trace_info=true` when set to "grouped". enum=['row','grouped']
+* `export_format` (optional, default: row) -  Controls the structure of traces in the response. Requires `get_trace_info=true` when set to "grouped". Allowed values: `row`, `grouped`.
 
 **Score Format** (`get_trace_info=true`,`export_format=row`):
 
