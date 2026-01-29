@@ -13,6 +13,7 @@ from fastapi import (
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
+from app.crud.evaluations.core import group_traces_by_question_id
 from app.models.evaluation import EvaluationRunPublic
 from app.api.permissions import Permission, require_permission
 from app.services.evaluations import (
@@ -160,8 +161,6 @@ def get_evaluation_run_status(
         )
     # Formatter = grouped
     if export_format == "grouped" and eval_run.score and "traces" in eval_run.score:
-        from app.crud.evaluations.core import group_traces_by_question_id
-
         try:
             grouped_traces = group_traces_by_question_id(eval_run.score["traces"])
             eval_run.score["traces"] = grouped_traces

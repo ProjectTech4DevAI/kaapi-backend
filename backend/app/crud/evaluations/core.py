@@ -357,11 +357,7 @@ def group_traces_by_question_id(
     traces: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Group evaluation traces by question_id for horizontal comparison
-
-    Args:
-        traces: List of trace dicts, each containing question_id, question,
-            ground_truth_answer, llm_answer, trace_id, and scores.
+    Group evaluation traces by question_id for horizontal comparison.
 
     Returns:
         List of grouped traces sorted by question_id:
@@ -375,12 +371,9 @@ def group_traces_by_question_id(
                 "scores": [[...], [...]]
             }
         ]
-
-    Raises:
-        ValueError: If traces lack question_id (required for grouping).
     """
 
-    # weather question_id exists in the traces
+    # whether question_id exists in the traces
     if traces and (
         traces[0].get("question_id") is None or traces[0].get("question_id") == ""
     ):
