@@ -1,6 +1,7 @@
 """Evaluation run API routes."""
 
 import logging
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("evaluation/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -41,19 +42,16 @@ def evaluate(
     experiment_name: str = Body(
         ..., description="Name for this evaluation experiment/run"
     ),
-    config: dict = Body(default_factory=dict, description="Evaluation configuration"),
-    assistant_id: str
-    | None = Body(
-        None, description="Optional assistant ID to fetch configuration from"
-    ),
+    config_id: UUID = Body(..., description="Stored config ID"),
+    config_version: int = Body(..., ge=1, description="Stored config version"),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
     eval_run = start_evaluation(
         session=_session,
         dataset_id=dataset_id,
         experiment_name=experiment_name,
-        config=config,
-        assistant_id=assistant_id,
+        config_id=config_id,
+        config_version=config_version,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
@@ -68,7 +66,7 @@ def evaluate(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("evaluation/list_evaluations.md"),
     response_model=APIResponse[list[EvaluationRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

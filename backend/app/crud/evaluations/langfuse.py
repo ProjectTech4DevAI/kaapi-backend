@@ -88,6 +88,7 @@ def create_langfuse_dataset_run(
             ground_truth = result["ground_truth"]
             response_id = result.get("response_id")
             usage_raw = result.get("usage")
+            question_id = result.get("question_id")
 
             dataset_item = dataset_items_map.get(item_id)
             if not dataset_item:
@@ -105,6 +106,8 @@ def create_langfuse_dataset_run(
                     }
                     if response_id:
                         metadata["response_id"] = response_id
+                    if question_id:
+                        metadata["question_id"] = question_id
 
                     # Create trace with basic info
                     langfuse.trace(
@@ -250,7 +253,7 @@ def upload_dataset_to_langfuse(
         f"duplication_factor={duplication_factor}"
     )
 
-    def upload_item(item: dict[str, str], duplicate_num: int) -> bool:
+    def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
@@ -260,6 +263,7 @@ def upload_dataset_to_langfuse(
                     "original_question": item["question"],
                     "duplicate_number": duplicate_num + 1,
                     "duplication_factor": duplication_factor,
+                    "question_id": question_id,
                 },
             )
             return True
@@ -275,19 +279,22 @@ def upload_dataset_to_langfuse(
         # Create or get dataset in Langfuse
         dataset = langfuse.create_dataset(name=dataset_name)
 
-        upload_tasks = [
-            (item, duplicate_num)
-            for item in items
-            for duplicate_num in range(duplication_factor)
-        ]
+        # Generate question_id for each unique question before duplication
+        # All duplicates of the same question share the same question_id
+        # Using 1-based integer IDs for easier sorting and grouping
+        upload_tasks = []
+        for idx, item in enumerate(items, start=1):
+            question_id = idx
+            for duplicate_num in range(duplication_factor):
+                upload_tasks.append((item, duplicate_num, question_id))
 
         # Upload items concurrently using ThreadPoolExecutor
         total_uploaded = 0
         with ThreadPoolExecutor(max_workers=4) as executor:
             # Submit all upload tasks and collect the futures
             futures = []
-            for item, dup_num in upload_tasks:
-                future = executor.submit(upload_item, item, dup_num)
+            for item, dup_num, question_id in upload_tasks:
+                future = executor.submit(upload_item, item, dup_num, question_id)
                 futures.append(future)
 
             for future in as_completed(futures):
@@ -416,6 +423,7 @@ def fetch_trace_scores_from_langfuse(
                     "question": "",
                     "llm_answer": "",
                     "ground_truth_answer": "",
+                    "question_id": "",
                     "scores": [],
                 }
 
@@ -433,11 +441,12 @@ def fetch_trace_scores_from_langfuse(
                     elif isinstance(trace.output, str):
                         trace_data["llm_answer"] = trace.output
 
-                # Get ground truth from metadata
+                # Get ground truth and question_id from metadata
                 if trace.metadata and isinstance(trace.metadata, dict):
                     trace_data["ground_truth_answer"] = trace.metadata.get(
                         "ground_truth", ""
                     )
+                    trace_data["question_id"] = trace.metadata.get("question_id", "")
 
                 # Add scores from this trace
                 if trace.scores:

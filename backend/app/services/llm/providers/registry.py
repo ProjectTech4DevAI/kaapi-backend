@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 
 class LLMProvider:
     OPENAI_NATIVE = "openai-native"
+    OPENAI = "openai"
     # Future constants for native providers:
     # CLAUDE_NATIVE = "claude-native"
     GOOGLE_NATIVE = "google-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI_NATIVE: OpenAIProvider,
+        OPENAI: OpenAIProvider,
         # Future native providers:
         # CLAUDE_NATIVE: ClaudeProvider,
         GOOGLE_NATIVE: GoogleAIProvider,
