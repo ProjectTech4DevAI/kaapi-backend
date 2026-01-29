@@ -1,6 +1,7 @@
 import io
 from typing import Any
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,8 +9,9 @@ from sqlmodel import Session, select
 
 from app.crud.evaluations.batch import build_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
+from app.models.llm.request import KaapiLLMParams
 from app.tests.utils.auth import TestAuthContext
-from app.tests.utils.test_data import create_test_evaluation_dataset
+from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
 
 # Helper function to create CSV file-like object
@@ -524,15 +526,21 @@ class TestBatchEvaluation:
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
-        sample_evaluation_config: dict[str, Any],
+        db: Session,
+        user_api_key: TestAuthContext,
     ) -> None:
-        """Test batch evaluation fails with invalid/non-existent dataset_id."""
+        """Test batch evaluation fails with invalid dataset_id."""
+        # Create a valid config to use
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
+        # Try to start evaluation with non-existent dataset_id
         response = client.post(
             "/api/v1/evaluations/",
             json={
                 "experiment_name": "test_evaluation_run",
-                "dataset_id": 99999,
-                "config": sample_evaluation_config,
+                "dataset_id": 99999,  # Non-existent
+                "config_id": str(config.id),
+                "config_version": 1,
             },
             headers=user_api_key_header,
         )
@@ -544,35 +552,30 @@ class TestBatchEvaluation:
         )
         assert "not found" in error_str.lower() or "not accessible" in error_str.lower()
 
-    def test_start_batch_evaluation_missing_model(
+    def test_start_batch_evaluation_invalid_config_id(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
-        """Test batch evaluation fails when model is missing from config."""
-        # We don't need a real dataset for this test - the validation should happen
-        # before dataset lookup. Use any dataset_id and expect config validation error
-        invalid_config = {
-            "instructions": "You are a helpful assistant",
-            "temperature": 0.5,
-        }
-
+        """Test batch evaluation fails with invalid config_id."""
+        # Test with a non-existent config_id (random UUID)
         response = client.post(
             "/api/v1/evaluations/",
             json={
-                "experiment_name": "test_no_model",
-                "dataset_id": 1,  # Dummy ID, error should come before this is checked
-                "config": invalid_config,
+                "experiment_name": "test_no_config",
+                "dataset_id": 1,  # Dummy ID, config validation happens first
+                "config_id": str(uuid4()),  # Non-existent config
+                "config_version": 1,
             },
             headers=user_api_key_header,
         )
 
-        # Should fail with either 400 (model missing) or 404 (dataset not found)
+        # Should fail with either 400 (config not found) or 404 (dataset/config not found)
         assert response.status_code in [400, 404]
         response_data = response.json()
         error_str = response_data.get(
             "detail", response_data.get("message", str(response_data))
         )
-        # Should fail with either "model" missing or "dataset not found" (both acceptable)
-        assert "model" in error_str.lower() or "not found" in error_str.lower()
+        # Should mention config or not found
+        assert "config" in error_str.lower() or "not found" in error_str.lower()
 
     def test_start_batch_evaluation_without_authentication(
         self, client, sample_evaluation_config
@@ -604,11 +607,11 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {
-            "model": "gpt-4o",
-            "temperature": 0.2,
-            "instructions": "You are a helpful assistant",
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o",
+            temperature=0.2,
+            instructions="You are a helpful assistant",
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -635,16 +638,11 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {
-            "model": "gpt-4o-mini",
-            "instructions": "Search documents",
-            "tools": [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": ["vs_abc123"],
-                }
-            ],
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o-mini",
+            instructions="Search documents",
+            knowledge_base_ids=["vs_abc123"],
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -664,7 +662,7 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = {"model": "gpt-4o"}  # Only model provided
+        config = KaapiLLMParams(model="gpt-4o")  # Only model provided
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -696,7 +694,7 @@ class TestBatchEvaluationJSONLBuilding:
             },
         ]
 
-        config = {"model": "gpt-4o", "instructions": "Test"}
+        config = KaapiLLMParams(model="gpt-4o", instructions="Test")
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -716,10 +714,10 @@ class TestBatchEvaluationJSONLBuilding:
             for i in range(5)
         ]
 
-        config = {
-            "model": "gpt-4o",
-            "instructions": "Answer questions",
-        }
+        config = KaapiLLMParams(
+            model="gpt-4o",
+            instructions="Answer questions",
+        )
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -758,11 +756,15 @@ class TestGetEvaluationRunStatus:
         create_test_dataset: EvaluationDataset,
     ) -> None:
         """Test requesting trace info for incomplete evaluation returns error."""
+        # Create a config for the evaluation run
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
         eval_run = EvaluationRun(
             run_name="test_pending_run",
             dataset_name=create_test_dataset.name,
             dataset_id=create_test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             status="pending",
             total_items=3,
             organization_id=user_api_key.organization_id,
@@ -794,11 +796,15 @@ class TestGetEvaluationRunStatus:
         create_test_dataset: EvaluationDataset,
     ) -> None:
         """Test requesting trace info for completed evaluation returns cached scores."""
+        # Create a config for the evaluation run
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
         eval_run = EvaluationRun(
             run_name="test_completed_run",
             dataset_name=create_test_dataset.name,
             dataset_id=create_test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             status="completed",
             total_items=3,
             score={
@@ -853,11 +859,13 @@ class TestGetEvaluationRunStatus:
         create_test_dataset: EvaluationDataset,
     ) -> None:
         """Test getting evaluation run without requesting trace info."""
+        config = create_test_config(db, project_id=user_api_key.project_id)
         eval_run = EvaluationRun(
             run_name="test_simple_run",
             dataset_name=create_test_dataset.name,
             dataset_id=create_test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             status="completed",
             total_items=3,
             organization_id=user_api_key.organization_id,
@@ -888,11 +896,13 @@ class TestGetEvaluationRunStatus:
         create_test_dataset: EvaluationDataset,
     ) -> None:
         """Test that resync_score=true requires get_trace_info=true."""
+        config = create_test_config(db, project_id=user_api_key.project_id)
         eval_run = EvaluationRun(
             run_name="test_run",
             dataset_name=create_test_dataset.name,
             dataset_id=create_test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             status="completed",
             total_items=3,
             organization_id=user_api_key.organization_id,
