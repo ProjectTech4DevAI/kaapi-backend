@@ -48,7 +48,7 @@ def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("evaluation/upload_dataset.md"),
     response_model=APIResponse[DatasetUploadResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -87,7 +87,7 @@ async def upload_dataset(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("evaluation/list_datasets.md"),
     response_model=APIResponse[list[DatasetUploadResponse]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

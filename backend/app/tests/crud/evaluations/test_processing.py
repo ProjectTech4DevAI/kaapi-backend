@@ -13,7 +13,7 @@ from app.crud.evaluations.processing import (
     poll_all_pending_evaluations,
 )
 from app.models import BatchJob, Organization, Project, EvaluationDataset, EvaluationRun
-from app.tests.utils.test_data import create_test_evaluation_dataset
+from app.tests.utils.test_data import create_test_evaluation_dataset, create_test_config
 from app.crud.evaluations.core import create_evaluation_run
 from app.core.util import now
 
@@ -52,6 +52,7 @@ class TestParseEvaluationOutput:
                 "id": "item1",
                 "input": {"question": "What is 2+2?"},
                 "expected_output": {"answer": "4"},
+                "metadata": {"question_id": 1},
             }
         ]
 
@@ -64,6 +65,36 @@ class TestParseEvaluationOutput:
         assert results[0]["ground_truth"] == "4"
         assert results[0]["response_id"] == "resp_123"
         assert results[0]["usage"]["total_tokens"] == 15
+        assert results[0]["question_id"] == 1
+
+    def test_parse_evaluation_output_without_question_id(self) -> None:
+        """Test parsing dataset items without question_id (backwards compatibility)."""
+        raw_results = [
+            {
+                "custom_id": "item1",
+                "response": {
+                    "body": {
+                        "id": "resp_123",
+                        "output": "Answer text",
+                        "usage": {"total_tokens": 10},
+                    }
+                },
+            }
+        ]
+
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question?"},
+                "expected_output": {"answer": "Test answer"},
+                # No metadata / question_id
+            }
+        ]
+
+        results = parse_evaluation_output(raw_results, dataset_items)
+
+        assert len(results) == 1
+        assert results[0]["question_id"] is None
 
     def test_parse_evaluation_output_simple_string(self) -> None:
         """Test parsing with simple string output."""
@@ -259,6 +290,11 @@ class TestProcessCompletedEvaluation:
     @pytest.fixture
     def eval_run_with_batch(self, db: Session, test_dataset) -> EvaluationRun:
         """Create evaluation run with batch job."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         # Create batch job
         batch_job = BatchJob(
             provider="openai",
@@ -281,7 +317,8 @@ class TestProcessCompletedEvaluation:
             run_name="test_run",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )
@@ -397,12 +434,18 @@ class TestProcessCompletedEvaluation:
         self, db: Session, test_dataset
     ):
         """Test processing without batch_job_id."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         eval_run = create_evaluation_run(
             session=db,
             run_name="test_run",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )
@@ -446,6 +489,11 @@ class TestProcessCompletedEmbeddingBatch:
     @pytest.fixture
     def eval_run_with_embedding_batch(self, db: Session, test_dataset) -> EvaluationRun:
         """Create evaluation run with embedding batch job."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         # Create embedding batch job
         embedding_batch = BatchJob(
             provider="openai",
@@ -469,7 +517,8 @@ class TestProcessCompletedEmbeddingBatch:
             run_name="test_run_embedding",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )
@@ -598,6 +647,11 @@ class TestCheckAndProcessEvaluation:
         test_dataset,
     ):
         """Test checking evaluation with completed batch."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         # Create batch job
         batch_job = BatchJob(
             provider="openai",
@@ -621,7 +675,8 @@ class TestCheckAndProcessEvaluation:
             run_name="test_run",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )
@@ -659,6 +714,11 @@ class TestCheckAndProcessEvaluation:
         test_dataset,
     ):
         """Test checking evaluation with failed batch."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         # Create failed batch job
         batch_job = BatchJob(
             provider="openai",
@@ -683,7 +743,8 @@ class TestCheckAndProcessEvaluation:
             run_name="test_run_fail",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )
@@ -759,6 +820,11 @@ class TestPollAllPendingEvaluations:
         test_dataset,
     ):
         """Test polling with pending evaluations."""
+        # Create a config for the evaluation run
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
         # Create batch job
         batch_job = BatchJob(
             provider="openai",
@@ -782,7 +848,8 @@ class TestPollAllPendingEvaluations:
             run_name="test_pending_run",
             dataset_name=test_dataset.name,
             dataset_id=test_dataset.id,
-            config={"model": "gpt-4o"},
+            config_id=config.id,
+            config_version=1,
             organization_id=test_dataset.organization_id,
             project_id=test_dataset.project_id,
         )

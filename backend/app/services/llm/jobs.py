@@ -5,18 +5,17 @@ from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.celery.utils import start_high_priority_job
 from app.core.db import engine
+from app.core.langfuse.langfuse import observe_llm_execution
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
-from app.utils import APIResponse, send_callback
-from app.celery.utils import start_high_priority_job
-from app.core.langfuse.langfuse import observe_llm_execution
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
-
+from app.utils import APIResponse, send_callback
 
 logger = logging.getLogger(__name__)
 

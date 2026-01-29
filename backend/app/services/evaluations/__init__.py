@@ -2,7 +2,6 @@
 
 from app.services.evaluations.dataset import upload_dataset
 from app.services.evaluations.evaluation import (
-    build_evaluation_config,
     get_evaluation_with_scores,
     start_evaluation,
 )

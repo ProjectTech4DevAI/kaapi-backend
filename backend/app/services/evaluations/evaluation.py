@@ -1,108 +1,33 @@
 """Evaluation run orchestration service."""
 
 import logging
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.crud.assistants import get_assistant_by_id
 from app.crud.evaluations import (
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
+    resolve_evaluation_config,
     save_score,
     start_evaluation_batch,
 )
 from app.models.evaluation import EvaluationRun
+from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
-
-
-def build_evaluation_config(
-    session: Session,
-    config: dict,
-    assistant_id: str | None,
-    project_id: int,
-) -> dict:
-    """
-    Build evaluation configuration from assistant or provided config.
-
-    If assistant_id is provided, fetch assistant and merge with config.
-    Config values take precedence over assistant values.
-
-    Args:
-        session: Database session
-        config: Provided configuration dict
-        assistant_id: Optional assistant ID to fetch configuration from
-        project_id: Project ID for assistant lookup
-
-    Returns:
-        Complete evaluation configuration dict
-
-    Raises:
-        HTTPException: If assistant not found or model missing
-    """
-    if assistant_id:
-        assistant = get_assistant_by_id(
-            session=session,
-            assistant_id=assistant_id,
-            project_id=project_id,
-        )
-
-        if not assistant:
-            raise HTTPException(
-                status_code=404, detail=f"Assistant {assistant_id} not found"
-            )
-
-        logger.info(
-            f"[build_evaluation_config] Found assistant in DB | id={assistant.id} | "
-            f"model={assistant.model} | instructions="
-            f"{assistant.instructions[:50] if assistant.instructions else 'None'}..."
-        )
-
-        # Build config from assistant (use provided config values to override if present)
-        merged_config = {
-            "model": config.get("model", assistant.model),
-            "instructions": config.get("instructions", assistant.instructions),
-            "temperature": config.get("temperature", assistant.temperature),
-        }
-
-        # Add tools if vector stores are available
-        vector_store_ids = config.get(
-            "vector_store_ids", assistant.vector_store_ids or []
-        )
-        if vector_store_ids and len(vector_store_ids) > 0:
-            merged_config["tools"] = [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": vector_store_ids,
-                }
-            ]
-
-        logger.info("[build_evaluation_config] Using config from assistant")
-        return merged_config
-
-    # Using provided config directly
-    logger.info("[build_evaluation_config] Using provided config directly")
-
-    # Validate that config has minimum required fields
-    if not config.get("model"):
-        raise HTTPException(
-            status_code=400,
-            detail="Config must include 'model' when assistant_id is not provided",
-        )
-
-    return config
 
 
 def start_evaluation(
     session: Session,
     dataset_id: int,
     experiment_name: str,
-    config: dict,
-    assistant_id: str | None,
+    config_id: UUID,
+    config_version: int,
     organization_id: int,
     project_id: int,
 ) -> EvaluationRun:
@@ -111,7 +36,7 @@ def start_evaluation(
 
     Steps:
     1. Validate dataset exists and has Langfuse ID
-    2. Build config (from assistant or direct)
+    2. Resolve config from stored config management
     3. Create evaluation run record
     4. Start batch processing
 
@@ -119,8 +44,8 @@ def start_evaluation(
         session: Database session
         dataset_id: ID of the evaluation dataset
         experiment_name: Name for this evaluation experiment/run
-        config: Evaluation configuration
-        assistant_id: Optional assistant ID to fetch configuration from
+        config_id: UUID of the stored config
+        config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
 
@@ -128,16 +53,17 @@ def start_evaluation(
         EvaluationRun instance
 
     Raises:
-        HTTPException: If dataset not found or evaluation fails to start
+        HTTPException: If dataset not found, config invalid, or evaluation fails to start
     """
     logger.info(
         f"[start_evaluation] Starting evaluation | experiment_name={experiment_name} | "
         f"dataset_id={dataset_id} | "
         f"org_id={organization_id} | "
-        f"assistant_id={assistant_id} | "
-        f"config_keys={list(config.keys())}"
+        f"config_id={config_id} | "
+        f"config_version={config_version}"
     )
 
+    # Step 1: Fetch dataset from database
     dataset = get_dataset_by_id(
         session=session,
         dataset_id=dataset_id,
@@ -165,13 +91,29 @@ def start_evaluation(
             "Please ensure Langfuse credentials were configured when the dataset was created.",
         )
 
-    eval_config = build_evaluation_config(
+    # Step 2: Resolve config from stored config management
+    config, error = resolve_evaluation_config(
         session=session,
-        config=config,
-        assistant_id=assistant_id,
+        config_id=config_id,
+        config_version=config_version,
         project_id=project_id,
     )
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to resolve config from stored config: {error}",
+        )
+    elif config.completion.provider != LLMProvider.OPENAI:
+        raise HTTPException(
+            status_code=422,
+            detail="Only 'openai' provider is supported for evaluation configs",
+        )
 
+    logger.info(
+        "[start_evaluation] Successfully resolved config from config management"
+    )
+
+    # Get API clients
     openai_client = get_openai_client(
         session=session,
         org_id=organization_id,
@@ -183,23 +125,26 @@ def start_evaluation(
         project_id=project_id,
     )
 
+    # Step 3: Create EvaluationRun record with config references
     eval_run = create_evaluation_run(
         session=session,
         run_name=experiment_name,
         dataset_name=dataset.name,
         dataset_id=dataset_id,
-        config=eval_config,
+        config_id=config_id,
+        config_version=config_version,
         organization_id=organization_id,
         project_id=project_id,
     )
 
+    # Step 4: Start the batch evaluation
     try:
         eval_run = start_evaluation_batch(
             langfuse=langfuse,
             openai_client=openai_client,
             session=session,
             eval_run=eval_run,
-            config=eval_config,
+            config=config.completion.params,
         )
 
         logger.info(

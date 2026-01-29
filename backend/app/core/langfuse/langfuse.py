@@ -17,11 +17,12 @@ class LangfuseTracer:
         credentials: Optional[dict] = None,
         session_id: Optional[str] = None,
         response_id: Optional[str] = None,
-    ):
+    ) -> None:
         self.session_id = session_id or str(uuid.uuid4())
         self.langfuse: Optional[Langfuse] = None
         self.trace: Optional[StatefulTraceClient] = None
         self.generation: Optional[StatefulGenerationClient] = None
+        self._failed = False
 
         has_credentials = (
             credentials
@@ -31,26 +32,43 @@ class LangfuseTracer:
         )
 
         if has_credentials:
-            self.langfuse = Langfuse(
-                public_key=credentials["public_key"],
-                secret_key=credentials["secret_key"],
-                host=credentials["host"],
-                enabled=True,  # This ensures the client is active
-            )
+            try:
+                self.langfuse = Langfuse(
+                    public_key=credentials["public_key"],
+                    secret_key=credentials["secret_key"],
+                    host=credentials["host"],
+                    enabled=True,  # This ensures the client is active
+                )
+            except Exception as e:
+                logger.warning(f"[LangfuseTracer] Failed to initialize: {e}")
+                self._failed = True
+                return
 
             if response_id:
-                traces = self.langfuse.fetch_traces(tags=response_id).data
-                if traces:
-                    self.session_id = traces[0].session_id
+                try:
+                    traces = self.langfuse.fetch_traces(tags=response_id).data
+                    if traces:
+                        self.session_id = traces[0].session_id
+                except Exception as e:
+                    logger.debug(f"[LangfuseTracer] Session resume failed: {e}")
 
             logger.info(
-                f"[LangfuseTracer] Langfuse tracing enabled | session_id={self.session_id}"
+                f"[LangfuseTracer] Tracing enabled | session_id={self.session_id}"
             )
         else:
-            self.langfuse = Langfuse(enabled=False)
+            logger.warning("[LangfuseTracer] Tracing disabled - missing credentials")
+
+    def _langfuse_call(self, fn: Callable, *args: Any, **kwargs: Any) -> Any:
+        if self._failed:
+            return None
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
             logger.warning(
-                "[LangfuseTracer] Langfuse tracing disabled due to missing credentials"
+                f"[LangfuseTracer] {getattr(fn, '__name__', 'operation')} failed: {e}"
             )
+            self._failed = True
+            return None
 
     def start_trace(
         self,
@@ -58,11 +76,13 @@ class LangfuseTracer:
         input: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
         tags: list[str] | None = None,
-    ):
+    ) -> None:
+        if self._failed or not self.langfuse:
+            return
         metadata = metadata or {}
         metadata["request_id"] = correlation_id.get() or "N/A"
-
-        self.trace = self.langfuse.trace(
+        self.trace = self._langfuse_call(
+            self.langfuse.trace,
             name=name,
             input=input,
             metadata=metadata,
@@ -75,10 +95,11 @@ class LangfuseTracer:
         name: str,
         input: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
-    ):
-        if not self.trace:
+    ) -> None:
+        if self._failed or not self.trace:
             return
-        self.generation = self.langfuse.generation(
+        self.generation = self._langfuse_call(
+            self.langfuse.generation,
             name=name,
             trace_id=self.trace.id,
             input=input,
@@ -90,31 +111,40 @@ class LangfuseTracer:
         output: Dict[str, Any],
         usage: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
-    ):
-        if self.generation:
-            self.generation.end(output=output, usage=usage, model=model)
+    ) -> None:
+        if self._failed or not self.generation:
+            return
+        self._langfuse_call(
+            self.generation.end, output=output, usage=usage, model=model
+        )
 
-    def update_trace(self, tags: list[str], output: Dict[str, Any]):
-        if self.trace:
-            self.trace.update(tags=tags, output=output)
+    def update_trace(self, tags: list[str], output: Dict[str, Any]) -> None:
+        if self._failed or not self.trace:
+            return
+        self._langfuse_call(self.trace.update, tags=tags, output=output)
 
-    def log_error(self, error_message: str, response_id: Optional[str] = None):
+    def log_error(self, error_message: str, response_id: Optional[str] = None) -> None:
+        if self._failed:
+            return
         if self.generation:
-            self.generation.end(output={"error": error_message})
+            self._langfuse_call(self.generation.end, output={"error": error_message})
         if self.trace:
-            self.trace.update(
+            self._langfuse_call(
+                self.trace.update,
                 tags=[response_id] if response_id else [],
                 output={"status": "failure", "error": error_message},
             )
 
-    def flush(self):
-        self.langfuse.flush()
+    def flush(self) -> None:
+        if self._failed or not self.langfuse:
+            return
+        self._langfuse_call(self.langfuse.flush)
 
 
 def observe_llm_execution(
     session_id: str | None = None,
     credentials: dict | None = None,
-):
+) -> Callable:
     """Decorator to add Langfuse observability to LLM provider execute methods.
 
     Args:
@@ -135,7 +165,9 @@ def observe_llm_execution(
         ):
             # Skip observability if no credentials provided
             if not credentials:
-                logger.info("[Langfuse] No credentials - skipping observability")
+                logger.info(
+                    "[observe_llm_execution] No credentials - skipping observability"
+                )
                 return func(completion_config, query, **kwargs)
 
             try:
@@ -144,30 +176,56 @@ def observe_llm_execution(
                     secret_key=credentials.get("secret_key"),
                     host=credentials.get("host"),
                 )
+                logger.info(
+                    f"[observe_llm_execution] Tracing enabled | session_id={session_id or 'auto'}"
+                )
             except Exception as e:
-                logger.warning(f"[Langfuse] Failed to initialize client: {e}")
+                logger.warning(
+                    f"[observe_llm_execution] Failed to initialize client: {e}"
+                )
                 return func(completion_config, query, **kwargs)
 
-            trace = langfuse.trace(
+            failed = False
+
+            def langfuse_call(fn, *args, **kwargs):
+                """Execute Langfuse operation safely. First failure disables further calls."""
+                nonlocal failed
+                if failed:
+                    return None
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as e:
+                    logger.warning(
+                        f"[observe_llm_execution] {getattr(fn, '__name__', 'operation')} failed: {e}"
+                    )
+                    failed = True
+                    return None
+
+            trace = langfuse_call(
+                langfuse.trace,
                 name="unified-llm-call",
                 input=query.input,
                 tags=[completion_config.provider],
             )
 
-            generation = trace.generation(
-                name=f"{completion_config.provider}-completion",
-                input=query.input,
-                model=completion_config.params.get("model"),
-            )
+            generation = None
+            if trace:
+                generation = langfuse_call(
+                    trace.generation,
+                    name=f"{completion_config.provider}-completion",
+                    input=query.input,
+                    model=completion_config.params.get("model"),
+                )
 
-            try:
-                # Execute the actual LLM call
-                response: LLMCallResponse | None
-                error: str | None
-                response, error = func(completion_config, query, **kwargs)
+            # Execute the actual LLM call
+            response: LLMCallResponse | None
+            error: str | None
+            response, error = func(completion_config, query, **kwargs)
 
-                if response:
-                    generation.end(
+            if response:
+                if generation:
+                    langfuse_call(
+                        generation.end,
                         output={
                             "status": "success",
                             "output": response.response.output.text,
@@ -178,34 +236,28 @@ def observe_llm_execution(
                         },
                         model=response.response.model,
                     )
-
-                    trace.update(
+                if trace:
+                    langfuse_call(
+                        trace.update,
                         output={
                             "status": "success",
                             "output": response.response.output.text,
                         },
                         session_id=session_id or response.response.conversation_id,
                     )
-                else:
-                    error_msg = error or "Unknown error"
-                    generation.end(output={"error": error_msg})
-                    trace.update(
+            else:
+                error_msg = error or "Unknown error"
+                if generation:
+                    langfuse_call(generation.end, output={"error": error_msg})
+                if trace:
+                    langfuse_call(
+                        trace.update,
                         output={"status": "failure", "error": error_msg},
                         session_id=session_id,
                     )
 
-                langfuse.flush()
-                return response, error
-
-            except Exception as e:
-                error_msg = str(e)
-                generation.end(output={"error": error_msg})
-                trace.update(
-                    output={"status": "failure", "error": error_msg},
-                    session_id=session_id,
-                )
-                langfuse.flush()
-                raise
+            langfuse_call(langfuse.flush)
+            return response, error
 
         return wrapper
 
