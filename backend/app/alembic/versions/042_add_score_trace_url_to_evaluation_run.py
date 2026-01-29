@@ -1,7 +1,7 @@
 """Add score_trace_url to evaluation_run
 
-Revision ID: 041
-Revises: 040
+Revision ID: 042
+Revises: 041
 Create Date: 2026-01-24 19:34:46.763908
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 
 
-revision = "041"
-down_revision = "040"
+revision = "042"
+down_revision = "041"
 branch_labels = None
 depends_on = None
 
