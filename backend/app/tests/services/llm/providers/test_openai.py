@@ -12,7 +12,7 @@ from app.models.llm import (
 )
 from app.models.llm.request import ConversationConfig
 from app.services.llm.providers.openai import OpenAIProvider
-from app.tests.utils.openai import mock_openai_response
+from app.tests.utils.llm_provider import mock_openai_response
 
 
 class TestOpenAIProvider:

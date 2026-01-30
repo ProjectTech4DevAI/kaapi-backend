@@ -8,9 +8,11 @@ from app.models import (
     CollectionActionType,
     CollectionJob,
     CollectionJobStatus,
+    ProviderType,
     Project,
 )
 from app.crud import CollectionCrud, CollectionJobCrud
+from app.services.collections.helpers import get_service_name
 
 
 class constants:
@@ -23,7 +25,7 @@ def uuid_increment(value: UUID) -> UUID:
     return UUID(int=inc)
 
 
-def get_collection(
+def get_assistant_collection(
     db: Session,
     project: Project,
     *,
@@ -44,6 +46,7 @@ def get_collection(
         organization_id=project.organization_id,
         llm_service_name=model,
         llm_service_id=assistant_id,
+        provider=ProviderType.openai,
     )
     return CollectionCrud(db, project.id).create(collection)
 
@@ -65,9 +68,9 @@ def get_vector_store_collection(
     collection = Collection(
         id=collection_id or uuid4(),
         project_id=project.id,
-        organization_id=project.organization_id,
-        llm_service_name="openai vector store",
+        llm_service_name=get_service_name("openai"),
         llm_service_id=vector_store_id,
+        provider=ProviderType.openai,
     )
     return CollectionCrud(db, project.id).create(collection)
 

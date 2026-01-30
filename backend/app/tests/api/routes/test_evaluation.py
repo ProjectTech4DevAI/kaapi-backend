@@ -928,6 +928,148 @@ class TestGetEvaluationRunStatus:
             and "get_trace_info" in error_str.lower()
         )
 
+    def test_get_evaluation_run_grouped_format_without_trace_info_fails(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        create_test_dataset: EvaluationDataset,
+    ) -> None:
+        eval_run = EvaluationRun(
+            run_name="test_run",
+            dataset_name=create_test_dataset.name,
+            dataset_id=create_test_dataset.id,
+            config={"model": "gpt-4o"},
+            status="completed",
+            total_items=3,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response = client.get(
+            f"/api/v1/evaluations/{eval_run.id}",
+            params={"export_format": "grouped"},  # Missing get_trace_info=true
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 400
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert (
+            "export_format" in error_str.lower()
+            and "get_trace_info" in error_str.lower()
+        )
+
+    def test_get_evaluation_run_grouped_format_success(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        create_test_dataset: EvaluationDataset,
+    ) -> None:
+        eval_run = EvaluationRun(
+            run_name="test_run",
+            dataset_name=create_test_dataset.name,
+            dataset_id=create_test_dataset.id,
+            config={"model": "gpt-4o"},
+            status="completed",
+            total_items=4,
+            score={
+                "traces": [
+                    {
+                        "trace_id": "trace-1a",
+                        "question_id": 1,
+                        "question": "What is Python?",
+                        "ground_truth_answer": "A programming language",
+                        "llm_answer": "Python is a high-level programming language",
+                        "scores": [
+                            {
+                                "name": "cosine_similarity",
+                                "value": 0.82,
+                                "data_type": "NUMERIC",
+                            }
+                        ],
+                    },
+                    {
+                        "trace_id": "trace-1b",
+                        "question_id": 1,
+                        "question": "What is Python?",
+                        "ground_truth_answer": "A programming language",
+                        "llm_answer": "Python is an interpreted language",
+                        "scores": [
+                            {
+                                "name": "cosine_similarity",
+                                "value": 0.75,
+                                "data_type": "NUMERIC",
+                            }
+                        ],
+                    },
+                    # Row format - 1 trace for question_id=2
+                    {
+                        "trace_id": "trace-2a",
+                        "question_id": 2,
+                        "question": "What is Java?",
+                        "ground_truth_answer": "An OOP language",
+                        "llm_answer": "Java is a statically typed language",
+                        "scores": [
+                            {
+                                "name": "cosine_similarity",
+                                "value": 0.80,
+                                "data_type": "NUMERIC",
+                            }
+                        ],
+                    },
+                ],
+                "summary_scores": [
+                    {
+                        "avg": 0.79,
+                        "std": 0.03,
+                        "name": "cosine_similarity",
+                        "data_type": "NUMERIC",
+                        "total_pairs": 3,
+                    }
+                ],
+            },
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response = client.get(
+            f"/api/v1/evaluations/{eval_run.id}",
+            params={
+                "export_format": "grouped",
+                "get_trace_info": True,
+            },  # Missing get_trace_info=true
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert data["id"] == eval_run.id
+        assert data["status"] == "completed"
+
+        traces = data["score"]["traces"]
+        assert (
+            isinstance(traces, list)
+            and len(traces) > 0
+            and "llm_answers" in traces[0]
+            and isinstance(traces[0]["llm_answers"], list)
+            and "trace_ids" in traces[0]
+            and isinstance(traces[0]["trace_ids"], list)
+        )
+
 
 class TestGetDataset:
     """Test GET /evaluations/datasets/{dataset_id} endpoint."""
