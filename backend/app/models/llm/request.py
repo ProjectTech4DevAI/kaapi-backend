@@ -392,12 +392,12 @@ class LlmCall(SQLModel, table=True):
     )
 
     # Provider and model info
-    provider: Literal["openai", "google", "anthropic"] = Field(
+    provider: str = Field(
         ...,
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="AI provider: openai, google, anthropic",
+            comment="AI provider as sent by user (e.g openai, -native, google)",
         ),
     )
 

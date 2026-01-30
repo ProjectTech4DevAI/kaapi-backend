@@ -74,7 +74,7 @@ class GoogleAIProvider(BaseProvider):
 
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
-        output_language = generation_params.get("output_language")
+        output_language = generation_params.get("output_language", "")
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -82,15 +82,17 @@ class GoogleAIProvider(BaseProvider):
                 "Detect the spoken language automatically and transcribe the audio"
             )
         else:
-            lang_instruction = f"Transcribe the audio from {input_language}"
+            lang_instruction = f"Transcribe the audio from {input_language} in the native script of {input_language}"
 
         if output_language and output_language != input_language:
-            lang_instruction += f" and translate to {output_language}"
+            lang_instruction += f" and translate to {output_language} in the native script of {output_language}"
 
-        forced_trascription_text="Only return transcribed text and no other text."
+        forced_trascription_text = "Only return transcribed text and no other text."
         # Merge user instructions with language instructions
         if instructions:
-            merged_instruction = f"{instructions}. {lang_instruction}. {forced_trascription_text}"
+            merged_instruction = (
+                f"{instructions}. {lang_instruction}. {forced_trascription_text}"
+            )
         else:
             merged_instruction = f"{lang_instruction}. {forced_trascription_text}"
 

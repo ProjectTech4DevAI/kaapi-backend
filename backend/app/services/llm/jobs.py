@@ -202,17 +202,26 @@ def execute_job(
             else:
                 config_blob = config.blob
 
+            user_sent_config_provider = ""
+
             try:
                 # Transform Kaapi config to native config if needed (before getting provider)
                 completion_config = config_blob.completion
+
+                original_provider = (
+                    config_blob.completion.provider
+                )  # openai, google or prefixed
+
                 if isinstance(completion_config, KaapiCompletionConfig):
                     completion_config, warnings = transform_kaapi_config_to_native(
                         completion_config
                     )
-                    print(f"The completion_config transformed is {completion_config}")
+
                     if request.request_metadata is None:
                         request.request_metadata = {}
                     request.request_metadata.setdefault("warnings", []).extend(warnings)
+                else:
+                    pass
             except Exception as e:
                 callback_response = APIResponse.failure_response(
                     error=f"Error processing configuration: {str(e)}",
@@ -232,6 +241,7 @@ def execute_job(
                     project_id=project_id,
                     organization_id=organization_id,
                     resolved_config=resolved_config_blob,
+                    original_provider=original_provider,
                 )
                 llm_call_id = llm_call.id
                 logger.info(

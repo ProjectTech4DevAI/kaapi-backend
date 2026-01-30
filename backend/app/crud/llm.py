@@ -62,6 +62,7 @@ def create_llm_call(
     project_id: int,
     organization_id: int,
     resolved_config: ConfigBlob,
+    original_provider: str,
 ) -> LlmCall:
     """
     Create a new LLM call record in the database.
@@ -96,8 +97,6 @@ def create_llm_call(
         input_type = "text"
         output_type = "text"
 
-    # Provider is guaranteed to be normalized (not native) by the time it reaches CRUD
-    provider: Literal["openai", "google", "anthropic"] = completion_config.provider  # type: ignore[assignment]
     model = (
         completion_config.params.model
         if hasattr(completion_config.params, "model")
@@ -130,7 +129,7 @@ def create_llm_call(
         input=serialize_input(request.query.input),
         input_type=input_type,
         output_type=output_type,
-        provider=provider,
+        provider=original_provider,
         model=model,
         conversation_id=conversation_id,
         auto_create=auto_create,
