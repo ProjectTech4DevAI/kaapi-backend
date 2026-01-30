@@ -5,6 +5,7 @@ import pytest
 
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
+    fetch_trace_scores_from_langfuse,
     update_traces_with_cosine_scores,
     upload_dataset_to_langfuse,
 )
@@ -629,3 +630,389 @@ class TestUploadDatasetToLangfuse:
 
         assert total_items == 2
         assert mock_langfuse.create_dataset_item.call_count == 3
+
+
+class TestFetchTraceScoresFromLangfuse:
+    """Test fetching trace scores from Langfuse."""
+
+    def test_fetch_trace_scores_success_with_question_id(self) -> None:
+        """Test successfully fetching traces with question_id in metadata."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item1 = MagicMock()
+        mock_run_item1.trace_id = "trace_1"
+        mock_run_item2 = MagicMock()
+        mock_run_item2.trace_id = "trace_2"
+
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item1, mock_run_item2]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock trace 1 with question_id
+        mock_trace1 = MagicMock()
+        mock_trace1.input = {"question": "What is 2+2?"}
+        mock_trace1.output = {"answer": "4"}
+        mock_trace1.metadata = {"ground_truth": "4", "question_id": 1}
+        mock_score1 = MagicMock()
+        mock_score1.name = "cosine_similarity"
+        mock_score1.value = 0.95
+        mock_score1.comment = "High similarity"
+        mock_score1.data_type = "NUMERIC"
+        mock_trace1.scores = [mock_score1]
+
+        # Mock trace 2 with question_id
+        mock_trace2 = MagicMock()
+        mock_trace2.input = {"question": "What is the capital of France?"}
+        mock_trace2.output = {"answer": "Paris"}
+        mock_trace2.metadata = {"ground_truth": "Paris", "question_id": 2}
+        mock_score2 = MagicMock()
+        mock_score2.name = "cosine_similarity"
+        mock_score2.value = 0.87
+        mock_score2.comment = None
+        mock_score2.data_type = "NUMERIC"
+        mock_trace2.scores = [mock_score2]
+
+        mock_langfuse.api.trace.get.side_effect = [mock_trace1, mock_trace2]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify traces
+        assert len(result["traces"]) == 2
+
+        # Check trace 1
+        trace1 = result["traces"][0]
+        assert trace1["trace_id"] == "trace_1"
+        assert trace1["question"] == "What is 2+2?"
+        assert trace1["llm_answer"] == "4"
+        assert trace1["ground_truth_answer"] == "4"
+        assert trace1["question_id"] == 1
+        assert len(trace1["scores"]) == 1
+        assert trace1["scores"][0]["name"] == "cosine_similarity"
+        assert trace1["scores"][0]["value"] == 0.95
+        assert trace1["scores"][0]["comment"] == "High similarity"
+
+        # Check trace 2
+        trace2 = result["traces"][1]
+        assert trace2["trace_id"] == "trace_2"
+        assert trace2["question_id"] == 2
+
+        # Verify summary scores
+        assert len(result["summary_scores"]) == 1
+        summary = result["summary_scores"][0]
+        assert summary["name"] == "cosine_similarity"
+        assert summary["avg"] == 0.91  # (0.95 + 0.87) / 2 = 0.91
+        assert summary["total_pairs"] == 2
+        assert summary["data_type"] == "NUMERIC"
+
+    def test_fetch_trace_scores_without_question_id(self) -> None:
+        """Test fetching traces without question_id (backwards compatibility)."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item = MagicMock()
+        mock_run_item.trace_id = "trace_1"
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock trace without question_id in metadata
+        mock_trace = MagicMock()
+        mock_trace.input = {"question": "What is 2+2?"}
+        mock_trace.output = {"answer": "4"}
+        mock_trace.metadata = {"ground_truth": "4"}  # No question_id
+        mock_trace.scores = []
+
+        mock_langfuse.api.trace.get.return_value = mock_trace
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify trace has empty string for question_id
+        assert len(result["traces"]) == 1
+        trace = result["traces"][0]
+        assert trace["question_id"] == ""
+        assert trace["trace_id"] == "trace_1"
+        assert trace["question"] == "What is 2+2?"
+
+    def test_fetch_trace_scores_with_categorical_scores(self) -> None:
+        """Test fetching traces with categorical scores."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item1 = MagicMock()
+        mock_run_item1.trace_id = "trace_1"
+        mock_run_item2 = MagicMock()
+        mock_run_item2.trace_id = "trace_2"
+        mock_run_item3 = MagicMock()
+        mock_run_item3.trace_id = "trace_3"
+
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [
+            mock_run_item1,
+            mock_run_item2,
+            mock_run_item3,
+        ]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock traces with categorical scores
+        mock_trace1 = MagicMock()
+        mock_trace1.input = {"question": "Q1"}
+        mock_trace1.output = {"answer": "A1"}
+        mock_trace1.metadata = {"ground_truth": "GT1", "question_id": 1}
+        mock_score1 = MagicMock()
+        mock_score1.name = "accuracy"
+        mock_score1.value = "CORRECT"
+        mock_score1.comment = None
+        mock_score1.data_type = "CATEGORICAL"
+        mock_trace1.scores = [mock_score1]
+
+        mock_trace2 = MagicMock()
+        mock_trace2.input = {"question": "Q2"}
+        mock_trace2.output = {"answer": "A2"}
+        mock_trace2.metadata = {"ground_truth": "GT2", "question_id": 2}
+        mock_score2 = MagicMock()
+        mock_score2.name = "accuracy"
+        mock_score2.value = "CORRECT"
+        mock_score2.comment = None
+        mock_score2.data_type = "CATEGORICAL"
+        mock_trace2.scores = [mock_score2]
+
+        mock_trace3 = MagicMock()
+        mock_trace3.input = {"question": "Q3"}
+        mock_trace3.output = {"answer": "A3"}
+        mock_trace3.metadata = {"ground_truth": "GT3", "question_id": 3}
+        mock_score3 = MagicMock()
+        mock_score3.name = "accuracy"
+        mock_score3.value = "INCORRECT"
+        mock_score3.comment = None
+        mock_score3.data_type = "CATEGORICAL"
+        mock_trace3.scores = [mock_score3]
+
+        mock_langfuse.api.trace.get.side_effect = [
+            mock_trace1,
+            mock_trace2,
+            mock_trace3,
+        ]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify summary scores for categorical data
+        assert len(result["summary_scores"]) == 1
+        summary = result["summary_scores"][0]
+        assert summary["name"] == "accuracy"
+        assert summary["data_type"] == "CATEGORICAL"
+        assert summary["distribution"] == {"CORRECT": 2, "INCORRECT": 1}
+        assert summary["total_pairs"] == 3
+
+    def test_fetch_trace_scores_filters_incomplete_scores(self) -> None:
+        """Test that scores present in only some traces are filtered out."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item1 = MagicMock()
+        mock_run_item1.trace_id = "trace_1"
+        mock_run_item2 = MagicMock()
+        mock_run_item2.trace_id = "trace_2"
+
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item1, mock_run_item2]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock trace 1 with two scores
+        mock_trace1 = MagicMock()
+        mock_trace1.input = {"question": "Q1"}
+        mock_trace1.output = {"answer": "A1"}
+        mock_trace1.metadata = {"ground_truth": "GT1", "question_id": 1}
+        mock_score1a = MagicMock()
+        mock_score1a.name = "complete_score"
+        mock_score1a.value = 0.9
+        mock_score1a.comment = None
+        mock_score1a.data_type = "NUMERIC"
+        mock_score1b = MagicMock()
+        mock_score1b.name = "incomplete_score"
+        mock_score1b.value = 0.8
+        mock_score1b.comment = None
+        mock_score1b.data_type = "NUMERIC"
+        mock_trace1.scores = [mock_score1a, mock_score1b]
+
+        # Mock trace 2 with only one score (incomplete_score is missing)
+        mock_trace2 = MagicMock()
+        mock_trace2.input = {"question": "Q2"}
+        mock_trace2.output = {"answer": "A2"}
+        mock_trace2.metadata = {"ground_truth": "GT2", "question_id": 2}
+        mock_score2 = MagicMock()
+        mock_score2.name = "complete_score"
+        mock_score2.value = 0.7
+        mock_score2.comment = None
+        mock_score2.data_type = "NUMERIC"
+        mock_trace2.scores = [mock_score2]
+
+        mock_langfuse.api.trace.get.side_effect = [mock_trace1, mock_trace2]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify only complete_score is in results
+        assert len(result["summary_scores"]) == 1
+        assert result["summary_scores"][0]["name"] == "complete_score"
+
+        # Verify traces only have complete_score
+        for trace in result["traces"]:
+            assert len(trace["scores"]) == 1
+            assert trace["scores"][0]["name"] == "complete_score"
+
+    def test_fetch_trace_scores_handles_string_input_output(self) -> None:
+        """Test fetching traces with string (non-dict) input/output."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item = MagicMock()
+        mock_run_item.trace_id = "trace_1"
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock trace with string input/output
+        mock_trace = MagicMock()
+        mock_trace.input = "What is 2+2?"  # String instead of dict
+        mock_trace.output = "The answer is 4"  # String instead of dict
+        mock_trace.metadata = {"ground_truth": "4", "question_id": 1}
+        mock_trace.scores = []
+
+        mock_langfuse.api.trace.get.return_value = mock_trace
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify string values are handled
+        assert len(result["traces"]) == 1
+        trace = result["traces"][0]
+        assert trace["question"] == "What is 2+2?"
+        assert trace["llm_answer"] == "The answer is 4"
+
+    def test_fetch_trace_scores_run_not_found(self) -> None:
+        """Test error handling when run is not found."""
+        mock_langfuse = MagicMock()
+        mock_langfuse.api.datasets.get_run.side_effect = Exception("Run not found")
+
+        with pytest.raises(ValueError, match="Run 'test_run' not found"):
+            fetch_trace_scores_from_langfuse(
+                langfuse=mock_langfuse,
+                dataset_name="test_dataset",
+                run_name="test_run",
+            )
+
+    def test_fetch_trace_scores_handles_trace_fetch_error(self) -> None:
+        """Test that trace fetch errors are handled gracefully."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item1 = MagicMock()
+        mock_run_item1.trace_id = "trace_1"
+        mock_run_item2 = MagicMock()
+        mock_run_item2.trace_id = "trace_2"
+
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item1, mock_run_item2]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock successful trace 1
+        mock_trace1 = MagicMock()
+        mock_trace1.input = {"question": "Q1"}
+        mock_trace1.output = {"answer": "A1"}
+        mock_trace1.metadata = {"ground_truth": "GT1", "question_id": 1}
+        mock_trace1.scores = []
+
+        # Second trace fetch fails
+        mock_langfuse.api.trace.get.side_effect = [
+            mock_trace1,
+            Exception("Trace fetch failed"),
+        ]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify only successful trace is returned
+        assert len(result["traces"]) == 1
+        assert result["traces"][0]["trace_id"] == "trace_1"
+
+    def test_fetch_trace_scores_empty_dataset_run(self) -> None:
+        """Test fetching from dataset run with no items."""
+        mock_langfuse = MagicMock()
+
+        # Mock empty dataset run
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = []
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify empty results
+        assert len(result["traces"]) == 0
+        assert len(result["summary_scores"]) == 0
+
+    def test_fetch_trace_scores_mixed_question_id_types(self) -> None:
+        """Test fetching traces with different question_id types (int vs string)."""
+        mock_langfuse = MagicMock()
+
+        # Mock dataset run
+        mock_run_item1 = MagicMock()
+        mock_run_item1.trace_id = "trace_1"
+        mock_run_item2 = MagicMock()
+        mock_run_item2.trace_id = "trace_2"
+
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item1, mock_run_item2]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        # Mock trace 1 with integer question_id
+        mock_trace1 = MagicMock()
+        mock_trace1.input = {"question": "Q1"}
+        mock_trace1.output = {"answer": "A1"}
+        mock_trace1.metadata = {"ground_truth": "GT1", "question_id": 123}
+        mock_trace1.scores = []
+
+        # Mock trace 2 with string question_id
+        mock_trace2 = MagicMock()
+        mock_trace2.input = {"question": "Q2"}
+        mock_trace2.output = {"answer": "A2"}
+        mock_trace2.metadata = {"ground_truth": "GT2", "question_id": "abc-456"}
+        mock_trace2.scores = []
+
+        mock_langfuse.api.trace.get.side_effect = [mock_trace1, mock_trace2]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        # Verify both types are handled correctly
+        assert len(result["traces"]) == 2
+        assert result["traces"][0]["question_id"] == 123
+        assert result["traces"][1]["question_id"] == "abc-456"

@@ -6,7 +6,6 @@ from sqlmodel import Session
 from asgi_correlation_id import correlation_id
 
 from app.core.cloud import get_cloud_storage
-from app.core.util import now
 from app.core.db import engine
 from app.crud import (
     CollectionCrud,
@@ -14,7 +13,6 @@ from app.crud import (
     DocumentCollectionCrud,
     CollectionJobCrud,
 )
-from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
 from app.models import (
     CollectionJobStatus,
     CollectionJob,
@@ -22,19 +20,12 @@ from app.models import (
     CollectionJobUpdate,
     CollectionPublic,
     CollectionJobPublic,
-)
-from app.models.collection import (
     CreationRequest,
-    AssistantOptions,
 )
-from app.services.collections.helpers import (
-    _backout,
-    batch_documents,
-    extract_error_message,
-    OPENAI_VECTOR_STORE,
-)
+from app.services.collections.helpers import extract_error_message
+from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_low_priority_job
-from app.utils import get_openai_client, send_callback, APIResponse
+from app.utils import send_callback, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -60,8 +51,8 @@ def start_job(
         project_id=project_id,
         job_id=str(collection_job_id),
         trace_id=trace_id,
-        with_assistant=with_assistant,
         request=request.model_dump(mode="json"),
+        with_assistant=with_assistant,
         organization_id=organization_id,
     )
 
@@ -116,26 +107,6 @@ def build_failure_payload(collection_job: CollectionJob, error_message: str) -> 
     )
 
 
-def _cleanup_remote_resources(
-    assistant,
-    assistant_crud,
-    vector_store,
-    vector_store_crud,
-) -> None:
-    """Best-effort cleanup of partially created remote resources."""
-    try:
-        if assistant is not None and assistant_crud is not None:
-            _backout(assistant_crud, assistant.id)
-        elif vector_store is not None and vector_store_crud is not None:
-            _backout(vector_store_crud, vector_store.id)
-        else:
-            logger.warning(
-                "[create_collection._backout] Skipping: no resource/crud available"
-            )
-    except Exception:
-        logger.warning("[create_collection.execute_job] Backout failed")
-
-
 def _mark_job_failed(
     project_id: int,
     job_id: str,
@@ -163,29 +134,33 @@ def _mark_job_failed(
 
 def execute_job(
     request: dict,
+    with_assistant: bool,
     project_id: int,
     organization_id: int,
     task_id: str,
     job_id: str,
-    with_assistant: bool,
     task_instance,
 ) -> None:
     """
     Worker entrypoint scheduled by start_job.
-    Orchestrates: job state, client/storage init, batching, vector-store upload,
+    Orchestrates: job state, provider init, collection creation,
     optional assistant creation, collection persistence, linking, callbacks, and cleanup.
     """
     start_time = time.time()
 
-    # Keep references for potential backout/cleanup on failure
-    assistant = None
-    assistant_crud = None
-    vector_store = None
-    vector_store_crud = None
+    # Keeping the references for potential backout/cleanup on failure
     collection_job = None
+    result = None
+    creation_request = None
+    provider = None
 
     try:
         creation_request = CreationRequest(**request)
+        if (
+            with_assistant
+        ):  # this will be removed once dalgo switches to vector store creation only
+            creation_request.provider = "openai"
+
         job_uuid = UUID(job_id)
 
         with Session(engine) as session:
@@ -199,50 +174,28 @@ def execute_job(
                 ),
             )
 
-            client = get_openai_client(session, organization_id, project_id)
             storage = get_cloud_storage(session=session, project_id=project_id)
-
-            # Batch documents for upload, and flatten for linking/metrics later
             document_crud = DocumentCrud(session, project_id)
-            docs_batches = batch_documents(
-                document_crud,
-                creation_request.documents,
-                creation_request.batch_size,
+
+            provider = get_llm_provider(
+                session=session,
+                provider=creation_request.provider,
+                project_id=project_id,
+                organization_id=organization_id,
             )
-            flat_docs = [doc for batch in docs_batches for doc in batch]
 
-        vector_store_crud = OpenAIVectorStoreCrud(client)
-        vector_store = vector_store_crud.create()
-        list(vector_store_crud.update(vector_store.id, storage, docs_batches))
+        result = provider.create(
+            collection_request=creation_request,
+            storage=storage,
+            document_crud=document_crud,
+        )
 
-        #  if with_assistant is true, create assistant backed by the vector store
-        if with_assistant:
-            assistant_crud = OpenAIAssistantCrud(client)
+        llm_service_id = result.llm_service_id
+        llm_service_name = result.llm_service_name
 
-            # Filter out None to avoid sending unset options
-            assistant_options = dict(
-                creation_request.extract_super_type(AssistantOptions)
-            )
-            assistant_options = {
-                k: v for k, v in assistant_options.items() if v is not None
-            }
-
-            assistant = assistant_crud.create(vector_store.id, **assistant_options)
-            llm_service_id = assistant.id
-            llm_service_name = assistant_options.get("model") or "assistant"
-
-            logger.info(
-                "[execute_job] Assistant created | assistant_id=%s, vector_store_id=%s",
-                assistant.id,
-                vector_store.id,
-            )
-        else:
-            # If no assistant, the collection points directly at the vector store
-            llm_service_id = vector_store.id
-            llm_service_name = OPENAI_VECTOR_STORE
-            logger.info(
-                "[execute_job] Skipping assistant creation | with_assistant=False"
-            )
+        with Session(engine) as session:
+            document_crud = DocumentCrud(session, project_id)
+            flat_docs = document_crud.read_each(creation_request.documents)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
         file_sizes_kb = [
@@ -253,17 +206,19 @@ def execute_job(
             collection_crud = CollectionCrud(session, project_id)
 
             collection_id = uuid4()
+
             collection = Collection(
                 id=collection_id,
                 project_id=project_id,
-                organization_id=organization_id,
                 llm_service_id=llm_service_id,
                 llm_service_name=llm_service_name,
+                provider=creation_request.provider,
+                name=creation_request.name,
+                description=creation_request.description,
             )
             collection_crud.create(collection)
             collection = collection_crud.read_one(collection.id)
 
-            # Link documents to the new collection
             if flat_docs:
                 DocumentCollectionCrud(session).create(collection, flat_docs)
 
@@ -299,12 +254,13 @@ def execute_job(
             exc_info=True,
         )
 
-        _cleanup_remote_resources(
-            assistant=assistant,
-            assistant_crud=assistant_crud,
-            vector_store=vector_store,
-            vector_store_crud=vector_store_crud,
-        )
+        if provider is not None and result is not None:
+            try:
+                provider.delete(result)
+            except Exception:
+                logger.warning(
+                    "[create_collection.execute_job] Provider cleanup failed"
+                )
 
         collection_job = _mark_job_failed(
             project_id=project_id,

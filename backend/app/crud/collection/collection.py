@@ -93,6 +93,16 @@ class CollectionCrud:
         collections = self.session.exec(statement).all()
         return collections
 
+    def exists_by_name(self, collection_name: str) -> bool:
+        statement = (
+            select(Collection.id)
+            .where(Collection.project_id == self.project_id)
+            .where(Collection.name == collection_name)
+            .where(Collection.deleted_at.is_(None))
+        )
+        result = self.session.exec(statement).first()
+        return result is not None
+
     def delete_by_id(self, collection_id: UUID) -> Collection:
         coll = self.read_one(collection_id)
         coll.deleted_at = now()

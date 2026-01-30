@@ -5,8 +5,9 @@ Returns comprehensive evaluation information including processing status, config
 **Query Parameters:**
 * `get_trace_info` (optional, default: false) - Include Langfuse trace scores with Q&A context. Data is fetched from Langfuse on first request and cached for subsequent calls. Only available for completed evaluations.
 * `resync_score` (optional, default: false) - Clear cached scores and re-fetch from Langfuse. Useful when evaluators have been updated. Requires `get_trace_info=true`.
+* `export_format` (optional, default: row) -  Controls the structure of traces in the response. Requires `get_trace_info=true` when set to "grouped". Allowed values: `row`, `grouped`.
 
-**Score Format** (`get_trace_info=true`):
+**Score Format** (`get_trace_info=true`,`export_format=row`):
 
 ```json
 {
@@ -43,6 +44,33 @@ Returns comprehensive evaluation information including processing status, config
           "data_type": "NUMERIC",
           "comment": "Response is correct"
         }
+      ]
+    }
+  ]
+}
+```
+
+**Score Format** (`get_trace_info=true`,`export_format=grouped`):
+```json
+{
+  "summary_scores": [...],
+  "traces": [...],
+  "grouped_traces": [
+    {
+      "question_id": 1,
+      "question": "What is Python?",
+      "ground_truth_answer": "Python is a high-level programming language.",
+      "llm_answers": [
+        "Answer from evaluation run 1...",
+        "Answer from evaluation run 2..."
+      ],
+      "trace_ids": [
+        "uuid-123",
+        "uuid-456"
+      ],
+      "scores": [
+        [{"name": "cosine_similarity", "value": 0.82, "data_type": "NUMERIC"}],
+        [{"name": "cosine_similarity", "value": 0.75, "data_type": "NUMERIC"}]
       ]
     }
   ]
