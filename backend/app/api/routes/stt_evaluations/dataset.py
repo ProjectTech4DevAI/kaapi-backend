@@ -39,8 +39,7 @@ Create a new STT evaluation dataset with audio samples.
 
 Each sample requires:
 - **object_store_url**: S3 URL of the audio file (from /evaluations/stt/files/audio endpoint)
-- **language**: ISO 639-1 language code (optional)
-- **ground_truth**: Reference transcription (optional, for Phase 2 WER/CER)
+- **ground_truth**: Reference transcription (optional, for WER/CER metrics)
 """,
 )
 def create_dataset(

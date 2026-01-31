@@ -119,10 +119,7 @@ def create_stt_samples(
     for sample_data in samples:
         sample = STTSample(
             object_store_url=sample_data.object_store_url,
-            language=sample_data.language,
             ground_truth=sample_data.ground_truth,
-            duration_seconds=sample_data.duration_seconds,
-            sample_metadata=sample_data.sample_metadata or {},
             dataset_id=dataset_id,
             organization_id=org_id,
             project_id=project_id,

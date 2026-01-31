@@ -270,15 +270,8 @@ class STTSampleCreate(BaseModel):
     """Request model for creating an STT sample."""
 
     object_store_url: str = Field(..., description="S3 URL of the audio file")
-    language: str | None = Field(None, description="ISO 639-1 language code")
     ground_truth: str | None = Field(
         None, description="Reference transcription (optional)"
-    )
-    duration_seconds: float | None = Field(
-        None, description="Audio duration in seconds"
-    )
-    sample_metadata: dict[str, Any] | None = Field(
-        None, description="Additional metadata"
     )
 
 
