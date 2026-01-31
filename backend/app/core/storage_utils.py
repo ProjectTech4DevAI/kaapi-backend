@@ -84,10 +84,7 @@ def upload_csv_to_object_store(
 
 
 def upload_jsonl_to_object_store(
-    storage: CloudStorage,
-    results: list[dict],
-    filename: str,
-    subdirectory: str
+    storage: CloudStorage, results: list[dict], filename: str, subdirectory: str
 ) -> str | None:
     """
     Upload JSONL (JSON Lines) content to object store.

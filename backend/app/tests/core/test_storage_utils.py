@@ -61,7 +61,9 @@ class TestLoadJsonFromObjectStore:
         """Verify successful load returns parsed JSON."""
         mock_storage = MagicMock()
         test_data = [{"id": 1, "value": "test"}]
-        mock_storage.stream.return_value = BytesIO(json.dumps(test_data).encode("utf-8"))
+        mock_storage.stream.return_value = BytesIO(
+            json.dumps(test_data).encode("utf-8")
+        )
 
         result = load_json_from_object_store(
             storage=mock_storage,

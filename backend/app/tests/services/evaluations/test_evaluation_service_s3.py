@@ -101,7 +101,10 @@ class TestGetEvaluationWithScoresS3:
         """Verify resync=True skips S3/DB and fetches from Langfuse."""
         mock_get_eval.return_value = completed_eval_run_with_s3
         mock_get_langfuse.return_value = MagicMock()
-        mock_fetch_langfuse.return_value = {"summary_scores": [], "traces": [{"trace_id": "new"}]}
+        mock_fetch_langfuse.return_value = {
+            "summary_scores": [],
+            "traces": [{"trace_id": "new"}],
+        }
         mock_save_score.return_value = completed_eval_run_with_s3
 
         get_evaluation_with_scores(

@@ -24,7 +24,13 @@ class TestSaveScoreS3Upload:
     @patch("app.core.cloud.storage.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_uploads_traces_to_s3_and_stores_summary_only(
-        self, mock_engine, mock_get_storage, mock_upload, mock_get_eval, mock_update, mock_eval_run
+        self,
+        mock_engine,
+        mock_get_storage,
+        mock_upload,
+        mock_get_eval,
+        mock_update,
+        mock_eval_run,
     ) -> None:
         """Verify traces uploaded to S3, only summary_scores stored in DB."""
         mock_get_eval.return_value = mock_eval_run
@@ -44,7 +50,9 @@ class TestSaveScoreS3Upload:
 
         # Verify DB gets summary only, not traces
         call_kwargs = mock_update.call_args.kwargs
-        assert call_kwargs["score"] == {"summary_scores": [{"name": "accuracy", "avg": 0.9}]}
+        assert call_kwargs["score"] == {
+            "summary_scores": [{"name": "accuracy", "avg": 0.9}]
+        }
         assert call_kwargs["score_trace_url"] == "s3://bucket/traces.json"
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
@@ -53,7 +61,13 @@ class TestSaveScoreS3Upload:
     @patch("app.core.cloud.storage.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_fallback_to_db_when_s3_fails(
-        self, mock_engine, mock_get_storage, mock_upload, mock_get_eval, mock_update, mock_eval_run
+        self,
+        mock_engine,
+        mock_get_storage,
+        mock_upload,
+        mock_get_eval,
+        mock_update,
+        mock_eval_run,
     ) -> None:
         """Verify full score stored in DB when S3 upload fails."""
         mock_get_eval.return_value = mock_eval_run
@@ -78,7 +92,13 @@ class TestSaveScoreS3Upload:
     @patch("app.core.cloud.storage.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_no_s3_upload_when_no_traces(
-        self, mock_engine, mock_get_storage, mock_upload, mock_get_eval, mock_update, mock_eval_run
+        self,
+        mock_engine,
+        mock_get_storage,
+        mock_upload,
+        mock_get_eval,
+        mock_update,
+        mock_eval_run,
     ) -> None:
         """Verify S3 upload skipped when traces is empty."""
         mock_get_eval.return_value = mock_eval_run
