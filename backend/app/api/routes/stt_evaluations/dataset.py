@@ -14,7 +14,6 @@ from app.crud.stt_evaluations import (
     list_stt_datasets,
     get_samples_by_dataset_id,
     get_sample_count_for_dataset,
-    update_dataset_metadata,
 )
 from app.models.stt_evaluation import (
     STTDatasetCreate,

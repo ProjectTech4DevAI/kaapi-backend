@@ -8,8 +8,7 @@ from celery import current_task
 from sqlmodel import Session, select
 
 from app.celery.celery_app import celery_app
-from app.core.batch import GeminiBatchProvider
-from app.core.batch.gemini import BatchJobState
+from app.core.batch import BatchJobState, GeminiBatchProvider
 from app.core.db import engine
 from app.core.cloud.storage import get_cloud_storage
 from app.crud.stt_evaluations import (

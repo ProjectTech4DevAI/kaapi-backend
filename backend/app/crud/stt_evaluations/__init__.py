@@ -6,6 +6,7 @@ from .dataset import (
     get_stt_dataset_by_id,
     list_stt_datasets,
     get_samples_by_dataset_id,
+    get_sample_count_for_dataset,
 )
 from .run import (
     create_stt_run,
@@ -19,6 +20,7 @@ from .result import (
     get_results_by_run_id,
     update_stt_result,
     update_human_feedback,
+    count_results_by_status,
 )
 
 __all__ = [
@@ -28,6 +30,7 @@ __all__ = [
     "get_stt_dataset_by_id",
     "list_stt_datasets",
     "get_samples_by_dataset_id",
+    "get_sample_count_for_dataset",
     # Run
     "create_stt_run",
     "get_stt_run_by_id",
@@ -39,4 +42,5 @@ __all__ = [
     "get_results_by_run_id",
     "update_stt_result",
     "update_human_feedback",
+    "count_results_by_status",
 ]
