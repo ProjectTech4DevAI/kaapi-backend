@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from uuid import UUID
 from sqlmodel import Session, select
-
+import datetime
 from app.core.util import now
 import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
@@ -142,7 +142,7 @@ def create_llm_call(
 
     logger.info(
         f"[create_llm_call] Created LLM call id={db_llm_call.id}, "
-        f"job_id={job_id}, provider={provider}, model={model}"
+        f"job_id={job_id}, provider={original_provider}, model={model}"
     )
 
     return db_llm_call
@@ -186,6 +186,8 @@ def update_llm_call_response(
         db_llm_call.usage = usage
     if conversation_id is not None:
         db_llm_call.conversation_id = conversation_id
+
+    db_llm_call.updated_at = datetime.datetime.now()
 
     session.add(db_llm_call)
     session.commit()

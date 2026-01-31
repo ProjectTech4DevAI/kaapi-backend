@@ -1,5 +1,4 @@
 import logging
-import os
 
 from google import genai
 from google.genai.types import GenerateContentResponse
@@ -35,13 +34,6 @@ class GoogleAIProvider(BaseProvider):
             raise ValueError("API Key for Google Gemini Not Set")
         return genai.Client(api_key=credentials["api_key"])
 
-    def _parse_input(self, query_input, completion_type, provider) -> str:
-        if completion_type == "stt":
-            if isinstance(query_input, str):
-                return query_input
-            else:
-                raise ValueError(f"{provider} STT require file path")
-
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
@@ -61,12 +53,9 @@ class GoogleAIProvider(BaseProvider):
         provider = completion_config.provider
         generation_params = completion_config.params
 
-        # Parse and validate input
-        parsed_input = self._parse_input(
-            query_input=resolved_input,
-            completion_type="stt",
-            provider=provider,
-        )
+        # Validate input is a file path string
+        if not isinstance(resolved_input, str):
+            return None, f"{provider} STT requires file path as string"
 
         model = generation_params.get("model")
         if not model:
@@ -97,7 +86,7 @@ class GoogleAIProvider(BaseProvider):
             merged_instruction = f"{lang_instruction}. {forced_trascription_text}"
 
         # Upload file and generate content
-        gemini_file = self.client.files.upload(file=parsed_input)
+        gemini_file = self.client.files.upload(file=resolved_input)
 
         contents = []
         if merged_instruction:
@@ -108,19 +97,41 @@ class GoogleAIProvider(BaseProvider):
             model=model, contents=contents
         )
 
+        # Validate response has required fields
+        if not response.response_id:
+            return None, "Google AI response missing response_id"
+
+        if not response.text:
+            return None, "Google AI response missing text content"
+
+        # Extract usage metadata with null checks
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count or 0
+            output_tokens = response.usage_metadata.candidates_token_count or 0
+            total_tokens = response.usage_metadata.total_token_count or 0
+            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        else:
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+            )
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            reasoning_tokens = 0
+
         # Build response
         llm_response = LLMCallResponse(
             response=LLMResponse(
                 provider_response_id=response.response_id,
-                model=response.model_version,
+                model=response.model_version or model,
                 provider=provider,
                 output=LLMOutput(text=response.text),
             ),
             usage=Usage(
-                input_tokens=response.usage_metadata.prompt_token_count,
-                output_tokens=response.usage_metadata.candidates_token_count,
-                total_tokens=response.usage_metadata.total_token_count,
-                reasoning_tokens=response.usage_metadata.thoughts_token_count,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                reasoning_tokens=reasoning_tokens,
             ),
         )
 
@@ -136,7 +147,7 @@ class GoogleAIProvider(BaseProvider):
     def execute(
         self,
         completion_config: NativeCompletionConfig,
-        query: QueryParams,
+        query: QueryParams,  # Not used by Google AI provider (no conversation support yet)
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
@@ -148,6 +159,11 @@ class GoogleAIProvider(BaseProvider):
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
+                )
+            else:
+                return (
+                    None,
+                    f"Unsupported completion type '{completion_type}' for Google AI provider",
                 )
 
         except TypeError as e:

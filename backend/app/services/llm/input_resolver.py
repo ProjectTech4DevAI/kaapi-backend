@@ -11,6 +11,7 @@ from app.models.llm.request import (
     AudioUrlInput,
     QueryInput,
 )
+from app.utils import validate_callback_url
 
 
 logger = logging.getLogger(__name__)
@@ -84,9 +85,23 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
 
 
 def resolve_audio_url(url: str) -> tuple[str, str | None]:
-    """Fetch audio from URL and write to temp file. Returns (file_path, error)."""
+    """Fetch audio from URL and write to temp file. Returns (file_path, error).
+
+    Implements SSRF protection by:
+    - Validating URL is HTTPS-only
+    - Blocking private/link-local IP addresses
+    - Blocking cloud metadata endpoints
+    - Disabling redirects
+    """
+    # Validate URL to prevent SSRF attacks
     try:
-        response = requests.get(url, timeout=60)
+        validate_callback_url(url)
+    except ValueError as e:
+        logger.error(f"[resolve_audio_url] Invalid audio URL: {e}")
+        return "", f"Invalid audio URL: {str(e)}"
+
+    try:
+        response = requests.get(url, timeout=60, allow_redirects=False)
         response.raise_for_status()
     except requests.Timeout:
         return "", f"Timeout fetching audio from URL: {url}"
