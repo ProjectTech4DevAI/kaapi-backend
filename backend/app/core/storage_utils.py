@@ -87,8 +87,7 @@ def upload_jsonl_to_object_store(
     storage: CloudStorage,
     results: list[dict],
     filename: str,
-    subdirectory: str,
-    as_json_array: bool = False,
+    subdirectory: str
 ) -> str | None:
     """
     Upload JSONL (JSON Lines) content to object store.
@@ -115,11 +114,7 @@ def upload_jsonl_to_object_store(
         # Create file path
         file_path = Path(subdirectory) / filename
 
-        # Convert results to JSONL
-        if as_json_array:
-            jsonl_content = json.dumps(results, ensure_ascii=False)
-        else:
-            jsonl_content = "\n".join([json.dumps(result) for result in results])
+        jsonl_content = json.dumps(results, ensure_ascii=False)
         content_bytes = jsonl_content.encode("utf-8")
 
         # Create UploadFile-like object
