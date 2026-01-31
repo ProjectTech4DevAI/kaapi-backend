@@ -344,6 +344,7 @@ class STTDatasetPublic(BaseModel):
     description: str | None
     type: str
     language: str | None
+    object_store_url: str | None
     dataset_metadata: dict[str, Any]
     sample_count: int = Field(0, description="Number of samples in the dataset")
     organization_id: int

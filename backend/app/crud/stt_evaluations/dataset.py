@@ -28,6 +28,7 @@ def create_stt_dataset(
     project_id: int,
     description: str | None = None,
     language: str | None = None,
+    object_store_url: str | None = None,
     dataset_metadata: dict[str, Any] | None = None,
 ) -> EvaluationDataset:
     """Create a new STT evaluation dataset.
@@ -39,6 +40,7 @@ def create_stt_dataset(
         project_id: Project ID
         description: Optional description
         language: Optional default language code
+        object_store_url: Optional object store URL
         dataset_metadata: Optional metadata dict
 
     Returns:
@@ -57,6 +59,7 @@ def create_stt_dataset(
         description=description,
         type=EvaluationType.STT.value,
         language=language,
+        object_store_url=object_store_url,
         dataset_metadata=dataset_metadata or {},
         organization_id=org_id,
         project_id=project_id,
@@ -227,6 +230,7 @@ def list_stt_datasets(
                 description=dataset.description,
                 type=dataset.type,
                 language=dataset.language,
+                object_store_url=dataset.object_store_url,
                 dataset_metadata=dataset.dataset_metadata,
                 sample_count=sample_count,
                 organization_id=dataset.organization_id,
