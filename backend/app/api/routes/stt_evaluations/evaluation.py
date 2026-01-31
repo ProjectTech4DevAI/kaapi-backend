@@ -2,18 +2,20 @@
 
 import logging
 
-from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.celery.tasks.stt_evaluation import process_stt_evaluation
 from app.crud.stt_evaluations import (
     create_stt_run,
+    create_stt_results,
+    get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     get_stt_run_by_id,
     list_stt_runs,
     get_sample_count_for_dataset,
+    start_stt_evaluation_batch,
+    update_stt_run,
 )
 from app.crud.stt_evaluations.result import get_results_by_run_id
 from app.models.stt_evaluation import (
@@ -88,21 +90,64 @@ def start_stt_evaluation(
         total_items=sample_count * len(run_create.providers),
     )
 
-    # Enqueue Celery task
-    trace_id = correlation_id.get() or ""
-
-    process_stt_evaluation.apply_async(
-        kwargs={
-            "evaluation_run_id": run.id,
-            "org_id": auth_context.organization_.id,
-            "project_id": auth_context.project_.id,
-            "trace_id": trace_id,
-        },
+    # Get samples for the dataset
+    samples, _ = get_samples_by_dataset_id(
+        session=_session,
+        dataset_id=run_create.dataset_id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+        limit=10000,  # Get all samples
     )
 
-    logger.info(
-        f"[start_stt_evaluation] STT evaluation queued | "
-        f"run_id: {run.id}, task queued"
+    # Create result records for each sample and provider
+    results = create_stt_results(
+        session=_session,
+        samples=samples,
+        evaluation_run_id=run.id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+        providers=run_create.providers,
+    )
+
+    # Extract result data for batch processing
+    result_refs = [
+        {"id": r.id, "stt_sample_id": r.stt_sample_id, "provider": r.provider}
+        for r in results
+    ]
+
+    # Submit batch synchronously
+    try:
+        batch_result = start_stt_evaluation_batch(
+            session=_session,
+            run=run,
+            samples=samples,
+            result_refs=result_refs,
+            org_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
+        )
+        logger.info(
+            f"[start_stt_evaluation] STT evaluation batch submitted | "
+            f"run_id: {run.id}, batch_jobs: {batch_result.get('batch_jobs', {}).keys()}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[start_stt_evaluation] Batch submission failed | "
+            f"run_id: {run.id}, error: {str(e)}"
+        )
+        update_stt_run(
+            session=_session,
+            run_id=run.id,
+            status="failed",
+            error_message=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"Batch submission failed: {e}")
+
+    # Refresh run to get updated status
+    run = get_stt_run_by_id(
+        session=_session,
+        run_id=run.id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
     )
 
     return APIResponse.success_response(

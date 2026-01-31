@@ -1,5 +1,7 @@
 """STT Evaluation CRUD operations."""
 
+from .batch import start_stt_evaluation_batch
+from .cron import poll_all_pending_stt_evaluations
 from .dataset import (
     create_stt_dataset,
     create_stt_samples,
@@ -24,6 +26,10 @@ from .result import (
 )
 
 __all__ = [
+    # Batch
+    "start_stt_evaluation_batch",
+    # Cron
+    "poll_all_pending_stt_evaluations",
     # Dataset
     "create_stt_dataset",
     "create_stt_samples",

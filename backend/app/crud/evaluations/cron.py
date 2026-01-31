@@ -12,6 +12,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
+from app.crud.stt_evaluations.cron import poll_all_pending_stt_evaluations
 from app.models import Organization
 
 logger = logging.getLogger(__name__)
@@ -84,22 +85,38 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     f"[process_all_pending_evaluations] Processing org_id={org.id} ({org.name})"
                 )
 
-                # Poll all pending evaluations for this org
+                # Poll all pending text evaluations for this org
                 summary = await poll_all_pending_evaluations(
                     session=session, org_id=org.id
                 )
+
+                # Poll all pending STT evaluations for this org
+                stt_summary = await poll_all_pending_stt_evaluations(
+                    session=session, org_id=org.id
+                )
+
+                # Merge summaries
+                combined_summary = {
+                    "text": summary,
+                    "stt": stt_summary,
+                    "processed": summary.get("processed", 0)
+                    + stt_summary.get("processed", 0),
+                    "failed": summary.get("failed", 0) + stt_summary.get("failed", 0),
+                    "still_processing": summary.get("still_processing", 0)
+                    + stt_summary.get("still_processing", 0),
+                }
 
                 results.append(
                     {
                         "org_id": org.id,
                         "org_name": org.name,
-                        "summary": summary,
+                        "summary": combined_summary,
                     }
                 )
 
-                total_processed += summary.get("processed", 0)
-                total_failed += summary.get("failed", 0)
-                total_still_processing += summary.get("still_processing", 0)
+                total_processed += combined_summary["processed"]
+                total_failed += combined_summary["failed"]
+                total_still_processing += combined_summary["still_processing"]
 
             except Exception as e:
                 logger.error(
