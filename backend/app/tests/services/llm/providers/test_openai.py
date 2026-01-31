@@ -15,6 +15,8 @@ from app.models.llm.request import ConversationConfig
 
 from app.services.llm.providers.oai import OpenAIProvider
 from app.tests.utils.openai import mock_openai_response
+
+
 class TestOpenAIProvider:
     """Test cases for the OpenAIProvider class."""
 
