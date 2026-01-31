@@ -1,7 +1,7 @@
 """add_llm_call_table
 
-Revision ID: 041
-Revises: 040
+Revision ID: 042
+Revises: 041
 Create Date: 2026-01-26 15:20:23.873332
 
 """

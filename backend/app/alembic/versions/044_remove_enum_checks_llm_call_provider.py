@@ -1,7 +1,7 @@
 """remove:enum checks llm_call provider
 
-Revision ID: 043
-Revises: 042
+Revision ID: 044
+Revises: 043
 Create Date: 2026-01-30 11:22:45.165543
 
 """
@@ -11,8 +11,8 @@ import sqlmodel.sql.sqltypes
 
 
 # revision identifiers, used by Alembic.
-revision = "043"
-down_revision = "042"
+revision = "044"
+down_revision = "043"
 branch_labels = None
 depends_on = None
 
