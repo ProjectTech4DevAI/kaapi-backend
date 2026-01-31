@@ -101,6 +101,18 @@ class EvaluationDataset(SQLModel, table=True):
         description="Optional description of the dataset",
         sa_column_kwargs={"comment": "Description of the dataset"},
     )
+    type: str = SQLField(
+        default="text",
+        max_length=20,
+        description="Evaluation type: text, stt, or tts",
+        sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
+    )
+    language: str | None = SQLField(
+        default=None,
+        max_length=10,
+        description="ISO 639-1 language code (e.g., en, hi)",
+        sa_column_kwargs={"comment": "ISO 639-1 language code (e.g., en, hi)"},
+    )
 
     # Dataset metadata stored as JSONB
     dataset_metadata: dict[str, Any] = SQLField(
@@ -192,6 +204,32 @@ class EvaluationRun(SQLModel, table=True):
     dataset_name: str = SQLField(
         description="Name of the Langfuse dataset",
         sa_column_kwargs={"comment": "Name of the Langfuse dataset used"},
+    )
+    type: str = SQLField(
+        default="text",
+        max_length=20,
+        description="Evaluation type: text, stt, or tts",
+        sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
+    )
+    language: str | None = SQLField(
+        default=None,
+        max_length=10,
+        description="ISO 639-1 language code",
+        sa_column_kwargs={"comment": "ISO 639-1 language code"},
+    )
+    providers: list[str] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="List of STT/TTS providers used (e.g., ['gemini-2.5-pro'])",
+        ),
+        description="List of STT/TTS providers used",
+    )
+    processed_samples: int = SQLField(
+        default=0,
+        description="Number of samples processed so far",
+        sa_column_kwargs={"comment": "Number of samples processed so far"},
     )
 
     config_id: UUID = SQLField(
