@@ -108,12 +108,6 @@ def upgrade():
             comment="Reference transcription for comparison (optional)",
         ),
         sa.Column(
-            "duration_seconds",
-            sa.Float(),
-            nullable=True,
-            comment="Audio duration in seconds",
-        ),
-        sa.Column(
             "sample_metadata",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,

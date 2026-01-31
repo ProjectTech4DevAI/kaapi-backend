@@ -74,12 +74,6 @@ class STTSample(SQLModel, table=True):
     )
 
     # Audio metadata
-    duration_seconds: float | None = SQLField(
-        default=None,
-        description="Audio duration in seconds",
-        sa_column_kwargs={"comment": "Audio duration in seconds"},
-    )
-
     sample_metadata: dict[str, Any] | None = SQLField(
         default_factory=dict,
         sa_column=Column(
@@ -282,7 +276,6 @@ class STTSamplePublic(BaseModel):
     object_store_url: str
     language: str | None
     ground_truth: str | None
-    duration_seconds: float | None
     sample_metadata: dict[str, Any] | None
     dataset_id: int
     organization_id: int

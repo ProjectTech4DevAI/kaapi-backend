@@ -2,6 +2,8 @@
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
+import os
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
@@ -92,6 +94,32 @@ def create_stt_dataset(
         raise
 
 
+def _extract_metadata_from_url(url: str) -> dict[str, Any]:
+    """Extract filename and extension from S3 URL.
+
+    Args:
+        url: S3 URL of the audio file
+
+    Returns:
+        dict with original_filename and file_extension
+    """
+    try:
+        parsed = urlparse(url)
+        path = parsed.path
+        filename = os.path.basename(path)
+        _, extension = os.path.splitext(filename)
+        # Remove leading dot from extension
+        extension = extension.lstrip(".").lower() if extension else None
+
+        return {
+            "original_filename": filename if filename else None,
+            "file_extension": extension,
+        }
+    except Exception as e:
+        logger.warning(f"[_extract_metadata_from_url] Failed to extract metadata: {e}")
+        return {}
+
+
 def create_stt_samples(
     *,
     session: Session,
@@ -99,6 +127,7 @@ def create_stt_samples(
     org_id: int,
     project_id: int,
     samples: list[STTSampleCreate],
+    language: str | None = None,
 ) -> list[STTSample]:
     """Create STT samples for a dataset.
 
@@ -108,21 +137,27 @@ def create_stt_samples(
         org_id: Organization ID
         project_id: Project ID
         samples: List of sample data
+        language: Language code from parent dataset
 
     Returns:
         list[STTSample]: Created samples
     """
     logger.info(
         f"[create_stt_samples] Creating STT samples | "
-        f"dataset_id: {dataset_id}, sample_count: {len(samples)}"
+        f"dataset_id: {dataset_id}, sample_count: {len(samples)}, language: {language}"
     )
 
     created_samples = []
 
     for sample_data in samples:
+        # Extract metadata from URL
+        sample_metadata = _extract_metadata_from_url(sample_data.object_store_url)
+
         sample = STTSample(
             object_store_url=sample_data.object_store_url,
             ground_truth=sample_data.ground_truth,
+            language=language,
+            sample_metadata=sample_metadata,
             dataset_id=dataset_id,
             organization_id=org_id,
             project_id=project_id,

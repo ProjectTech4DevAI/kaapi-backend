@@ -212,7 +212,6 @@ def get_results_by_run_id(
             object_store_url=sample.object_store_url,
             language=sample.language,
             ground_truth=sample.ground_truth,
-            duration_seconds=sample.duration_seconds,
             sample_metadata=sample.sample_metadata,
             dataset_id=sample.dataset_id,
             organization_id=sample.organization_id,

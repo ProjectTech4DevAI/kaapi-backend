@@ -146,7 +146,6 @@ def get_dataset(
                 object_store_url=s.object_store_url,
                 language=s.language,
                 ground_truth=s.ground_truth,
-                duration_seconds=s.duration_seconds,
                 sample_metadata=s.sample_metadata,
                 dataset_id=s.dataset_id,
                 organization_id=s.organization_id,

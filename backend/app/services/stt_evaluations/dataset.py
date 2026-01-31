@@ -95,6 +95,7 @@ def upload_stt_dataset(
         org_id=organization_id,
         project_id=project_id,
         samples=samples,
+        language=language,
     )
 
     logger.info(
