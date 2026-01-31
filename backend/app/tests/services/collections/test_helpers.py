@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from sqlmodel import Session
+from fastapi import HTTPException
+
 from app.services.collections import helpers
+from app.tests.utils.utils import get_project
+from app.tests.utils.collection import get_vector_store_collection
+from app.services.collections.helpers import ensure_unique_name
 
 
 def test_extract_error_message_parses_json_and_strips_prefix() -> None:
@@ -84,28 +90,38 @@ def test_batch_documents_empty_input() -> None:
     assert crud.calls == []
 
 
-# _backout
+def test_ensure_unique_name_success(db: Session) -> None:
+    requested_name = "new_collection_name"
+
+    project = get_project(db)
+
+    result = ensure_unique_name(
+        session=db,
+        project_id=project.id,
+        requested_name=requested_name,
+    )
+
+    assert result == requested_name
 
 
-def test_backout_calls_delete_and_swallows_openai_error(monkeypatch: Any) -> None:
-    class Crud:
-        def __init__(self):
-            self.calls = 0
+def test_ensure_unique_name_conflict_with_vector_store_collection(db: Session) -> None:
+    existing_name = "vector_collection"
+    project = get_project(db)
 
-        def delete(self, resource_id: str):
-            self.calls += 1
+    collection = get_vector_store_collection(
+        db=db,
+        project=project,
+    )
 
-    crud = Crud()
-    helpers._backout(crud, "rsrc_1")
-    assert crud.calls == 1
+    collection.name = existing_name
+    db.commit()
 
-    class DummyOpenAIError(Exception):
-        pass
+    with pytest.raises(HTTPException) as exc:
+        ensure_unique_name(
+            session=db,
+            project_id=project.id,
+            requested_name=existing_name,
+        )
 
-    monkeypatch.setattr(helpers, "OpenAIError", DummyOpenAIError)
-
-    class FailingCrud:
-        def delete(self, resource_id: str):
-            raise DummyOpenAIError("nope")
-
-    helpers._backout(FailingCrud(), "rsrc_2")
+    assert exc.value.status_code == 409
+    assert "already exists" in exc.value.detail

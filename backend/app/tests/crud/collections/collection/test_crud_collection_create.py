@@ -4,7 +4,7 @@ import openai_responses
 from sqlmodel import Session, select
 
 from app.crud import CollectionCrud
-from app.models import DocumentCollection, Collection
+from app.models import DocumentCollection, Collection, ProviderType
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 
@@ -18,9 +18,9 @@ class TestCollectionCreate:
         collection = Collection(
             id=uuid4(),
             project_id=project.id,
-            organization_id=project.organization_id,
             llm_service_id="asst_dummy",
             llm_service_name="gpt-4o",
+            provider=ProviderType.openai,
         )
 
         store = DocumentStore(db, project_id=collection.project_id)

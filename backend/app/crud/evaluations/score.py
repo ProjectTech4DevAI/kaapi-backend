@@ -23,6 +23,7 @@ class TraceData(TypedDict):
     trace_id: str
     question: str
     llm_answer: str
+    question_id: int | None
     ground_truth_answer: str
     scores: list[TraceScore]
 
