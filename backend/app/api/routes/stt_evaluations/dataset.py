@@ -1,15 +1,12 @@
 """STT dataset API routes."""
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.stt_evaluations import (
-    create_stt_dataset,
-    create_stt_samples,
     get_stt_dataset_by_id,
     list_stt_datasets,
     get_samples_by_dataset_id,
@@ -19,9 +16,9 @@ from app.models.stt_evaluation import (
     STTDatasetCreate,
     STTDatasetPublic,
     STTDatasetWithSamples,
-    STTSampleCreate,
     STTSamplePublic,
 )
+from app.services.stt_evaluations.dataset import upload_stt_dataset
 from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
@@ -48,34 +45,14 @@ def create_dataset(
     dataset_create: STTDatasetCreate = Body(...),
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
-    logger.info(
-        f"[create_dataset] Creating STT dataset | "
-        f"name: {dataset_create.name}, sample_count: {len(dataset_create.samples)}"
-    )
-
-    # Create dataset
-    dataset = create_stt_dataset(
+    dataset, samples = upload_stt_dataset(
         session=_session,
         name=dataset_create.name,
-        org_id=auth_context.organization_.id,
+        samples=dataset_create.samples,
+        organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         description=dataset_create.description,
         language=dataset_create.language,
-        dataset_metadata={
-            "sample_count": len(dataset_create.samples),
-            "has_ground_truth_count": sum(
-                1 for s in dataset_create.samples if s.ground_truth
-            ),
-        },
-    )
-
-    # Create samples
-    samples = create_stt_samples(
-        session=_session,
-        dataset_id=dataset.id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-        samples=dataset_create.samples,
     )
 
     return APIResponse.success_response(
