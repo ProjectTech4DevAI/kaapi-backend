@@ -222,23 +222,28 @@ class TestGoogleAIProviderSTT:
         assert error is not None
         assert "Unexpected error occurred" in error
 
-    def test_parse_input_with_invalid_type(self, provider):
-        """Test _parse_input with invalid input type."""
-        with pytest.raises(ValueError) as exc_info:
-            provider._parse_input(
-                query_input={"invalid": "data"},
-                completion_type="stt",
-                provider="google-native",
-            )
+    def test_stt_with_invalid_input_type(
+        self, provider, mock_client, stt_config, query_params
+    ):
+        """Test STT execution with invalid input type (non-string)."""
+        # Pass a dict instead of a string path
+        invalid_input = {"invalid": "data"}
 
-        assert "STT require file path" in str(exc_info.value)
+        result, error = provider.execute(stt_config, query_params, invalid_input)
 
-    def test_parse_input_with_valid_string(self, provider):
-        """Test _parse_input with valid string path."""
-        result = provider._parse_input(
-            query_input="/path/to/audio.wav",
-            completion_type="stt",
-            provider="google-native",
-        )
+        assert result is None
+        assert error is not None
+        assert "STT requires file path as string" in error
 
-        assert result == "/path/to/audio.wav"
+    def test_stt_with_valid_file_path(
+        self, provider, mock_client, stt_config, query_params
+    ):
+        """Test STT execution with valid file path string."""
+        mock_response = mock_google_response(text="Valid transcription")
+        mock_client.models.generate_content.return_value = mock_response
+
+        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+
+        assert error is None
+        assert result is not None
+        assert result.response.output.text == "Valid transcription"

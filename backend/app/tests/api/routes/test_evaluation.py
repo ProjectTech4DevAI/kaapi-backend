@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.crud.evaluations.batch import build_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
-from app.models.llm.request import KaapiLLMParams
+from app.models.llm.request import TextLLMParams
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
@@ -607,7 +607,7 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = KaapiLLMParams(
+        config = TextLLMParams(
             model="gpt-4o",
             temperature=0.2,
             instructions="You are a helpful assistant",
@@ -638,7 +638,7 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = KaapiLLMParams(
+        config = TextLLMParams(
             model="gpt-4o-mini",
             instructions="Search documents",
             knowledge_base_ids=["vs_abc123"],
@@ -662,7 +662,7 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = KaapiLLMParams(model="gpt-4o")  # Only model provided
+        config = TextLLMParams(model="gpt-4o")  # Only model provided
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -694,7 +694,7 @@ class TestBatchEvaluationJSONLBuilding:
             },
         ]
 
-        config = KaapiLLMParams(model="gpt-4o", instructions="Test")
+        config = TextLLMParams(model="gpt-4o", instructions="Test")
 
         jsonl_data = build_evaluation_jsonl(dataset_items, config)
 
@@ -714,7 +714,7 @@ class TestBatchEvaluationJSONLBuilding:
             for i in range(5)
         ]
 
-        config = KaapiLLMParams(
+        config = TextLLMParams(
             model="gpt-4o",
             instructions="Answer questions",
         )
@@ -734,7 +734,7 @@ class TestGetEvaluationRunStatus:
 
     @pytest.fixture
     def create_test_dataset(
-        self, db: Session, user_api_key: TestAuthContext
+        db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset for evaluation runs."""
         return create_test_evaluation_dataset(
@@ -1076,7 +1076,7 @@ class TestGetDataset:
 
     @pytest.fixture
     def create_test_dataset(
-        self, db: Session, user_api_key: TestAuthContext
+        db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset."""
         return create_test_evaluation_dataset(
@@ -1136,7 +1136,7 @@ class TestDeleteDataset:
 
     @pytest.fixture
     def create_test_dataset(
-        self, db: Session, user_api_key: TestAuthContext
+        db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset for deletion."""
         return create_test_evaluation_dataset(
