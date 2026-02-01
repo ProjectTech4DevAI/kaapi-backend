@@ -734,7 +734,7 @@ class TestGetEvaluationRunStatus:
 
     @pytest.fixture
     def create_test_dataset(
-        db: Session, user_api_key: TestAuthContext
+        self, db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset for evaluation runs."""
         return create_test_evaluation_dataset(
@@ -1076,7 +1076,7 @@ class TestGetDataset:
 
     @pytest.fixture
     def create_test_dataset(
-        db: Session, user_api_key: TestAuthContext
+        self, db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset."""
         return create_test_evaluation_dataset(
@@ -1136,7 +1136,7 @@ class TestDeleteDataset:
 
     @pytest.fixture
     def create_test_dataset(
-        db: Session, user_api_key: TestAuthContext
+        self, db: Session, user_api_key: TestAuthContext
     ) -> EvaluationDataset:
         """Create a test dataset for deletion."""
         return create_test_evaluation_dataset(

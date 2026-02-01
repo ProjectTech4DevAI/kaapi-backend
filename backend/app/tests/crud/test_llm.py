@@ -114,6 +114,7 @@ def test_create_llm_call_text(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     assert llm_call.id is not None
@@ -149,6 +150,7 @@ def test_create_llm_call_stt(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=stt_config_blob,
+        original_provider="openai",
     )
 
     assert llm_call.input_type == "audio"
@@ -176,6 +178,7 @@ def test_create_llm_call_tts(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=tts_config_blob,
+        original_provider="openai",
     )
 
     assert llm_call.input_type == "text"
@@ -204,6 +207,7 @@ def test_create_llm_call_with_stored_config(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     assert llm_call.config is not None
@@ -232,6 +236,7 @@ def test_get_llm_call_by_id(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     fetched = get_llm_call_by_id(db, created.id)
@@ -260,6 +265,7 @@ def test_get_llm_call_by_id_with_project_scope(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     # Should find with correct project
@@ -299,6 +305,7 @@ def test_get_llm_calls_by_job_id(
             project_id=test_project.id,
             organization_id=test_organization.id,
             resolved_config=text_config_blob,
+            original_provider="openai",
         )
 
     llm_calls = get_llm_calls_by_job_id(db, test_job.id)
@@ -332,6 +339,7 @@ def test_update_llm_call_response(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     # Update with response data
@@ -378,6 +386,7 @@ def test_update_llm_call_response_partial(
         project_id=test_project.id,
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
+        original_provider="openai",
     )
 
     # Only update provider_response_id
