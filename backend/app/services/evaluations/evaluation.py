@@ -259,7 +259,7 @@ def get_evaluation_with_scores(
                     exc_info=True,
                 )
 
-        elif has_cached_traces_db:
+        if has_cached_traces_db:
             logger.info(
                 f"[get_evaluation_with_scores] Returning traces from DB | "
                 f"evaluation_id={evaluation_id}"
