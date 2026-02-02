@@ -4,6 +4,8 @@ LLM response models.
 This module contains structured response models for LLM API calls.
 """
 
+import base64
+from pydantic import model_validator
 from sqlmodel import SQLModel, Field
 from typing import Literal, Annotated
 from app.models.llm.request import AudioContent, TextContent

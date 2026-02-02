@@ -174,8 +174,40 @@ def update_llm_call_response(
 
     if provider_response_id is not None:
         db_llm_call.provider_response_id = provider_response_id
+
     if content is not None:
+        # For TTS responses: transform audio_bytes to metadata only
+        # (audio_bytes should already be converted to audio_base64 by LLMOutput validator,
+        # but handle it defensively in case it wasn't)
+        if "audio_bytes" in content:
+            import base64
+
+            audio_bytes = content.pop("audio_bytes")
+            if audio_bytes:
+                content["audio_size_bytes"] = len(audio_bytes)
+                # Convert to base64 for storage if not already done
+                if "audio_base64" not in content:
+                    content["audio_base64"] = base64.b64encode(audio_bytes).decode(
+                        "utf-8"
+                    )
+            logger.info(
+                f"[update_llm_call_response] Converted audio_bytes to audio_base64 for storage"
+            )
+
+        # Calculate audio size from base64 if present and audio_size_bytes not set
+        if "audio_base64" in content and "audio_size_bytes" not in content:
+            import base64
+
+            try:
+                audio_data = base64.b64decode(content["audio_base64"])
+                content["audio_size_bytes"] = len(audio_data)
+            except Exception as e:
+                logger.warning(
+                    f"[update_llm_call_response] Failed to calculate audio size: {e}"
+                )
+
         db_llm_call.content = content
+
     if usage is not None:
         db_llm_call.usage = usage
     if conversation_id is not None:
