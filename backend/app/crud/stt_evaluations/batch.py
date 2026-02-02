@@ -60,11 +60,14 @@ def start_stt_evaluation_batch(
     This function runs synchronously during the API request:
     1. Initializes GeminiClient
     2. Generates signed URLs for audio files (valid for batch processing window)
-    3. Builds batch requests using signed URLs directly
-    4. Submits batch job via start_batch_job (creates BatchJob record)
+    3. Builds batch requests using signed URLs with sample_id as key for tracking
+    4. Submits batch job via start_batch_job (creates BatchJob record with request_keys)
     5. Links batch_job_id to the evaluation run
-    6. Stores sample_file_mapping in run.score
-    7. Updates run status to "processing"
+    6. Updates run status to "processing"
+
+    Note: Sample IDs are passed as keys in the batch request and stored in
+    batch_job.config["request_keys"]. This allows direct mapping of results
+    without storing sample_file_mapping in run.score.
 
     Args:
         session: Database session
@@ -146,10 +149,14 @@ def start_stt_evaluation_batch(
     if not sample_url_mapping:
         raise Exception("Failed to generate signed URLs for any audio files")
 
-    # Build batch requests using signed URLs directly (with mime type detection)
+    # Extract sample IDs as keys for batch request tracking
+    sample_keys = [str(item["sample_id"]) for item in sample_url_mapping]
+
+    # Build batch requests in Gemini JSONL format (with keys embedded)
     jsonl_data = create_stt_batch_requests(
         signed_urls=signed_urls,
         prompt=DEFAULT_TRANSCRIPTION_PROMPT,
+        keys=sample_keys,
     )
 
     # Use first provider (STT evaluations use one provider per run)
@@ -197,15 +204,13 @@ def start_stt_evaluation_batch(
             )
         raise Exception(f"Batch submission failed: {str(e)}")
 
-    # Link batch job to the evaluation run and store sample mapping
+    # Link batch job to the evaluation run
+    # Note: sample_file_mapping is no longer needed as we use batch request keys
     update_stt_run(
         session=session,
         run_id=run.id,
         status="processing",
         batch_job_id=batch_job.id,
-        score={
-            "sample_file_mapping": sample_url_mapping,
-        },
     )
 
     logger.info(

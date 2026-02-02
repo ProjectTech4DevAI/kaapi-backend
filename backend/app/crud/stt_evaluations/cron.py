@@ -210,9 +210,6 @@ async def process_completed_stt_batch(
         f"run_id: {run.id}, batch_job_id: {batch_job.id}"
     )
 
-    sample_file_mapping = run.score.get("sample_file_mapping", []) if run.score else []
-    sample_ids = [item["sample_id"] for item in sample_file_mapping]
-
     # Get the STT provider from batch job config
     stt_provider = batch_job.config.get("stt_provider", "gemini-2.5-pro")
 
@@ -229,7 +226,7 @@ async def process_completed_stt_batch(
 
     try:
         # Download results using GeminiBatchProvider
-        # Use provider_batch_id to download results
+        # Keys are embedded in the JSONL response file, no separate mapping needed
         results = batch_provider.download_batch_results(batch_job.provider_batch_id)
 
         logger.info(
@@ -237,19 +234,19 @@ async def process_completed_stt_batch(
             f"batch_job_id: {batch_job.id}, result_count: {len(results)}"
         )
 
-        # Match results to samples by index
+        # Match results to samples using key (sample_id) from batch request
         for batch_result in results:
             custom_id = batch_result["custom_id"]
-            # custom_id is the index as string
+            # custom_id is the sample_id as string (set via key in batch request)
             try:
-                index = int(custom_id)
+                sample_id = int(custom_id)
             except (ValueError, TypeError):
-                index = results.index(batch_result)
-
-            if index >= len(sample_ids):
+                logger.warning(
+                    f"[process_completed_stt_batch] Invalid custom_id | "
+                    f"batch_job_id: {batch_job.id}, custom_id: {custom_id}"
+                )
+                failed_count += 1
                 continue
-
-            sample_id = sample_ids[index]
 
             # Find result record for this sample and provider
             stmt = select(STTResult).where(
@@ -281,9 +278,11 @@ async def process_completed_stt_batch(
     except Exception as e:
         logger.error(
             f"[process_completed_stt_batch] Failed to process batch results | "
-            f"batch_job_id: {batch_job.id}, error: {str(e)}"
+            f"batch_job_id: {batch_job.id}, error: {str(e)}",
+            exc_info=True,
         )
-        failed_count += len(sample_file_mapping)
+        # Mark all pending results as failed since we couldn't process the batch
+        raise
 
     # Update run status
     status_counts = count_results_by_status(session=session, run_id=run.id)
