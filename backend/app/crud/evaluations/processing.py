@@ -664,9 +664,11 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
         }
     """
     # Get pending evaluations (status = "processing")
+    # Filter to only text evaluations - STT/TTS evaluations have their own polling
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.organization_id == org_id,
+        EvaluationRun.type == "text",
     )
     pending_runs = session.exec(statement).all()
 

@@ -11,6 +11,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from app.core.storage_utils import get_mime_from_url
+
 from .base import BatchProvider
 
 logger = logging.getLogger(__name__)
@@ -346,3 +348,68 @@ class GeminiBatchProvider(BatchProvider):
                         if hasattr(part, "text"):
                             text += part.text
         return text
+
+
+def create_stt_batch_requests(
+    signed_urls: list[str],
+    prompt: str,
+    keys: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Create batch API requests for Gemini STT using signed URLs.
+
+    This function generates request payloads suitable for Gemini's batch API
+    using signed URLs directly (no file upload required). MIME types are
+    automatically detected from the URL path.
+
+    Args:
+        signed_urls: List of signed URLs pointing to audio files
+        prompt: Transcription prompt/instructions for the model
+        keys: Optional list of custom IDs for each request. If not provided,
+              uses 0-indexed integers as strings.
+
+    Returns:
+        List of batch request dictionaries ready for GeminiBatchProvider.create_batch()
+
+    Example:
+        >>> urls = ["https://bucket.s3.amazonaws.com/audio.mp3?..."]
+        >>> prompt = "Transcribe this audio file."
+        >>> requests = create_stt_batch_requests(urls, prompt)
+        >>> provider.create_batch(requests, {"display_name": "stt-batch"})
+    """
+    if keys is not None and len(keys) != len(signed_urls):
+        raise ValueError(
+            f"Length of keys ({len(keys)}) must match signed_urls ({len(signed_urls)})"
+        )
+
+    requests = []
+    for i, url in enumerate(signed_urls):
+        mime_type = get_mime_from_url(url)
+        if mime_type is None:
+            logger.warning(
+                f"[create_stt_batch_requests] Could not determine MIME type for URL | "
+                f"index={i} | defaulting to audio/mpeg"
+            )
+            mime_type = "audio/mpeg"
+
+        request = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {"file_data": {"mime_type": mime_type, "file_uri": url}},
+                    ],
+                    "role": "user",
+                }
+            ]
+        }
+
+        # Add key if provided for tracking
+        if keys is not None:
+            request["key"] = keys[i]
+
+        requests.append(request)
+
+    logger.info(f"[create_stt_batch_requests] Created {len(requests)} batch requests")
+
+    return requests

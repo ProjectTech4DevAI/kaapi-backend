@@ -192,6 +192,7 @@ def update_stt_run(
     score: dict[str, Any] | None = None,
     error_message: str | None = None,
     object_store_url: str | None = None,
+    batch_job_id: int | None = None,
 ) -> EvaluationRun | None:
     """Update an STT evaluation run.
 
@@ -203,6 +204,7 @@ def update_stt_run(
         score: Score data
         error_message: Error message
         object_store_url: URL to stored results
+        batch_job_id: ID of the associated batch job
 
     Returns:
         EvaluationRun | None: Updated run
@@ -227,6 +229,9 @@ def update_stt_run(
 
     if object_store_url is not None:
         run.object_store_url = object_store_url
+
+    if batch_job_id is not None:
+        run.batch_job_id = batch_job_id
 
     run.updated_at = now()
 
@@ -280,18 +285,22 @@ def get_pending_stt_runs(
     session: Session,
     org_id: int | None = None,
 ) -> list[EvaluationRun]:
-    """Get all pending STT evaluation runs.
+    """Get all pending STT evaluation runs that are ready for polling.
+
+    Only returns runs with status "processing" that have a batch_job_id set,
+    meaning the batch has been submitted and is ready to be polled.
 
     Args:
         session: Database session
         org_id: Optional filter by organization
 
     Returns:
-        list[EvaluationRun]: Pending runs
+        list[EvaluationRun]: Pending runs ready for polling
     """
     where_clauses = [
         EvaluationRun.type == EvaluationType.STT.value,
-        EvaluationRun.status.in_(["pending", "processing"]),
+        EvaluationRun.status == "processing",
+        EvaluationRun.batch_job_id.is_not(None),
     ]
 
     if org_id is not None:

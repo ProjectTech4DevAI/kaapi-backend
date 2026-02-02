@@ -5,18 +5,38 @@ This module provides common functions for uploading various file types
 to cloud object storage, abstracting away provider-specific details.
 """
 
-import io
 import json
 import logging
+import mimetypes
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.cloud.storage import CloudStorage, CloudStorageError
 
 logger = logging.getLogger(__name__)
+
+
+def get_mime_from_url(url: str) -> str | None:
+    """
+    Extract MIME type from a URL by parsing its path component.
+
+    Works with signed URLs by ignoring query parameters and extracting
+    the file extension from the path.
+
+    Args:
+        url: URL string (can include query parameters like signed URLs)
+
+    Returns:
+        MIME type string (e.g., 'audio/mpeg') or None if unable to determine
+    """
+    parsed = urlparse(url)
+    path = unquote(parsed.path)
+    mime_type, _ = mimetypes.guess_type(path)
+    return mime_type
 
 
 def upload_to_object_store(

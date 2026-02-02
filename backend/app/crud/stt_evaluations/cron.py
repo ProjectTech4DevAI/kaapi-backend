@@ -9,12 +9,13 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.core.batch import BatchJobState, GeminiBatchProvider
+from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
+from app.crud.job import get_batch_job
 from app.crud.stt_evaluations.result import count_results_by_status, update_stt_result
 from app.crud.stt_evaluations.run import get_pending_stt_runs, update_stt_run
 from app.models import EvaluationRun
 from app.models.stt_evaluation import STTResult, STTResultStatus
-from app.services.stt_evaluations.gemini import GeminiClient, GeminiFilesManager
+from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -118,21 +119,22 @@ async def poll_stt_run(
     """
     logger.info(f"[poll_stt_run] Polling run | run_id: {run.id}")
 
-    # Check if run has batch jobs stored
-    if not run.score or "batch_jobs" not in run.score:
+    # Check if run has batch_job_id
+    if not run.batch_job_id:
+        logger.warning(f"[poll_stt_run] Run has no batch_job_id | run_id: {run.id}")
+        return {"status": "failed", "error": "No batch job found"}
+
+    # Get the batch job record
+    batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
+    if not batch_job:
         logger.warning(
-            f"[poll_stt_run] Run has no batch_jobs in score | run_id: {run.id}"
+            f"[poll_stt_run] BatchJob not found | run_id: {run.id}, "
+            f"batch_job_id: {run.batch_job_id}"
         )
-        return {"status": "failed", "error": "No batch jobs found"}
-
-    batch_jobs: dict[str, str] = run.score.get("batch_jobs", {})
-
-    if not batch_jobs:
-        logger.warning(f"[poll_stt_run] Empty batch_jobs | run_id: {run.id}")
-        return {"status": "failed", "error": "Empty batch jobs"}
+        return {"status": "failed", "error": "Batch job not found"}
 
     try:
-        # Initialize Gemini client
+        # Initialize Gemini client and poll batch status
         gemini_client = GeminiClient.from_credentials(
             session=session,
             org_id=org_id,
@@ -140,46 +142,46 @@ async def poll_stt_run(
         )
         batch_provider = GeminiBatchProvider(client=gemini_client.client)
 
-        all_complete = True
-        any_success = False
+        # Poll and update batch job status
+        poll_batch_status(
+            session=session,
+            provider=batch_provider,
+            batch_job=batch_job,
+        )
 
-        for provider, batch_id in batch_jobs.items():
-            status = batch_provider.get_batch_status(batch_id)
-            provider_status = status["provider_status"]
+        # Refresh to get updated status
+        session.refresh(batch_job)
+        provider_status = batch_job.provider_status
 
-            logger.info(
-                f"[poll_stt_run] Batch status | "
-                f"run_id: {run.id}, provider: {provider}, "
-                f"batch_id: {batch_id}, state: {provider_status}"
-            )
+        logger.info(
+            f"[poll_stt_run] Batch status | "
+            f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
+            f"state: {provider_status}"
+        )
 
-            is_terminal = provider_status in TERMINAL_STATES
-
-            if not is_terminal:
-                all_complete = False
-            elif provider_status == BatchJobState.SUCCEEDED.value:
-                any_success = True
-
-        if not all_complete:
+        # Check if batch is complete
+        if provider_status not in TERMINAL_STATES:
             return {"status": "still_processing"}
 
-        # All batches complete - process results
-        if any_success:
+        # Batch is complete - check if succeeded
+        if provider_status == BatchJobState.SUCCEEDED.value:
             await process_completed_stt_batch(
                 session=session,
                 run=run,
-                batch_jobs=batch_jobs,
+                batch_job=batch_job,
                 org_id=org_id,
             )
             return {"status": "completed"}
         else:
+            # Batch failed
+            error_msg = batch_job.error_message or f"Batch {provider_status}"
             update_stt_run(
                 session=session,
                 run_id=run.id,
                 status="failed",
-                error_message="All batch jobs failed",
+                error_message=error_msg,
             )
-            return {"status": "failed", "error": "All batch jobs failed"}
+            return {"status": "failed", "error": error_msg}
 
     except Exception as e:
         logger.error(
@@ -192,7 +194,7 @@ async def poll_stt_run(
 async def process_completed_stt_batch(
     session: Session,
     run: EvaluationRun,
-    batch_jobs: dict[str, str],
+    batch_job: Any,
     org_id: int,
 ) -> None:
     """Process completed Gemini batch - download results and update STT result records.
@@ -200,123 +202,88 @@ async def process_completed_stt_batch(
     Args:
         session: Database session
         run: The evaluation run
-        batch_jobs: Dict of provider -> batch_id
+        batch_job: The BatchJob record
         org_id: Organization ID
     """
     logger.info(
-        f"[process_completed_stt_batch] Processing batch results | run_id: {run.id}"
+        f"[process_completed_stt_batch] Processing batch results | "
+        f"run_id: {run.id}, batch_job_id: {batch_job.id}"
     )
 
-    sample_file_mapping = run.score.get("sample_file_mapping", [])
+    sample_file_mapping = run.score.get("sample_file_mapping", []) if run.score else []
     sample_ids = [item["sample_id"] for item in sample_file_mapping]
 
-    # Initialize Gemini client and providers
+    # Get the STT provider from batch job config
+    stt_provider = batch_job.config.get("stt_provider", "gemini-2.5-pro")
+
+    # Initialize Gemini client
     gemini_client = GeminiClient.from_credentials(
         session=session,
         org_id=org_id,
         project_id=run.project_id,
     )
     batch_provider = GeminiBatchProvider(client=gemini_client.client)
-    files_manager = GeminiFilesManager(gemini_client.client)
 
     processed_count = 0
     failed_count = 0
 
-    for provider, batch_id in batch_jobs.items():
-        try:
-            # Check if batch succeeded before downloading
-            status = batch_provider.get_batch_status(batch_id)
-            if status["provider_status"] != BatchJobState.SUCCEEDED.value:
-                logger.warning(
-                    f"[process_completed_stt_batch] Batch not succeeded | "
-                    f"provider: {provider}, status: {status['provider_status']}"
-                )
-                # Mark results for this provider as failed
-                for item in sample_file_mapping:
-                    sample_id = item["sample_id"]
-                    stmt = select(STTResult).where(
-                        STTResult.evaluation_run_id == run.id,
-                        STTResult.stt_sample_id == sample_id,
-                        STTResult.provider == provider,
-                    )
-                    result_record = session.exec(stmt).one_or_none()
-                    if result_record:
-                        update_stt_result(
-                            session=session,
-                            result_id=result_record.id,
-                            status=STTResultStatus.FAILED.value,
-                            error_message=f"Batch {status['provider_status']}",
-                        )
-                        failed_count += 1
+    try:
+        # Download results using GeminiBatchProvider
+        # Use provider_batch_id to download results
+        results = batch_provider.download_batch_results(batch_job.provider_batch_id)
+
+        logger.info(
+            f"[process_completed_stt_batch] Got batch results | "
+            f"batch_job_id: {batch_job.id}, result_count: {len(results)}"
+        )
+
+        # Match results to samples by index
+        for batch_result in results:
+            custom_id = batch_result["custom_id"]
+            # custom_id is the index as string
+            try:
+                index = int(custom_id)
+            except (ValueError, TypeError):
+                index = results.index(batch_result)
+
+            if index >= len(sample_ids):
                 continue
 
-            # Download results using GeminiBatchProvider
-            results = batch_provider.download_batch_results(batch_id)
+            sample_id = sample_ids[index]
 
-            logger.info(
-                f"[process_completed_stt_batch] Got batch results | "
-                f"provider: {provider}, result_count: {len(results)}"
+            # Find result record for this sample and provider
+            stmt = select(STTResult).where(
+                STTResult.evaluation_run_id == run.id,
+                STTResult.stt_sample_id == sample_id,
+                STTResult.provider == stt_provider,
             )
+            result_record = session.exec(stmt).one_or_none()
 
-            # Match results to samples by index
-            for batch_result in results:
-                custom_id = batch_result["custom_id"]
-                # custom_id is the index as string
-                try:
-                    index = int(custom_id)
-                except (ValueError, TypeError):
-                    index = results.index(batch_result)
+            if result_record:
+                if batch_result.get("response"):
+                    text = batch_result["response"].get("text", "")
+                    update_stt_result(
+                        session=session,
+                        result_id=result_record.id,
+                        transcription=text,
+                        status=STTResultStatus.COMPLETED.value,
+                    )
+                    processed_count += 1
+                else:
+                    update_stt_result(
+                        session=session,
+                        result_id=result_record.id,
+                        status=STTResultStatus.FAILED.value,
+                        error_message=batch_result.get("error", "Unknown error"),
+                    )
+                    failed_count += 1
 
-                if index >= len(sample_ids):
-                    continue
-
-                sample_id = sample_ids[index]
-
-                # Find result record for this sample and provider
-                stmt = select(STTResult).where(
-                    STTResult.evaluation_run_id == run.id,
-                    STTResult.stt_sample_id == sample_id,
-                    STTResult.provider == provider,
-                )
-                result_record = session.exec(stmt).one_or_none()
-
-                if result_record:
-                    if batch_result.get("response"):
-                        text = batch_result["response"].get("text", "")
-                        update_stt_result(
-                            session=session,
-                            result_id=result_record.id,
-                            transcription=text,
-                            status=STTResultStatus.COMPLETED.value,
-                        )
-                        processed_count += 1
-                    else:
-                        update_stt_result(
-                            session=session,
-                            result_id=result_record.id,
-                            status=STTResultStatus.FAILED.value,
-                            error_message=batch_result.get("error", "Unknown error"),
-                        )
-                        failed_count += 1
-
-        except Exception as e:
-            logger.error(
-                f"[process_completed_stt_batch] Failed to process provider results | "
-                f"provider: {provider}, error: {str(e)}"
-            )
-            failed_count += len(sample_file_mapping)
-
-    # Clean up Google Files
-    for item in sample_file_mapping:
-        file_uri = item.get("file_uri")
-        if file_uri:
-            try:
-                files_manager.delete_file(file_uri)
-            except Exception as e:
-                logger.warning(
-                    f"[process_completed_stt_batch] Failed to delete Google file | "
-                    f"file_uri: {file_uri}, error: {str(e)}"
-                )
+    except Exception as e:
+        logger.error(
+            f"[process_completed_stt_batch] Failed to process batch results | "
+            f"batch_job_id: {batch_job.id}, error: {str(e)}"
+        )
+        failed_count += len(sample_file_mapping)
 
     # Update run status
     status_counts = count_results_by_status(session=session, run_id=run.id)
