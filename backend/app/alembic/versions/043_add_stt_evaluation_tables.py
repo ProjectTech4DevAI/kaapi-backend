@@ -325,8 +325,22 @@ def upgrade():
         unique=False,
     )
 
+    # Add unique constraint on evaluation_dataset (name, organization_id, project_id)
+    # Prevents duplicate dataset names within the same organization/project scope
+    op.create_unique_constraint(
+        "uq_evaluation_dataset_name_org_project",
+        "evaluation_dataset",
+        ["name", "organization_id", "project_id"],
+    )
+
 
 def downgrade():
+    # Drop unique constraint on evaluation_dataset
+    op.drop_constraint(
+        "uq_evaluation_dataset_name_org_project",
+        "evaluation_dataset",
+        type_="unique",
+    )
     # Drop stt_result table
     op.drop_index("idx_stt_result_status", table_name="stt_result")
     op.drop_index("idx_stt_result_feedback", table_name="stt_result")
