@@ -1,5 +1,5 @@
 """
-Tests for the Google AI provider (STT).
+Tests for the Google AI provider (STT and TTS).
 """
 
 import pytest
