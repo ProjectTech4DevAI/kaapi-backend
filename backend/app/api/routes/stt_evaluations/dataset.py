@@ -19,7 +19,7 @@ from app.models.stt_evaluation import (
     STTSamplePublic,
 )
 from app.services.stt_evaluations.dataset import upload_stt_dataset
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +31,7 @@ router = APIRouter()
     response_model=APIResponse[STTDatasetPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Create STT dataset",
-    description="""
-Create a new STT evaluation dataset with audio samples.
-
-Each sample requires:
-- **object_store_url**: S3 URL of the audio file (from /evaluations/stt/files/audio endpoint)
-- **ground_truth**: Reference transcription (optional, for WER/CER metrics)
-""",
+    description=load_description("stt_evaluation/create_dataset.md"),
 )
 def create_dataset(
     _session: SessionDep,
@@ -78,7 +72,7 @@ def create_dataset(
     response_model=APIResponse[list[STTDatasetPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List STT datasets",
-    description="List all STT evaluation datasets for the current project.",
+    description=load_description("stt_evaluation/list_datasets.md"),
 )
 def list_datasets(
     _session: SessionDep,
@@ -106,7 +100,7 @@ def list_datasets(
     response_model=APIResponse[STTDatasetWithSamples],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT dataset",
-    description="Get an STT dataset with its samples.",
+    description=load_description("stt_evaluation/get_dataset.md"),
 )
 def get_dataset(
     _session: SessionDep,

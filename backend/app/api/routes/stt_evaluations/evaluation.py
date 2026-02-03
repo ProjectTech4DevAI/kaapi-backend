@@ -23,7 +23,7 @@ from app.models.stt_evaluation import (
     STTEvaluationRunPublic,
     STTEvaluationRunWithResults,
 )
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +35,7 @@ router = APIRouter()
     response_model=APIResponse[STTEvaluationRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Start STT evaluation",
-    description="""
-Start an STT evaluation run on a dataset.
-
-The evaluation will:
-1. Process each audio sample through the specified providers
-2. Generate transcriptions using Gemini Batch API
-3. Store results for human review
-
-**Supported providers:** gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash
-""",
+    description=load_description("stt_evaluation/start_evaluation.md"),
 )
 def start_stt_evaluation(
     _session: SessionDep,
@@ -177,7 +168,7 @@ def start_stt_evaluation(
     response_model=APIResponse[list[STTEvaluationRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List STT evaluation runs",
-    description="List all STT evaluation runs for the current project.",
+    description=load_description("stt_evaluation/list_runs.md"),
 )
 def list_stt_evaluation_runs(
     _session: SessionDep,
@@ -209,7 +200,7 @@ def list_stt_evaluation_runs(
     response_model=APIResponse[STTEvaluationRunWithResults],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT evaluation run",
-    description="Get an STT evaluation run with its results.",
+    description=load_description("stt_evaluation/get_run.md"),
 )
 def get_stt_evaluation_run(
     _session: SessionDep,

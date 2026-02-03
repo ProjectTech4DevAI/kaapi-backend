@@ -14,7 +14,7 @@ from app.models.stt_evaluation import (
     STTFeedbackUpdate,
     STTResultPublic,
 )
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +26,7 @@ router = APIRouter()
     response_model=APIResponse[STTResultPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Update human feedback",
-    description="""
-Update human feedback on an STT transcription result.
-
-**Fields:**
-- **is_correct**: Boolean indicating if the transcription is correct
-- **comment**: Optional feedback comment explaining issues or observations
-""",
+    description=load_description("stt_evaluation/update_feedback.md"),
 )
 def update_result_feedback(
     _session: SessionDep,
@@ -94,7 +88,7 @@ def update_result_feedback(
     response_model=APIResponse[STTResultPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT result",
-    description="Get a single STT transcription result.",
+    description=load_description("stt_evaluation/get_result.md"),
 )
 def get_result(
     _session: SessionDep,
