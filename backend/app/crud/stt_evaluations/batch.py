@@ -176,11 +176,7 @@ def start_stt_evaluation_batch(
             organization_id=org_id,
             project_id=project_id,
             jsonl_data=jsonl_data,
-            config={
-                "display_name": f"stt-eval-{run.id}-{provider}",
-                "model": model,
-                "stt_provider": provider,
-            },
+            config={"model": provider},
         )
 
         logger.info(
