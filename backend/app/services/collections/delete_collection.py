@@ -6,7 +6,6 @@ from asgi_correlation_id import correlation_id
 
 from app.core.db import engine
 from app.crud import CollectionCrud, CollectionJobCrud
-from app.crud.rag import OpenAIAssistantCrud, OpenAIVectorStoreCrud
 from app.models import (
     CollectionJobStatus,
     CollectionJobUpdate,
@@ -15,9 +14,10 @@ from app.models import (
     CollectionIDPublic,
 )
 from app.models.collection import DeletionRequest
-from app.services.collections.helpers import extract_error_message, OPENAI_VECTOR_STORE
+from app.services.collections.helpers import extract_error_message
+from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_low_priority_job
-from app.utils import get_openai_client, send_callback, APIResponse
+from app.utils import send_callback, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,6 @@ def execute_job(
     job_uuid = UUID(job_id)
 
     collection_job = None
-    client = None
 
     try:
         with Session(engine) as session:
@@ -169,20 +168,16 @@ def execute_job(
                 ),
             )
 
-            client = get_openai_client(session, organization_id, project_id)
-
             collection = CollectionCrud(session, project_id).read_one(collection_id)
 
-            # Identify which external service (assistant/vector store) this collection belongs to
-            service = (collection.llm_service_name or "").strip().lower()
-            is_vector = service == OPENAI_VECTOR_STORE
-            llm_service_id = collection.llm_service_id
+            provider = get_llm_provider(
+                session=session,
+                provider=collection.provider,
+                project_id=project_id,
+                organization_id=organization_id,
+            )
 
-            # Delete the corresponding OpenAI resource (vector store or assistant)
-        if is_vector:
-            OpenAIVectorStoreCrud(client).delete(llm_service_id)
-        else:
-            OpenAIAssistantCrud(client).delete(llm_service_id)
+        provider.delete(collection)
 
         with Session(engine) as session:
             CollectionCrud(session, project_id).delete_by_id(collection_id)

@@ -8,9 +8,12 @@ from .assistants import Assistant, AssistantBase, AssistantCreate, AssistantUpda
 
 from .collection import (
     Collection,
+    CreationRequest,
     CollectionPublic,
     CollectionIDPublic,
     CollectionWithDocsPublic,
+    DeletionRequest,
+    ProviderType,
 )
 from .collection_job import (
     CollectionActionType,

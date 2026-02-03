@@ -28,6 +28,7 @@ from app.models.collection import (
     CollectionPublic,
 )
 from app.utils import APIResponse, load_description, validate_callback_url
+from app.services.collections.helpers import ensure_unique_name
 from app.services.collections import (
     create_collection as create_service,
     delete_collection as delete_service,
@@ -87,6 +88,9 @@ def create_collection(
 ):
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
+
+    if request.name:
+        ensure_unique_name(session, current_user.project_.id, request.name)
 
     collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.create(

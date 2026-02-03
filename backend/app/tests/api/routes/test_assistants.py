@@ -6,8 +6,8 @@ import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-
-from app.tests.utils.openai import mock_openai_assistant
+from unittest.mock import patch
+from app.tests.utils.llm_provider import mock_openai_assistant
 from app.tests.utils.utils import get_assistant
 from app.tests.utils.auth import TestAuthContext
 

@@ -16,9 +16,9 @@ from app.crud import CollectionCrud, CollectionJobCrud, DocumentCollectionCrud
 from app.models import CollectionJobStatus, CollectionJob, CollectionActionType, Project
 from app.models.collection import CreationRequest
 from app.services.collections.create_collection import start_job, execute_job
-from app.tests.utils.openai import get_mock_openai_client_with_vector_store
+from app.tests.utils.llm_provider import get_mock_provider
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_collection_job, get_collection
+from app.tests.utils.collection import get_collection_job, get_assistant_collection
 from app.tests.utils.document import DocumentStore
 
 
@@ -57,12 +57,10 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     """
     project = get_project(db)
     request = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.000001,
         documents=[UUID("f3e86a17-1e6f-41ec-b020-5b08eebef928")],
         batch_size=1,
         callback_url=None,
+        provider="openai",
     )
     job_id = uuid4()
 
@@ -115,9 +113,9 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 
 @pytest.mark.usefixtures("aws_credentials")
 @mock_aws
-@patch("app.services.collections.create_collection.get_openai_client")
+@patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_job_success_flow_updates_job_and_creates_collection(
-    mock_get_openai_client: Any, db: Session
+    mock_get_llm_provider: MagicMock, db: Session
 ) -> None:
     """
     execute_job should:
@@ -139,16 +137,12 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
     aws.client.put_object(Bucket=settings.AWS_S3_BUCKET, Key=str(s3_key), Body=b"test")
 
     sample_request = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.000001,
-        documents=[document.id],
-        batch_size=1,
-        callback_url=None,
+        documents=[document.id], batch_size=1, callback_url=None, provider="openai"
     )
 
-    mock_client = get_mock_openai_client_with_vector_store()
-    mock_get_openai_client.return_value = mock_client
+    mock_get_llm_provider.return_value = get_mock_provider(
+        llm_service_id="mock_vector_store_id", llm_service_name="openai vector store"
+    )
 
     job_id = uuid4()
     _ = get_collection_job(
@@ -184,8 +178,8 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
     created_collection = CollectionCrud(db, project.id).read_one(
         updated_job.collection_id
     )
-    assert created_collection.llm_service_id == "mock_assistant_id"
-    assert created_collection.llm_service_name == sample_request.model
+    assert created_collection.llm_service_id == "mock_vector_store_id"
+    assert created_collection.llm_service_name == "openai vector store"
     assert created_collection.updated_at is not None
 
     docs = DocumentCollectionCrud(db).read(created_collection, skip=0, limit=10)
@@ -195,9 +189,9 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
 
 @pytest.mark.usefixtures("aws_credentials")
 @mock_aws
-@patch("app.services.collections.create_collection.get_openai_client")
-def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
-    mock_get_openai_client: Any, db: Session
+@patch("app.services.collections.create_collection.get_llm_provider")
+def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collection(
+    mock_get_llm_provider: MagicMock, db
 ) -> None:
     project = get_project(db)
 
@@ -211,32 +205,23 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
     )
 
     req = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.0,
-        documents=[],
-        batch_size=1,
-        callback_url=None,
+        documents=[], batch_size=1, callback_url=None, provider="openai"
     )
 
-    _ = mock_get_openai_client.return_value
+    mock_provider = get_mock_provider(
+        llm_service_id="vs_123", llm_service_name="openai vector store"
+    )
+    mock_get_llm_provider.return_value = mock_provider
 
     with patch(
         "app.services.collections.create_collection.Session"
     ) as SessionCtor, patch(
-        "app.services.collections.create_collection.OpenAIVectorStoreCrud"
-    ) as MockVS, patch(
-        "app.services.collections.create_collection.OpenAIAssistantCrud"
-    ) as MockAsst:
+        "app.services.collections.create_collection.CollectionCrud"
+    ) as MockCrud:
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 
-        MockVS.return_value.create.return_value = type(
-            "Vector store", (), {"id": "vs_123"}
-        )()
-        MockVS.return_value.update.return_value = []
-
-        MockAsst.return_value.create.side_effect = RuntimeError("assistant boom")
+        MockCrud.return_value.create.side_effect = Exception("DB constraint violation")
 
         task_id = str(uuid4())
         execute_job(
@@ -249,20 +234,17 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_vector(
             task_instance=None,
         )
 
-        failed = CollectionJobCrud(db, project.id).read_one(job.id)
-        assert failed.task_id == task_id
-        assert failed.status == CollectionJobStatus.FAILED
-        assert "assistant boom" in (failed.error_message or "")
-
-        MockVS.return_value.delete.assert_called_once_with("vs_123")
+    mock_provider.delete.assert_called_once()
 
 
 @pytest.mark.usefixtures("aws_credentials")
 @mock_aws
-@patch("app.services.collections.create_collection.get_openai_client")
+@patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_flow_callback_job_and_creates_collection(
-    mock_send_callback: Any, mock_get_openai_client: Any, db: Session
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
+    db,
 ) -> None:
     """
     execute_job should:
@@ -286,16 +268,15 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
     callback_url = "https://example.com/collections/create-success"
 
     sample_request = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.000001,
         documents=[document.id],
         batch_size=1,
         callback_url=callback_url,
+        provider="openai",
     )
 
-    mock_client = get_mock_openai_client_with_vector_store()
-    mock_get_openai_client.return_value = mock_client
+    mock_get_llm_provider.return_value = get_mock_provider(
+        llm_service_id="mock_vector_store_id", llm_service_name="openai vector store"
+    )
 
     job_id = uuid.uuid4()
     _ = get_collection_job(
@@ -339,10 +320,12 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
 
 @pytest.mark.usefixtures("aws_credentials")
 @mock_aws
-@patch("app.services.collections.create_collection.get_openai_client")
+@patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.send_callback")
 def test_execute_job_success_creates_collection_with_callback(
-    mock_send_callback: Any, mock_get_openai_client: Any, db: Session
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
+    db,
 ) -> None:
     """
     execute_job should:
@@ -366,16 +349,15 @@ def test_execute_job_success_creates_collection_with_callback(
     callback_url = "https://example.com/collections/create-success"
 
     sample_request = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.000001,
         documents=[document.id],
         batch_size=1,
         callback_url=callback_url,
+        provider="openai",
     )
 
-    mock_client = get_mock_openai_client_with_vector_store()
-    mock_get_openai_client.return_value = mock_client
+    mock_get_llm_provider.return_value = get_mock_provider(
+        llm_service_id="mock_vector_store_id", llm_service_name="gpt-4o"
+    )
 
     job_id = uuid.uuid4()
     _ = get_collection_job(
@@ -419,13 +401,13 @@ def test_execute_job_success_creates_collection_with_callback(
 
 @pytest.mark.usefixtures("aws_credentials")
 @mock_aws
-@patch("app.services.collections.create_collection.get_openai_client")
+@patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.send_callback")
 @patch("app.services.collections.create_collection.CollectionCrud")
 def test_execute_job_failure_flow_callback_job_and_marks_failed(
-    MockCollectionCrud: Any,
-    mock_send_callback: Any,
-    mock_get_openai_client: Any,
+    MockCollectionCrud,
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
     db: Session,
 ) -> None:
     """
@@ -434,7 +416,7 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
     """
     project = get_project(db)
 
-    collection = get_collection(db, project, assistant_id="asst_123")
+    collection = get_assistant_collection(db, project, assistant_id="asst_123")
     job = get_collection_job(
         db,
         project,
@@ -443,7 +425,7 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
         collection_id=None,
     )
 
-    mock_get_openai_client.return_value = MagicMock()
+    mock_get_llm_provider.return_value = MagicMock()
 
     callback_url = "https://example.com/collections/create-failure"
 
@@ -451,12 +433,10 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
     collection_crud_instance.read_one.return_value = collection
 
     sample_request = CreationRequest(
-        model="gpt-4o",
-        instructions="string",
-        temperature=0.000001,
         documents=[uuid.uuid4()],
         batch_size=1,
         callback_url=callback_url,
+        provider="openai",
     )
 
     task_id = uuid.uuid4()

@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.tests.utils.auth import TestAuthContext
 from app.models import CollectionJobStatus
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_collection
+from app.tests.utils.collection import get_assistant_collection
 
 
 @patch("app.api.routes.collections.delete_service.start_job")
@@ -28,7 +28,7 @@ def test_delete_collection_calls_start_job_and_returns_job(
     - Calls delete_service.start_job with correct arguments
     """
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     resp = client.request(
         "DELETE",
@@ -72,7 +72,7 @@ def test_delete_collection_with_callback_url_passes_it_to_start_job(
     into the DeletionRequest and then into delete_service.start_job.
     """
     project = get_project(db, "Dalgo")
-    collection = get_collection(db, project)
+    collection = get_assistant_collection(db, project)
 
     payload = {
         "callback_url": "https://example.com/collections/delete-callback",
