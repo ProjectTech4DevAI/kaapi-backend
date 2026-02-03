@@ -129,7 +129,6 @@ def get_results_by_run_id(
     Returns:
         tuple[list[STTResultWithSample], int]: Results with samples and total count
     """
-    # Build where clause
     where_clauses = [
         STTResult.evaluation_run_id == run_id,
         STTResult.organization_id == org_id,
@@ -142,11 +141,9 @@ def get_results_by_run_id(
     if status is not None:
         where_clauses.append(STTResult.status == status)
 
-    # Get total count
     count_stmt = select(func.count(STTResult.id)).where(*where_clauses)
     total = session.exec(count_stmt).one()
 
-    # Get results with samples
     statement = (
         select(STTResult, STTSample)
         .join(STTSample, STTResult.stt_sample_id == STTSample.id)
@@ -227,20 +224,17 @@ def update_stt_result(
     if not result:
         return None
 
-    if transcription is not None:
-        result.transcription = transcription
+    updates = {
+        "transcription": transcription,
+        "status": status,
+        "score": score,
+        "provider_metadata": provider_metadata,
+        "error_message": error_message,
+    }
 
-    if status is not None:
-        result.status = status
-
-    if score is not None:
-        result.score = score
-
-    if provider_metadata is not None:
-        result.provider_metadata = provider_metadata
-
-    if error_message is not None:
-        result.error_message = error_message
+    for field, value in updates.items():
+        if value is not None:
+            setattr(result, field, value)
 
     result.updated_at = now()
 

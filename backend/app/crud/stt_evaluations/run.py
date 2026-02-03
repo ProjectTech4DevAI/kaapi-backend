@@ -129,7 +129,6 @@ def list_stt_runs(
     Returns:
         tuple[list[STTEvaluationRunPublic], int]: Runs and total count
     """
-    # Build base where clause
     where_clauses = [
         EvaluationRun.organization_id == org_id,
         EvaluationRun.project_id == project_id,
@@ -142,11 +141,9 @@ def list_stt_runs(
     if status is not None:
         where_clauses.append(EvaluationRun.status == status)
 
-    # Get total count
     count_stmt = select(func.count(EvaluationRun.id)).where(*where_clauses)
     total = session.exec(count_stmt).one()
 
-    # Get runs
     statement = (
         select(EvaluationRun)
         .where(*where_clauses)
@@ -157,7 +154,6 @@ def list_stt_runs(
 
     runs = session.exec(statement).all()
 
-    # Convert to public models
     result = [
         STTEvaluationRunPublic(
             id=run.id,
@@ -215,23 +211,18 @@ def update_stt_run(
     if not run:
         return None
 
-    if status is not None:
-        run.status = status
+    updates = {
+        "status": status,
+        "processed_samples": processed_samples,
+        "score": score,
+        "error_message": error_message,
+        "object_store_url": object_store_url,
+        "batch_job_id": batch_job_id,
+    }
 
-    if processed_samples is not None:
-        run.processed_samples = processed_samples
-
-    if score is not None:
-        run.score = score
-
-    if error_message is not None:
-        run.error_message = error_message
-
-    if object_store_url is not None:
-        run.object_store_url = object_store_url
-
-    if batch_job_id is not None:
-        run.batch_job_id = batch_job_id
+    for field, value in updates.items():
+        if value is not None:
+            setattr(run, field, value)
 
     run.updated_at = now()
 
