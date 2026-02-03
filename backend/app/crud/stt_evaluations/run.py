@@ -239,38 +239,6 @@ def update_stt_run(
     return run
 
 
-def increment_processed_samples(
-    *,
-    session: Session,
-    run_id: int,
-    increment: int = 1,
-) -> EvaluationRun | None:
-    """Increment the processed_samples counter for a run.
-
-    Args:
-        session: Database session
-        run_id: Run ID
-        increment: Amount to increment by
-
-    Returns:
-        EvaluationRun | None: Updated run
-    """
-    statement = select(EvaluationRun).where(EvaluationRun.id == run_id)
-    run = session.exec(statement).one_or_none()
-
-    if not run:
-        return None
-
-    run.processed_samples = (run.processed_samples or 0) + increment
-    run.updated_at = now()
-
-    session.add(run)
-    session.commit()
-    session.refresh(run)
-
-    return run
-
-
 def get_pending_stt_runs(
     *,
     session: Session,
