@@ -2,7 +2,6 @@
 Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
-
 import logging
 from typing import Any, Dict, Optional
 from celery.result import AsyncResult
