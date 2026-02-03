@@ -100,36 +100,16 @@ def start_stt_evaluation_batch(
     storage = get_cloud_storage(session=session, project_id=project_id)
 
     # Generate signed URLs for audio files
-    sample_url_mapping: list[dict[str, Any]] = []
     signed_urls: list[str] = []
+    sample_keys: list[str] = []
 
     for sample in samples:
         try:
-            # Get signed URL for S3 audio file
-            # Use longer expiry for batch processing (up to 24 hours)
             signed_url = storage.get_signed_url(
                 sample.object_store_url, expires_in=signed_url_expires_in
             )
-
-            # Find the result record for this sample
-            result_for_sample = next(
-                (r for r in result_refs if r["stt_sample_id"] == sample.id),
-                None,
-            )
-
-            sample_url_mapping.append(
-                {
-                    "sample_id": sample.id,
-                    "result_id": result_for_sample["id"] if result_for_sample else None,
-                    "signed_url": signed_url,
-                }
-            )
             signed_urls.append(signed_url)
-
-            logger.info(
-                f"[start_stt_evaluation_batch] Generated signed URL | "
-                f"sample_id: {sample.id}"
-            )
+            sample_keys.append(str(sample.id))
 
         except Exception as e:
             logger.error(
@@ -146,11 +126,8 @@ def start_stt_evaluation_batch(
                         error_message=f"Failed to generate signed URL: {str(e)}",
                     )
 
-    if not sample_url_mapping:
+    if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
-
-    # Extract sample IDs as keys for batch request tracking
-    sample_keys = [str(item["sample_id"]) for item in sample_url_mapping]
 
     # Build batch requests in Gemini JSONL format (with keys embedded)
     jsonl_data = create_stt_batch_requests(
@@ -201,7 +178,6 @@ def start_stt_evaluation_batch(
         raise Exception(f"Batch submission failed: {str(e)}")
 
     # Link batch job to the evaluation run
-    # Note: sample_file_mapping is no longer needed as we use batch request keys
     update_stt_run(
         session=session,
         run_id=run.id,
@@ -212,7 +188,7 @@ def start_stt_evaluation_batch(
     logger.info(
         f"[start_stt_evaluation_batch] Batch submission complete | "
         f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
-        f"sample_count: {len(sample_url_mapping)}"
+        f"sample_count: {len(signed_urls)}"
     )
 
     return {
@@ -220,5 +196,5 @@ def start_stt_evaluation_batch(
         "run_id": run.id,
         "batch_job_id": batch_job.id,
         "provider_batch_id": batch_job.provider_batch_id,
-        "sample_count": len(sample_url_mapping),
+        "sample_count": len(signed_urls),
     }
