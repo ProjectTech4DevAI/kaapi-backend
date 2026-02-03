@@ -123,59 +123,47 @@ def _extract_metadata_from_url(url: str) -> dict[str, Any]:
 def create_stt_samples(
     *,
     session: Session,
-    dataset_id: int,
-    org_id: int,
-    project_id: int,
+    dataset: EvaluationDataset,
     samples: list[STTSampleCreate],
-    language: str | None = None,
 ) -> list[STTSample]:
     """Create STT samples for a dataset.
 
     Args:
         session: Database session
-        dataset_id: Parent dataset ID
-        org_id: Organization ID
-        project_id: Project ID
+        dataset: Parent dataset (must have sample_count in dataset_metadata)
         samples: List of sample data
-        language: Language code from parent dataset
 
     Returns:
         list[STTSample]: Created samples
     """
     logger.info(
         f"[create_stt_samples] Creating STT samples | "
-        f"dataset_id: {dataset_id}, sample_count: {len(samples)}, language: {language}"
+        f"dataset_id: {dataset.id}, sample_count: {len(samples)}"
     )
 
-    created_samples = []
-
-    for sample_data in samples:
-        # Extract metadata from URL
-        sample_metadata = _extract_metadata_from_url(sample_data.object_store_url)
-
-        sample = STTSample(
+    timestamp = now()
+    created_samples = [
+        STTSample(
             object_store_url=sample_data.object_store_url,
             ground_truth=sample_data.ground_truth,
-            language=language,
-            sample_metadata=sample_metadata,
-            dataset_id=dataset_id,
-            organization_id=org_id,
-            project_id=project_id,
-            inserted_at=now(),
-            updated_at=now(),
+            language=dataset.language,
+            sample_metadata=_extract_metadata_from_url(sample_data.object_store_url),
+            dataset_id=dataset.id,
+            organization_id=dataset.organization_id,
+            project_id=dataset.project_id,
+            inserted_at=timestamp,
+            updated_at=timestamp,
         )
-        session.add(sample)
-        created_samples.append(sample)
+        for sample_data in samples
+    ]
 
+    session.add_all(created_samples)
+    session.flush()
     session.commit()
-
-    # Refresh all samples to get IDs
-    for sample in created_samples:
-        session.refresh(sample)
 
     logger.info(
         f"[create_stt_samples] STT samples created | "
-        f"dataset_id: {dataset_id}, created_count: {len(created_samples)}"
+        f"dataset_id: {dataset.id}, created_count: {len(created_samples)}"
     )
 
     return created_samples
@@ -229,22 +217,18 @@ def list_stt_datasets(
     Returns:
         tuple[list[STTDatasetPublic], int]: Datasets and total count
     """
-    # Get total count
-    count_stmt = select(func.count(EvaluationDataset.id)).where(
+    base_filter = (
         EvaluationDataset.organization_id == org_id,
         EvaluationDataset.project_id == project_id,
         EvaluationDataset.type == EvaluationType.STT.value,
     )
+
+    count_stmt = select(func.count(EvaluationDataset.id)).where(*base_filter)
     total = session.exec(count_stmt).one()
 
-    # Get datasets
     statement = (
         select(EvaluationDataset)
-        .where(
-            EvaluationDataset.organization_id == org_id,
-            EvaluationDataset.project_id == project_id,
-            EvaluationDataset.type == EvaluationType.STT.value,
-        )
+        .where(*base_filter)
         .order_by(EvaluationDataset.inserted_at.desc())
         .offset(offset)
         .limit(limit)
@@ -252,46 +236,25 @@ def list_stt_datasets(
 
     datasets = session.exec(statement).all()
 
-    # Convert to public models with sample counts
-    result = []
-    for dataset in datasets:
-        sample_count = get_sample_count_for_dataset(
-            session=session, dataset_id=dataset.id
+    result = [
+        STTDatasetPublic(
+            id=dataset.id,
+            name=dataset.name,
+            description=dataset.description,
+            type=dataset.type,
+            language=dataset.language,
+            object_store_url=dataset.object_store_url,
+            dataset_metadata=dataset.dataset_metadata,
+            sample_count=(dataset.dataset_metadata or {}).get("sample_count", 0),
+            organization_id=dataset.organization_id,
+            project_id=dataset.project_id,
+            inserted_at=dataset.inserted_at,
+            updated_at=dataset.updated_at,
         )
-        result.append(
-            STTDatasetPublic(
-                id=dataset.id,
-                name=dataset.name,
-                description=dataset.description,
-                type=dataset.type,
-                language=dataset.language,
-                object_store_url=dataset.object_store_url,
-                dataset_metadata=dataset.dataset_metadata,
-                sample_count=sample_count,
-                organization_id=dataset.organization_id,
-                project_id=dataset.project_id,
-                inserted_at=dataset.inserted_at,
-                updated_at=dataset.updated_at,
-            )
-        )
+        for dataset in datasets
+    ]
 
     return result, total
-
-
-def get_sample_count_for_dataset(*, session: Session, dataset_id: int) -> int:
-    """Get the number of samples in a dataset.
-
-    Args:
-        session: Database session
-        dataset_id: Dataset ID
-
-    Returns:
-        int: Sample count
-    """
-    statement = select(func.count(STTSample.id)).where(
-        STTSample.dataset_id == dataset_id
-    )
-    return session.exec(statement).one()
 
 
 def get_samples_by_dataset_id(

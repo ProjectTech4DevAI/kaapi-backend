@@ -10,7 +10,6 @@ from app.crud.stt_evaluations import (
     get_stt_dataset_by_id,
     list_stt_datasets,
     get_samples_by_dataset_id,
-    get_sample_count_for_dataset,
 )
 from app.models.stt_evaluation import (
     STTDatasetCreate,
@@ -150,9 +149,7 @@ def get_dataset(
             for s in sample_records
         ]
     else:
-        samples_total = get_sample_count_for_dataset(
-            session=_session, dataset_id=dataset_id
-        )
+        samples_total = (dataset.dataset_metadata or {}).get("sample_count", 0)
 
     return APIResponse.success_response(
         data=STTDatasetWithSamples(

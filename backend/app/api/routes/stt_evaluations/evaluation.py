@@ -13,7 +13,6 @@ from app.crud.stt_evaluations import (
     get_stt_dataset_by_id,
     get_stt_run_by_id,
     list_stt_runs,
-    get_sample_count_for_dataset,
     start_stt_evaluation_batch,
     update_stt_run,
 )
@@ -60,10 +59,7 @@ def start_stt_evaluation(
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Get sample count for total items
-    sample_count = get_sample_count_for_dataset(
-        session=_session, dataset_id=run_create.dataset_id
-    )
+    sample_count = (dataset.dataset_metadata or {}).get("sample_count", 0)
 
     if sample_count == 0:
         raise HTTPException(status_code=400, detail="Dataset has no samples")

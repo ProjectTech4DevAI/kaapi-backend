@@ -91,11 +91,8 @@ def upload_stt_dataset(
     # Step 4: Create sample records
     created_samples = create_stt_samples(
         session=session,
-        dataset_id=dataset.id,
-        org_id=organization_id,
-        project_id=project_id,
+        dataset=dataset,
         samples=samples,
-        language=language,
     )
 
     logger.info(
