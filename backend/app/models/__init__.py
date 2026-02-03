@@ -34,7 +34,7 @@ from .config import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
-    ConfigVersionCreatePartial,
+    ConfigVersionUpdatePartial,
     ConfigVersionPublic,
     ConfigVersionItems,
 )

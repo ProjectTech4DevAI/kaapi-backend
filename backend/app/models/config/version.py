@@ -96,13 +96,13 @@ class ConfigVersionCreate(ConfigVersionBase):
     )
 
 
-class ConfigVersionCreatePartial(SQLModel):
+class ConfigVersionUpdatePartial(SQLModel):
     """
     Partial update model for creating a new config version.
 
     Only the fields that need to change should be provided.
-    Fields like 'provider' and 'type' are inherited from the existing config
-    and cannot be changed.
+    Fields like 'type'(text, stt,tts) are inherited from the existing config
+    and cannot be changed,
     """
 
     config_blob: dict[str, Any] = Field(

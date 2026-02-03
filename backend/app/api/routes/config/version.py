@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Path
 from app.api.deps import SessionDep, AuthContextDep
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models import (
-    ConfigVersionCreatePartial,
+    ConfigVersionUpdatePartial,
     ConfigVersionPublic,
     Message,
     ConfigVersionItems,
@@ -24,7 +24,7 @@ router = APIRouter()
 )
 def create_version(
     config_id: UUID,
-    version_create: ConfigVersionCreatePartial,
+    version_create: ConfigVersionUpdatePartial,
     current_user: AuthContextDep,
     session: SessionDep,
 ):

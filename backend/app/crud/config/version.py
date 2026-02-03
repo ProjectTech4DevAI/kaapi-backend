@@ -13,7 +13,7 @@ from app.models import (
     Config,
     ConfigVersion,
     ConfigVersionCreate,
-    ConfigVersionCreatePartial,
+    ConfigVersionUpdatePartial,
     ConfigVersionItems,
 )
 from app.models.llm.request import ConfigBlob
@@ -76,7 +76,7 @@ class ConfigVersionCrud:
             )
 
     def create_from_partial_or_raise(
-        self, version_create: ConfigVersionCreatePartial
+        self, version_create: ConfigVersionUpdatePartial
     ) -> ConfigVersion:
         """
         Create a new version from a partial config update.
@@ -84,7 +84,7 @@ class ConfigVersionCrud:
         Fetches the latest version, merges the partial config with it,
         validates the result, and creates the new version.
 
-        Fields like 'provider' and 'type' are inherited from the existing config
+        Fields 'type' is inherited from the existing config
         and cannot be changed.
         """
         self._config_exists_or_raise(self.config_id)
