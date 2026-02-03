@@ -300,7 +300,6 @@ async def process_completed_stt_batch(
         session=session,
         run_id=run.id,
         status=final_status,
-        processed_samples=completed + failed,
         error_message=error_message,
     )
 

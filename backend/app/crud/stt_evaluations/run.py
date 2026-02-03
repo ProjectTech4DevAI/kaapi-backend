@@ -58,7 +58,6 @@ def create_stt_run(
         providers=providers,
         status="pending",
         total_items=total_items,
-        processed_samples=0,
         organization_id=org_id,
         project_id=project_id,
         inserted_at=now(),
@@ -165,7 +164,6 @@ def list_stt_runs(
             dataset_id=run.dataset_id,
             status=run.status,
             total_items=run.total_items,
-            processed_samples=run.processed_samples,
             score=run.score,
             error_message=run.error_message,
             organization_id=run.organization_id,
@@ -184,7 +182,6 @@ def update_stt_run(
     session: Session,
     run_id: int,
     status: str | None = None,
-    processed_samples: int | None = None,
     score: dict[str, Any] | None = None,
     error_message: str | None = None,
     object_store_url: str | None = None,
@@ -196,7 +193,6 @@ def update_stt_run(
         session: Database session
         run_id: Run ID
         status: New status
-        processed_samples: Number of processed samples
         score: Score data
         error_message: Error message
         object_store_url: URL to stored results
@@ -213,7 +209,6 @@ def update_stt_run(
 
     updates = {
         "status": status,
-        "processed_samples": processed_samples,
         "score": score,
         "error_message": error_message,
         "object_store_url": object_store_url,
@@ -231,9 +226,7 @@ def update_stt_run(
     session.refresh(run)
 
     logger.info(
-        f"[update_stt_run] STT run updated | "
-        f"run_id: {run_id}, status: {run.status}, "
-        f"processed_samples: {run.processed_samples}"
+        f"[update_stt_run] STT run updated | run_id: {run_id}, status: {run.status}"
     )
 
     return run

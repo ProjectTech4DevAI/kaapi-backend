@@ -40,7 +40,7 @@ def upgrade():
         ),
     )
 
-    # Add type, language, providers, and processed_samples columns to evaluation_run table
+    # Add type, language, and providers columns to evaluation_run table
     op.add_column(
         "evaluation_run",
         sa.Column(
@@ -69,17 +69,6 @@ def upgrade():
             comment="List of STT/TTS providers used (e.g., ['gemini-2.5-pro'])",
         ),
     )
-    op.add_column(
-        "evaluation_run",
-        sa.Column(
-            "processed_samples",
-            sa.Integer(),
-            nullable=False,
-            server_default=sa.text("0"),
-            comment="Number of samples processed so far",
-        ),
-    )
-
     # Create stt_sample table
     op.create_table(
         "stt_sample",
@@ -334,7 +323,6 @@ def downgrade():
     op.drop_table("stt_sample")
 
     # Remove columns from evaluation_run table
-    op.drop_column("evaluation_run", "processed_samples")
     op.drop_column("evaluation_run", "providers")
     op.drop_column("evaluation_run", "language")
     op.drop_column("evaluation_run", "type")

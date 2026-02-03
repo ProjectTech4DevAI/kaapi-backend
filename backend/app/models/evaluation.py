@@ -226,11 +226,6 @@ class EvaluationRun(SQLModel, table=True):
         ),
         description="List of STT/TTS providers used",
     )
-    processed_samples: int = SQLField(
-        default=0,
-        description="Number of samples processed so far",
-        sa_column_kwargs={"comment": "Number of samples processed so far"},
-    )
 
     config_id: UUID = SQLField(
         foreign_key="config.id",

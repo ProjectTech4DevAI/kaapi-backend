@@ -350,7 +350,6 @@ class STTEvaluationRunPublic(BaseModel):
     dataset_id: int
     status: str
     total_items: int
-    processed_samples: int
     score: dict[str, Any] | None
     error_message: str | None
     organization_id: int
