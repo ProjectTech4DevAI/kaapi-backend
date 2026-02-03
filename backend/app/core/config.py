@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
+    KAAPI_GUARDRAILS_AUTH: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
