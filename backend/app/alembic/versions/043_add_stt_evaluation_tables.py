@@ -211,13 +211,6 @@ def upgrade():
             comment="Human feedback comment",
         ),
         sa.Column(
-            "provider_metadata",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            server_default=sa.text("'{}'::jsonb"),
-            comment="Provider-specific response metadata (tokens, latency, etc.)",
-        ),
-        sa.Column(
             "error_message",
             sa.Text(),
             nullable=True,

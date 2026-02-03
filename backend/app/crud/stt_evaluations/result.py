@@ -179,7 +179,6 @@ def get_results_by_run_id(
             score=result.score,
             is_correct=result.is_correct,
             comment=result.comment,
-            provider_metadata=result.provider_metadata,
             error_message=result.error_message,
             stt_sample_id=result.stt_sample_id,
             evaluation_run_id=result.evaluation_run_id,
@@ -201,7 +200,6 @@ def update_stt_result(
     transcription: str | None = None,
     status: str | None = None,
     score: dict[str, Any] | None = None,
-    provider_metadata: dict[str, Any] | None = None,
     error_message: str | None = None,
 ) -> STTResult | None:
     """Update an STT result with transcription data.
@@ -212,7 +210,6 @@ def update_stt_result(
         transcription: Generated transcription
         status: New status
         score: Evaluation metrics (e.g., wer, cer)
-        provider_metadata: Provider response metadata
         error_message: Error message if failed
 
     Returns:
@@ -228,7 +225,6 @@ def update_stt_result(
         "transcription": transcription,
         "status": status,
         "score": score,
-        "provider_metadata": provider_metadata,
         "error_message": error_message,
     }
 

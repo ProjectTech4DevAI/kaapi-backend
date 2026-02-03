@@ -174,16 +174,6 @@ class STTResult(SQLModel, table=True):
         description="Human feedback comment",
     )
 
-    provider_metadata: dict[str, Any] | None = SQLField(
-        default_factory=dict,
-        sa_column=Column(
-            JSONB,
-            nullable=True,
-            comment="Provider-specific response metadata (tokens, latency, etc.)",
-        ),
-        description="Provider-specific response metadata",
-    )
-
     error_message: str | None = SQLField(
         default=None,
         sa_column=Column(
@@ -270,7 +260,6 @@ class STTResultPublic(BaseModel):
     score: dict[str, Any] | None
     is_correct: bool | None
     comment: str | None
-    provider_metadata: dict[str, Any] | None
     error_message: str | None
     stt_sample_id: int
     evaluation_run_id: int
