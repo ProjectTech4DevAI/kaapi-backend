@@ -10,55 +10,12 @@ from app.core.util import now
 from app.models.stt_evaluation import (
     STTResult,
     STTResultStatus,
-    STTResultPublic,
     STTSample,
     STTSamplePublic,
     STTResultWithSample,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def create_stt_result(
-    *,
-    session: Session,
-    stt_sample_id: int,
-    evaluation_run_id: int,
-    org_id: int,
-    project_id: int,
-    provider: str,
-    status: str = STTResultStatus.PENDING.value,
-) -> STTResult:
-    """Create a single STT result record.
-
-    Args:
-        session: Database session
-        stt_sample_id: Sample ID
-        evaluation_run_id: Run ID
-        org_id: Organization ID
-        project_id: Project ID
-        provider: Provider name
-        status: Initial status
-
-    Returns:
-        STTResult: Created result
-    """
-    result = STTResult(
-        stt_sample_id=stt_sample_id,
-        evaluation_run_id=evaluation_run_id,
-        organization_id=org_id,
-        project_id=project_id,
-        provider=provider,
-        status=status,
-        inserted_at=now(),
-        updated_at=now(),
-    )
-
-    session.add(result)
-    session.commit()
-    session.refresh(result)
-
-    return result
 
 
 def create_stt_results(
@@ -91,28 +48,25 @@ def create_stt_results(
         f"provider_count: {len(providers)}"
     )
 
-    results = []
+    timestamp = now()
+    results = [
+        STTResult(
+            stt_sample_id=sample.id,
+            evaluation_run_id=evaluation_run_id,
+            organization_id=org_id,
+            project_id=project_id,
+            provider=provider,
+            status=STTResultStatus.PENDING.value,
+            inserted_at=timestamp,
+            updated_at=timestamp,
+        )
+        for sample in samples
+        for provider in providers
+    ]
 
-    for sample in samples:
-        for provider in providers:
-            result = STTResult(
-                stt_sample_id=sample.id,
-                evaluation_run_id=evaluation_run_id,
-                organization_id=org_id,
-                project_id=project_id,
-                provider=provider,
-                status=STTResultStatus.PENDING.value,
-                inserted_at=now(),
-                updated_at=now(),
-            )
-            session.add(result)
-            results.append(result)
-
+    session.add_all(results)
+    session.flush()
     session.commit()
-
-    # Refresh to get IDs
-    for result in results:
-        session.refresh(result)
 
     logger.info(
         f"[create_stt_results] STT results created | "
@@ -225,8 +179,7 @@ def get_results_by_run_id(
             transcription=result.transcription,
             provider=result.provider,
             status=result.status,
-            wer=result.wer,
-            cer=result.cer,
+            score=result.score,
             is_correct=result.is_correct,
             comment=result.comment,
             provider_metadata=result.provider_metadata,
@@ -250,8 +203,7 @@ def update_stt_result(
     result_id: int,
     transcription: str | None = None,
     status: str | None = None,
-    wer: float | None = None,
-    cer: float | None = None,
+    score: dict[str, Any] | None = None,
     provider_metadata: dict[str, Any] | None = None,
     error_message: str | None = None,
 ) -> STTResult | None:
@@ -262,8 +214,7 @@ def update_stt_result(
         result_id: Result ID
         transcription: Generated transcription
         status: New status
-        wer: Word Error Rate
-        cer: Character Error Rate
+        score: Evaluation metrics (e.g., wer, cer)
         provider_metadata: Provider response metadata
         error_message: Error message if failed
 
@@ -282,11 +233,8 @@ def update_stt_result(
     if status is not None:
         result.status = status
 
-    if wer is not None:
-        result.wer = wer
-
-    if cer is not None:
-        result.cer = cer
+    if score is not None:
+        result.score = score
 
     if provider_metadata is not None:
         result.provider_metadata = provider_metadata
