@@ -245,7 +245,6 @@ def list_stt_datasets(
             language=dataset.language,
             object_store_url=dataset.object_store_url,
             dataset_metadata=dataset.dataset_metadata,
-            sample_count=(dataset.dataset_metadata or {}).get("sample_count", 0),
             organization_id=dataset.organization_id,
             project_id=dataset.project_id,
             inserted_at=dataset.inserted_at,

@@ -121,7 +121,7 @@ def get_dataset(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     samples = []
-    samples_total = 0
+    samples_total = (dataset.dataset_metadata or {}).get("sample_count", 0)
 
     if include_samples:
         sample_records, samples_total = get_samples_by_dataset_id(
@@ -148,8 +148,6 @@ def get_dataset(
             )
             for s in sample_records
         ]
-    else:
-        samples_total = (dataset.dataset_metadata or {}).get("sample_count", 0)
 
     return APIResponse.success_response(
         data=STTDatasetWithSamples(
@@ -160,7 +158,6 @@ def get_dataset(
             language=dataset.language,
             object_store_url=dataset.object_store_url,
             dataset_metadata=dataset.dataset_metadata,
-            sample_count=samples_total,
             organization_id=dataset.organization_id,
             project_id=dataset.project_id,
             inserted_at=dataset.inserted_at,
