@@ -19,30 +19,12 @@ from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 
-# Default transcription prompt
 DEFAULT_TRANSCRIPTION_PROMPT = (
     "Generate a verbatim transcript of the speech in this audio file. "
     "Return only the transcription text without any formatting, timestamps, or metadata."
 )
 
-# Provider name to Gemini model mapping
-PROVIDER_MODEL_MAPPING: dict[str, str] = {
-    "gemini-2.5-pro": "models/gemini-2.5-pro",
-    "gemini-2.5-flash": "models/gemini-2.5-flash",
-    "gemini-2.0-flash": "models/gemini-2.0-flash",
-}
-
-
-def _get_model_for_provider(provider: str) -> str:
-    """Map provider name to Gemini model.
-
-    Args:
-        provider: Provider name
-
-    Returns:
-        str: Gemini model name
-    """
-    return PROVIDER_MODEL_MAPPING.get(provider, f"models/{provider}")
+DEFAULT_MODEL = "gemini-2.5-pro"
 
 
 def start_stt_evaluation_batch(
@@ -66,8 +48,7 @@ def start_stt_evaluation_batch(
     6. Updates run status to "processing"
 
     Note: Sample IDs are passed as keys in the batch request and stored in
-    batch_job.config["request_keys"]. This allows direct mapping of results
-    without storing sample_file_mapping in run.score.
+    batch_job.config["request_keys"].
 
     Args:
         session: Database session
@@ -129,20 +110,16 @@ def start_stt_evaluation_batch(
     if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
 
-    # Build batch requests in Gemini JSONL format (with keys embedded)
     jsonl_data = create_stt_batch_requests(
         signed_urls=signed_urls,
         prompt=DEFAULT_TRANSCRIPTION_PROMPT,
         keys=sample_keys,
     )
 
-    # Use first provider (STT evaluations use one provider per run)
-    providers = run.providers or ["gemini-2.5-pro"]
-    provider = providers[0]
-    model = _get_model_for_provider(provider)
+    model = (run.providers or [DEFAULT_MODEL])[0]
+    model_path = f"models/{model}"
 
-    # Create batch job using the standard batch operations
-    batch_provider = GeminiBatchProvider(client=gemini_client.client, model=model)
+    batch_provider = GeminiBatchProvider(client=gemini_client.client, model=model_path)
 
     try:
         batch_job = start_batch_job(
@@ -153,19 +130,18 @@ def start_stt_evaluation_batch(
             organization_id=org_id,
             project_id=project_id,
             jsonl_data=jsonl_data,
-            config={"model": provider},
+            config={"model": model},
         )
 
         logger.info(
             f"[start_stt_evaluation_batch] Batch job created | "
-            f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
-            f"provider_batch_id: {batch_job.provider_batch_id}"
+            f"run_id: {run.id}, batch_job_id: {batch_job.id}"
         )
 
     except Exception as e:
         logger.error(
             f"[start_stt_evaluation_batch] Failed to submit batch | "
-            f"provider: {provider}, error: {str(e)}"
+            f"model: {model}, error: {str(e)}"
         )
         # Update all results as failed
         for ref in result_refs:
