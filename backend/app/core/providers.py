@@ -36,6 +36,17 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
 
 
 def validate_provider(provider: str) -> Provider:
+    """Validate that the provider name is supported and return the Provider enum.
+
+    Args:
+        provider: The provider name to validate
+
+    Returns:
+        Provider: The validated provider enum
+
+    Raises:
+        ValueError: If the provider is not supported
+    """
     try:
         return Provider(provider.lower())
     except ValueError:

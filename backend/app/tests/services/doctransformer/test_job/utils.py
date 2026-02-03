@@ -4,7 +4,6 @@ Base test class for DocTransform service tests.
 This module contains DocTransformTestBase with common AWS S3 setup and utilities.
 All fixtures are automatically available from conftest.py in the same directory.
 """
-
 from pathlib import Path
 from urllib.parse import urlparse
 

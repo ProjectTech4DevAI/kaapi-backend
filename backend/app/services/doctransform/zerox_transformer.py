@@ -38,7 +38,7 @@ class ZeroxTransformer(Transformer):
                 f"ZeroxTransformer timed out for {input_path} (model={self.model})"
             )
             raise RuntimeError(
-                f"ZeroxTransformer PDF extraction timed out after {10 * 60} seconds for {input_path}"
+                f"ZeroxTransformer PDF extraction timed out after {10*60} seconds for {input_path}"
             )
         except Exception as e:
             logger.error(
