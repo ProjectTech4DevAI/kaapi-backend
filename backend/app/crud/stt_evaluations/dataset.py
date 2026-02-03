@@ -302,38 +302,3 @@ def get_samples_by_dataset_id(
     samples = session.exec(statement).all()
 
     return list(samples), total
-
-
-def update_dataset_metadata(
-    *,
-    session: Session,
-    dataset_id: int,
-    metadata: dict[str, Any],
-) -> EvaluationDataset | None:
-    """Update dataset metadata.
-
-    Args:
-        session: Database session
-        dataset_id: Dataset ID
-        metadata: Metadata to merge
-
-    Returns:
-        EvaluationDataset | None: Updated dataset
-    """
-    statement = select(EvaluationDataset).where(EvaluationDataset.id == dataset_id)
-    dataset = session.exec(statement).one_or_none()
-
-    if not dataset:
-        return None
-
-    # Merge metadata
-    current_metadata = dataset.dataset_metadata or {}
-    current_metadata.update(metadata)
-    dataset.dataset_metadata = current_metadata
-    dataset.updated_at = now()
-
-    session.add(dataset)
-    session.commit()
-    session.refresh(dataset)
-
-    return dataset
