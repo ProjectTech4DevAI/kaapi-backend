@@ -204,16 +204,10 @@ def upgrade():
             comment="Result status: pending, completed, failed",
         ),
         sa.Column(
-            "wer",
-            sa.Float(),
+            "score",
+            postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
-            comment="Word Error Rate (null for Phase 1)",
-        ),
-        sa.Column(
-            "cer",
-            sa.Float(),
-            nullable=True,
-            comment="Character Error Rate (null for Phase 1)",
+            comment="Evaluation metrics (e.g., wer, cer, mer, wil) - extensible for future metrics",
         ),
         sa.Column(
             "is_correct",

@@ -34,9 +34,6 @@ class STTResultStatus(str, Enum):
     FAILED = "failed"
 
 
-# Database Models
-
-
 class STTSample(SQLModel, table=True):
     """Database table for STT audio samples within a dataset."""
 
@@ -48,13 +45,11 @@ class STTSample(SQLModel, table=True):
         sa_column_kwargs={"comment": "Unique identifier for the STT sample"},
     )
 
-    # Audio file reference
     object_store_url: str = SQLField(
         description="S3 URL of the audio file",
         sa_column_kwargs={"comment": "S3 URL of the audio file"},
     )
 
-    # Language (can be different per sample within a dataset)
     language: str | None = SQLField(
         default=None,
         max_length=10,
@@ -62,7 +57,6 @@ class STTSample(SQLModel, table=True):
         sa_column_kwargs={"comment": "ISO 639-1 language code for this sample"},
     )
 
-    # Ground truth transcription (optional, for evaluation)
     ground_truth: str | None = SQLField(
         default=None,
         sa_column=Column(
@@ -73,7 +67,6 @@ class STTSample(SQLModel, table=True):
         description="Reference transcription for comparison",
     )
 
-    # Audio metadata
     sample_metadata: dict[str, Any] | None = SQLField(
         default_factory=dict,
         sa_column=Column(
@@ -84,7 +77,6 @@ class STTSample(SQLModel, table=True):
         description="Additional metadata about the audio sample",
     )
 
-    # Foreign keys
     dataset_id: int = SQLField(
         foreign_key="evaluation_dataset.id",
         nullable=False,
@@ -104,7 +96,6 @@ class STTSample(SQLModel, table=True):
         sa_column_kwargs={"comment": "Reference to the project"},
     )
 
-    # Timestamps
     inserted_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
@@ -116,7 +107,6 @@ class STTSample(SQLModel, table=True):
         sa_column_kwargs={"comment": "Timestamp when the sample was last updated"},
     )
 
-    # Relationships
     dataset: "EvaluationDataset" = Relationship()
     organization: "Organization" = Relationship()
     project: "Project" = Relationship()
@@ -134,7 +124,6 @@ class STTResult(SQLModel, table=True):
         sa_column_kwargs={"comment": "Unique identifier for the STT result"},
     )
 
-    # Transcription output
     transcription: str | None = SQLField(
         default=None,
         sa_column=Column(
@@ -145,14 +134,12 @@ class STTResult(SQLModel, table=True):
         description="Generated transcription from STT provider",
     )
 
-    # Provider info
     provider: str = SQLField(
         max_length=50,
         description="STT provider used (e.g., gemini-2.5-pro)",
         sa_column_kwargs={"comment": "STT provider used (e.g., gemini-2.5-pro)"},
     )
 
-    # Status
     status: str = SQLField(
         default=STTResultStatus.PENDING.value,
         max_length=20,
@@ -160,19 +147,16 @@ class STTResult(SQLModel, table=True):
         sa_column_kwargs={"comment": "Result status: pending, completed, failed"},
     )
 
-    # Metrics (null for Phase 1)
-    wer: float | None = SQLField(
+    score: dict[str, Any] | None = SQLField(
         default=None,
-        description="Word Error Rate (null for Phase 1)",
-        sa_column_kwargs={"comment": "Word Error Rate (null for Phase 1)"},
-    )
-    cer: float | None = SQLField(
-        default=None,
-        description="Character Error Rate (null for Phase 1)",
-        sa_column_kwargs={"comment": "Character Error Rate (null for Phase 1)"},
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Evaluation metrics (e.g., wer, cer, mer, wil) - extensible for future metrics",
+        ),
+        description="Evaluation metrics such as WER, CER, etc.",
     )
 
-    # Human feedback
     is_correct: bool | None = SQLField(
         default=None,
         description="Human feedback: transcription correctness",
@@ -190,7 +174,6 @@ class STTResult(SQLModel, table=True):
         description="Human feedback comment",
     )
 
-    # Provider response metadata
     provider_metadata: dict[str, Any] | None = SQLField(
         default_factory=dict,
         sa_column=Column(
@@ -201,7 +184,6 @@ class STTResult(SQLModel, table=True):
         description="Provider-specific response metadata",
     )
 
-    # Error message if failed
     error_message: str | None = SQLField(
         default=None,
         sa_column=Column(
@@ -212,7 +194,6 @@ class STTResult(SQLModel, table=True):
         description="Error message if transcription failed",
     )
 
-    # Foreign keys
     stt_sample_id: int = SQLField(
         foreign_key="stt_sample.id",
         nullable=False,
@@ -238,7 +219,6 @@ class STTResult(SQLModel, table=True):
         sa_column_kwargs={"comment": "Reference to the project"},
     )
 
-    # Timestamps
     inserted_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
@@ -250,14 +230,10 @@ class STTResult(SQLModel, table=True):
         sa_column_kwargs={"comment": "Timestamp when the result was last updated"},
     )
 
-    # Relationships
     sample: "STTSample" = Relationship(back_populates="results")
     evaluation_run: "EvaluationRun" = Relationship()
     organization: "Organization" = Relationship()
     project: "Project" = Relationship()
-
-
-# Pydantic Models for API
 
 
 class STTSampleCreate(BaseModel):
@@ -291,8 +267,7 @@ class STTResultPublic(BaseModel):
     transcription: str | None
     provider: str
     status: str
-    wer: float | None
-    cer: float | None
+    score: dict[str, Any] | None
     is_correct: bool | None
     comment: str | None
     provider_metadata: dict[str, Any] | None
