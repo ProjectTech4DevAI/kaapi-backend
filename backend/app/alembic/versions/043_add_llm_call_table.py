@@ -1,7 +1,7 @@
 """add_llm_call_table
 
-Revision ID: 042
-Revises: 041
+Revision ID: 043
+Revises: 042
 Create Date: 2026-01-26 15:20:23.873332
 
 """
@@ -11,8 +11,8 @@ import sqlmodel.sql.sqltypes
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "042"
-down_revision = "041"
+revision = "043"
+down_revision = "042"
 branch_labels = None
 depends_on = None
 
@@ -158,6 +158,14 @@ def upgrade():
         existing_comment="Name of the LLM service provider",
         existing_nullable=False,
     )
+    op.alter_column(
+        "llm_call",
+        "provider",
+        existing_type=sa.VARCHAR(),
+        comment="AI provider as sent by user (e.g openai, -native, google)",
+        existing_comment="AI provider: openai, google, anthropic",
+        existing_nullable=False,
+    )
     # ### end Alembic commands ###
 
 
@@ -169,6 +177,14 @@ def downgrade():
         existing_type=sa.VARCHAR(),
         comment="Name of the LLM service provider",
         existing_comment="Name of the LLM service",
+        existing_nullable=False,
+    )
+    op.alter_column(
+        "llm_call",
+        "provider",
+        existing_type=sa.VARCHAR(),
+        comment="AI provider: openai, google, anthropic",
+        existing_comment="AI provider as sent by user (e.g openai, -native, google)",
         existing_nullable=False,
     )
     op.drop_index(
