@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 from uuid import UUID
 from sqlmodel import Session, select
-import datetime
 from app.core.util import now
 import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
@@ -187,7 +186,7 @@ def update_llm_call_response(
     if conversation_id is not None:
         db_llm_call.conversation_id = conversation_id
 
-    db_llm_call.updated_at = datetime.datetime.now()
+    db_llm_call.updated_at = now()
 
     session.add(db_llm_call)
     session.commit()
