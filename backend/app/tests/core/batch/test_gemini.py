@@ -552,3 +552,65 @@ class TestExtractTextFromResponseDict:
         }
         text = GeminiBatchProvider._extract_text_from_response_dict(response)
         assert text == "FirstSecond"
+
+
+class TestExtractTextFromResponse:
+    """Test cases for _extract_text_from_response static method (object version)."""
+
+    def test_extract_direct_text_attribute(self):
+        """Test extracting text when response has .text attribute."""
+        response = MagicMock()
+        response.text = "Hello from text attribute"
+        text = GeminiBatchProvider._extract_text_from_response(response)
+        assert text == "Hello from text attribute"
+
+    def test_extract_from_candidates_structure(self):
+        """Test extracting text from candidates when no .text attribute."""
+        # Create mock without .text attribute
+        response = MagicMock(spec=[])
+        del response.text  # Ensure no text attribute
+
+        # Create candidates structure
+        part1 = MagicMock()
+        part1.text = "Part 1"
+        part2 = MagicMock()
+        part2.text = " Part 2"
+
+        content = MagicMock()
+        content.parts = [part1, part2]
+
+        candidate = MagicMock()
+        candidate.content = content
+
+        response.candidates = [candidate]
+
+        text = GeminiBatchProvider._extract_text_from_response(response)
+        assert text == "Part 1 Part 2"
+
+    def test_extract_empty_response_no_text_no_candidates(self):
+        """Test extracting text from response with no text and no candidates."""
+        response = MagicMock(spec=[])
+        del response.text
+        del response.candidates
+
+        text = GeminiBatchProvider._extract_text_from_response(response)
+        assert text == ""
+
+
+class TestCreateSttBatchRequestsMimeTypeFallback:
+    """Test cases for create_stt_batch_requests MIME type fallback."""
+
+    def test_unknown_mime_type_defaults_to_audio_mpeg(self):
+        """Test that unknown file extensions default to audio/mpeg."""
+        # URL with no recognizable audio extension
+        signed_urls = ["https://bucket.s3.amazonaws.com/audio.unknown?signature=xyz"]
+        prompt = "Transcribe this audio."
+
+        with patch("app.core.batch.gemini.get_mime_from_url", return_value=None):
+            requests = create_stt_batch_requests(signed_urls, prompt)
+
+        assert len(requests) == 1
+        # Check that the request was created with default mime type
+        # parts[0] is text prompt, parts[1] is file_data
+        file_data = requests[0]["request"]["contents"][0]["parts"][1]["file_data"]
+        assert file_data["mime_type"] == "audio/mpeg"
