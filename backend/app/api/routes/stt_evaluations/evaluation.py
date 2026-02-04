@@ -78,12 +78,12 @@ def start_stt_evaluation(
     )
 
     # Get samples for the dataset
-    samples, _ = get_samples_by_dataset_id(
+    samples = get_samples_by_dataset_id(
         session=_session,
         dataset_id=run_create.dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        limit=10000,  # Get all samples
+        limit=10000,
     )
 
     # Create result records for each sample and provider

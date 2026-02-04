@@ -235,7 +235,7 @@ def update_stt_run(
 def get_pending_stt_runs(
     *,
     session: Session,
-    org_id: int | None = None,
+    org_id: int,
 ) -> list[EvaluationRun]:
     """Get all pending STT evaluation runs that are ready for polling.
 
@@ -244,20 +244,16 @@ def get_pending_stt_runs(
 
     Args:
         session: Database session
-        org_id: Optional filter by organization
+        org_id: Organization ID
 
     Returns:
         list[EvaluationRun]: Pending runs ready for polling
     """
-    where_clauses = [
+    statement = select(EvaluationRun).where(
         EvaluationRun.type == EvaluationType.STT.value,
         EvaluationRun.status == "processing",
         EvaluationRun.batch_job_id.is_not(None),
-    ]
-
-    if org_id is not None:
-        where_clauses.append(EvaluationRun.organization_id == org_id)
-
-    statement = select(EvaluationRun).where(*where_clauses)
+        EvaluationRun.organization_id == org_id,
+    )
 
     return list(session.exec(statement).all())

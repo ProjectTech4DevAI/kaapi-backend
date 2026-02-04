@@ -124,7 +124,7 @@ def get_dataset(
     samples_total = (dataset.dataset_metadata or {}).get("sample_count", 0)
 
     if include_samples:
-        sample_records, samples_total = get_samples_by_dataset_id(
+        sample_records = get_samples_by_dataset_id(
             session=_session,
             dataset_id=dataset_id,
             org_id=auth_context.organization_.id,

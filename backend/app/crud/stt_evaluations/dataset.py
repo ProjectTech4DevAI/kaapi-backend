@@ -264,7 +264,7 @@ def get_samples_by_dataset_id(
     project_id: int,
     limit: int = 100,
     offset: int = 0,
-) -> tuple[list[STTSample], int]:
+) -> list[STTSample]:
     """Get samples for a dataset.
 
     Args:
@@ -276,17 +276,8 @@ def get_samples_by_dataset_id(
         offset: Number of results to skip
 
     Returns:
-        tuple[list[STTSample], int]: Samples and total count
+        list[STTSample]: Samples
     """
-    # Get total count
-    count_stmt = select(func.count(STTSample.id)).where(
-        STTSample.dataset_id == dataset_id,
-        STTSample.organization_id == org_id,
-        STTSample.project_id == project_id,
-    )
-    total = session.exec(count_stmt).one()
-
-    # Get samples
     statement = (
         select(STTSample)
         .where(
@@ -299,6 +290,4 @@ def get_samples_by_dataset_id(
         .limit(limit)
     )
 
-    samples = session.exec(statement).all()
-
-    return list(samples), total
+    return list(session.exec(statement).all())
