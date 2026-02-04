@@ -57,14 +57,14 @@ class TestGeminiBatchProvider:
         }
 
         # Mock file upload
-        mock_genai_client.files.upload.return_value = MagicMock(
-            name="files/uploaded-123"
-        )
+        mock_uploaded_file = MagicMock()
+        mock_uploaded_file.name = "files/uploaded-123"
+        mock_genai_client.files.upload.return_value = mock_uploaded_file
 
         # Mock batch creation
         mock_batch_job = MagicMock()
         mock_batch_job.name = "batches/batch-xyz789"
-        mock_batch_job.state = MagicMock(name="JOB_STATE_PENDING")
+        mock_batch_job.state.name = "JOB_STATE_PENDING"
         mock_genai_client.batches.create.return_value = mock_batch_job
 
         with patch("tempfile.NamedTemporaryFile"):
@@ -81,13 +81,13 @@ class TestGeminiBatchProvider:
         jsonl_data = [{"key": "req-1", "request": {}}]
         config = {}
 
-        mock_genai_client.files.upload.return_value = MagicMock(
-            name="files/uploaded-456"
-        )
+        mock_uploaded_file = MagicMock()
+        mock_uploaded_file.name = "files/uploaded-456"
+        mock_genai_client.files.upload.return_value = mock_uploaded_file
 
         mock_batch_job = MagicMock()
         mock_batch_job.name = "batches/batch-123"
-        mock_batch_job.state = MagicMock(name="JOB_STATE_PENDING")
+        mock_batch_job.state.name = "JOB_STATE_PENDING"
         mock_genai_client.batches.create.return_value = mock_batch_job
 
         with patch("tempfile.NamedTemporaryFile"):
@@ -116,9 +116,9 @@ class TestGeminiBatchProvider:
         jsonl_data = [{"key": "req-1", "request": {}}]
         config = {"display_name": "test"}
 
-        mock_genai_client.files.upload.return_value = MagicMock(
-            name="files/uploaded-123"
-        )
+        mock_uploaded_file = MagicMock()
+        mock_uploaded_file.name = "files/uploaded-123"
+        mock_genai_client.files.upload.return_value = mock_uploaded_file
         mock_genai_client.batches.create.side_effect = Exception(
             "Batch creation failed"
         )
@@ -135,7 +135,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_PENDING")
+        mock_batch_job.state.name = "JOB_STATE_PENDING"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         result = provider.get_batch_status(batch_id)
@@ -150,7 +150,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         result = provider.get_batch_status(batch_id)
@@ -163,7 +163,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_FAILED")
+        mock_batch_job.state.name = "JOB_STATE_FAILED"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         result = provider.get_batch_status(batch_id)
@@ -177,7 +177,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_CANCELLED")
+        mock_batch_job.state.name = "JOB_STATE_CANCELLED"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         result = provider.get_batch_status(batch_id)
@@ -190,7 +190,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_EXPIRED")
+        mock_batch_job.state.name = "JOB_STATE_EXPIRED"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         result = provider.get_batch_status(batch_id)
@@ -214,7 +214,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_batch_job.dest = MagicMock()
         mock_batch_job.dest.file_name = "files/output-123"
         mock_genai_client.batches.get.return_value = mock_batch_job
@@ -244,7 +244,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_batch_job.dest = MagicMock()
         mock_batch_job.dest.file_name = "files/output-123"
         mock_genai_client.batches.get.return_value = mock_batch_job
@@ -262,7 +262,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_batch_job.dest = MagicMock()
         mock_batch_job.dest.file_name = "files/output-123"
         mock_genai_client.batches.get.return_value = mock_batch_job
@@ -290,7 +290,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_RUNNING")
+        mock_batch_job.state.name = "JOB_STATE_RUNNING"
         mock_genai_client.batches.get.return_value = mock_batch_job
 
         with pytest.raises(ValueError) as exc_info:
@@ -303,7 +303,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_batch_job.dest = MagicMock()
         mock_batch_job.dest.file_name = "files/output-123"
         mock_genai_client.batches.get.return_value = mock_batch_job
@@ -327,7 +327,7 @@ class TestGeminiBatchProvider:
         batch_id = "batches/batch-xyz789"
 
         mock_batch_job = MagicMock()
-        mock_batch_job.state = MagicMock(name="JOB_STATE_SUCCEEDED")
+        mock_batch_job.state.name = "JOB_STATE_SUCCEEDED"
         mock_batch_job.dest = None
         mock_genai_client.batches.get.return_value = mock_batch_job
 
@@ -476,10 +476,11 @@ class TestCreateSTTBatchRequests:
             requests[1]["request"]["contents"][0]["parts"][1]["file_data"]["mime_type"]
             == "audio/x-wav"
         )
-        assert (
-            requests[2]["request"]["contents"][0]["parts"][1]["file_data"]["mime_type"]
-            == "audio/mp4"
-        )
+        # .m4a can return different MIME types depending on the system
+        m4a_mime = requests[2]["request"]["contents"][0]["parts"][1]["file_data"][
+            "mime_type"
+        ]
+        assert m4a_mime in ("audio/mp4", "audio/mp4a-latm", "audio/x-m4a")
 
     def test_create_requests_key_length_mismatch(self):
         """Test that mismatched keys and URLs raise error."""

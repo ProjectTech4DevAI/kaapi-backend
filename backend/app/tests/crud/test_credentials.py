@@ -208,7 +208,7 @@ def test_invalid_provider(db: Session) -> None:
     """Test handling of invalid provider names."""
     project = create_test_project(db)
 
-    credentials_data = {"gemini": {"api_key": "test-key"}}
+    credentials_data = {"invalid_provider": {"api_key": "test-key"}}
     credentials_create = CredsCreate(
         is_active=True,
         credential=credentials_data,

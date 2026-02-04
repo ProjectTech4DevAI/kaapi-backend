@@ -379,6 +379,7 @@ class TestSTTDatasetGet:
         user_api_key: TestAuthContext,
     ) -> None:
         """Test getting an STT dataset without including samples."""
+        # Create dataset with sample_count in metadata set correctly
         dataset = create_test_stt_dataset(
             db=db,
             organization_id=user_api_key.organization_id,
@@ -391,6 +392,10 @@ class TestSTTDatasetGet:
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
         )
+        # Update dataset metadata to reflect the sample count
+        dataset.dataset_metadata = {"sample_count": 1, "has_ground_truth_count": 0}
+        db.add(dataset)
+        db.commit()
 
         response = client.get(
             f"/api/v1/evaluations/stt/datasets/{dataset.id}",
