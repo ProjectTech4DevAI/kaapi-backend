@@ -19,10 +19,10 @@ from app.services.llm.providers.base import BaseProvider
 
 logger = logging.getLogger(__name__)
 
-SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
-if not SARVAM_API_KEY:
-    SARVAM_API_KEY = "sk_lmsvfc31_On1bxqwDAqYZoijqBfblr3yf"  # for testing only
-    print("Requested Action: Please set SARVAM_API_KEY , Going ahead with a trail key for testing purposes.")
+# SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+#if not SARVAM_API_KEY:
+ #   SARVAM_API_KEY = "sk_lmsvfc31_On1bxqwDAqYZoijqBfblr3yf"  # for testing only
+  #  print("Requested Action: Please set SARVAM_API_KEY , Going ahead with a trail key for testing purposes.")
  
 
 

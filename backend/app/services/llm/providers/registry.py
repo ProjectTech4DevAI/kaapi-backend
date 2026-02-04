@@ -9,6 +9,7 @@ from app.crud import get_provider_credential
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.gai import GoogleAIProvider
+from app.services.llm.providers.sai import SarvamAIProvider
 
 from google.genai.types import GenerateContentConfig
 
@@ -34,10 +35,12 @@ class LLMProvider:
     # Future constants for native providers:
     # CLAUDE_NATIVE = "claude-native"
     GOOGLE_NATIVE = "google-native"
+    SARVAMAI_NATIVE = "sarvamai-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI_NATIVE: OpenAIProvider,
         OPENAI: OpenAIProvider,
+        SARVAMAI_NATIVE: SarvamAIProvider,
         # Future native providers:
         # CLAUDE_NATIVE: ClaudeProvider,
         GOOGLE_NATIVE: GoogleAIProvider,
@@ -96,6 +99,7 @@ def get_llm_provider(
 
 # ad hoc testing code
 if __name__ == "__main__":
+    print("helllooooo Nan..."  )
     # 1. Simulate environment/credentials
     GEMINI_KEY = os.getenv("GEMINI_API_KEY")
     if not GEMINI_KEY:
@@ -130,6 +134,9 @@ if __name__ == "__main__":
         input="/Users/prajna/Desktop/personal/projects/software/Syspin_Hackathon_api_server/wav_files/1253534463206645.wav"  # Ensure this file exists in your directory
     )
 
+
+
+
     # 4. Execution
     print("Executing STT...")
     result, error = instance.execute(completion_config=test_config, query=test_query)
@@ -138,3 +145,5 @@ if __name__ == "__main__":
         print(f"Error: {error}")
     else:
         print(f"Result: {result}")
+
+

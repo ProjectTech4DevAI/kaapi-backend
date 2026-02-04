@@ -13,6 +13,7 @@ class Provider(str, Enum):
     AWS = "aws"
     LANGFUSE = "langfuse"
     GOOGLE = "google"
+    SARVAMAI = "sarvamai"
 
 
 @dataclass
@@ -32,6 +33,7 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
         required_fields=["secret_key", "public_key", "host"]
     ),
     Provider.GOOGLE: ProviderConfig(required_fields=["api_key"]),
+    Provider.SARVAMAI: ProviderConfig(required_fields=["api_key"]),
 }
 
 
