@@ -97,7 +97,7 @@ class TestSTTDatasetCreate:
         assert data["description"] == "Test STT dataset"
         assert data["type"] == "stt"
         assert data["language"] == "en"
-        assert data["sample_count"] == 2
+        assert data["dataset_metadata"]["sample_count"] == 2
         assert data["dataset_metadata"]["has_ground_truth_count"] == 1
 
     def test_create_stt_dataset_minimal(
@@ -125,7 +125,7 @@ class TestSTTDatasetCreate:
         assert data["name"] == "minimal_stt_dataset"
         assert data["description"] is None
         assert data["language"] is None
-        assert data["sample_count"] == 1
+        assert data["dataset_metadata"]["sample_count"] == 1
 
     def test_create_stt_dataset_empty_samples(
         self,
@@ -409,7 +409,7 @@ class TestSTTDatasetGet:
 
         assert data["id"] == dataset.id
         assert data["samples"] == []
-        assert data["sample_count"] == 1  # Count should still be correct
+        assert data["dataset_metadata"]["sample_count"] == 1
 
 
 class TestSTTEvaluationRun:

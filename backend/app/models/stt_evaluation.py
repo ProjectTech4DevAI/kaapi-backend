@@ -291,7 +291,6 @@ class STTDatasetPublic(BaseModel):
     language: str | None
     object_store_url: str | None
     dataset_metadata: dict[str, Any]
-    sample_count: int = 0
     organization_id: int
     project_id: int
     inserted_at: datetime
@@ -310,8 +309,9 @@ class STTEvaluationRunCreate(BaseModel):
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the STT dataset to evaluate")
     providers: list[str] = Field(
-        default=["gemini-2.5-pro"],
+        default_factory=lambda: ["gemini-2.5-pro"],
         description="List of STT providers to use",
+        min_length=1,
     )
     language: str | None = Field(None, description="Override language for all samples")
 

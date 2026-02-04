@@ -55,7 +55,7 @@ class GeminiBatchProvider(BatchProvider):
 
     DEFAULT_MODEL = "models/gemini-2.5-pro"
 
-    def __init__(self, client: genai.Client, model: str | None = None):
+    def __init__(self, client: genai.Client, model: str | None = None) -> None:
         """Initialize the Gemini batch provider.
 
         Args:

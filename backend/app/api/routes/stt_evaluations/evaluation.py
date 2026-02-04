@@ -83,7 +83,6 @@ def start_stt_evaluation(
         dataset_id=run_create.dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        limit=10000,
     )
 
     # Create result records for each sample and provider

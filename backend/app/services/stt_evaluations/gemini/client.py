@@ -21,7 +21,7 @@ class GeminiClientError(Exception):
 class GeminiClient:
     """Wrapper for Google GenAI client with credential management."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str) -> None:
         """Initialize Gemini client with API key.
 
         Args:
