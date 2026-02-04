@@ -2,20 +2,15 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
-from sqlmodel import Relationship, SQLModel
+from sqlmodel import SQLModel
 
 from app.core.util import now
-
-if TYPE_CHECKING:
-    from .evaluation import EvaluationDataset, EvaluationRun
-    from .organization import Organization
-    from .project import Project
 
 
 class EvaluationType(str, Enum):
@@ -106,11 +101,6 @@ class STTSample(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the sample was last updated"},
     )
-
-    dataset: "EvaluationDataset" = Relationship()
-    organization: "Organization" = Relationship()
-    project: "Project" = Relationship()
-    results: list["STTResult"] = Relationship(back_populates="sample")
 
 
 class STTResult(SQLModel, table=True):
@@ -219,11 +209,6 @@ class STTResult(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the result was last updated"},
     )
-
-    sample: "STTSample" = Relationship(back_populates="results")
-    evaluation_run: "EvaluationRun" = Relationship()
-    organization: "Organization" = Relationship()
-    project: "Project" = Relationship()
 
 
 class STTSampleCreate(BaseModel):
