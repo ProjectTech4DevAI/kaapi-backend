@@ -4,13 +4,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
 
 from app.core.util import now
+
+# Supported STT providers for evaluation
+SUPPORTED_STT_PROVIDERS = ["gemini-2.5-pro"]
 
 
 class EvaluationType(str, Enum):
@@ -310,6 +313,20 @@ class STTEvaluationRunCreate(BaseModel):
         description="List of STT providers to use",
     )
     language: str | None = Field(None, description="Override language for all samples")
+
+    @field_validator("providers")
+    @classmethod
+    def validate_providers(cls, v: list[str]) -> list[str]:
+        """Validate that all providers are supported."""
+        if not v:
+            raise ValueError("At least one provider must be specified")
+        unsupported = [p for p in v if p not in SUPPORTED_STT_PROVIDERS]
+        if unsupported:
+            raise ValueError(
+                f"Unsupported provider(s): {', '.join(unsupported)}. "
+                f"Supported providers are: {', '.join(SUPPORTED_STT_PROVIDERS)}"
+            )
+        return v
 
 
 class STTEvaluationRunPublic(BaseModel):
