@@ -9,6 +9,7 @@ from app.api.permissions import Permission, require_permission
 from app.crud.stt_evaluations import (
     create_stt_run,
     create_stt_results,
+    get_results_by_run_id,
     get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     get_stt_run_by_id,
@@ -16,7 +17,6 @@ from app.crud.stt_evaluations import (
     start_stt_evaluation_batch,
     update_stt_run,
 )
-from app.crud.stt_evaluations.result import get_results_by_run_id
 from app.models.stt_evaluation import (
     STTEvaluationRunCreate,
     STTEvaluationRunPublic,
@@ -96,19 +96,14 @@ def start_stt_evaluation(
         providers=run_create.providers,
     )
 
-    # Extract result data for batch processing
-    result_refs = [
-        {"id": r.id, "stt_sample_id": r.stt_sample_id, "provider": r.provider}
-        for r in results
-    ]
+    sample_to_result = {r.stt_sample_id: r.id for r in results}
 
-    # Submit batch synchronously
     try:
         batch_result = start_stt_evaluation_batch(
             session=_session,
             run=run,
             samples=samples,
-            result_refs=result_refs,
+            sample_to_result=sample_to_result,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
         )

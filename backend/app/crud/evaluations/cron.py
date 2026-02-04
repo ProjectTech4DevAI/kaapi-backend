@@ -12,7 +12,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
-from app.crud.stt_evaluations.cron import poll_all_pending_stt_evaluations
+from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
 from app.models import Organization
 
 logger = logging.getLogger(__name__)

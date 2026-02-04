@@ -19,9 +19,7 @@ from .result import (
     create_stt_results,
     get_stt_result_by_id,
     get_results_by_run_id,
-    update_stt_result,
     update_human_feedback,
-    count_results_by_status,
 )
 
 __all__ = [
@@ -44,7 +42,5 @@ __all__ = [
     "create_stt_results",
     "get_stt_result_by_id",
     "get_results_by_run_id",
-    "update_stt_result",
     "update_human_feedback",
-    "count_results_by_status",
 ]
