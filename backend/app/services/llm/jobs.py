@@ -13,7 +13,7 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
-from app.services.llm.guardrail import call_guardrails
+from app.services.llm.guardrails import call_guardrails
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback

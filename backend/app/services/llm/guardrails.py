@@ -22,9 +22,6 @@ def call_guardrails(
 
     Returns:
         JSON response from the guardrails service with validation results.
-
-    Raises:
-        httpx.HTTPError: If the request fails.
     """
     payload = {
         "request_id": str(job_id),

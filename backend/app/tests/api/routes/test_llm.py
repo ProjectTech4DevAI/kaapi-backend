@@ -6,7 +6,6 @@ from app.models import LLMCallRequest
 from app.models.llm.request import (
     QueryParams,
     LLMCallConfig,
-    CompletionConfig,
     ConfigBlob,
     KaapiLLMParams,
     KaapiCompletionConfig,
@@ -174,7 +173,7 @@ def test_llm_call_success_with_guardrails(
 
     with (
         patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
-        patch("app.services.llm.guardrail.call_guardrails") as mock_guardrails,
+        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
     ):
         mock_start_job.return_value = "test-task-id"
 
@@ -229,7 +228,7 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
 
     with (
         patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
-        patch("app.services.llm.guardrail.call_guardrails") as mock_guardrails,
+        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
     ):
         mock_start_job.return_value = "test-task-id"
 
