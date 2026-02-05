@@ -91,7 +91,7 @@ class TestGoogleAIProviderSTT:
 
         assert error is None
         assert result is not None
-        assert result.response.output.text == "Hello world"
+        assert result.response.output.content.value == "Hello world"
         assert result.response.model == "gemini-2.5-pro"
         assert result.response.provider == "google-native"
         assert result.usage.input_tokens == 50
@@ -246,4 +246,4 @@ class TestGoogleAIProviderSTT:
 
         assert error is None
         assert result is not None
-        assert result.response.output.text == "Valid transcription"
+        assert result.response.output.content.value == "Valid transcription"

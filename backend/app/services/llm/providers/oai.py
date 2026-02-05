@@ -9,9 +9,10 @@ from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
     QueryParams,
-    LLMOutput,
     LLMResponse,
     Usage,
+    TextOutput,
+    TextContent,
 )
 from app.services.llm.providers.base import BaseProvider
 
@@ -77,7 +78,7 @@ class OpenAIProvider(BaseProvider):
                     conversation_id=conversation_id,
                     model=response.model,
                     provider=completion_config.provider,
-                    output=LLMOutput(text=response.output_text),
+                    output=TextOutput(content=TextContent(value=response.output_text)),
                 ),
                 usage=Usage(
                     input_tokens=response.usage.input_tokens,

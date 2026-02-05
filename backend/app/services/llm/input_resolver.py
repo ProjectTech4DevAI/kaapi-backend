@@ -3,15 +3,11 @@ import logging
 import tempfile
 from pathlib import Path
 
-import requests
-
 from app.models.llm.request import (
     TextInput,
-    AudioBase64Input,
-    AudioUrlInput,
+    AudioInput,
     QueryInput,
 )
-from app.utils import validate_callback_url
 
 
 logger = logging.getLogger(__name__)
@@ -39,21 +35,20 @@ def resolve_input(query_input: QueryInput) -> tuple[str, str | None]:
     """Resolve discriminated union input to content string.
 
     Args:
-        query_input: The input from QueryParams (TextInput, AudioBase64Input, or AudioUrlInput)
+        query_input: The input from QueryParams (TextInput or AudioInput)
 
     Returns:
-        (content_string, None) on success - for text returns content, for audio returns temp file path
+        (content_string, None) on success - for text returns content value, for audio returns temp file path
         ("", error_message) on failure
     """
     try:
         if isinstance(query_input, TextInput):
-            return query_input.content, None
+            return query_input.content.value, None
 
-        elif isinstance(query_input, AudioBase64Input):
-            return resolve_audio_base64(query_input.data, query_input.mime_type)
-
-        elif isinstance(query_input, AudioUrlInput):
-            return resolve_audio_url(str(query_input.url))
+        elif isinstance(query_input, AudioInput):
+            # AudioInput content is base64-encoded audio
+            mime_type = query_input.content.mime_type or "audio/wav"
+            return resolve_audio_base64(query_input.content.value, mime_type)
 
         else:
             return "", f"Unknown input type: {type(query_input)}"
@@ -82,48 +77,6 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
         return temp_path, None
     except Exception as e:
         return "", f"Failed to write audio to temp file: {str(e)}"
-
-
-def resolve_audio_url(url: str) -> tuple[str, str | None]:
-    """Fetch audio from URL and write to temp file. Returns (file_path, error).
-
-    Implements SSRF protection by:
-    - Validating URL is HTTPS-only
-    - Blocking private/link-local IP addresses
-    - Blocking cloud metadata endpoints
-    - Disabling redirects
-    """
-    # Validate URL to prevent SSRF attacks
-    try:
-        validate_callback_url(url)
-    except ValueError as e:
-        logger.error(f"[resolve_audio_url] Invalid audio URL: {e}")
-        return "", f"Invalid audio URL: {str(e)}"
-
-    try:
-        response = requests.get(url, timeout=60, allow_redirects=False)
-        response.raise_for_status()
-    except requests.Timeout:
-        return "", f"Timeout fetching audio from URL: {url}"
-    except requests.HTTPError as e:
-        return "", f"HTTP error fetching audio: {e.response.status_code}"
-    except Exception as e:
-        return "", f"Failed to fetch audio from URL: {str(e)}"
-
-    content_type = response.headers.get("content-type", "audio/wav")
-    ext = get_file_extension(content_type.split(";")[0].strip())
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, prefix="audio_"
-        ) as tmp:
-            tmp.write(response.content)
-            temp_path = tmp.name
-
-        logger.info(f"[resolve_audio_url] Wrote audio to temp file: {temp_path}")
-        return temp_path, None
-    except Exception as e:
-        return "", f"Failed to write fetched audio to temp file: {str(e)}"
 
 
 def cleanup_temp_file(file_path: str) -> None:

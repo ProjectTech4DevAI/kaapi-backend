@@ -17,36 +17,31 @@ import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
 from app.models.llm.request import (
     TextInput,
-    AudioBase64Input,
-    AudioUrlInput,
+    AudioInput,
     QueryInput,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def serialize_input(query_input: QueryInput) -> str:
+def serialize_input(query_input: QueryInput | str) -> str:
     """Serialize query input for database storage.
 
-    For text: stores the actual content
-    For audio_base64: stores metadata (type, mime_type, size)
-    For audio_url: stores the URL
+    For text: stores the actual content value
+    For audio: stores metadata (type, mime_type, size)
     """
-    if isinstance(query_input, TextInput):
-        return query_input.content
-    elif isinstance(query_input, AudioBase64Input):
+    # Handle string input (should be normalized by QueryParams validator, but be defensive)
+    if isinstance(query_input, str):
+        return query_input
+    elif isinstance(query_input, TextInput):
+        return query_input.content.value
+    elif isinstance(query_input, AudioInput):
         return json.dumps(
             {
-                "type": "audio_base64",
-                "mime_type": query_input.mime_type,
-                "size_bytes": len(query_input.data),
-            }
-        )
-    elif isinstance(query_input, AudioUrlInput):
-        return json.dumps(
-            {
-                "type": "audio_url",
-                "url": str(query_input.url),
+                "type": "audio",
+                "format": query_input.content.format,
+                "mime_type": query_input.content.mime_type,
+                "size_bytes": len(query_input.content.value),
             }
         )
     else:

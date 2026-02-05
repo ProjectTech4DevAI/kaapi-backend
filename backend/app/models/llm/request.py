@@ -43,7 +43,7 @@ class STTLLMParams(SQLModel):
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
-        description="Can take multiple response_format like text, json, verbose_json.",
+        description="Currently supports text type",
     )
     temperature: float | None = Field(
         default=0.2,
@@ -57,35 +57,40 @@ class TTSLLMParams(SQLModel):
     voice: str
     language: str
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
-    speed: float | None = Field(None, ge=0.25, le=4.0)
 
 
 KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams]
 
 
 # Input type models for discriminated union
-class TextInput(SQLModel):
-    type: Literal["text"] = "text"
-    content: str = Field(..., min_length=1, description="Text content")
+class TextContent(SQLModel):
+    format: Literal["text"] = "text"
+    value: str = Field(..., description="Text content")
 
 
-class AudioBase64Input(SQLModel):
-    type: Literal["audio_base64"] = "audio_base64"
-    data: str = Field(..., min_length=1, description="Base64-encoded audio data")
-    mime_type: str = Field(
-        default="audio/wav",
+class AudioContent(SQLModel):
+    format: Literal["base64"] = "base64"
+    value: str = Field(..., min_length=1, description="Base64 encoded audio")
+    # keeping the mime_type liberal here, since does not affect transcription type
+    mime_type: str | None = Field(
+        None,
         description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
     )
 
 
-class AudioUrlInput(SQLModel):
-    type: Literal["audio_url"] = "audio_url"
-    url: HttpUrl = Field(..., description="URL to fetch audio from")
+class TextInput(SQLModel):
+    type: Literal["text"] = "text"
+    content: TextContent
+
+
+class AudioInput(SQLModel):
+    type: Literal["audio"] = "audio"
+    content: AudioContent
 
 
 # Discriminated union for query input types
 QueryInput = Annotated[
-    Union[TextInput, AudioBase64Input, AudioUrlInput],
+    Union[TextInput, AudioInput],
     Field(discriminator="type"),
 ]
 
@@ -124,9 +129,6 @@ class QueryParams(SQLModel):
         ...,
         description=(
             "User input - either a plain string (text) or a structured input object. "
-            "Accepts: string, {type: 'text', content: '...'}, "
-            "{type: 'audio_base64', data: '...', mime_type: '...'}, "
-            "or {type: 'audio_url', url: '...'}."
         ),
     )
     conversation: ConversationConfig | None = Field(
@@ -141,7 +143,10 @@ class QueryParams(SQLModel):
         if isinstance(data, dict) and "input" in data:
             input_val = data["input"]
             if isinstance(input_val, str):
-                data["input"] = {"type": "text", "content": input_val}
+                data["input"] = {
+                    "type": "text",
+                    "content": {"format": "text", "value": input_val},
+                }
         return data
 
 

@@ -157,8 +157,6 @@ def execute_job(
         with Session(engine) as session:
             # Update job status to PROCESSING
             job_crud = JobCrud(session=session)
-
-            # Debug: Try to fetch the job first
             logger.info(f"[execute_job] Attempting to fetch job | job_id={job_id}")
             job = session.get(Job, job_id)
             if not job:

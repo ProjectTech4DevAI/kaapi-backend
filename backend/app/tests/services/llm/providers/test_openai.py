@@ -60,7 +60,7 @@ class TestOpenAIProvider:
 
         assert error is None
         assert result is not None
-        assert result.response.output.text == mock_response.output_text
+        assert result.response.output.content.value == mock_response.output_text
         assert result.response.model == mock_response.model
         assert result.response.provider == "openai-native"
         assert result.response.conversation_id is None

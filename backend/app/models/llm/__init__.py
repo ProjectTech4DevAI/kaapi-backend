@@ -7,5 +7,14 @@ from app.models.llm.request import (
     KaapiCompletionConfig,
     NativeCompletionConfig,
     LlmCall,
+    AudioContent,
+    TextContent,
 )
-from app.models.llm.response import LLMCallResponse, LLMResponse, LLMOutput, Usage
+from app.models.llm.response import (
+    LLMCallResponse,
+    LLMResponse,
+    LLMOutput,
+    Usage,
+    TextOutput,
+    AudioOutput,
+)

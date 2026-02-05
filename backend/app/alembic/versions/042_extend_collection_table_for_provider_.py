@@ -1,7 +1,7 @@
 """extend collection table for provider agnostic support
 
-Revision ID: 043
-Revises: 042
+Revision ID: 042
+Revises: 041
 Create Date: 2026-01-15 16:53:19.495583
 
 """

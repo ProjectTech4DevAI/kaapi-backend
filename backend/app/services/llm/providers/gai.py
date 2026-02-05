@@ -8,9 +8,10 @@ from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
     QueryParams,
-    LLMOutput,
     LLMResponse,
     Usage,
+    TextOutput,
+    TextContent,
 )
 from app.services.llm.providers.base import BaseProvider
 
@@ -76,14 +77,14 @@ class GoogleAIProvider(BaseProvider):
         if output_language and output_language != input_language:
             lang_instruction += f" and translate to {output_language} in the native script of {output_language}"
 
-        forced_trascription_text = "Only return transcribed text and no other text."
+        forced_transcription_text = "Only return transcribed text and no other text."
         # Merge user instructions with language instructions
         if instructions:
             merged_instruction = (
-                f"{instructions}. {lang_instruction}. {forced_trascription_text}"
+                f"{instructions}. {lang_instruction}. {forced_transcription_text}"
             )
         else:
-            merged_instruction = f"{lang_instruction}. {forced_trascription_text}"
+            merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
         # Upload file and generate content
         gemini_file = self.client.files.upload(file=resolved_input)
@@ -125,7 +126,7 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=LLMOutput(text=response.text),
+                output=TextOutput(content=TextContent(value=response.text)),
             ),
             usage=Usage(
                 input_tokens=input_tokens,
