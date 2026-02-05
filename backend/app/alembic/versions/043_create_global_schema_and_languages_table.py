@@ -57,7 +57,7 @@ def upgrade():
         sa.Column(
             "is_active",
             sa.Boolean(),
-            nullable=True,
+            nullable=False,
             server_default=sa.text("true"),
             comment="Flag indicating if the language is available",
         ),
