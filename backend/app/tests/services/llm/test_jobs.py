@@ -719,7 +719,9 @@ class TestExecuteJob:
             assert "reasoning" in result["metadata"]["warnings"][0].lower()
             assert "does not support reasoning" in result["metadata"]["warnings"][0]
 
-    def test_guardrails_sanitize_input_before_provider(self, db, job_env, job_for_execution):
+    def test_guardrails_sanitize_input_before_provider(
+        self, db, job_env, job_for_execution
+    ):
         """
         Input guardrails should sanitize the text BEFORE provider.execute is called.
         """
@@ -767,7 +769,9 @@ class TestExecuteJob:
 
         assert result["success"]
 
-    def test_guardrails_sanitize_output_after_provider(self, db, job_env, job_for_execution):
+    def test_guardrails_sanitize_output_after_provider(
+        self, db, job_env, job_for_execution
+    ):
         env = job_env
 
         env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
@@ -800,8 +804,10 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert "REDACTED" in result["data"]["response"]["output"]["text"]
-    
-    def test_guardrails_bypass_does_not_modify_input(self, db, job_env, job_for_execution):
+
+    def test_guardrails_bypass_does_not_modify_input(
+        self, db, job_env, job_for_execution
+    ):
         env = job_env
 
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
@@ -836,7 +842,9 @@ class TestExecuteJob:
         provider_query = env["provider"].execute.call_args[0][1]
         assert provider_query.input == unsafe_input
 
-    def test_guardrails_validation_failure_blocks_job(self, db, job_env, job_for_execution):
+    def test_guardrails_validation_failure_blocks_job(
+        self, db, job_env, job_for_execution
+    ):
         env = job_env
 
         with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
@@ -864,7 +872,9 @@ class TestExecuteJob:
         assert "Unsafe content" in result["error"]
         env["provider"].execute.assert_not_called()
 
-    def test_guardrails_rephrase_needed_blocks_job(self, db, job_env, job_for_execution):
+    def test_guardrails_rephrase_needed_blocks_job(
+        self, db, job_env, job_for_execution
+    ):
         env = job_env
 
         with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
@@ -894,6 +904,7 @@ class TestExecuteJob:
 
         assert not result["success"]
         env["provider"].execute.assert_not_called()
+
 
 class TestResolveConfigBlob:
     """Test suite for resolve_config_blob function."""

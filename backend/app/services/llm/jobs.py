@@ -142,7 +142,7 @@ def execute_job(
     config_blob: ConfigBlob | None = None
 
     logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "    
+        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "
     )
 
     try:
@@ -174,9 +174,7 @@ def execute_job(
                     error=safe_input["error"],
                     metadata=request.request_metadata,
                 )
-                return handle_job_error(
-                    job_id, request.callback_url, callback_response
-                )
+                return handle_job_error(job_id, request.callback_url, callback_response)
 
         with Session(engine) as session:
             # Update job status to PROCESSING
@@ -271,7 +269,9 @@ def execute_job(
                 )
 
                 if safe_output.get("bypassed"):
-                    logger.info("[execute_job] Guardrails bypassed (service unavailable)")
+                    logger.info(
+                        "[execute_job] Guardrails bypassed (service unavailable)"
+                    )
 
                 elif safe_output["success"]:
                     response.response.output.text = safe_output["data"]["safe_text"]

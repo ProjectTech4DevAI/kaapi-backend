@@ -165,6 +165,7 @@ def test_llm_call_invalid_provider(
 
     assert response.status_code == 422
 
+
 def test_llm_call_success_with_guardrails(
     client: TestClient,
     user_api_key_header: dict[str, str],
@@ -218,6 +219,7 @@ def test_llm_call_success_with_guardrails(
 
         mock_start_job.assert_called_once()
         mock_guardrails.assert_not_called()
+
 
 def test_llm_call_guardrails_bypassed_still_succeeds(
     client: TestClient,

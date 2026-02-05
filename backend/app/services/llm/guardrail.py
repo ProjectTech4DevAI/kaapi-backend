@@ -9,7 +9,9 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def call_guardrails(input_text: str, guardrail_config: list[dict], job_id: UUID) -> dict[str, Any]:
+def call_guardrails(
+    input_text: str, guardrail_config: list[dict], job_id: UUID
+) -> dict[str, Any]:
     """
     Call the Kaapi guardrails service to validate and process input text.
 
@@ -27,7 +29,7 @@ def call_guardrails(input_text: str, guardrail_config: list[dict], job_id: UUID)
     payload = {
         "request_id": str(job_id),
         "input": input_text,
-        "validators": guardrail_config
+        "validators": guardrail_config,
     }
 
     headers = {
