@@ -4,23 +4,21 @@ from uuid import UUID
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
-import httpx
 
 from app.celery.utils import start_high_priority_job
 from app.core.db import engine
 from app.core.langfuse.langfuse import observe_llm_execution
-from app.core.config import settings
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
+from app.services.llm.guardrail import call_guardrails
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback
 
 logger = logging.getLogger(__name__)
-GUARDRAILS_URL = "http://host.docker.internal:8001/api/v1/guardrails/"
 
 
 def start_job(
@@ -144,26 +142,30 @@ def execute_job(
     config_blob: ConfigBlob | None = None
 
     logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, input_guardrail={input_guardrails}, input_query={input_query}."
-    )
+        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "    )
 
     try:
         if input_guardrails:
             safe_input = call_guardrails(input_query, input_guardrails, job_id)
+
             logger.info(
-                f"[execute_job] Input guardrail validation | Original query={input_query}, safe_input={safe_input}/"
+                f"[execute_job] Input guardrail validation | success={safe_input['success']}."
             )
-            if safe_input["success"] == True and safe_input["data"]["rephrase_needed"] == False:
+
+            if safe_input["bypassed"] == True:
+                logger.info("[execute_job] Guardrails bypassed (service unavailable)")
+
+            elif safe_input["success"] == True:
                 request.query.input = safe_input["data"]["safe_text"]
-            elif safe_input["success"] == True and safe_input["data"]["rephrase_needed"] == True:
-                request.query.input = safe_input["data"]["safe_text"]
-                callback_response = APIResponse.failure_response(
-                    error=request.query.input,
-                    metadata=request.request_metadata,
-                )
-                return handle_job_error(
-                    job_id, request.callback_url, callback_response
-                )
+
+                if safe_input["data"]["rephrase_needed"] == True:
+                    callback_response = APIResponse.failure_response(
+                        error=request.query.input,
+                        metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_id, request.callback_url, callback_response
+                    )
             else:
                 request.query.input = safe_input["error"]
 
@@ -262,13 +264,30 @@ def execute_job(
             if output_guardrails:
                 output_text = response.response.output.text
                 safe_output = call_guardrails(output_text, output_guardrails, job_id)
+
                 logger.info(
-                    f"[execute_job] Output guardrail validation | Original output={output_text}, safe_output={safe_output}/"
+                    f"[execute_job] Output guardrail validation | success={safe_output['success']}."
                 )
-                if safe_output["success"] == True:
+
+                if safe_output["bypassed"] == True:
+                    logger.info("[execute_job] Guardrails bypassed (service unavailable)")
+
+                elif safe_output["success"] == True:
                     response.response.output.text = safe_output["data"]["safe_text"]
+
+                    if safe_output["data"]["rephrase_needed"] == True:
+                        callback_response = APIResponse.failure_response(
+                            error=request.query.input,
+                            metadata=request.request_metadata,
+                        )
+
                 else:
                     response.response.output.text = safe_output["error"]
+
+                    callback_response = APIResponse.failure_response(
+                        error=safe_output["error"],
+                        metadata=request.request_metadata,
+                    )
 
             callback_response = APIResponse.success_response(
                 data=response, metadata=request.request_metadata
@@ -307,27 +326,3 @@ def execute_job(
             exc_info=True,
         )
         return handle_job_error(job_id, request.callback_url, callback_response)
-
-
-def call_guardrails(input_text: str, guardrail_config: list[dict], job_id: UUID):
-    payload = {
-        "request_id": str(job_id),
-        "input": input_text,
-        "validators": guardrail_config
-    }
-
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
-        "Content-Type": "application/json",
-    }
-
-    with httpx.Client(timeout=10.0) as client:
-        response = client.post(
-            GUARDRAILS_URL,
-            json=payload,
-            headers=headers,
-        )
-
-        response.raise_for_status()
-        return response.json()
