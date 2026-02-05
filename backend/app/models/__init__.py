@@ -93,7 +93,10 @@ from .llm import (
     ConfigBlob,
     CompletionConfig,
     LLMCallRequest,
+    LLMChainRequest,
     LLMCallResponse,
+    LLMChainResponse,
+    LlmCall,
 )
 
 from .message import Message

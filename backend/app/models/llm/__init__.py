@@ -6,5 +6,13 @@ from app.models.llm.request import (
     KaapiLLMParams,
     KaapiCompletionConfig,
     NativeCompletionConfig,
+    LlmCall,
+    LLMChainRequest,
 )
-from app.models.llm.response import LLMCallResponse, LLMResponse, LLMOutput, Usage
+from app.models.llm.response import (
+    LLMCallResponse,
+    LLMResponse,
+    LLMOutput,
+    Usage,
+    LLMChainResponse,
+)

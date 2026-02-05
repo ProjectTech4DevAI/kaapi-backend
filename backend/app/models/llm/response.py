@@ -50,3 +50,10 @@ class LLMCallResponse(SQLModel):
         default=None,
         description="Unmodified raw response from the LLM provider.",
     )
+
+
+class LLMChainResponse(SQLModel):
+    response: LLMCallResponse = Field(
+        ..., description="Full response from the last block in the chain"
+    )
+    # blocks_executed: int = Field(..., description="Total number of blocks executed")
