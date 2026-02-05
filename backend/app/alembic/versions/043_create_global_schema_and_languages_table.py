@@ -73,13 +73,6 @@ def upgrade():
             nullable=False,
             comment="Timestamp when the language was last updated",
         ),
-        sa.Column(
-            "localized",
-            sa.Boolean(),
-            nullable=True,
-            server_default=sa.text("false"),
-            comment="Flag indicating if the platform is localized for this language",
-        ),
         schema="global",
     )
 
@@ -94,21 +87,21 @@ def upgrade():
     # Seed default languages
     op.execute(
         """
-        INSERT INTO global.languages (label, label_locale, description, locale, is_active, inserted_at, updated_at, localized)
+        INSERT INTO global.languages (label, label_locale, description, locale, is_active, inserted_at, updated_at)
         VALUES
-            ('English', 'English', NULL, 'en', true, NOW(), NOW(), true),
-            ('Hindi', 'हिंदी', NULL, 'hi', true, NOW(), NOW(), true),
-            ('Tamil', 'தமிழ்', NULL, 'ta', true, NOW(), NOW(), false),
-            ('Kannada', 'ಕನ್ನಡ', NULL, 'kn', true, NOW(), NOW(), false),
-            ('Malayalam', 'മലയാളം', NULL, 'ml', true, NOW(), NOW(), false),
-            ('Telugu', 'తెలుగు', NULL, 'te', true, NOW(), NOW(), false),
-            ('Odia', 'ଓଡ଼ିଆ', NULL, 'or', true, NOW(), NOW(), false),
-            ('Assamese', 'অসমীয়া', NULL, 'as', true, NOW(), NOW(), false),
-            ('Gujarati', 'ગુજરાતી', NULL, 'gu', true, NOW(), NOW(), false),
-            ('Bengali', 'বাংলা', NULL, 'bn', true, NOW(), NOW(), false),
-            ('Punjabi', 'ਪੰਜਾਬੀ', NULL, 'pa', true, NOW(), NOW(), false),
-            ('Marathi', 'मराठी', NULL, 'mr', true, NOW(), NOW(), false),
-            ('Urdu', 'اردو', NULL, 'ur', true, NOW(), NOW(), false)
+            ('English', 'English', NULL, 'en', true, NOW(), NOW()),
+            ('Hindi', 'हिंदी', NULL, 'hi', true, NOW(), NOW()),
+            ('Tamil', 'தமிழ்', NULL, 'ta', true, NOW(), NOW()),
+            ('Kannada', 'ಕನ್ನಡ', NULL, 'kn', true, NOW(), NOW()),
+            ('Malayalam', 'മലയാളം', NULL, 'ml', true, NOW(), NOW()),
+            ('Telugu', 'తెలుగు', NULL, 'te', true, NOW(), NOW()),
+            ('Odia', 'ଓଡ଼ିଆ', NULL, 'or', true, NOW(), NOW()),
+            ('Assamese', 'অসমীয়া', NULL, 'as', true, NOW(), NOW()),
+            ('Gujarati', 'ગુજરાતી', NULL, 'gu', true, NOW(), NOW()),
+            ('Bengali', 'বাংলা', NULL, 'bn', true, NOW(), NOW()),
+            ('Punjabi', 'ਪੰਜਾਬੀ', NULL, 'pa', true, NOW(), NOW()),
+            ('Marathi', 'मराठी', NULL, 'mr', true, NOW(), NOW()),
+            ('Urdu', 'اردو', NULL, 'ur', true, NOW(), NOW())
         """
     )
 

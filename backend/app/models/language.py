@@ -31,12 +31,6 @@ class LanguageBase(SQLModel):
         default=True,
         sa_column_kwargs={"comment": "Flag indicating if the language is available"},
     )
-    localized: bool = Field(
-        default=False,
-        sa_column_kwargs={
-            "comment": "Flag indicating if the platform is localized for this language"
-        },
-    )
 
 
 # Database model for Language in the global schema
