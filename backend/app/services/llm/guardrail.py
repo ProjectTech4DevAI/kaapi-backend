@@ -46,9 +46,9 @@ def call_guardrails(input_text: str, guardrail_config: list[dict], job_id: UUID)
 
             response.raise_for_status()
             return response.json()
-    except Exception as e:    
+    except Exception as e:
         logger.warning(
-            f"[guardrails] Service unavailable. Bypassing guardrails. job_id={job_id}. error={e}"
+            f"[call_guardrails] Service unavailable. Bypassing guardrails. job_id={job_id}. error={e}"
         )
 
         return {

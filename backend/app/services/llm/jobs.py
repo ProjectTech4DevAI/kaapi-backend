@@ -142,7 +142,8 @@ def execute_job(
     config_blob: ConfigBlob | None = None
 
     logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "    )
+        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "    
+    )
 
     try:
         if input_guardrails:
@@ -152,13 +153,13 @@ def execute_job(
                 f"[execute_job] Input guardrail validation | success={safe_input['success']}."
             )
 
-            if safe_input["bypassed"] == True:
+            if safe_input.get("bypassed"):
                 logger.info("[execute_job] Guardrails bypassed (service unavailable)")
 
-            elif safe_input["success"] == True:
+            elif safe_input["success"]:
                 request.query.input = safe_input["data"]["safe_text"]
 
-                if safe_input["data"]["rephrase_needed"] == True:
+                if safe_input["data"]["rephrase_needed"]:
                     callback_response = APIResponse.failure_response(
                         error=request.query.input,
                         metadata=request.request_metadata,
@@ -175,7 +176,7 @@ def execute_job(
                 )
                 return handle_job_error(
                     job_id, request.callback_url, callback_response
-                )                
+                )
 
         with Session(engine) as session:
             # Update job status to PROCESSING
@@ -269,16 +270,19 @@ def execute_job(
                     f"[execute_job] Output guardrail validation | success={safe_output['success']}."
                 )
 
-                if safe_output["bypassed"] == True:
+                if safe_output.get("bypassed"):
                     logger.info("[execute_job] Guardrails bypassed (service unavailable)")
 
-                elif safe_output["success"] == True:
+                elif safe_output["success"]:
                     response.response.output.text = safe_output["data"]["safe_text"]
 
                     if safe_output["data"]["rephrase_needed"] == True:
                         callback_response = APIResponse.failure_response(
                             error=request.query.input,
                             metadata=request.request_metadata,
+                        )
+                        return handle_job_error(
+                            job_id, request.callback_url, callback_response
                         )
 
                 else:
@@ -287,6 +291,9 @@ def execute_job(
                     callback_response = APIResponse.failure_response(
                         error=safe_output["error"],
                         metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_id, request.callback_url, callback_response
                     )
 
             callback_response = APIResponse.success_response(
