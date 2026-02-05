@@ -14,7 +14,7 @@ TEST_CONFIG = [{"type": "pii_remover"}]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_call_guardrails_success(mock_client_cls):
+def test_call_guardrails_success(mock_client_cls) -> None:
     mock_response = MagicMock()
     mock_response.json.return_value = {"success": True}
     mock_response.raise_for_status.return_value = None
@@ -39,7 +39,7 @@ def test_call_guardrails_success(mock_client_cls):
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_call_guardrails_http_error_bypasses(mock_client_cls):
+def test_call_guardrails_http_error_bypasses(mock_client_cls) -> None:
     mock_response = MagicMock()
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
         "bad", request=None, response=None
@@ -57,7 +57,7 @@ def test_call_guardrails_http_error_bypasses(mock_client_cls):
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_call_guardrails_network_failure_bypasses(mock_client_cls):
+def test_call_guardrails_network_failure_bypasses(mock_client_cls) -> None:
     mock_client = MagicMock()
     mock_client.post.side_effect = httpx.ConnectError("failed")
     mock_client_cls.return_value.__enter__.return_value = mock_client
@@ -69,7 +69,7 @@ def test_call_guardrails_network_failure_bypasses(mock_client_cls):
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_call_guardrails_timeout_bypasses(mock_client_cls):
+def test_call_guardrails_timeout_bypasses(mock_client_cls) -> None:
     mock_client = MagicMock()
     mock_client.post.side_effect = httpx.TimeoutException("timeout")
     mock_client_cls.return_value.__enter__.return_value = mock_client
@@ -80,7 +80,7 @@ def test_call_guardrails_timeout_bypasses(mock_client_cls):
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_call_guardrails_uses_settings(mock_client_cls):
+def test_call_guardrails_uses_settings(mock_client_cls) -> None:
     mock_response = MagicMock()
     mock_response.raise_for_status.return_value = None
     mock_response.json.return_value = {"ok": True}

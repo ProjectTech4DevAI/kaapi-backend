@@ -150,7 +150,7 @@ def test_llm_call_invalid_provider(
             "blob": {
                 "completion": {
                     "provider": "invalid-provider",
-                    "params": {"model": "gpt-4o"},
+                    "params": {"model": "gpt-4"},
                 }
             }
         },
@@ -168,7 +168,7 @@ def test_llm_call_invalid_provider(
 def test_llm_call_success_with_guardrails(
     client: TestClient,
     user_api_key_header: dict[str, str],
-):
+) -> None:
     """Test successful LLM call when guardrails are enabled (no validators)."""
 
     with (
@@ -223,7 +223,7 @@ def test_llm_call_success_with_guardrails(
 def test_llm_call_guardrails_bypassed_still_succeeds(
     client: TestClient,
     user_api_key_header: dict[str, str],
-):
+) -> None:
     """If guardrails service is unavailable (bypassed), request should still succeed."""
 
     with (
