@@ -93,4 +93,6 @@ def test_call_guardrails_uses_settings(mock_client_cls):
 
     _, kwargs = mock_client.post.call_args
 
-    assert kwargs["headers"]["Authorization"] == f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}"
+    assert (
+        kwargs["headers"]["Authorization"] == f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}"
+    )
