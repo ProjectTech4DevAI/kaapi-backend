@@ -88,7 +88,7 @@ class SarvamAIProvider(BaseProvider):
                 sarvam_response = self.client.speech_to_text.transcribe(
                     file=audio_file,
                     model=model,
-                    # SarvamAI transcribe currently does not support instructions/language directly as params
+                    # SarvamAI's flagship STT model  Saarika supports mixed language content with automatic detection of languages within the sentance    
                     # language_code=generation_params.get("input_language"),
                 )
 
