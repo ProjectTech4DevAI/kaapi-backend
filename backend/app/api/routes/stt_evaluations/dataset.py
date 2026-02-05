@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.crud.file import get_files_by_ids
 from app.crud.stt_evaluations import (
     get_stt_dataset_by_id,
     list_stt_datasets,
@@ -133,10 +134,23 @@ def get_dataset(
             offset=sample_offset,
         )
 
+        # Fetch file records to get object_store_url
+        file_ids = [s.file_id for s in sample_records]
+        file_records = get_files_by_ids(
+            session=_session,
+            file_ids=file_ids,
+            organization_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
+        )
+        file_map = {f.id: f for f in file_records}
+
         samples = [
             STTSamplePublic(
                 id=s.id,
-                object_store_url=s.object_store_url,
+                file_id=s.file_id,
+                object_store_url=file_map.get(s.file_id).object_store_url
+                if s.file_id in file_map
+                else None,
                 language=s.language,
                 ground_truth=s.ground_truth,
                 sample_metadata=s.sample_metadata,

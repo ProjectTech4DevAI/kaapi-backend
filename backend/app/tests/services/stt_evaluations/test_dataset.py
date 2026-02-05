@@ -18,7 +18,7 @@ class TestSamplesToCSV:
     def test_single_sample_without_ground_truth(self):
         """Test CSV conversion with single sample without ground truth."""
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio1.mp3"),
+            STTSampleCreate(file_id=1),
         ]
         result = _samples_to_csv(samples)
 
@@ -27,14 +27,14 @@ class TestSamplesToCSV:
         lines = csv_str.strip().split("\n")
 
         assert len(lines) == 2  # Header + 1 sample
-        assert lines[0] == "object_store_url,ground_truth"
-        assert lines[1] == "s3://bucket/audio1.mp3,"
+        assert lines[0] == "file_id,ground_truth"
+        assert lines[1] == "1,"
 
     def test_single_sample_with_ground_truth(self):
         """Test CSV conversion with single sample with ground truth."""
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio1.mp3",
+                file_id=1,
                 ground_truth="Hello world",
             ),
         ]
@@ -50,15 +50,15 @@ class TestSamplesToCSV:
         """Test CSV conversion with multiple samples."""
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio1.mp3",
+                file_id=1,
                 ground_truth="First transcription",
             ),
             STTSampleCreate(
-                object_store_url="s3://bucket/audio2.mp3",
+                file_id=2,
                 ground_truth="Second transcription",
             ),
             STTSampleCreate(
-                object_store_url="s3://bucket/audio3.mp3",
+                file_id=3,
             ),
         ]
         result = _samples_to_csv(samples)
@@ -78,13 +78,13 @@ class TestSamplesToCSV:
 
         # Should only have header
         assert len(lines) == 1
-        assert lines[0] == "object_store_url,ground_truth"
+        assert lines[0] == "file_id,ground_truth"
 
     def test_sample_with_unicode(self):
         """Test CSV conversion with unicode characters."""
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio.mp3",
+                file_id=1,
                 ground_truth="Hello 世界 🌍",
             ),
         ]
@@ -97,7 +97,7 @@ class TestSamplesToCSV:
         """Test CSV conversion handles commas in ground truth."""
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio.mp3",
+                file_id=1,
                 ground_truth="Hello, world",
             ),
         ]
@@ -111,7 +111,7 @@ class TestSamplesToCSV:
         """Test CSV conversion handles quotes in ground truth."""
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio.mp3",
+                file_id=1,
                 ground_truth='He said "hello"',
             ),
         ]
@@ -134,7 +134,7 @@ class TestUploadSamplesToObjectStore:
 
         mock_session = MagicMock()
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio.mp3"),
+            STTSampleCreate(file_id=1),
         ]
 
         result = _upload_samples_to_object_store(
@@ -157,7 +157,7 @@ class TestUploadSamplesToObjectStore:
 
         mock_session = MagicMock()
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio.mp3"),
+            STTSampleCreate(file_id=1),
         ]
 
         result = _upload_samples_to_object_store(
@@ -176,7 +176,7 @@ class TestUploadSamplesToObjectStore:
 
         mock_session = MagicMock()
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio.mp3"),
+            STTSampleCreate(file_id=1),
         ]
 
         result = _upload_samples_to_object_store(
@@ -212,7 +212,7 @@ class TestUploadSTTDataset:
         mock_session = MagicMock()
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio.mp3",
+                file_id=1,
                 ground_truth="Test transcription",
             ),
         ]
@@ -250,7 +250,7 @@ class TestUploadSTTDataset:
 
         mock_session = MagicMock()
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio.mp3"),
+            STTSampleCreate(file_id=1),
         ]
 
         upload_stt_dataset(
@@ -283,18 +283,18 @@ class TestUploadSTTDataset:
         mock_session = MagicMock()
         samples = [
             STTSampleCreate(
-                object_store_url="s3://bucket/audio1.mp3",
+                file_id=1,
                 ground_truth="Has ground truth",
             ),
             STTSampleCreate(
-                object_store_url="s3://bucket/audio2.mp3",
+                file_id=2,
             ),
             STTSampleCreate(
-                object_store_url="s3://bucket/audio3.mp3",
+                file_id=3,
                 ground_truth="Also has ground truth",
             ),
             STTSampleCreate(
-                object_store_url="s3://bucket/audio4.mp3",
+                file_id=4,
                 ground_truth="",  # Empty string should not count
             ),
         ]
@@ -327,7 +327,7 @@ class TestUploadSTTDataset:
 
         mock_session = MagicMock()
         samples = [
-            STTSampleCreate(object_store_url="s3://bucket/audio.mp3"),
+            STTSampleCreate(file_id=1),
         ]
 
         dataset, created_samples = upload_stt_dataset(

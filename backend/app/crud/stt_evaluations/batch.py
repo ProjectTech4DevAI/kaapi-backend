@@ -11,6 +11,7 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.core.cloud.storage import get_cloud_storage
+from app.crud.file import get_files_by_ids
 from app.crud.stt_evaluations.result import update_stt_result
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
@@ -69,14 +70,29 @@ def start_stt_evaluation_batch(
     # Get cloud storage for S3 access
     storage = get_cloud_storage(session=session, project_id=project_id)
 
+    # Fetch file records to get object_store_url
+    file_ids = [sample.file_id for sample in samples]
+    file_records = get_files_by_ids(
+        session=session,
+        file_ids=file_ids,
+        organization_id=org_id,
+        project_id=project_id,
+    )
+    file_map = {f.id: f for f in file_records}
+
     # Generate signed URLs for audio files
     signed_urls: list[str] = []
     sample_keys: list[str] = []
 
     for sample in samples:
         try:
+            # Get object_store_url from file record
+            file_record = file_map.get(sample.file_id)
+            if not file_record:
+                raise ValueError(f"File record not found for file_id: {sample.file_id}")
+
             signed_url = storage.get_signed_url(
-                sample.object_store_url, expires_in=signed_url_expires_in
+                file_record.object_store_url, expires_in=signed_url_expires_in
             )
             signed_urls.append(signed_url)
             sample_keys.append(str(sample.id))

@@ -296,13 +296,19 @@ class TestUploadAudioFile:
         mock_file.size = size
         return mock_file
 
+    @patch("app.services.stt_evaluations.audio.create_file")
     @patch("app.services.stt_evaluations.audio.get_cloud_storage")
-    def test_successful_upload(self, mock_get_storage):
+    def test_successful_upload(self, mock_get_storage, mock_create_file):
         """Test successful audio file upload."""
         mock_storage = MagicMock()
         mock_storage.put.return_value = "s3://bucket/stt/audio/test.mp3"
         mock_storage.get_file_size_kb.return_value = 1.0
         mock_get_storage.return_value = mock_storage
+
+        # Mock the file record creation
+        mock_file_record = MagicMock()
+        mock_file_record.id = 1
+        mock_create_file.return_value = mock_file_record
 
         mock_session = MagicMock()
         file = self._create_upload_file()
@@ -310,9 +316,11 @@ class TestUploadAudioFile:
         result = upload_audio_file(
             session=mock_session,
             file=file,
+            organization_id=1,
             project_id=1,
         )
 
+        assert result.file_id == 1
         assert result.s3_url == "s3://bucket/stt/audio/test.mp3"
         assert result.filename == "test.mp3"
         assert result.size_bytes == 1024
@@ -330,6 +338,7 @@ class TestUploadAudioFile:
             upload_audio_file(
                 session=mock_session,
                 file=file,
+                organization_id=1,
                 project_id=1,
             )
 
@@ -352,19 +361,28 @@ class TestUploadAudioFile:
             upload_audio_file(
                 session=mock_session,
                 file=file,
+                organization_id=1,
                 project_id=1,
             )
 
         assert exc_info.value.status_code == 500
         assert "Failed to upload audio file" in str(exc_info.value.detail)
 
+    @patch("app.services.stt_evaluations.audio.create_file")
     @patch("app.services.stt_evaluations.audio.get_cloud_storage")
-    def test_upload_uses_file_size_on_s3_error(self, mock_get_storage):
+    def test_upload_uses_file_size_on_s3_error(
+        self, mock_get_storage, mock_create_file
+    ):
         """Test upload uses file.size when S3 size retrieval fails."""
         mock_storage = MagicMock()
         mock_storage.put.return_value = "s3://bucket/stt/audio/test.mp3"
         mock_storage.get_file_size_kb.side_effect = Exception("Failed to get size")
         mock_get_storage.return_value = mock_storage
+
+        # Mock the file record creation
+        mock_file_record = MagicMock()
+        mock_file_record.id = 1
+        mock_create_file.return_value = mock_file_record
 
         mock_session = MagicMock()
         file = self._create_upload_file(size=2048)
@@ -372,6 +390,7 @@ class TestUploadAudioFile:
         result = upload_audio_file(
             session=mock_session,
             file=file,
+            organization_id=1,
             project_id=1,
         )
 

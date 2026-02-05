@@ -36,6 +36,7 @@ def upload_audio(
     result = upload_audio_file(
         session=_session,
         file=file,
+        organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 

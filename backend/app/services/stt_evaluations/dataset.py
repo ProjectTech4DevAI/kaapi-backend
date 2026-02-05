@@ -169,7 +169,7 @@ def _samples_to_csv(samples: list[STTSampleCreate]) -> bytes:
     """
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["object_store_url", "ground_truth"])
+    writer.writerow(["file_id", "ground_truth"])
     for sample in samples:
-        writer.writerow([sample.object_store_url, sample.ground_truth or ""])
+        writer.writerow([sample.file_id, sample.ground_truth or ""])
     return output.getvalue().encode("utf-8")

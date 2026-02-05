@@ -2,15 +2,15 @@
 
 import logging
 from typing import Any
-from urllib.parse import urlparse
-import os
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
+from app.crud.file import get_files_by_ids
 from app.models import EvaluationDataset
+from app.models.file import File
 from app.models.stt_evaluation import (
     EvaluationType,
     STTSample,
@@ -94,30 +94,47 @@ def create_stt_dataset(
         raise
 
 
-def _extract_metadata_from_url(url: str) -> dict[str, Any]:
-    """Extract filename and extension from S3 URL.
+def validate_file_ids(
+    *,
+    session: Session,
+    file_ids: list[int],
+    organization_id: int,
+    project_id: int,
+) -> dict[int, File]:
+    """Validate that all file IDs exist and belong to the organization/project.
 
     Args:
-        url: S3 URL of the audio file
+        session: Database session
+        file_ids: List of file IDs to validate
+        organization_id: Organization ID
+        project_id: Project ID
 
     Returns:
-        dict with original_filename and file_extension
-    """
-    try:
-        parsed = urlparse(url)
-        path = parsed.path
-        filename = os.path.basename(path)
-        _, extension = os.path.splitext(filename)
-        # Remove leading dot from extension
-        extension = extension.lstrip(".").lower() if extension else None
+        dict[int, File]: Mapping of file_id to File object
 
-        return {
-            "original_filename": filename if filename else None,
-            "file_extension": extension,
-        }
-    except Exception as e:
-        logger.warning(f"[_extract_metadata_from_url] Failed to extract metadata: {e}")
+    Raises:
+        HTTPException: If any file IDs are invalid
+    """
+    if not file_ids:
         return {}
+
+    files = get_files_by_ids(
+        session=session,
+        file_ids=file_ids,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+
+    file_map = {f.id: f for f in files}
+    missing_ids = set(file_ids) - set(file_map.keys())
+
+    if missing_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File IDs not found: {sorted(missing_ids)}",
+        )
+
+    return file_map
 
 
 def create_stt_samples(
@@ -135,19 +152,38 @@ def create_stt_samples(
 
     Returns:
         list[STTSample]: Created samples
+
+    Raises:
+        HTTPException: If any file IDs are invalid
     """
     logger.info(
         f"[create_stt_samples] Creating STT samples | "
         f"dataset_id: {dataset.id}, sample_count: {len(samples)}"
     )
 
+    # Validate all file IDs exist
+    file_ids = [sample.file_id for sample in samples]
+    file_map = validate_file_ids(
+        session=session,
+        file_ids=file_ids,
+        organization_id=dataset.organization_id,
+        project_id=dataset.project_id,
+    )
+
     timestamp = now()
     created_samples = [
         STTSample(
-            object_store_url=sample_data.object_store_url,
+            file_id=sample_data.file_id,
             ground_truth=sample_data.ground_truth,
             language=dataset.language,
-            sample_metadata=_extract_metadata_from_url(sample_data.object_store_url),
+            sample_metadata={
+                "original_filename": file_map[sample_data.file_id].filename,
+                "file_extension": file_map[sample_data.file_id]
+                .filename.rsplit(".", 1)[-1]
+                .lower()
+                if "." in file_map[sample_data.file_id].filename
+                else None,
+            },
             dataset_id=dataset.id,
             organization_id=dataset.organization_id,
             project_id=dataset.project_id,

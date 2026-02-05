@@ -7,6 +7,7 @@ from sqlmodel import Session, select, func
 
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
+from app.models.file import File
 from app.models.stt_evaluation import (
     STTResult,
     STTResultStatus,
@@ -145,8 +146,9 @@ def get_results_by_run_id(
     total = session.exec(count_stmt).one()
 
     statement = (
-        select(STTResult, STTSample)
+        select(STTResult, STTSample, File)
         .join(STTSample, STTResult.stt_sample_id == STTSample.id)
+        .join(File, STTSample.file_id == File.id)
         .where(*where_clauses)
         .order_by(STTResult.id)
         .offset(offset)
@@ -157,10 +159,11 @@ def get_results_by_run_id(
 
     # Convert to response models
     results = []
-    for result, sample in rows:
+    for result, sample, file in rows:
         sample_public = STTSamplePublic(
             id=sample.id,
-            object_store_url=sample.object_store_url,
+            file_id=sample.file_id,
+            object_store_url=file.object_store_url,
             language=sample.language,
             ground_truth=sample.ground_truth,
             sample_metadata=sample.sample_metadata,

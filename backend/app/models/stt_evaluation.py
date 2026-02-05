@@ -43,9 +43,14 @@ class STTSample(SQLModel, table=True):
         sa_column_kwargs={"comment": "Unique identifier for the STT sample"},
     )
 
-    object_store_url: str = SQLField(
-        description="S3 URL of the audio file",
-        sa_column_kwargs={"comment": "S3 URL of the audio file"},
+    file_id: int = SQLField(
+        foreign_key="file.id",
+        nullable=False,
+        ondelete="CASCADE",
+        description="Reference to the uploaded audio file",
+        sa_column_kwargs={
+            "comment": "Reference to the uploaded audio file in file table"
+        },
     )
 
     language: str | None = SQLField(
@@ -217,7 +222,7 @@ class STTResult(SQLModel, table=True):
 class STTSampleCreate(BaseModel):
     """Request model for creating an STT sample."""
 
-    object_store_url: str = Field(..., description="S3 URL of the audio file")
+    file_id: int = Field(..., description="ID of the uploaded audio file")
     ground_truth: str | None = Field(
         None, description="Reference transcription (optional)"
     )
@@ -227,7 +232,8 @@ class STTSamplePublic(BaseModel):
     """Public model for STT samples."""
 
     id: int
-    object_store_url: str
+    file_id: int
+    object_store_url: str | None = None  # Populated from file record when needed
     language: str | None
     ground_truth: str | None
     sample_metadata: dict[str, Any] | None
@@ -360,6 +366,7 @@ class STTEvaluationRunWithResults(STTEvaluationRunPublic):
 class AudioUploadResponse(BaseModel):
     """Response model for audio file upload."""
 
+    file_id: int = Field(..., description="ID of the created file record")
     s3_url: str = Field(..., description="S3 URL of the uploaded audio file")
     filename: str = Field(..., description="Original filename")
     size_bytes: int = Field(..., description="File size in bytes")

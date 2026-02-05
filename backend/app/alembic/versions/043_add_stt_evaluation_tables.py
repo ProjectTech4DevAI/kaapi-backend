@@ -69,7 +69,97 @@ def upgrade():
             comment="List of STT/TTS providers used (e.g., ['gemini-2.5-pro'])",
         ),
     )
-    # Create stt_sample table
+
+    # Create file table for storing uploaded file metadata
+    op.create_table(
+        "file",
+        sa.Column(
+            "id",
+            sa.Integer(),
+            nullable=False,
+            comment="Unique identifier for the file",
+        ),
+        sa.Column(
+            "object_store_url",
+            sqlmodel.sql.sqltypes.AutoString(),
+            nullable=False,
+            comment="S3 URL where the file is stored",
+        ),
+        sa.Column(
+            "filename",
+            sa.String(length=255),
+            nullable=False,
+            comment="Original filename as uploaded",
+        ),
+        sa.Column(
+            "size_bytes",
+            sa.Integer(),
+            nullable=False,
+            comment="File size in bytes",
+        ),
+        sa.Column(
+            "content_type",
+            sa.String(length=100),
+            nullable=False,
+            comment="MIME type of the file (e.g., audio/mp3)",
+        ),
+        sa.Column(
+            "file_type",
+            sa.String(length=20),
+            nullable=False,
+            server_default="other",
+            comment="Type of file: audio, document, image, other",
+        ),
+        sa.Column(
+            "organization_id",
+            sa.Integer(),
+            nullable=False,
+            comment="Reference to the organization",
+        ),
+        sa.Column(
+            "project_id",
+            sa.Integer(),
+            nullable=False,
+            comment="Reference to the project",
+        ),
+        sa.Column(
+            "inserted_at",
+            sa.DateTime(),
+            nullable=False,
+            comment="Timestamp when the file was created",
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(),
+            nullable=False,
+            comment="Timestamp when the file was last updated",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["organization.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id"],
+            ["project.id"],
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "idx_file_org_project",
+        "file",
+        ["organization_id", "project_id"],
+        unique=False,
+    )
+    op.create_index(
+        "idx_file_type",
+        "file",
+        ["file_type"],
+        unique=False,
+    )
+
+    # Create stt_sample table with file_id reference
     op.create_table(
         "stt_sample",
         sa.Column(
@@ -79,10 +169,10 @@ def upgrade():
             comment="Unique identifier for the STT sample",
         ),
         sa.Column(
-            "object_store_url",
-            sqlmodel.sql.sqltypes.AutoString(),
+            "file_id",
+            sa.Integer(),
             nullable=False,
-            comment="S3 URL of the audio file",
+            comment="Reference to the uploaded audio file in file table",
         ),
         sa.Column(
             "language",
@@ -134,6 +224,12 @@ def upgrade():
             comment="Timestamp when the sample was last updated",
         ),
         sa.ForeignKeyConstraint(
+            ["file_id"],
+            ["file.id"],
+            name="fk_stt_sample_file_id",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
             ["dataset_id"],
             ["evaluation_dataset.id"],
             name="fk_stt_sample_dataset_id",
@@ -150,6 +246,12 @@ def upgrade():
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_stt_sample_file_id",
+        "stt_sample",
+        ["file_id"],
+        unique=False,
     )
     op.create_index(
         "ix_stt_sample_dataset_id",
@@ -313,7 +415,13 @@ def downgrade():
     # Drop stt_sample table
     op.drop_index("idx_stt_sample_org_project", table_name="stt_sample")
     op.drop_index("ix_stt_sample_dataset_id", table_name="stt_sample")
+    op.drop_index("ix_stt_sample_file_id", table_name="stt_sample")
     op.drop_table("stt_sample")
+
+    # Drop file table
+    op.drop_index("idx_file_type", table_name="file")
+    op.drop_index("idx_file_org_project", table_name="file")
+    op.drop_table("file")
 
     # Remove columns from evaluation_run table
     op.drop_column("evaluation_run", "providers")

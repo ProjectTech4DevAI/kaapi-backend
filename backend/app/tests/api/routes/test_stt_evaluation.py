@@ -4,13 +4,41 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.models import EvaluationDataset
+from app.models import EvaluationDataset, File, FileType
 from app.models.stt_evaluation import STTSample, EvaluationType
 from app.tests.utils.auth import TestAuthContext
 from app.core.util import now
 
 
 # Helper functions
+def create_test_file(
+    db: Session,
+    organization_id: int,
+    project_id: int,
+    object_store_url: str = "s3://test-bucket/audio/test.mp3",
+    filename: str = "test.mp3",
+    size_bytes: int = 1024,
+    content_type: str = "audio/mpeg",
+    file_type: str = FileType.AUDIO.value,
+) -> File:
+    """Create a test file record."""
+    file = File(
+        object_store_url=object_store_url,
+        filename=filename,
+        size_bytes=size_bytes,
+        content_type=content_type,
+        file_type=file_type,
+        organization_id=organization_id,
+        project_id=project_id,
+        inserted_at=now(),
+        updated_at=now(),
+    )
+    db.add(file)
+    db.commit()
+    db.refresh(file)
+    return file
+
+
 def create_test_stt_dataset(
     db: Session,
     organization_id: int,
@@ -42,12 +70,21 @@ def create_test_stt_sample(
     dataset_id: int,
     organization_id: int,
     project_id: int,
-    object_store_url: str = "s3://test-bucket/audio/test.mp3",
+    file_id: int | None = None,
     ground_truth: str | None = None,
 ) -> STTSample:
     """Create a test STT sample."""
+    # If no file_id provided, create a test file first
+    if file_id is None:
+        file = create_test_file(
+            db=db,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+        file_id = file.id
+
     sample = STTSample(
-        object_store_url=object_store_url,
+        file_id=file_id,
         ground_truth=ground_truth,
         dataset_id=dataset_id,
         organization_id=organization_id,
@@ -69,8 +106,25 @@ class TestSTTDatasetCreate:
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
+        user_api_key: TestAuthContext,
     ) -> None:
         """Test creating an STT dataset with samples."""
+        # Create test files first
+        file1 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/audio1.mp3",
+            filename="audio1.mp3",
+        )
+        file2 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/audio2.mp3",
+            filename="audio2.mp3",
+        )
+
         response = client.post(
             "/api/v1/evaluations/stt/datasets",
             json={
@@ -78,9 +132,9 @@ class TestSTTDatasetCreate:
                 "description": "Test STT dataset",
                 "language": "en",
                 "samples": [
-                    {"object_store_url": "s3://bucket/audio1.mp3"},
+                    {"file_id": file1.id},
                     {
-                        "object_store_url": "s3://bucket/audio2.mp3",
+                        "file_id": file2.id,
                         "ground_truth": "Hello world",
                     },
                 ],
@@ -104,14 +158,25 @@ class TestSTTDatasetCreate:
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
     ) -> None:
         """Test creating an STT dataset with minimal fields."""
+        # Create a test file first
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/audio.mp3",
+            filename="audio.mp3",
+        )
+
         response = client.post(
             "/api/v1/evaluations/stt/datasets",
             json={
                 "name": "minimal_stt_dataset",
                 "samples": [
-                    {"object_store_url": "s3://bucket/audio.mp3"},
+                    {"file_id": file.id},
                 ],
             },
             headers=user_api_key_header,
@@ -154,7 +219,7 @@ class TestSTTDatasetCreate:
             "/api/v1/evaluations/stt/datasets",
             json={
                 "samples": [
-                    {"object_store_url": "s3://bucket/audio.mp3"},
+                    {"file_id": 1},
                 ],
             },
             headers=user_api_key_header,
@@ -172,7 +237,7 @@ class TestSTTDatasetCreate:
             json={
                 "name": "unauthenticated_dataset",
                 "samples": [
-                    {"object_store_url": "s3://bucket/audio.mp3"},
+                    {"file_id": 1},
                 ],
             },
         )
@@ -187,6 +252,13 @@ class TestSTTDatasetCreate:
         user_api_key: TestAuthContext,
     ) -> None:
         """Test creating an STT dataset with duplicate name fails."""
+        # Create a test file first
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
         # Create first dataset
         create_test_stt_dataset(
             db=db,
@@ -201,7 +273,7 @@ class TestSTTDatasetCreate:
             json={
                 "name": "duplicate_name_test",
                 "samples": [
-                    {"object_store_url": "s3://bucket/audio.mp3"},
+                    {"file_id": file.id},
                 ],
             },
             headers=user_api_key_header,
@@ -211,6 +283,28 @@ class TestSTTDatasetCreate:
         response_data = response.json()
         error_str = response_data.get("detail", response_data.get("error", ""))
         assert "already exists" in error_str.lower()
+
+    def test_create_stt_dataset_invalid_file_id(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test creating an STT dataset with invalid file_id fails."""
+        response = client.post(
+            "/api/v1/evaluations/stt/datasets",
+            json={
+                "name": "invalid_file_dataset",
+                "samples": [
+                    {"file_id": 99999},
+                ],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 400
+        response_data = response.json()
+        error_str = response_data.get("detail", response_data.get("error", ""))
+        assert "not found" in error_str.lower()
 
 
 class TestSTTDatasetList:
@@ -426,14 +520,21 @@ class TestSTTEvaluationRun:
             project_id=user_api_key.project_id,
             name="eval_test_dataset",
         )
-        # Create some samples
+        # Create some samples (file will be created automatically)
         for i in range(3):
+            file = create_test_file(
+                db=db,
+                organization_id=user_api_key.organization_id,
+                project_id=user_api_key.project_id,
+                object_store_url=f"s3://bucket/audio_{i}.mp3",
+                filename=f"audio_{i}.mp3",
+            )
             create_test_stt_sample(
                 db=db,
                 dataset_id=dataset.id,
                 organization_id=user_api_key.organization_id,
                 project_id=user_api_key.project_id,
-                object_store_url=f"s3://bucket/audio_{i}.mp3",
+                file_id=file.id,
             )
         return dataset
 

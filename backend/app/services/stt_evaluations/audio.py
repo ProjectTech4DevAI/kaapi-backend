@@ -9,6 +9,8 @@ from sqlmodel import Session
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.exception_handlers import HTTPException
+from app.crud.file import create_file
+from app.models.file import FileType
 from app.models.stt_evaluation import AudioUploadResponse
 from app.services.stt_evaluations.constants import (
     MAX_FILE_SIZE_BYTES,
@@ -116,17 +118,19 @@ def validate_audio_file(file: UploadFile) -> str:
 def upload_audio_file(
     session: Session,
     file: UploadFile,
+    organization_id: int,
     project_id: int,
 ) -> AudioUploadResponse:
-    """Upload an audio file to S3.
+    """Upload an audio file to S3 and create a file record.
 
     Args:
         session: Database session
         file: FastAPI UploadFile object
+        organization_id: Organization ID
         project_id: Project ID
 
     Returns:
-        AudioUploadResponse: Upload result with S3 URL
+        AudioUploadResponse: Upload result with file_id and S3 URL
 
     Raises:
         HTTPException: If validation or upload fails
@@ -165,18 +169,37 @@ def upload_audio_file(
             # If we can't get size from S3, use the upload file size
             size_bytes = file.size or 0
 
+        original_filename = file.filename or new_filename
+        content_type = file.content_type or f"audio/{extension}"
+
+        # Create file record in database
+        file_record = create_file(
+            session=session,
+            object_store_url=s3_url,
+            filename=original_filename,
+            size_bytes=size_bytes,
+            content_type=content_type,
+            file_type=FileType.AUDIO.value,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+
         logger.info(
             f"[upload_audio_file] Audio uploaded successfully | "
-            f"project_id: {project_id}, s3_url: {s3_url}, size_bytes: {size_bytes}"
+            f"project_id: {project_id}, file_id: {file_record.id}, "
+            f"s3_url: {s3_url}, size_bytes: {size_bytes}"
         )
 
         return AudioUploadResponse(
+            file_id=file_record.id,
             s3_url=s3_url,
-            filename=file.filename or new_filename,
+            filename=original_filename,
             size_bytes=size_bytes,
-            content_type=file.content_type or f"audio/{extension}",
+            content_type=content_type,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             f"[upload_audio_file] Failed to upload audio | "
