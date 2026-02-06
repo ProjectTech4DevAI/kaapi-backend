@@ -18,6 +18,8 @@ from app.crud.evaluations import (
 from app.models.evaluation import EvaluationRun
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import load_json_from_object_store
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +191,7 @@ def get_evaluation_with_scores(
     Returns:
         Tuple of (EvaluationRun or None, error_message or None)
     """
-    from app.core.cloud.storage import get_cloud_storage
-    from app.core.storage_utils import load_json_from_object_store
+    
 
     logger.info(
         f"[get_evaluation_with_scores] Fetching status for evaluation run | "
