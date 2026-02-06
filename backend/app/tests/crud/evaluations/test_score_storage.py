@@ -20,8 +20,8 @@ class TestSaveScoreS3Upload:
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
     @patch("app.crud.evaluations.core.get_evaluation_run_by_id")
-    @patch("app.core.storage_utils.upload_jsonl_to_object_store")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.crud.evaluations.core.upload_jsonl_to_object_store")
+    @patch("app.crud.evaluations.core.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_uploads_traces_to_s3_and_stores_summary_only(
         self,
@@ -57,8 +57,8 @@ class TestSaveScoreS3Upload:
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
     @patch("app.crud.evaluations.core.get_evaluation_run_by_id")
-    @patch("app.core.storage_utils.upload_jsonl_to_object_store")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.crud.evaluations.core.upload_jsonl_to_object_store")
+    @patch("app.crud.evaluations.core.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_fallback_to_db_when_s3_fails(
         self,
@@ -88,8 +88,8 @@ class TestSaveScoreS3Upload:
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
     @patch("app.crud.evaluations.core.get_evaluation_run_by_id")
-    @patch("app.core.storage_utils.upload_jsonl_to_object_store")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.crud.evaluations.core.upload_jsonl_to_object_store")
+    @patch("app.crud.evaluations.core.get_cloud_storage")
     @patch("app.core.db.engine")
     def test_no_s3_upload_when_no_traces(
         self,
