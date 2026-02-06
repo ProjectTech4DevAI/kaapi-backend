@@ -128,7 +128,7 @@ def start_stt_evaluation_batch(
         batch_job = start_batch_job(
             session=session,
             provider=batch_provider,
-            provider_name="gemini",
+            provider_name="google",
             job_type="stt_evaluation",
             organization_id=org_id,
             project_id=project_id,

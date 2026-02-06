@@ -42,7 +42,7 @@ class Collection(SQLModel, table=True):
     provider: ProviderType = (
         Field(
             nullable=False,
-            description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'gemini', etc)",
+            description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
             sa_column_kwargs={"comment": "LLM provider used for this collection"},
         ),
     )

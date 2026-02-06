@@ -65,7 +65,7 @@ class GeminiClient:
             session=session,
             org_id=org_id,
             project_id=project_id,
-            provider="gemini",
+            provider="google",
         )
 
         if not credentials:

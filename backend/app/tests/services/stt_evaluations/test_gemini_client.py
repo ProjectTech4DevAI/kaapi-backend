@@ -58,7 +58,7 @@ class TestGeminiClientFromCredentials:
             session=mock_session,
             org_id=1,
             project_id=2,
-            provider="gemini",
+            provider="google",
         )
         assert client._api_key == "stored-api-key"
 

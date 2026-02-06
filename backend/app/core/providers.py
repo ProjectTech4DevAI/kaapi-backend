@@ -12,7 +12,7 @@ class Provider(str, Enum):
     OPENAI = "openai"
     AWS = "aws"
     LANGFUSE = "langfuse"
-    GEMINI = "gemini"
+    GOOGLE = "google"
 
 
 @dataclass
@@ -31,7 +31,7 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.LANGFUSE: ProviderConfig(
         required_fields=["secret_key", "public_key", "host"]
     ),
-    Provider.GEMINI: ProviderConfig(required_fields=["api_key"]),
+    Provider.GOOGLE: ProviderConfig(required_fields=["api_key"]),
 }
 
 
