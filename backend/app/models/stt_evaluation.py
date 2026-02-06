@@ -53,11 +53,12 @@ class STTSample(SQLModel, table=True):
         },
     )
 
-    language: str | None = SQLField(
+    language_id: int | None = SQLField(
         default=None,
-        max_length=10,
-        description="ISO 639-1 language code for this sample",
-        sa_column_kwargs={"comment": "ISO 639-1 language code for this sample"},
+        foreign_key="global.languages.id",
+        nullable=True,
+        description="Reference to the language in the global languages table",
+        sa_column_kwargs={"comment": "Foreign key to global.languages table"},
     )
 
     ground_truth: str | None = SQLField(
@@ -234,7 +235,7 @@ class STTSamplePublic(BaseModel):
     id: int
     file_id: int
     object_store_url: str | None = None  # Populated from file record when needed
-    language: str | None
+    language_id: int | None
     ground_truth: str | None
     sample_metadata: dict[str, Any] | None
     dataset_id: int
@@ -281,7 +282,9 @@ class STTDatasetCreate(BaseModel):
 
     name: str = Field(..., description="Dataset name", min_length=1)
     description: str | None = Field(None, description="Dataset description")
-    language: str | None = Field(None, description="Default language for the dataset")
+    language_id: int | None = Field(
+        None, description="ID of the language from global languages table"
+    )
     samples: list[STTSampleCreate] = Field(
         ..., description="List of audio samples", min_length=1
     )
@@ -294,7 +297,7 @@ class STTDatasetPublic(BaseModel):
     name: str
     description: str | None
     type: str
-    language: str | None
+    language_id: int | None
     object_store_url: str | None
     dataset_metadata: dict[str, Any]
     organization_id: int
@@ -319,7 +322,9 @@ class STTEvaluationRunCreate(BaseModel):
         description="List of STT providers to use",
         min_length=1,
     )
-    language: str | None = Field(None, description="Override language for all samples")
+    language_id: int | None = Field(
+        None, description="Override language ID from global languages table"
+    )
 
     @field_validator("providers")
     @classmethod
@@ -343,7 +348,7 @@ class STTEvaluationRunPublic(BaseModel):
     run_name: str
     dataset_name: str
     type: str
-    language: str | None
+    language_id: int | None
     providers: list[str] | None
     dataset_id: int
     status: str

@@ -107,11 +107,12 @@ class EvaluationDataset(SQLModel, table=True):
         description="Evaluation type: text, stt, or tts",
         sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
     )
-    language: str | None = SQLField(
+    language_id: int | None = SQLField(
         default=None,
-        max_length=10,
-        description="ISO 639-1 language code (e.g., en, hi)",
-        sa_column_kwargs={"comment": "ISO 639-1 language code (e.g., en, hi)"},
+        foreign_key="global.languages.id",
+        nullable=True,
+        description="Reference to the language in the global languages table",
+        sa_column_kwargs={"comment": "Foreign key to global.languages table"},
     )
 
     # Dataset metadata stored as JSONB
@@ -211,11 +212,12 @@ class EvaluationRun(SQLModel, table=True):
         description="Evaluation type: text, stt, or tts",
         sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
     )
-    language: str | None = SQLField(
+    language_id: int | None = SQLField(
         default=None,
-        max_length=10,
-        description="ISO 639-1 language code",
-        sa_column_kwargs={"comment": "ISO 639-1 language code"},
+        foreign_key="global.languages.id",
+        nullable=True,
+        description="Reference to the language in the global languages table",
+        sa_column_kwargs={"comment": "Foreign key to global.languages table"},
     )
     providers: list[str] | None = SQLField(
         default=None,

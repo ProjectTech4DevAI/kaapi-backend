@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.file import get_files_by_ids
+from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
     get_stt_dataset_by_id,
     list_stt_datasets,
@@ -39,6 +40,16 @@ def create_dataset(
     dataset_create: STTDatasetCreate = Body(...),
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
+    # Validate language_id if provided
+    if dataset_create.language_id is not None:
+        language = get_language_by_id(
+            session=_session, language_id=dataset_create.language_id
+        )
+        if not language:
+            raise HTTPException(
+                status_code=400, detail="Invalid language_id: language not found"
+            )
+
     dataset, samples = upload_stt_dataset(
         session=_session,
         name=dataset_create.name,
@@ -46,7 +57,7 @@ def create_dataset(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         description=dataset_create.description,
-        language=dataset_create.language,
+        language_id=dataset_create.language_id,
     )
 
     return APIResponse.success_response(
@@ -55,7 +66,7 @@ def create_dataset(
             name=dataset.name,
             description=dataset.description,
             type=dataset.type,
-            language=dataset.language,
+            language_id=dataset.language_id,
             object_store_url=dataset.object_store_url,
             dataset_metadata=dataset.dataset_metadata,
             sample_count=len(samples),
@@ -151,7 +162,7 @@ def get_dataset(
                 object_store_url=file_map.get(s.file_id).object_store_url
                 if s.file_id in file_map
                 else None,
-                language=s.language,
+                language_id=s.language_id,
                 ground_truth=s.ground_truth,
                 sample_metadata=s.sample_metadata,
                 dataset_id=s.dataset_id,
@@ -169,7 +180,7 @@ def get_dataset(
             name=dataset.name,
             description=dataset.description,
             type=dataset.type,
-            language=dataset.language,
+            language_id=dataset.language_id,
             object_store_url=dataset.object_store_url,
             dataset_metadata=dataset.dataset_metadata,
             organization_id=dataset.organization_id,

@@ -33,11 +33,19 @@ def upgrade():
     op.add_column(
         "evaluation_dataset",
         sa.Column(
-            "language",
-            sa.String(length=10),
+            "language_id",
+            sa.Integer(),
             nullable=True,
-            comment="ISO 639-1 language code (e.g., en, hi)",
+            comment="Foreign key to global.languages table",
         ),
+    )
+    op.create_foreign_key(
+        "fk_evaluation_dataset_language_id",
+        "evaluation_dataset",
+        "languages",
+        ["language_id"],
+        ["id"],
+        referent_schema="global",
     )
 
     # Add type, language, and providers columns to evaluation_run table
@@ -54,11 +62,19 @@ def upgrade():
     op.add_column(
         "evaluation_run",
         sa.Column(
-            "language",
-            sa.String(length=10),
+            "language_id",
+            sa.Integer(),
             nullable=True,
-            comment="ISO 639-1 language code",
+            comment="Foreign key to global.languages table",
         ),
+    )
+    op.create_foreign_key(
+        "fk_evaluation_run_language_id",
+        "evaluation_run",
+        "languages",
+        ["language_id"],
+        ["id"],
+        referent_schema="global",
     )
     op.add_column(
         "evaluation_run",
@@ -175,10 +191,10 @@ def upgrade():
             comment="Reference to the uploaded audio file in file table",
         ),
         sa.Column(
-            "language",
-            sa.String(length=10),
+            "language_id",
+            sa.Integer(),
             nullable=True,
-            comment="ISO 639-1 language code for this sample",
+            comment="Foreign key to global.languages table",
         ),
         sa.Column(
             "ground_truth",
@@ -228,6 +244,11 @@ def upgrade():
             ["file.id"],
             name="fk_stt_sample_file_id",
             ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["language_id"],
+            ["global.languages.id"],
+            name="fk_stt_sample_language_id",
         ),
         sa.ForeignKeyConstraint(
             ["dataset_id"],
@@ -425,9 +446,17 @@ def downgrade():
 
     # Remove columns from evaluation_run table
     op.drop_column("evaluation_run", "providers")
-    op.drop_column("evaluation_run", "language")
+    op.drop_constraint(
+        "fk_evaluation_run_language_id", "evaluation_run", type_="foreignkey"
+    )
+    op.drop_column("evaluation_run", "language_id")
     op.drop_column("evaluation_run", "type")
 
     # Remove columns from evaluation_dataset table
-    op.drop_column("evaluation_dataset", "language")
+    op.drop_constraint(
+        "fk_evaluation_dataset_language_id",
+        "evaluation_dataset",
+        type_="foreignkey",
+    )
+    op.drop_column("evaluation_dataset", "language_id")
     op.drop_column("evaluation_dataset", "type")

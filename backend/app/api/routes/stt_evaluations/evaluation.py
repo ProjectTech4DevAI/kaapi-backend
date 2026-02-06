@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
     create_stt_run,
     create_stt_results,
@@ -64,6 +65,15 @@ def start_stt_evaluation(
     if sample_count == 0:
         raise HTTPException(status_code=400, detail="Dataset has no samples")
 
+    # Validate language_id if provided
+    language_id = run_create.language_id or dataset.language_id
+    if language_id is not None:
+        language = get_language_by_id(session=_session, language_id=language_id)
+        if not language:
+            raise HTTPException(
+                status_code=400, detail="Invalid language_id: language not found"
+            )
+
     # Create run record
     run = create_stt_run(
         session=_session,
@@ -73,7 +83,7 @@ def start_stt_evaluation(
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         providers=run_create.providers,
-        language=run_create.language or dataset.language,
+        language_id=language_id,
         total_items=sample_count * len(run_create.providers),
     )
 
@@ -137,7 +147,7 @@ def start_stt_evaluation(
             run_name=run.run_name,
             dataset_name=run.dataset_name,
             type=run.type,
-            language=run.language,
+            language_id=run.language_id,
             providers=run.providers,
             dataset_id=run.dataset_id,
             status=run.status,
@@ -233,7 +243,7 @@ def get_stt_evaluation_run(
             run_name=run.run_name,
             dataset_name=run.dataset_name,
             type=run.type,
-            language=run.language,
+            language_id=run.language_id,
             providers=run.providers,
             dataset_id=run.dataset_id,
             status=run.status,

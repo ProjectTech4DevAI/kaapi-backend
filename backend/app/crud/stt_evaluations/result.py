@@ -164,7 +164,7 @@ def get_results_by_run_id(
             id=sample.id,
             file_id=sample.file_id,
             object_store_url=file.object_store_url,
-            language=sample.language,
+            language_id=sample.language_id,
             ground_truth=sample.ground_truth,
             sample_metadata=sample.sample_metadata,
             dataset_id=sample.dataset_id,

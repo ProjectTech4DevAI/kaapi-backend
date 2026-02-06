@@ -28,7 +28,7 @@ def upload_stt_dataset(
     organization_id: int,
     project_id: int,
     description: str | None = None,
-    language: str | None = None,
+    language_id: int | None = None,
 ) -> tuple[EvaluationDataset, list[STTSample]]:
     """
     Orchestrate STT dataset upload workflow.
@@ -46,7 +46,7 @@ def upload_stt_dataset(
         organization_id: Organization ID
         project_id: Project ID
         description: Optional dataset description
-        language: Optional default language code
+        language_id: Optional reference to global.languages table
 
     Returns:
         Tuple of (created dataset, created samples)
@@ -78,7 +78,7 @@ def upload_stt_dataset(
         org_id=organization_id,
         project_id=project_id,
         description=description,
-        language=language,
+        language_id=language_id,
         object_store_url=object_store_url,
         dataset_metadata=metadata,
     )

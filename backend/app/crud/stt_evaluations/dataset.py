@@ -29,7 +29,7 @@ def create_stt_dataset(
     org_id: int,
     project_id: int,
     description: str | None = None,
-    language: str | None = None,
+    language_id: int | None = None,
     object_store_url: str | None = None,
     dataset_metadata: dict[str, Any] | None = None,
 ) -> EvaluationDataset:
@@ -41,7 +41,7 @@ def create_stt_dataset(
         org_id: Organization ID
         project_id: Project ID
         description: Optional description
-        language: Optional default language code
+        language_id: Optional reference to global.languages table
         object_store_url: Optional object store URL
         dataset_metadata: Optional metadata dict
 
@@ -60,7 +60,7 @@ def create_stt_dataset(
         name=name,
         description=description,
         type=EvaluationType.STT.value,
-        language=language,
+        language_id=language_id,
         object_store_url=object_store_url,
         dataset_metadata=dataset_metadata or {},
         organization_id=org_id,
@@ -175,7 +175,7 @@ def create_stt_samples(
         STTSample(
             file_id=sample_data.file_id,
             ground_truth=sample_data.ground_truth,
-            language=dataset.language,
+            language_id=dataset.language_id,
             sample_metadata={
                 "original_filename": file_map[sample_data.file_id].filename,
                 "file_extension": file_map[sample_data.file_id]
@@ -278,7 +278,7 @@ def list_stt_datasets(
             name=dataset.name,
             description=dataset.description,
             type=dataset.type,
-            language=dataset.language,
+            language_id=dataset.language_id,
             object_store_url=dataset.object_store_url,
             dataset_metadata=dataset.dataset_metadata,
             organization_id=dataset.organization_id,
