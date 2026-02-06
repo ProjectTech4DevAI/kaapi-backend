@@ -85,7 +85,11 @@ def upload_csv_to_object_store(
 
 
 def upload_jsonl_to_object_store(
-    storage: CloudStorage, results: list[dict], filename: str, subdirectory: str, format: Literal["json","jsonl"] = "jsonl"
+    storage: CloudStorage,
+    results: list[dict],
+    filename: str,
+    subdirectory: str,
+    format: Literal["json", "jsonl"] = "jsonl",
 ) -> str | None:
     """
     Upload JSONL (JSON Lines) content to object store.
@@ -111,9 +115,12 @@ def upload_jsonl_to_object_store(
     try:
         # Create file path
         file_path = Path(subdirectory) / filename
-        
+
         if format == "jsonl":
-            jsonl_content = "\n".join(json.dumps(result, ensure_ascii=False) for result in results) + "\n"
+            jsonl_content = (
+                "\n".join(json.dumps(result, ensure_ascii=False) for result in results)
+                + "\n"
+            )
             content_type = {"content-type": "application/jsonl"}
         else:
             jsonl_content = json.dumps(results, ensure_ascii=False)

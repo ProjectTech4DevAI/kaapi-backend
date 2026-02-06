@@ -13,6 +13,10 @@ from app.models import EvaluationRun
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.services.llm.jobs import resolve_config_blob
 
+from app.core.db import engine
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import upload_jsonl_to_object_store
+
 logger = logging.getLogger(__name__)
 
 
@@ -338,9 +342,6 @@ def save_score(
     Returns:
         Updated EvaluationRun instance, or None if not found
     """
-    from app.core.db import engine
-    from app.core.cloud.storage import get_cloud_storage
-    from app.core.storage_utils import upload_jsonl_to_object_store
 
     with Session(engine) as session:
         eval_run = get_evaluation_run_by_id(
@@ -364,7 +365,7 @@ def save_score(
                     results=traces,
                     filename=f"traces_{eval_run_id}.json",
                     subdirectory=f"evaluations/score/{eval_run_id}",
-                    format="json"
+                    format="json",
                 )
                 if score_trace_url:
                     logger.info(
