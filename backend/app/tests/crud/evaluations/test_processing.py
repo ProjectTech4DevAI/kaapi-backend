@@ -798,9 +798,7 @@ class TestPollAllPendingEvaluations:
         self, db: Session, test_dataset
     ):
         """Test polling with no pending evaluations."""
-        result = await poll_all_pending_evaluations(
-            session=db, org_id=test_dataset.organization_id
-        )
+        result = await poll_all_pending_evaluations(session=db)
 
         assert result["total"] == 0
         assert result["processed"] == 0
@@ -867,9 +865,7 @@ class TestPollAllPendingEvaluations:
             "action": "no_change",
         }
 
-        result = await poll_all_pending_evaluations(
-            session=db, org_id=test_dataset.organization_id
-        )
+        result = await poll_all_pending_evaluations(session=db)
 
         assert result["total"] == 1
         assert result["still_processing"] == 1
