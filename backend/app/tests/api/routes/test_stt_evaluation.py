@@ -6,6 +6,7 @@ from sqlmodel import Session
 
 from app.models import EvaluationDataset, File, FileType
 from app.models.stt_evaluation import STTSample, EvaluationType
+from app.crud.language import get_language_by_locale
 from app.tests.utils.auth import TestAuthContext
 from app.core.util import now
 
@@ -45,14 +46,14 @@ def create_test_stt_dataset(
     project_id: int,
     name: str = "test_stt_dataset",
     description: str | None = None,
-    language: str | None = "en",
+    language_id: int | None = None,
 ) -> EvaluationDataset:
     """Create a test STT dataset."""
     dataset = EvaluationDataset(
         name=name,
         description=description,
         type=EvaluationType.STT.value,
-        language=language,
+        language_id=language_id,
         dataset_metadata={"sample_count": 0, "has_ground_truth_count": 0},
         organization_id=organization_id,
         project_id=project_id,
@@ -109,7 +110,8 @@ class TestSTTDatasetCreate:
         user_api_key: TestAuthContext,
     ) -> None:
         """Test creating an STT dataset with samples."""
-        # Create test files first
+        # Get seeded English language
+        language = get_language_by_locale(session=db, locale="en")
         file1 = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
@@ -130,7 +132,7 @@ class TestSTTDatasetCreate:
             json={
                 "name": "test_stt_dataset_create",
                 "description": "Test STT dataset",
-                "language": "en",
+                "language_id": language.id,
                 "samples": [
                     {"file_id": file1.id},
                     {
@@ -150,7 +152,7 @@ class TestSTTDatasetCreate:
         assert data["name"] == "test_stt_dataset_create"
         assert data["description"] == "Test STT dataset"
         assert data["type"] == "stt"
-        assert data["language"] == "en"
+        assert data["language_id"] == language.id
         assert data["dataset_metadata"]["sample_count"] == 2
         assert data["dataset_metadata"]["has_ground_truth_count"] == 1
 
@@ -189,7 +191,7 @@ class TestSTTDatasetCreate:
 
         assert data["name"] == "minimal_stt_dataset"
         assert data["description"] is None
-        assert data["language"] is None
+        assert data["language_id"] is None
         assert data["dataset_metadata"]["sample_count"] == 1
 
     def test_create_stt_dataset_empty_samples(
