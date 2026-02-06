@@ -225,7 +225,7 @@ def update_evaluation_run(
     if embedding_batch_job_id is not None:
         eval_run.embedding_batch_job_id = embedding_batch_job_id
     if score_trace_url is not None:
-        eval_run.score_trace_url = score_trace_url
+        eval_run.score_trace_url = score_trace_url or None
 
     # Always update timestamp
     eval_run.updated_at = now()
@@ -355,7 +355,7 @@ def save_score(
 
         traces = score.get("traces", [])
         summary_score = score.get("summary_scores", [])
-        score_trace_url = None
+        score_trace_url: str | None = "" if not traces else None
 
         if traces:
             try:
