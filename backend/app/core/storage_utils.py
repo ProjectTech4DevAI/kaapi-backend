@@ -15,6 +15,7 @@ from pathlib import Path
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.cloud.storage import CloudStorage, CloudStorageError
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def upload_csv_to_object_store(
 
 
 def upload_jsonl_to_object_store(
-    storage: CloudStorage, results: list[dict], filename: str, subdirectory: str
+    storage: CloudStorage, results: list[dict], filename: str, subdirectory: str, format: Literal["json","jsonl"] = "jsonl"
 ) -> str | None:
     """
     Upload JSONL (JSON Lines) content to object store.
@@ -110,12 +111,18 @@ def upload_jsonl_to_object_store(
     try:
         # Create file path
         file_path = Path(subdirectory) / filename
+        
+        if format == "jsonl":
+            jsonl_content = "\n".join(json.dumps(result, ensure_ascii=False) for result in results) + "\n"
+            content_type = {"content-type": "application/jsonl"}
+        else:
+            jsonl_content = json.dumps(results, ensure_ascii=False)
+            content_type = {"content-type": "application/json"}
 
-        jsonl_content = json.dumps(results, ensure_ascii=False)
         content_bytes = jsonl_content.encode("utf-8")
 
         # Create UploadFile-like object
-        headers = Headers({"content-type": "application/jsonl"})
+        headers = Headers(content_type)
         upload_file = UploadFile(
             filename=filename,
             file=BytesIO(content_bytes),

@@ -364,6 +364,7 @@ def save_score(
                     results=traces,
                     filename=f"traces_{eval_run_id}.json",
                     subdirectory=f"evaluations/score/{eval_run_id}",
+                    format="json"
                 )
                 if score_trace_url:
                     logger.info(

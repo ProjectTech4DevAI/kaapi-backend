@@ -10,8 +10,8 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 
 
-revision = "043"
-down_revision = "042"
+revision = "044"
+down_revision = "043"
 branch_labels = None
 depends_on = None
 
