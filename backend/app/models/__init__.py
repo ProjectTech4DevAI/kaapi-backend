@@ -89,6 +89,13 @@ from .fine_tuning import (
 
 from .job import Job, JobType, JobStatus, JobUpdate
 
+from .language import (
+    Language,
+    LanguageBase,
+    LanguagePublic,
+    LanguagesPublic,
+)
+
 from .llm import (
     ConfigBlob,
     CompletionConfig,
