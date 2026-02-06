@@ -191,7 +191,6 @@ def get_evaluation_with_scores(
     Returns:
         Tuple of (EvaluationRun or None, error_message or None)
     """
-    
 
     logger.info(
         f"[get_evaluation_with_scores] Fetching status for evaluation run | "
