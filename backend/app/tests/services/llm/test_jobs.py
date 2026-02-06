@@ -719,6 +719,192 @@ class TestExecuteJob:
             assert "reasoning" in result["metadata"]["warnings"][0].lower()
             assert "does not support reasoning" in result["metadata"]["warnings"][0]
 
+    def test_guardrails_sanitize_input_before_provider(
+        self, db, job_env, job_for_execution
+    ):
+        """
+        Input guardrails should sanitize the text BEFORE provider.execute is called.
+        """
+
+        env = job_env
+
+        env["provider"].execute.return_value = (
+            env["mock_llm_response"],
+            None,
+        )
+
+        unsafe_input = "My credit card is 4111 1111 1111 1111"
+
+        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "My credit card is [REDACTED]",
+                    "rephrase_needed": False,
+                },
+            }
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "input_guardrails": [{"type": "pii_remover"}],
+                "output_guardrails": [],
+                "include_provider_raw_response": False,
+                "callback_url": None,
+            }
+
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        provider_query = env["provider"].execute.call_args[0][1]
+        assert "[REDACTED]" in provider_query.input
+        assert "4111" not in provider_query.input
+
+        assert result["success"]
+
+    def test_guardrails_sanitize_output_after_provider(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Aadhar [REDACTED]",
+                    "rephrase_needed": False,
+                },
+            }
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "input_guardrails": [],
+                "output_guardrails": [{"type": "pii_remover"}],
+            }
+
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert "REDACTED" in result["data"]["response"]["output"]["text"]
+
+    def test_guardrails_bypass_does_not_modify_input(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        unsafe_input = "4111 1111 1111 1111"
+
+        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": True,
+                "data": {
+                    "safe_text": unsafe_input,
+                    "rephrase_needed": False,
+                },
+            }
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "input_guardrails": [{"type": "pii_remover"}],
+            }
+
+            self._execute_job(job_for_execution, db, request_data)
+
+        provider_query = env["provider"].execute.call_args[0][1]
+        assert provider_query.input == unsafe_input
+
+    def test_guardrails_validation_failure_blocks_job(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+            mock_guardrails.return_value = {
+                "success": False,
+                "error": "Unsafe content detected",
+            }
+
+            request_data = {
+                "query": {"input": "bad input"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "input_guardrails": [{"type": "uli_slur_match"}],
+            }
+
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert "Unsafe content" in result["error"]
+        env["provider"].execute.assert_not_called()
+
+    def test_guardrails_rephrase_needed_blocks_job(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Rephrased text",
+                    "rephrase_needed": True,
+                },
+            }
+
+            request_data = {
+                "query": {"input": "unsafe text"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "input_guardrails": [{"type": "policy"}],
+            }
+
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        env["provider"].execute.assert_not_called()
+
 
 class TestResolveConfigBlob:
     """Test suite for resolve_config_blob function."""

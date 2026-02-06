@@ -13,6 +13,7 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
+from app.services.llm.guardrails import call_guardrails
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback
@@ -134,6 +135,9 @@ def execute_job(
 
     # one of (id, version) or blob is guaranteed to be present due to prior validation
     config = request.config
+    input_query = request.query.input
+    input_guardrails = request.input_guardrails
+    output_guardrails = request.output_guardrails
     callback_response = None
     config_blob: ConfigBlob | None = None
 
@@ -142,6 +146,36 @@ def execute_job(
     )
 
     try:
+        if input_guardrails:
+            safe_input = call_guardrails(input_query, input_guardrails, job_id)
+
+            logger.info(
+                f"[execute_job] Input guardrail validation | success={safe_input['success']}."
+            )
+
+            if safe_input.get("bypassed"):
+                logger.info("[execute_job] Guardrails bypassed (service unavailable)")
+
+            elif safe_input["success"]:
+                request.query.input = safe_input["data"]["safe_text"]
+
+                if safe_input["data"]["rephrase_needed"]:
+                    callback_response = APIResponse.failure_response(
+                        error=request.query.input,
+                        metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_id, request.callback_url, callback_response
+                    )
+            else:
+                request.query.input = safe_input["error"]
+
+                callback_response = APIResponse.failure_response(
+                    error=safe_input["error"],
+                    metadata=request.request_metadata,
+                )
+                return handle_job_error(job_id, request.callback_url, callback_response)
+
         with Session(engine) as session:
             # Update job status to PROCESSING
             job_crud = JobCrud(session=session)
@@ -226,6 +260,42 @@ def execute_job(
         )
 
         if response:
+            if output_guardrails:
+                output_text = response.response.output.text
+                safe_output = call_guardrails(output_text, output_guardrails, job_id)
+
+                logger.info(
+                    f"[execute_job] Output guardrail validation | success={safe_output['success']}."
+                )
+
+                if safe_output.get("bypassed"):
+                    logger.info(
+                        "[execute_job] Guardrails bypassed (service unavailable)"
+                    )
+
+                elif safe_output["success"]:
+                    response.response.output.text = safe_output["data"]["safe_text"]
+
+                    if safe_output["data"]["rephrase_needed"] == True:
+                        callback_response = APIResponse.failure_response(
+                            error=request.query.input,
+                            metadata=request.request_metadata,
+                        )
+                        return handle_job_error(
+                            job_id, request.callback_url, callback_response
+                        )
+
+                else:
+                    response.response.output.text = safe_output["error"]
+
+                    callback_response = APIResponse.failure_response(
+                        error=safe_output["error"],
+                        metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_id, request.callback_url, callback_response
+                    )
+
             callback_response = APIResponse.success_response(
                 data=response, metadata=request.request_metadata
             )
