@@ -38,8 +38,8 @@ class TestGetEvaluationWithScoresS3:
         return _factory
 
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
-    @patch("app.core.storage_utils.load_json_from_object_store")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
     def test_loads_traces_from_s3(
         self,
         mock_get_storage: MagicMock,
@@ -75,7 +75,7 @@ class TestGetEvaluationWithScoresS3:
         assert result.score["summary_scores"] == [{"name": "accuracy", "avg": 0.9}]
 
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
     def test_returns_db_traces_when_no_s3_url(
         self,
         mock_get_storage: MagicMock,
@@ -110,8 +110,8 @@ class TestGetEvaluationWithScoresS3:
     @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
     @patch("app.services.evaluations.evaluation.get_langfuse_client")
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
-    @patch("app.core.storage_utils.load_json_from_object_store")
-    @patch("app.core.cloud.storage.get_cloud_storage")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
     def test_resync_bypasses_cache_and_fetches_langfuse(
         self,
         mock_get_storage: MagicMock,
