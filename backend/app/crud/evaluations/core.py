@@ -386,7 +386,7 @@ def save_score(
                 )
 
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
-        # TODO: Evaluate weather this behaviour is needed or completely discard the storing data in db
+        # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
             db_score = {"summary_scores": summary_score}
         else:

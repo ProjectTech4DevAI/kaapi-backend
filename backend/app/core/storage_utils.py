@@ -162,7 +162,7 @@ def upload_jsonl_to_object_store(
         return None
 
 
-def load_json_from_object_store(storage: CloudStorage, url: str) -> list | None:
+def load_json_from_object_store(storage: CloudStorage, url: str) -> list | dict | None:
     logger.info(f"[load_json_from_object_store] Loading JSON from '{url}")
     try:
         body = storage.stream(url)

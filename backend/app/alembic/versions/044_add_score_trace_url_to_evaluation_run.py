@@ -1,7 +1,7 @@
 """Add score_trace_url to evaluation_run
 
-Revision ID: 043
-Revises: 042
+Revision ID: 044
+Revises: 043
 Create Date: 2026-01-24 19:34:46.763908
 
 """
