@@ -5,6 +5,7 @@ from passlib.context import CryptContext
 from typing import Optional, Any
 
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import text
 from sqlmodel import Session, delete, select
 
 from app.core.db import engine
@@ -18,6 +19,7 @@ from app.models import (
     Credential,
     Assistant,
     Document,
+    Language,
 )
 
 
@@ -356,6 +358,65 @@ def clear_database(session: Session) -> None:
     logging.info("[tests.seed_data] Existing database cleared")
 
 
+def seed_languages(session: Session) -> None:
+    """Seed the global.languages table with default languages."""
+    # Create global schema if it doesn't exist
+    session.exec(text("CREATE SCHEMA IF NOT EXISTS global"))
+
+    # Create languages table if it doesn't exist
+    session.exec(
+        text(
+            """
+        CREATE TABLE IF NOT EXISTS global.languages (
+            id BIGSERIAL PRIMARY KEY,
+            label VARCHAR(255) NOT NULL,
+            label_locale VARCHAR(255) NOT NULL,
+            description TEXT,
+            locale VARCHAR(255) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT true,
+            inserted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """
+        )
+    )
+    session.commit()
+
+    # Check if languages already exist
+    existing = session.exec(select(Language)).first()
+    if existing:
+        logging.info("[tests.seed_data] Languages already seeded, skipping")
+        return
+
+    languages_data = [
+        {"label": "English", "label_locale": "English", "locale": "en"},
+        {"label": "Hindi", "label_locale": "हिंदी", "locale": "hi"},
+        {"label": "Tamil", "label_locale": "தமிழ்", "locale": "ta"},
+        {"label": "Kannada", "label_locale": "ಕನ್ನಡ", "locale": "kn"},
+        {"label": "Malayalam", "label_locale": "മലയാളം", "locale": "ml"},
+        {"label": "Telugu", "label_locale": "తెలుగు", "locale": "te"},
+        {"label": "Odia", "label_locale": "ଓଡ଼ିଆ", "locale": "or"},
+        {"label": "Assamese", "label_locale": "অসমীয়া", "locale": "as"},
+        {"label": "Gujarati", "label_locale": "ગુજરાતી", "locale": "gu"},
+        {"label": "Bengali", "label_locale": "বাংলা", "locale": "bn"},
+        {"label": "Punjabi", "label_locale": "ਪੰਜਾਬੀ", "locale": "pa"},
+        {"label": "Marathi", "label_locale": "मराठी", "locale": "mr"},
+        {"label": "Urdu", "label_locale": "اردو", "locale": "ur"},
+    ]
+
+    for lang_data in languages_data:
+        language = Language(
+            label=lang_data["label"],
+            label_locale=lang_data["label_locale"],
+            locale=lang_data["locale"],
+            is_active=True,
+        )
+        session.add(language)
+
+    session.flush()
+    logging.info("[tests.seed_data] Languages seeded successfully")
+
+
 def seed_database(session: Session) -> None:
     """
     Seed the database with initial test data.
@@ -376,6 +437,7 @@ def seed_database(session: Session) -> None:
     logging.info("[tests.seed_data] Starting database seeding")
     try:
         clear_database(session)
+        seed_languages(session)
 
         seed_data = load_seed_data()
 
