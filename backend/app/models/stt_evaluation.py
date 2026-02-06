@@ -322,9 +322,6 @@ class STTEvaluationRunCreate(BaseModel):
         description="List of STT providers to use",
         min_length=1,
     )
-    language_id: int | None = Field(
-        None, description="Override language ID from global languages table"
-    )
 
     @field_validator("providers")
     @classmethod
