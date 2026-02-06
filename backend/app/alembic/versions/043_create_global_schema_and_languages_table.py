@@ -76,9 +76,9 @@ def upgrade():
         schema="global",
     )
 
-    # Create index on locale for faster lookups
-    op.create_index(
-        "ix_global_languages_locale",
+    # Create unique constraint on locale
+    op.create_unique_constraint(
+        "uq_global_languages_locale",
         "languages",
         ["locale"],
         schema="global",
@@ -107,6 +107,8 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_index("ix_global_languages_locale", table_name="languages", schema="global")
+    op.drop_constraint(
+        "uq_global_languages_locale", "languages", schema="global", type_="unique"
+    )
     op.drop_table("languages", schema="global")
     op.execute("DROP SCHEMA IF EXISTS global")

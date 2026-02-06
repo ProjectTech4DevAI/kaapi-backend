@@ -25,6 +25,7 @@ class LanguageBase(SQLModel):
     )
     locale: str = Field(
         max_length=255,
+        unique=True,
         sa_column_kwargs={"comment": "ISO 639-1 language code (e.g., 'en', 'hi')"},
     )
     is_active: bool = Field(
