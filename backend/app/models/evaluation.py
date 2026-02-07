@@ -250,6 +250,13 @@ class EvaluationRun(SQLModel, table=True):
         description="Object store URL of processed evaluation results for future reference",
         sa_column_kwargs={"comment": "S3 URL of processed evaluation results"},
     )
+    score_trace_url: str | None = SQLField(
+        default=None,
+        description="S3 URL per-trace score data is stored",
+        sa_column_kwargs={
+            "comment": "S3 URL where per-trace evaluation scores are stored"
+        },
+    )
     total_items: int = SQLField(
         default=0,
         description="Total number of items evaluated (set during processing)",

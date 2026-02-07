@@ -15,6 +15,7 @@ from pathlib import Path
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.cloud.storage import CloudStorage, CloudStorageError
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def upload_jsonl_to_object_store(
     results: list[dict],
     filename: str,
     subdirectory: str,
+    format: Literal["json", "jsonl"] = "jsonl",
 ) -> str | None:
     """
     Upload JSONL (JSON Lines) content to object store.
@@ -114,12 +116,20 @@ def upload_jsonl_to_object_store(
         # Create file path
         file_path = Path(subdirectory) / filename
 
-        # Convert results to JSONL
-        jsonl_content = "\n".join([json.dumps(result) for result in results])
+        if format == "jsonl":
+            jsonl_content = (
+                "\n".join(json.dumps(result, ensure_ascii=False) for result in results)
+                + "\n"
+            )
+            content_type = {"content-type": "application/jsonl"}
+        else:
+            jsonl_content = json.dumps(results, ensure_ascii=False)
+            content_type = {"content-type": "application/json"}
+
         content_bytes = jsonl_content.encode("utf-8")
 
         # Create UploadFile-like object
-        headers = Headers({"content-type": "application/jsonl"})
+        headers = Headers(content_type)
         upload_file = UploadFile(
             filename=filename,
             file=BytesIO(content_bytes),
@@ -147,6 +157,37 @@ def upload_jsonl_to_object_store(
         logger.warning(
             f"[upload_jsonl_to_object_store] Unexpected error uploading '{filename}': {e}. "
             "Continuing without object store storage.",
+            exc_info=True,
+        )
+        return None
+
+
+def load_json_from_object_store(storage: CloudStorage, url: str) -> list | dict | None:
+    logger.info(f"[load_json_from_object_store] Loading JSON from '{url}")
+    try:
+        body = storage.stream(url)
+        content = body.read()
+
+        data = json.loads(content.decode("utf-8"))
+
+        logger.info(
+            f"[load_json_from_object_store] Download successful | "
+            f"url='{url}', size={len(content)} bytes"
+        )
+        return data
+    except CloudStorageError as e:
+        logger.warning(
+            f"[load_json_from_object_store] failed to load JSON from '{url}': {e}",
+        )
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(
+            f"[load_json_from_object_store] JSON decode error loading JSON from '{url}': {e}",
+        )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"[load_json_from_object_store] unexpected error loading JSON from '{url}': {e}",
             exc_info=True,
         )
         return None

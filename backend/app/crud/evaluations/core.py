@@ -13,6 +13,10 @@ from app.models import EvaluationRun
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.services.llm.jobs import resolve_config_blob
 
+from app.core.db import engine
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import upload_jsonl_to_object_store
+
 logger = logging.getLogger(__name__)
 
 
@@ -187,6 +191,7 @@ def update_evaluation_run(
     status: str | None = None,
     error_message: str | None = None,
     object_store_url: str | None = None,
+    score_trace_url: str | None = None,
     score: dict | None = None,
     embedding_batch_job_id: int | None = None,
 ) -> EvaluationRun:
@@ -219,6 +224,8 @@ def update_evaluation_run(
         eval_run.score = score
     if embedding_batch_job_id is not None:
         eval_run.embedding_batch_job_id = embedding_batch_job_id
+    if score_trace_url is not None:
+        eval_run.score_trace_url = score_trace_url or None
 
     # Always update timestamp
     eval_run.updated_at = now()
@@ -335,7 +342,6 @@ def save_score(
     Returns:
         Updated EvaluationRun instance, or None if not found
     """
-    from app.core.db import engine
 
     with Session(engine) as session:
         eval_run = get_evaluation_run_by_id(
@@ -344,12 +350,61 @@ def save_score(
             organization_id=organization_id,
             project_id=project_id,
         )
-        if eval_run:
-            update_evaluation_run(session=session, eval_run=eval_run, score=score)
-            logger.info(
-                f"[save_score] Saved score | evaluation_id={eval_run_id} | "
-                f"traces={len(score.get('traces', []))}"
-            )
+        if not eval_run:
+            return None
+
+        traces = score.get("traces", [])
+        summary_score = score.get("summary_scores", [])
+        score_trace_url: str | None = "" if not traces else None
+
+        if traces:
+            try:
+                storage = get_cloud_storage(session=session, project_id=project_id)
+                score_trace_url = upload_jsonl_to_object_store(
+                    storage=storage,
+                    results=traces,
+                    filename=f"traces_{eval_run_id}.json",
+                    subdirectory=f"evaluations/score/{eval_run_id}",
+                    format="json",
+                )
+                if score_trace_url:
+                    logger.info(
+                        f"[save_score] uploaded traces to S3 | "
+                        f"evaluation_id={eval_run_id} | url={score_trace_url} | "
+                        f"traces_count={len(traces)}"
+                    )
+                else:
+                    logger.warning(
+                        f"[save_score] failed to upload traces to S3, "
+                        f"falling back to DB storage | evaluation_id={eval_run_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[save_score] Error uploading traces to S3: {e} | "
+                    f"evaluation_id={eval_run_id}",
+                    exc_info=True,
+                )
+
+        # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
+        # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
+        if score_trace_url:
+            db_score = {"summary_scores": summary_score}
+        else:
+            # fallback to store data in db if failed to store in s3
+            db_score = score
+
+        update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            score=db_score,
+            score_trace_url=score_trace_url,
+        )
+
+        logger.info(
+            f"[save_score] Saved score | evaluation_id={eval_run_id} | "
+            f"traces={len(score.get('traces', []))}"
+        )
+
         return eval_run
 
 
