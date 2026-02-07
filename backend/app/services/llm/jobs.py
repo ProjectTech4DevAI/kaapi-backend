@@ -235,9 +235,6 @@ def execute_job(
 
             else:
                 config_blob = config.blob
-
-            user_sent_config_provider = ""
-
             try:
                 # Transform Kaapi config to native config if needed (before getting provider)
                 completion_config = config_blob.completion

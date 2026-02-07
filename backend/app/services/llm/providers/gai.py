@@ -1,5 +1,5 @@
 import logging
-
+import base64
 from google import genai
 from google.genai.types import (
     GenerateContentResponse,
@@ -17,8 +17,9 @@ from app.models.llm import (
     TextOutput,
     TextContent,
 )
+from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider
-
+from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,6 @@ class GoogleAIProvider(BaseProvider):
             return None, "Missing 'language' in native params"
 
         # Extract optional params
-        speed = generation_params.get("speed", 1.0)
         response_format = generation_params.get("response_format", "wav")
 
         # Extract Gemini-specific params from provider_specific.gemini
@@ -203,15 +203,9 @@ class GoogleAIProvider(BaseProvider):
         gemini_params = provider_specific.get("gemini", {})
 
         director_notes = gemini_params.get("director_notes")
-        pitch = gemini_params.get("pitch")
-        volume_gain_db = gemini_params.get("volume_gain_db")
-
         # Build Gemini TTS config
         from google.genai import types
 
-        # Note: Current google-genai SDK doesn't support AudioConfig or parameters
-        # like speaking_rate, pitch, volume_gain_db. These may be added in future SDK versions.
-        # For now, we only use the available TTS parameters.
         config_kwargs = {
             "response_modalities": ["AUDIO"],
             "speech_config": types.SpeechConfig(
@@ -225,73 +219,56 @@ class GoogleAIProvider(BaseProvider):
         if director_notes:
             config_kwargs["system_instruction"] = director_notes
 
-        # Log warning if unsupported parameters were provided
-        if speed and speed != 1.0:
-            logger.warning(
-                f"[GoogleAIProvider._execute_tts] speed parameter ({speed}) is not supported by current SDK version"
-            )
-        if pitch is not None:
-            logger.warning(
-                f"[GoogleAIProvider._execute_tts] pitch parameter ({pitch}) is not supported by current SDK version"
-            )
-        if volume_gain_db is not None:
-            logger.warning(
-                f"[GoogleAIProvider._execute_tts] volume_gain_db parameter ({volume_gain_db}) is not supported by current SDK version"
-            )
-        if response_format and response_format != "wav":
-            logger.warning(
-                f"[GoogleAIProvider._execute_tts] response_format ({response_format}) selection is not supported by current SDK version, using default"
-            )
-
         config = types.GenerateContentConfig(**config_kwargs)
 
         # Execute TTS
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model, contents=resolved_input, config=config
         )
-
-        # Validate response
         if not response.response_id:
             return None, "Google AI response missing response_id"
-
-        # Extract audio bytes
         try:
-            audio_bytes = response.candidates[0].content.parts[0].inline_data.data
+            raw_audio_bytes = response.candidates[0].content.parts[0].inline_data.data
+
         except (IndexError, AttributeError) as e:
             return None, f"Failed to extract audio from response: {str(e)}"
 
-        if not audio_bytes:
+        if not raw_audio_bytes:
             return None, "Google AI response missing audio data"
 
         # Post-process audio format conversion if needed
         # Gemini TTS natively outputs 24kHz 16-bit PCM (WAV format)
         actual_format = "wav"  # Native Gemini TTS output format
+        encoded_content = base64.b64encode(raw_audio_bytes or b"").decode("ascii")
 
         if response_format and response_format != "wav":
             # Need to convert from WAV to requested format
-            from app.core.audio_utils import convert_wav_to_mp3, convert_wav_to_ogg
-
             logger.info(
                 f"[GoogleAIProvider._execute_tts] Converting audio from WAV to {response_format}"
             )
 
             if response_format == "mp3":
-                converted_bytes, convert_error = convert_wav_to_mp3(audio_bytes)
+                converted_bytes, convert_error = convert_pcm_to_mp3(raw_audio_bytes)
                 if convert_error:
                     return None, f"Failed to convert audio to MP3: {convert_error}"
-                audio_bytes = converted_bytes
+                encoded_content = base64.b64encode(converted_bytes or b"").decode(
+                    "ascii"
+                )
                 actual_format = "mp3"
 
             elif response_format == "ogg":
-                converted_bytes, convert_error = convert_wav_to_ogg(audio_bytes)
+                converted_bytes, convert_error = convert_pcm_to_ogg(raw_audio_bytes)
                 if convert_error:
                     return None, f"Failed to convert audio to OGG: {convert_error}"
-                audio_bytes = converted_bytes
+                encoded_content = base64.b64encode(converted_bytes or b"").decode(
+                    "ascii"
+                )
                 actual_format = "ogg"
 
             logger.info(
-                f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(audio_bytes)} bytes)"
+                f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(raw_audio_bytes)} bytes)"
             )
+        response_mime_type = f"audio/{response_format}"
 
         # Extract usage metadata
         if response.usage_metadata:
@@ -314,7 +291,14 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=LLMOutput(audio_bytes=audio_bytes, audio_format=actual_format),
+                # output=LLMOutput(audio_bytes=audio_bytes, audio_format=actual_format),
+                output=AudioOutput(
+                    content=AudioContent(
+                        format="base64",
+                        value=encoded_content,
+                        mime_type=response_mime_type,
+                    )
+                ),
             ),
             usage=Usage(
                 input_tokens=input_tokens,
@@ -329,7 +313,7 @@ class GoogleAIProvider(BaseProvider):
 
         logger.info(
             f"[GoogleAIProvider._execute_tts] Successfully generated TTS response: "
-            f"{response.response_id}, audio_size={len(audio_bytes)} bytes"
+            f"{response.response_id}, audio_size={len(raw_audio_bytes)} bytes"
         )
 
         return llm_response, None
