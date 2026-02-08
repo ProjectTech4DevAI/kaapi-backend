@@ -13,6 +13,7 @@ from typing import Any, Literal
 from uuid import UUID
 from sqlmodel import Session, select
 from app.core.util import now
+import base64
 import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
 from app.models.llm.request import (
@@ -176,35 +177,18 @@ def update_llm_call_response(
         db_llm_call.provider_response_id = provider_response_id
 
     if content is not None:
-        # For TTS responses: transform audio_bytes to metadata only
-        # (audio_bytes should already be converted to audio_base64 by LLMOutput validator,
-        # but handle it defensively in case it wasn't)
-        if "audio_bytes" in content:
-            import base64
-
-            audio_bytes = content.pop("audio_bytes")
-            if audio_bytes:
-                content["audio_size_bytes"] = len(audio_bytes)
-                # Convert to base64 for storage if not already done
-                if "audio_base64" not in content:
-                    content["audio_base64"] = base64.b64encode(audio_bytes).decode(
-                        "utf-8"
+        # For audio outputs (AudioOutput model): calculate size metadata from base64 content
+        # AudioOutput serializes as: {"type": "audio", "content": {"format": "base64", "value": "...", "mime_type": "..."}}
+        if content.get("type") == "audio":
+            audio_value = content.get("content", {}).get("value")
+            if audio_value:
+                try:
+                    audio_data = base64.b64decode(audio_value)
+                    content["audio_size_bytes"] = len(audio_data)
+                except Exception as e:
+                    logger.warning(
+                        f"[update_llm_call_response] Failed to calculate audio size: {e}"
                     )
-            logger.info(
-                f"[update_llm_call_response] Converted audio_bytes to audio_base64 for storage"
-            )
-
-        # Calculate audio size from base64 if present and audio_size_bytes not set
-        if "audio_base64" in content and "audio_size_bytes" not in content:
-            import base64
-
-            try:
-                audio_data = base64.b64decode(content["audio_base64"])
-                content["audio_size_bytes"] = len(audio_data)
-            except Exception as e:
-                logger.warning(
-                    f"[update_llm_call_response] Failed to calculate audio size: {e}"
-                )
 
         db_llm_call.content = content
 
