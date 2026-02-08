@@ -169,18 +169,20 @@ def execute_job(
                 logger.info("[execute_job] Guardrails bypassed (service unavailable)")
 
             elif safe_input["success"]:
-                request.query.input = safe_input["data"]["safe_text"]
+                # Update the text value within the QueryInput structure
+                request.query.input.content.value = safe_input["data"]["safe_text"]
 
                 if safe_input["data"]["rephrase_needed"]:
                     callback_response = APIResponse.failure_response(
-                        error=request.query.input,
+                        error=safe_input["data"]["safe_text"],
                         metadata=request.request_metadata,
                     )
                     return handle_job_error(
                         job_id, request.callback_url, callback_response
                     )
             else:
-                request.query.input = safe_input["error"]
+                # Update the text value with error message
+                request.query.input.content.value = safe_input["error"]
 
                 callback_response = APIResponse.failure_response(
                     error=safe_input["error"],
@@ -345,7 +347,7 @@ def execute_job(
 
         if response:
             if output_guardrails:
-                output_text = response.response.output.text
+                output_text = response.response.output.content.value
                 safe_output = call_guardrails(output_text, output_guardrails, job_id)
 
                 logger.info(
@@ -358,7 +360,9 @@ def execute_job(
                     )
 
                 elif safe_output["success"]:
-                    response.response.output.text = safe_output["data"]["safe_text"]
+                    response.response.output.content.value = safe_output["data"][
+                        "safe_text"
+                    ]
 
                     if safe_output["data"]["rephrase_needed"] == True:
                         callback_response = APIResponse.failure_response(

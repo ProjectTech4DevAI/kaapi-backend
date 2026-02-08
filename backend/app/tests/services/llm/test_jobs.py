@@ -765,6 +765,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -778,8 +779,8 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert "[REDACTED]" in provider_query.input
-        assert "4111" not in provider_query.input
+        assert "[REDACTED]" in provider_query.input.content.value
+        assert "4111" not in provider_query.input.content.value
 
         assert result["success"]
 
@@ -788,7 +789,7 @@ class TestExecuteJob:
     ):
         env = job_env
 
-        env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
+        env["mock_llm_response"].response.output.content.value = "Aadhar no 123-45-6789"
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
@@ -807,6 +808,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -817,7 +819,7 @@ class TestExecuteJob:
 
             result = self._execute_job(job_for_execution, db, request_data)
 
-        assert "REDACTED" in result["data"]["response"]["output"]["text"]
+        assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
 
     def test_guardrails_bypass_does_not_modify_input(
         self, db, job_env, job_for_execution
@@ -844,6 +846,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -854,7 +857,7 @@ class TestExecuteJob:
             self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert provider_query.input == unsafe_input
+        assert provider_query.input.content.value == unsafe_input
 
     def test_guardrails_validation_failure_blocks_job(
         self, db, job_env, job_for_execution
@@ -873,6 +876,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -907,6 +911,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }

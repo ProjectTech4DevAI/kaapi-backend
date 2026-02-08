@@ -194,6 +194,7 @@ def test_llm_call_success_with_guardrails(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4o",
                             "temperature": 0.7,
@@ -249,6 +250,7 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,
