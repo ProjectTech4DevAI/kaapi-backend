@@ -26,11 +26,11 @@ def create_stt_results(
     evaluation_run_id: int,
     org_id: int,
     project_id: int,
-    providers: list[str],
+    models: list[str],
 ) -> list[STTResult]:
-    """Create STT result records for all samples and providers.
+    """Create STT result records for all samples and models.
 
-    Creates one result per sample per provider.
+    Creates one result per sample per model.
 
     Args:
         session: Database session
@@ -38,7 +38,7 @@ def create_stt_results(
         evaluation_run_id: Run ID
         org_id: Organization ID
         project_id: Project ID
-        providers: List of providers
+        models: List of STT models
 
     Returns:
         list[STTResult]: Created results
@@ -46,7 +46,7 @@ def create_stt_results(
     logger.info(
         f"[create_stt_results] Creating STT results | "
         f"run_id: {evaluation_run_id}, sample_count: {len(samples)}, "
-        f"provider_count: {len(providers)}"
+        f"model_count: {len(models)}"
     )
 
     timestamp = now()
@@ -56,13 +56,13 @@ def create_stt_results(
             evaluation_run_id=evaluation_run_id,
             organization_id=org_id,
             project_id=project_id,
-            provider=provider,
+            provider=model,
             status=STTResultStatus.PENDING.value,
             inserted_at=timestamp,
             updated_at=timestamp,
         )
         for sample in samples
-        for provider in providers
+        for model in models
     ]
 
     session.add_all(results)
@@ -304,6 +304,7 @@ def get_pending_results_for_run(
     session: Session,
     run_id: int,
     provider: str | None = None,
+    sample_id: int | None = None,
 ) -> list[STTResult]:
     """Get all pending results for a run.
 
@@ -311,6 +312,7 @@ def get_pending_results_for_run(
         session: Database session
         run_id: Run ID
         provider: Optional filter by provider
+        sample_id: Optional filter by sample ID
 
     Returns:
         list[STTResult]: Pending results
@@ -322,6 +324,9 @@ def get_pending_results_for_run(
 
     if provider is not None:
         where_clauses.append(STTResult.provider == provider)
+
+    if sample_id is not None:
+        where_clauses.append(STTResult.stt_sample_id == sample_id)
 
     statement = select(STTResult).where(*where_clauses)
 

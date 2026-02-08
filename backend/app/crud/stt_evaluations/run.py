@@ -23,7 +23,7 @@ def create_stt_run(
     dataset_name: str,
     org_id: int,
     project_id: int,
-    providers: list[str],
+    models: list[str],
     language_id: int | None = None,
     total_items: int = 0,
 ) -> EvaluationRun:
@@ -36,7 +36,7 @@ def create_stt_run(
         dataset_name: Name of the dataset
         org_id: Organization ID
         project_id: Project ID
-        providers: List of STT providers to use
+        models: List of STT models to use
         language_id: Optional language ID override (references global.languages)
         total_items: Total number of items to process
 
@@ -46,7 +46,7 @@ def create_stt_run(
     logger.info(
         f"[create_stt_run] Creating STT evaluation run | "
         f"run_name: {run_name}, dataset_id: {dataset_id}, "
-        f"providers: {providers}"
+        f"models: {models}"
     )
 
     run = EvaluationRun(
@@ -55,7 +55,7 @@ def create_stt_run(
         dataset_id=dataset_id,
         type=EvaluationType.STT.value,
         language_id=language_id,
-        providers=providers,
+        providers=models,
         status="pending",
         total_items=total_items,
         organization_id=org_id,
@@ -160,7 +160,7 @@ def list_stt_runs(
             dataset_name=run.dataset_name,
             type=run.type,
             language_id=run.language_id,
-            providers=run.providers,
+            models=run.providers,
             dataset_id=run.dataset_id,
             status=run.status,
             total_items=run.total_items,

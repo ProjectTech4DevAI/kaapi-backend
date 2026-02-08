@@ -7,13 +7,14 @@ pending STT evaluations - polling batch status and processing completed batches.
 import logging
 from typing import Any
 
+from sqlalchemy import Integer
 from sqlmodel import Session, select
 
 from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
-from app.crud.job import get_batch_job
 from app.crud.stt_evaluations.result import count_results_by_status, update_stt_result
 from app.crud.stt_evaluations.run import get_pending_stt_runs, update_stt_run
 from app.models import EvaluationRun
+from app.models.batch_job import BatchJob
 from app.models.stt_evaluation import STTResult, STTResultStatus
 from app.services.stt_evaluations.gemini import GeminiClient
 
@@ -102,12 +103,37 @@ async def poll_all_pending_stt_evaluations(
     }
 
 
+def _get_batch_jobs_for_run(
+    session: Session,
+    run: EvaluationRun,
+) -> list[BatchJob]:
+    """Find all batch jobs associated with an STT evaluation run.
+
+    Queries batch_job table where config contains the evaluation_run_id.
+
+    Args:
+        session: Database session
+        run: The evaluation run
+
+    Returns:
+        list[BatchJob]: All batch jobs for this run
+    """
+    stmt = select(BatchJob).where(
+        BatchJob.job_type == "stt_evaluation",
+        BatchJob.config["evaluation_run_id"].astext.cast(Integer) == run.id,
+    )
+    return list(session.exec(stmt).all())
+
+
 async def poll_stt_run(
     session: Session,
     run: EvaluationRun,
     org_id: int,
 ) -> dict[str, Any]:
     """Poll a single STT evaluation run's batch status.
+
+    Finds all batch jobs for this run (one per provider) and polls each.
+    Only marks the run as complete when all batch jobs are in terminal states.
 
     Args:
         session: Database session
@@ -119,22 +145,15 @@ async def poll_stt_run(
     """
     logger.info(f"[poll_stt_run] Polling run | run_id: {run.id}")
 
-    # Check if run has batch_job_id
-    if not run.batch_job_id:
-        logger.warning(f"[poll_stt_run] Run has no batch_job_id | run_id: {run.id}")
-        return {"status": "failed", "error": "No batch job found"}
+    # Find all batch jobs for this run
+    batch_jobs = _get_batch_jobs_for_run(session=session, run=run)
 
-    # Get the batch job record
-    batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
-    if not batch_job:
-        logger.warning(
-            f"[poll_stt_run] BatchJob not found | run_id: {run.id}, "
-            f"batch_job_id: {run.batch_job_id}"
-        )
-        return {"status": "failed", "error": "Batch job not found"}
+    if not batch_jobs:
+        logger.warning(f"[poll_stt_run] No batch jobs found | run_id: {run.id}")
+        return {"status": "failed", "error": "No batch jobs found"}
 
     try:
-        # Initialize Gemini client and poll batch status
+        # Initialize Gemini client
         gemini_client = GeminiClient.from_credentials(
             session=session,
             org_id=org_id,
@@ -142,46 +161,83 @@ async def poll_stt_run(
         )
         batch_provider = GeminiBatchProvider(client=gemini_client.client)
 
-        # Poll and update batch job status
-        poll_batch_status(
-            session=session,
-            provider=batch_provider,
-            batch_job=batch_job,
-        )
+        all_terminal = True
+        any_succeeded = False
+        any_failed = False
+        errors: list[str] = []
 
-        # Refresh to get updated status
-        session.refresh(batch_job)
-        provider_status = batch_job.provider_status
+        for batch_job in batch_jobs:
+            provider_name = batch_job.config.get("stt_provider", "unknown")
 
-        logger.info(
-            f"[poll_stt_run] Batch status | "
-            f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
-            f"state: {provider_status}"
-        )
+            # Skip batch jobs already in terminal state that have been processed
+            if batch_job.provider_status in TERMINAL_STATES:
+                if batch_job.provider_status == BatchJobState.SUCCEEDED.value:
+                    any_succeeded = True
+                else:
+                    any_failed = True
+                    errors.append(
+                        f"{provider_name}: {batch_job.error_message or batch_job.provider_status}"
+                    )
+                continue
 
-        # Check if batch is complete
-        if provider_status not in TERMINAL_STATES:
+            # Poll batch job status
+            poll_batch_status(
+                session=session,
+                provider=batch_provider,
+                batch_job=batch_job,
+            )
+
+            session.refresh(batch_job)
+            provider_status = batch_job.provider_status
+
+            logger.info(
+                f"[poll_stt_run] Batch status | "
+                f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
+                f"provider: {provider_name}, state: {provider_status}"
+            )
+
+            if provider_status not in TERMINAL_STATES:
+                all_terminal = False
+                continue
+
+            # Batch reached terminal state - process it
+            if provider_status == BatchJobState.SUCCEEDED.value:
+                await process_completed_stt_batch(
+                    session=session,
+                    run=run,
+                    batch_job=batch_job,
+                    org_id=org_id,
+                )
+                any_succeeded = True
+            else:
+                any_failed = True
+                errors.append(
+                    f"{provider_name}: {batch_job.error_message or provider_status}"
+                )
+
+        if not all_terminal:
             return {"status": "still_processing"}
 
-        # Batch is complete - check if succeeded
-        if provider_status == BatchJobState.SUCCEEDED.value:
-            await process_completed_stt_batch(
-                session=session,
-                run=run,
-                batch_job=batch_job,
-                org_id=org_id,
-            )
-            return {"status": "completed"}
-        else:
-            # Batch failed
-            error_msg = batch_job.error_message or f"Batch {provider_status}"
-            update_stt_run(
-                session=session,
-                run_id=run.id,
-                status="failed",
-                error_message=error_msg,
-            )
-            return {"status": "failed", "error": error_msg}
+        # All batch jobs are done - finalize the run
+        status_counts = count_results_by_status(session=session, run_id=run.id)
+        pending = status_counts.get(STTResultStatus.PENDING.value, 0)
+        failed = status_counts.get(STTResultStatus.FAILED.value, 0)
+
+        final_status = "completed" if pending == 0 else "processing"
+        error_message = None
+        if any_failed:
+            error_message = "; ".join(errors)
+        elif failed > 0:
+            error_message = f"{failed} transcription(s) failed"
+
+        update_stt_run(
+            session=session,
+            run_id=run.id,
+            status=final_status,
+            error_message=error_message,
+        )
+
+        return {"status": "completed" if not any_failed else "failed", "errors": errors}
 
     except Exception as e:
         logger.error(
@@ -281,30 +337,10 @@ async def process_completed_stt_batch(
             f"batch_job_id: {batch_job.id}, error: {str(e)}",
             exc_info=True,
         )
-        # Mark all pending results as failed since we couldn't process the batch
         raise
-
-    # Update run status
-    status_counts = count_results_by_status(session=session, run_id=run.id)
-
-    completed = status_counts.get(STTResultStatus.COMPLETED.value, 0)
-    failed = status_counts.get(STTResultStatus.FAILED.value, 0)
-    pending = status_counts.get(STTResultStatus.PENDING.value, 0)
-
-    final_status = "completed" if pending == 0 else "processing"
-    error_message = None
-    if failed > 0:
-        error_message = f"{failed} transcription(s) failed"
-
-    update_stt_run(
-        session=session,
-        run_id=run.id,
-        status=final_status,
-        error_message=error_message,
-    )
 
     logger.info(
         f"[process_completed_stt_batch] Batch results processed | "
-        f"run_id: {run.id}, completed: {completed}, "
-        f"failed: {failed}, status: {final_status}"
+        f"run_id: {run.id}, provider: {stt_provider}, "
+        f"processed: {processed_count}, failed: {failed_count}"
     )

@@ -12,8 +12,9 @@ from sqlmodel import SQLModel
 
 from app.core.util import now
 
-# Supported STT providers for evaluation
-SUPPORTED_STT_PROVIDERS = ["gemini-2.5-pro"]
+# Supported STT models for evaluation
+# SUPPORTED_STT_MODELS = ["gemini-2.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
+SUPPORTED_STT_MODELS = ["gemini-2.5-pro"]
 
 
 class EvaluationType(str, Enum):
@@ -317,25 +318,27 @@ class STTEvaluationRunCreate(BaseModel):
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the STT dataset to evaluate")
-    providers: list[str] = Field(
+    models: list[str] = Field(
         default_factory=lambda: ["gemini-2.5-pro"],
-        description="List of STT providers to use",
+        description="List of STT models to use",
         min_length=1,
     )
 
-    @field_validator("providers")
+    @field_validator("models")
     @classmethod
-    def validate_providers(cls, v: list[str]) -> list[str]:
-        """Validate that all providers are supported."""
-        if not v:
-            raise ValueError("At least one provider must be specified")
-        unsupported = [p for p in v if p not in SUPPORTED_STT_PROVIDERS]
+    def validate_models(cls, valid_model: list[str]) -> list[str]:
+        """Validate that all models are supported."""
+        if not valid_model:
+            raise ValueError("At least one model must be specified")
+        unsupported = [
+            models for models in valid_model if models not in SUPPORTED_STT_MODELS
+        ]
         if unsupported:
             raise ValueError(
-                f"Unsupported provider(s): {', '.join(unsupported)}. "
-                f"Supported providers are: {', '.join(SUPPORTED_STT_PROVIDERS)}"
+                f"Unsupported model(s): {', '.join(unsupported)}. "
+                f"Supported models are: {', '.join(SUPPORTED_STT_MODELS)}"
             )
-        return v
+        return valid_model
 
 
 class STTEvaluationRunPublic(BaseModel):
@@ -346,7 +349,7 @@ class STTEvaluationRunPublic(BaseModel):
     dataset_name: str
     type: str
     language_id: int | None
-    providers: list[str] | None
+    models: list[str] | None
     dataset_id: int
     status: str
     total_items: int

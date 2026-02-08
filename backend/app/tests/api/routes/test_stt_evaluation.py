@@ -551,7 +551,7 @@ class TestSTTEvaluationRun:
             json={
                 "run_name": "test_run",
                 "dataset_id": 99999,
-                "providers": ["gemini-2.5-pro"],
+                "models": ["gemini-2.5-pro"],
             },
             headers=user_api_key_header,
         )
@@ -571,7 +571,7 @@ class TestSTTEvaluationRun:
             json={
                 "run_name": "test_run",
                 "dataset_id": 1,
-                "providers": ["gemini-2.5-pro"],
+                "models": ["gemini-2.5-pro"],
             },
         )
 

@@ -45,7 +45,7 @@ def start_stt_evaluation(
     logger.info(
         f"[start_stt_evaluation] Starting STT evaluation | "
         f"run_name: {run_create.run_name}, dataset_id: {run_create.dataset_id}, "
-        f"providers: {run_create.providers}"
+        f"models: {run_create.models}"
     )
 
     # Validate dataset exists
@@ -75,9 +75,9 @@ def start_stt_evaluation(
         dataset_name=dataset.name,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        providers=run_create.providers,
+        models=run_create.models,
         language_id=language_id,
-        total_items=sample_count * len(run_create.providers),
+        total_items=sample_count * len(run_create.models),
     )
 
     # Get samples for the dataset
@@ -88,30 +88,27 @@ def start_stt_evaluation(
         project_id=auth_context.project_.id,
     )
 
-    # Create result records for each sample and provider
-    results = create_stt_results(
+    # Create result records for each sample and model
+    create_stt_results(
         session=_session,
         samples=samples,
         evaluation_run_id=run.id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        providers=run_create.providers,
+        models=run_create.models,
     )
-
-    sample_to_result = {r.stt_sample_id: r.id for r in results}
 
     try:
         batch_result = start_stt_evaluation_batch(
             session=_session,
             run=run,
             samples=samples,
-            sample_to_result=sample_to_result,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
         )
         logger.info(
             f"[start_stt_evaluation] STT evaluation batch submitted | "
-            f"run_id: {run.id}, batch_jobs: {batch_result.get('batch_jobs', {}).keys()}"
+            f"run_id: {run.id}, batch_jobs: {list(batch_result.get('batch_jobs', {}).keys())}"
         )
     except Exception as e:
         logger.error(
@@ -141,7 +138,7 @@ def start_stt_evaluation(
             dataset_name=run.dataset_name,
             type=run.type,
             language_id=run.language_id,
-            providers=run.providers,
+            models=run.providers,
             dataset_id=run.dataset_id,
             status=run.status,
             total_items=run.total_items,
@@ -237,7 +234,7 @@ def get_stt_evaluation_run(
             dataset_name=run.dataset_name,
             type=run.type,
             language_id=run.language_id,
-            providers=run.providers,
+            models=run.providers,
             dataset_id=run.dataset_id,
             status=run.status,
             total_items=run.total_items,
