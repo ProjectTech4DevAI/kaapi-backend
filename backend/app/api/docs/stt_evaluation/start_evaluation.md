@@ -5,4 +5,4 @@ The evaluation will:
 2. Generate transcriptions using Gemini Batch API
 3. Store results for human review
 
-**Supported providers:** gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash
+**Supported providers:** gemini-2.5-pro
