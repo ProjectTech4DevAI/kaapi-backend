@@ -371,7 +371,7 @@ def execute_job(
                         )
 
                 else:
-                    response.response.output.text = safe_output["error"]
+                    response.response.output.content.value = safe_output["error"]
 
                     callback_response = APIResponse.failure_response(
                         error=safe_output["error"],
