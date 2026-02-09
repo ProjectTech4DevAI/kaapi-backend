@@ -13,15 +13,14 @@ def test_evaluation_cron_job_success(
     """Test successful cron job execution."""
     mock_result = {
         "status": "success",
-        "organizations_processed": 2,
         "total_processed": 5,
         "total_failed": 0,
         "total_still_processing": 1,
         "results": [
             {
-                "org_id": superuser_api_key.organization_id,
-                "org_name": "Test Org",
-                "summary": {"processed": 3, "failed": 0},
+                "run_id": 1,
+                "run_name": "test_run",
+                "action": "processed",
             }
         ],
     }
@@ -38,24 +37,21 @@ def test_evaluation_cron_job_success(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    assert data["organizations_processed"] == 2
     assert data["total_processed"] == 5
     assert data["total_failed"] == 0
     assert data["total_still_processing"] == 1
 
 
-def test_evaluation_cron_job_no_organizations(
+def test_evaluation_cron_job_no_pending(
     client: TestClient,
     superuser_api_key: TestAuthContext,
 ) -> None:
-    """Test cron job when no organizations exist."""
+    """Test cron job when no pending evaluations exist."""
     mock_result = {
         "status": "success",
-        "organizations_processed": 0,
         "total_processed": 0,
         "total_failed": 0,
         "total_still_processing": 0,
-        "message": "No organizations to process",
         "results": [],
     }
 
@@ -71,8 +67,7 @@ def test_evaluation_cron_job_no_organizations(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    assert data["organizations_processed"] == 0
-    assert data["message"] == "No organizations to process"
+    assert data["total_processed"] == 0
 
 
 def test_evaluation_cron_job_with_failures(
@@ -82,15 +77,15 @@ def test_evaluation_cron_job_with_failures(
     """Test cron job execution with some failed evaluations."""
     mock_result = {
         "status": "success",
-        "organizations_processed": 1,
         "total_processed": 3,
         "total_failed": 2,
         "total_still_processing": 0,
         "results": [
             {
-                "org_id": superuser_api_key.organization_id,
-                "org_name": "Test Org",
-                "summary": {"processed": 3, "failed": 2},
+                "run_id": 1,
+                "run_name": "test_run",
+                "action": "failed",
+                "error": "Check failed",
             }
         ],
     }

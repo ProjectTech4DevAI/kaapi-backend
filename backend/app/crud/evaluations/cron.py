@@ -9,10 +9,9 @@ import asyncio
 import logging
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
-from app.models import Organization
 
 logger = logging.getLogger(__name__)
 
@@ -21,110 +20,32 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     """
     Process all pending evaluations across all organizations.
 
-    This function:
-    1. Gets all organizations
-    2. For each org, polls their pending evaluations
-    3. Processes completed batches automatically
-    4. Returns aggregated results
-
-    This is the main function that should be called by the cron endpoint.
+    Delegates to poll_all_pending_evaluations which fetches all processing
+    evaluation runs in a single query, groups by project, and processes them.
 
     Args:
         session: Database session
 
     Returns:
-        Dict with aggregated results:
-        {
-            "status": "success",
-            "organizations_processed": 3,
-            "total_processed": 5,
-            "total_failed": 1,
-            "total_still_processing": 2,
-            "results": [
-                {
-                    "org_id": 1,
-                    "org_name": "Org 1",
-                    "summary": {...}
-                },
-                ...
-            ]
-        }
+        Dict with aggregated results.
     """
     logger.info("[process_all_pending_evaluations] Starting evaluation processing")
 
     try:
-        # Get all organizations
-        orgs = session.exec(select(Organization)).all()
-
-        if not orgs:
-            logger.info("[process_all_pending_evaluations] No organizations found")
-            return {
-                "status": "success",
-                "organizations_processed": 0,
-                "total_processed": 0,
-                "total_failed": 0,
-                "total_still_processing": 0,
-                "message": "No organizations to process",
-                "results": [],
-            }
-
-        logger.info(
-            f"[process_all_pending_evaluations] Found {len(orgs)} organizations to process"
-        )
-
-        results = []
-        total_processed = 0
-        total_failed = 0
-        total_still_processing = 0
-
-        # Process each organization
-        for org in orgs:
-            try:
-                logger.info(
-                    f"[process_all_pending_evaluations] Processing org_id={org.id} ({org.name})"
-                )
-
-                # Poll all pending evaluations for this org
-                summary = await poll_all_pending_evaluations(
-                    session=session, org_id=org.id
-                )
-
-                results.append(
-                    {
-                        "org_id": org.id,
-                        "org_name": org.name,
-                        "summary": summary,
-                    }
-                )
-
-                total_processed += summary.get("processed", 0)
-                total_failed += summary.get("failed", 0)
-                total_still_processing += summary.get("still_processing", 0)
-
-            except Exception as e:
-                logger.error(
-                    f"[process_all_pending_evaluations] Error processing org_id={org.id}: {e}",
-                    exc_info=True,
-                )
-                session.rollback()
-                results.append(
-                    {"org_id": org.id, "org_name": org.name, "error": str(e)}
-                )
-                total_failed += 1
+        summary = await poll_all_pending_evaluations(session=session)
 
         logger.info(
             f"[process_all_pending_evaluations] Completed: "
-            f"{total_processed} processed, {total_failed} failed, "
-            f"{total_still_processing} still processing"
+            f"{summary['processed']} processed, {summary['failed']} failed, "
+            f"{summary['still_processing']} still processing"
         )
 
         return {
             "status": "success",
-            "organizations_processed": len(orgs),
-            "total_processed": total_processed,
-            "total_failed": total_failed,
-            "total_still_processing": total_still_processing,
-            "results": results,
+            "total_processed": summary["processed"],
+            "total_failed": summary["failed"],
+            "total_still_processing": summary["still_processing"],
+            "results": summary["details"],
         }
 
     except Exception as e:
@@ -134,7 +55,6 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
         )
         return {
             "status": "error",
-            "organizations_processed": 0,
             "total_processed": 0,
             "total_failed": 0,
             "total_still_processing": 0,

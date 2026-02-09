@@ -645,13 +645,16 @@ async def check_and_process_evaluation(
         }
 
 
-async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[str, Any]:
+async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
     """
-    Poll all pending evaluations for an organization.
+    Poll all pending evaluations across all organizations.
+
+    Fetches all evaluation runs with status='processing' in a single query,
+    groups them by project_id, and processes each project with its own
+    OpenAI/Langfuse clients.
 
     Args:
         session: Database session
-        org_id: Organization ID
 
     Returns:
         Summary dict:
@@ -663,10 +666,9 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
             "details": [...]
         }
     """
-    # Get pending evaluations (status = "processing")
+    # Single query to fetch all processing evaluation runs
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
-        EvaluationRun.organization_id == org_id,
     )
     pending_runs = session.exec(statement).all()
 
@@ -678,8 +680,13 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
             "still_processing": 0,
             "details": [],
         }
+
+    logger.info(
+        f"[poll_all_pending_evaluations] Found {len(pending_runs)} pending evaluation runs"
+    )
+
     # Group evaluations by project_id since credentials are per project
-    evaluations_by_project = defaultdict(list)
+    evaluations_by_project: dict[int, list[EvaluationRun]] = defaultdict(list)
     for run in pending_runs:
         evaluations_by_project[run.project_id].append(run)
 
@@ -690,6 +697,8 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
     total_still_processing_count = 0
 
     for project_id, project_runs in evaluations_by_project.items():
+        # All runs in a project share the same org_id
+        org_id = project_runs[0].organization_id
         try:
             # Get API clients for this project
             try:
@@ -709,7 +718,6 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
                 )
                 # Mark all runs in this project as failed due to client configuration error
                 for eval_run in project_runs:
-                    # Persist failure status to database
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
@@ -751,7 +759,6 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
                         f"[poll_all_pending_evaluations] Failed to check evaluation run | run_id={eval_run.id} | {e}",
                         exc_info=True,
                     )
-                    # Persist failure status to database
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
@@ -774,9 +781,7 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
                 f"[poll_all_pending_evaluations] Failed to process project | project_id={project_id} | {e}",
                 exc_info=True,
             )
-            # Mark all runs in this project as failed
             for eval_run in project_runs:
-                # Persist failure status to database
                 update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
@@ -803,7 +808,7 @@ async def poll_all_pending_evaluations(session: Session, org_id: int) -> dict[st
     }
 
     logger.info(
-        f"[poll_all_pending_evaluations] Polling summary | org_id={org_id} | processed={total_processed_count} | failed={total_failed_count} | still_processing={total_still_processing_count}"
+        f"[poll_all_pending_evaluations] Polling summary | processed={total_processed_count} | failed={total_failed_count} | still_processing={total_still_processing_count}"
     )
 
     return summary
