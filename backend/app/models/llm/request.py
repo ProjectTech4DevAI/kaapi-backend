@@ -208,6 +208,20 @@ class LLMCallRequest(SQLModel):
             "in production, always use the id + version."
         ),
     )
+    input_guardrails: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Optional guardrails configuration to apply input validation. "
+            "If not provided, no guardrails will be applied."
+        ),
+    )
+    output_guardrails: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Optional guardrails configuration to apply output validation. "
+            "If not provided, no guardrails will be applied."
+        ),
+    )
     callback_url: HttpUrl | None = Field(
         default=None, description="Webhook URL for async response delivery"
     )

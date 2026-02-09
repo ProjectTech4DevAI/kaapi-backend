@@ -18,6 +18,8 @@ from app.crud.evaluations import (
 from app.models.evaluation import EvaluationRun
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import load_json_from_object_store
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +191,7 @@ def get_evaluation_with_scores(
     Returns:
         Tuple of (EvaluationRun or None, error_message or None)
     """
+
     logger.info(
         f"[get_evaluation_with_scores] Fetching status for evaluation run | "
         f"evaluation_id={evaluation_id} | "
@@ -227,9 +230,41 @@ def get_evaluation_with_scores(
         return eval_run, None
 
     # Check if we already have cached traces
-    has_cached_traces = eval_run.score is not None and "traces" in eval_run.score
-    if not resync_score and has_cached_traces:
-        return eval_run, None
+    has_cached_traces_s3 = eval_run.score_trace_url is not None
+    has_cached_traces_db = eval_run.score is not None and "traces" in eval_run.score
+    if not resync_score:
+        if has_cached_traces_s3:
+            try:
+                storage = get_cloud_storage(session=session, project_id=project_id)
+                traces = load_json_from_object_store(
+                    storage=storage, url=eval_run.score_trace_url
+                )
+                if traces is not None:
+                    eval_run.score = {
+                        "summary_scores": (eval_run.score or {}).get(
+                            "summary_scores", []
+                        ),
+                        "traces": traces,
+                    }
+                    logger.info(
+                        f"[get_evaluation_with_scores] Loaded traces from S3 | "
+                        f"evaluation_id={evaluation_id} | "
+                        f"traces_count={len(traces)}"
+                    )
+                    return eval_run, None
+            except Exception as e:
+                logger.error(
+                    f"[get_evaluation_with_scores] Error loading traces from S3: {e} | "
+                    f"evaluation_id={evaluation_id}",
+                    exc_info=True,
+                )
+
+        if has_cached_traces_db:
+            logger.info(
+                f"[get_evaluation_with_scores] Returning traces from DB | "
+                f"evaluation_id={evaluation_id}"
+            )
+            return eval_run, None
 
     langfuse = get_langfuse_client(
         session=session,
@@ -288,5 +323,8 @@ def get_evaluation_with_scores(
         project_id=project_id,
         score=score,
     )
+
+    if eval_run:
+        eval_run.score = score
 
     return eval_run, None

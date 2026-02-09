@@ -2,11 +2,9 @@ import logging
 
 from app.api.permissions import Permission, require_permission
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
 
-from app.api.deps import SessionDep, AuthContextDep
+from app.api.deps import SessionDep
 from app.crud.evaluations import process_all_pending_evaluations_sync
-from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +23,9 @@ def evaluation_cron_job(
     Cron job endpoint for periodic evaluation tasks.
 
     This endpoint:
-    1. Gets all organizations
-    2. For each org, polls their pending evaluations
-    3. Processes completed batches automatically
+    1. Fetches all evaluation runs with status='processing'
+    2. Groups them by project_id
+    3. Processes each project with its OpenAI/Langfuse clients
     4. Returns aggregated results
 
     Hidden from Swagger documentation.
@@ -41,7 +39,6 @@ def evaluation_cron_job(
 
         logger.info(
             f"[evaluation_cron_job] Completed: "
-            f"orgs={result.get('organizations_processed', 0)}, "
             f"processed={result.get('total_processed', 0)}, "
             f"failed={result.get('total_failed', 0)}, "
             f"still_processing={result.get('total_still_processing', 0)}"
@@ -57,7 +54,6 @@ def evaluation_cron_job(
         return {
             "status": "error",
             "error": str(e),
-            "organizations_processed": 0,
             "total_processed": 0,
             "total_failed": 0,
             "total_still_processing": 0,

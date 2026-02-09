@@ -6,7 +6,6 @@ from app.models import LLMCallRequest
 from app.models.llm.request import (
     QueryParams,
     LLMCallConfig,
-    CompletionConfig,
     ConfigBlob,
     KaapiLLMParams,
     KaapiCompletionConfig,
@@ -164,3 +163,112 @@ def test_llm_call_invalid_provider(
     )
 
     assert response.status_code == 422
+
+
+def test_llm_call_success_with_guardrails(
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+) -> None:
+    """Test successful LLM call when guardrails are enabled (no validators)."""
+
+    with (
+        patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
+        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
+    ):
+        mock_start_job.return_value = "test-task-id"
+
+        mock_guardrails.return_value = {
+            "success": True,
+            "bypassed": False,
+            "data": {
+                "safe_text": "What is the capital of France?",
+                "rephrase_needed": False,
+            },
+        }
+
+        payload = LLMCallRequest(
+            query=QueryParams(input="What is the capital of France?"),
+            config=LLMCallConfig(
+                blob=ConfigBlob(
+                    completion=NativeCompletionConfig(
+                        provider="openai-native",
+                        params={
+                            "model": "gpt-4o",
+                            "temperature": 0.7,
+                        },
+                    )
+                )
+            ),
+            input_guardrails=[],
+            output_guardrails=[],
+            callback_url="https://example.com/callback",
+        )
+
+        response = client.post(
+            "/api/v1/llm/call",
+            json=payload.model_dump(mode="json"),
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["success"] is True
+        assert "response is being generated" in body["data"]["message"]
+
+        mock_start_job.assert_called_once()
+        mock_guardrails.assert_not_called()
+
+
+def test_llm_call_guardrails_bypassed_still_succeeds(
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+) -> None:
+    """If guardrails service is unavailable (bypassed), request should still succeed."""
+
+    with (
+        patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
+        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
+    ):
+        mock_start_job.return_value = "test-task-id"
+
+        mock_guardrails.return_value = {
+            "success": True,
+            "bypassed": True,
+            "data": {
+                "safe_text": "What is the capital of France?",
+                "rephrase_needed": False,
+            },
+        }
+
+        payload = LLMCallRequest(
+            query=QueryParams(input="What is the capital of France?"),
+            config=LLMCallConfig(
+                blob=ConfigBlob(
+                    completion=NativeCompletionConfig(
+                        provider="openai-native",
+                        params={
+                            "model": "gpt-4",
+                            "temperature": 0.7,
+                        },
+                    )
+                )
+            ),
+            input_guardrails=[{"type": "pii_remover"}],
+            output_guardrails=[],
+            callback_url="https://example.com/callback",
+        )
+
+        response = client.post(
+            "/api/v1/llm/call",
+            json=payload.model_dump(mode="json"),
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["success"] is True
+        assert "response is being generated" in body["data"]["message"]
+
+        mock_start_job.assert_called_once()
