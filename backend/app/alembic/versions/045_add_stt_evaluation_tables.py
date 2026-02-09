@@ -424,8 +424,18 @@ def upgrade():
         unique=False,
     )
 
+    # GIN index on batch_job.config for JSONB lookups (e.g. config->>'evaluation_run_id')
+    op.create_index(
+        "ix_batch_job_config_gin",
+        "batch_job",
+        ["config"],
+        unique=False,
+        postgresql_using="gin",
+    )
+
 
 def downgrade():
+    op.drop_index("ix_batch_job_config_gin", table_name="batch_job")
     # Drop stt_result table
     op.drop_index("idx_stt_result_status", table_name="stt_result")
     op.drop_index("idx_stt_result_feedback", table_name="stt_result")

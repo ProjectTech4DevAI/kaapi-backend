@@ -119,6 +119,7 @@ def start_stt_evaluation_batch(
                     status=STTResultStatus.FAILED.value,
                     error_message=f"Failed to generate signed URL: {str(e)}",
                 )
+            session.commit()
 
     if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
@@ -185,6 +186,7 @@ def start_stt_evaluation_batch(
                     status=STTResultStatus.FAILED.value,
                     error_message=f"Batch submission failed for {model}: {str(e)}",
                 )
+            session.commit()
 
     if not batch_jobs:
         raise Exception("Batch submission failed for all models")

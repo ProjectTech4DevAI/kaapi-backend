@@ -451,6 +451,8 @@ async def process_completed_stt_batch(
                     )
                     failed_count += 1
 
+        session.commit()
+
     except Exception as e:
         logger.error(
             f"[process_completed_stt_batch] Failed to process batch results | "

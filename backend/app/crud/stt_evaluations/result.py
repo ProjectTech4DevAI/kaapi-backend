@@ -238,8 +238,7 @@ def update_stt_result(
     result.updated_at = now()
 
     session.add(result)
-    session.commit()
-    session.refresh(result)
+    session.flush()
 
     return result
 
