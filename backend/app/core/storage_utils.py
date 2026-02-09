@@ -51,7 +51,6 @@ def upload_to_object_store(
     Upload content to object store.
 
     This is the generic upload function that handles any content type.
-    Use this directly or through convenience wrappers like upload_csv_to_object_store.
 
     Args:
         storage: CloudStorage instance
@@ -105,35 +104,6 @@ def upload_to_object_store(
             exc_info=True,
         )
         return None
-
-
-def upload_csv_to_object_store(
-    storage: CloudStorage,
-    csv_content: bytes,
-    filename: str,
-    subdirectory: str = "datasets",
-) -> str | None:
-    """
-    Upload CSV content to object store.
-
-    Convenience wrapper around upload_to_object_store for CSV files.
-
-    Args:
-        storage: CloudStorage instance
-        csv_content: Raw CSV content as bytes
-        filename: Name of the file (can include timestamp)
-        subdirectory: Subdirectory path in object store (default: "datasets")
-
-    Returns:
-        Object store URL as string if successful, None if failed
-    """
-    return upload_to_object_store(
-        storage=storage,
-        content=csv_content,
-        filename=filename,
-        subdirectory=subdirectory,
-        content_type="text/csv",
-    )
 
 
 def upload_jsonl_to_object_store(

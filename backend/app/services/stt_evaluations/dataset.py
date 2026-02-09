@@ -9,7 +9,7 @@ from sqlmodel import Session
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import (
     generate_timestamped_filename,
-    upload_csv_to_object_store,
+    upload_to_object_store,
 )
 from app.crud.stt_evaluations import (
     create_stt_dataset,
@@ -129,11 +129,12 @@ def _upload_samples_to_object_store(
 
         # Generate filename and upload
         filename = generate_timestamped_filename(dataset_name, "csv")
-        object_store_url = upload_csv_to_object_store(
+        object_store_url = upload_to_object_store(
             storage=storage,
-            csv_content=csv_content,
+            content=csv_content,
             filename=filename,
             subdirectory="stt_datasets",
+            content_type="text/csv",
         )
 
         if object_store_url:

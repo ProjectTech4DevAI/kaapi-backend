@@ -125,7 +125,7 @@ class TestUploadSamplesToObjectStore:
     """Test cases for _upload_samples_to_object_store function."""
 
     @patch("app.services.stt_evaluations.dataset.get_cloud_storage")
-    @patch("app.services.stt_evaluations.dataset.upload_csv_to_object_store")
+    @patch("app.services.stt_evaluations.dataset.upload_to_object_store")
     def test_successful_upload(self, mock_upload_csv, mock_get_storage):
         """Test successful upload to object store."""
         mock_storage = MagicMock()
@@ -148,7 +148,7 @@ class TestUploadSamplesToObjectStore:
         mock_upload_csv.assert_called_once()
 
     @patch("app.services.stt_evaluations.dataset.get_cloud_storage")
-    @patch("app.services.stt_evaluations.dataset.upload_csv_to_object_store")
+    @patch("app.services.stt_evaluations.dataset.upload_to_object_store")
     def test_upload_returns_none_on_failure(self, mock_upload_csv, mock_get_storage):
         """Test upload returns None on failure."""
         mock_storage = MagicMock()
