@@ -71,8 +71,7 @@ def create_stt_dataset(
 
     try:
         session.add(dataset)
-        session.commit()
-        session.refresh(dataset)
+        session.flush()
 
         logger.info(
             f"[create_stt_dataset] STT dataset created | "
@@ -195,7 +194,6 @@ def create_stt_samples(
 
     session.add_all(created_samples)
     session.flush()
-    session.commit()
 
     logger.info(
         f"[create_stt_samples] STT samples created | "

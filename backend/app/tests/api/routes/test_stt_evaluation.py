@@ -49,6 +49,7 @@ def create_test_stt_dataset(
     name: str = "test_stt_dataset",
     description: str | None = None,
     language_id: int | None = None,
+    dataset_metadata: dict | None = None,
 ) -> EvaluationDataset:
     """Create a test STT dataset."""
     dataset = EvaluationDataset(
@@ -56,7 +57,8 @@ def create_test_stt_dataset(
         description=description,
         type=EvaluationType.STT.value,
         language_id=language_id,
-        dataset_metadata={"sample_count": 0, "has_ground_truth_count": 0},
+        dataset_metadata=dataset_metadata
+        or {"sample_count": 0, "has_ground_truth_count": 0},
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
@@ -483,6 +485,7 @@ class TestSTTDatasetGet:
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
             name="get_no_samples_dataset",
+            dataset_metadata={"sample_count": 1, "has_ground_truth_count": 0},
         )
         create_test_stt_sample(
             db=db,
@@ -490,10 +493,6 @@ class TestSTTDatasetGet:
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
         )
-        # Update dataset metadata to reflect the sample count
-        dataset.dataset_metadata = {"sample_count": 1, "has_ground_truth_count": 0}
-        db.add(dataset)
-        db.commit()
 
         response = client.get(
             f"/api/v1/evaluations/stt/datasets/{dataset.id}",
@@ -523,6 +522,7 @@ class TestSTTEvaluationRun:
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
             name="eval_test_dataset",
+            dataset_metadata={"sample_count": 3, "has_ground_truth_count": 0},
         )
         # Create some samples (file will be created automatically)
         for i in range(3):
@@ -540,11 +540,6 @@ class TestSTTEvaluationRun:
                 project_id=user_api_key.project_id,
                 file_id=file.id,
             )
-        # Update metadata to reflect actual sample count
-        dataset.dataset_metadata = {"sample_count": 3, "has_ground_truth_count": 0}
-        db.add(dataset)
-        db.commit()
-        db.refresh(dataset)
         return dataset
 
     @patch("app.api.routes.stt_evaluations.evaluation.start_stt_evaluation_batch")

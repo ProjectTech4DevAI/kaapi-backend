@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.core.exception_handlers import HTTPException
 from app.models.stt_evaluation import STTSampleCreate
 from app.services.stt_evaluations.dataset import (
     _samples_to_csv,
@@ -235,6 +236,9 @@ class TestUploadSTTDataset:
         assert call_kwargs["dataset_metadata"]["sample_count"] == 1
         assert call_kwargs["dataset_metadata"]["has_ground_truth_count"] == 1
 
+        # Verify single commit after both operations
+        mock_session.commit.assert_called_once()
+
     @patch("app.services.stt_evaluations.dataset._upload_samples_to_object_store")
     @patch("app.services.stt_evaluations.dataset.create_stt_samples")
     @patch("app.services.stt_evaluations.dataset.create_stt_dataset")
@@ -342,3 +346,38 @@ class TestUploadSTTDataset:
         assert dataset is not None
         call_kwargs = mock_create_dataset.call_args.kwargs
         assert call_kwargs["object_store_url"] is None
+
+    @patch("app.services.stt_evaluations.dataset._upload_samples_to_object_store")
+    @patch("app.services.stt_evaluations.dataset.create_stt_samples")
+    @patch("app.services.stt_evaluations.dataset.create_stt_dataset")
+    def test_upload_rolls_back_on_sample_creation_failure(
+        self, mock_create_dataset, mock_create_samples, mock_upload_samples
+    ):
+        """Test that dataset is rolled back if sample creation fails."""
+        mock_upload_samples.return_value = "s3://bucket/stt_datasets/test.csv"
+
+        mock_dataset = MagicMock()
+        mock_dataset.id = 1
+        mock_create_dataset.return_value = mock_dataset
+
+        mock_create_samples.side_effect = HTTPException(
+            status_code=400, detail="File IDs not found: [999]"
+        )
+
+        mock_session = MagicMock()
+        samples = [
+            STTSampleCreate(file_id=999),
+        ]
+
+        with pytest.raises(HTTPException) as exc_info:
+            upload_stt_dataset(
+                session=mock_session,
+                name="test_dataset",
+                samples=samples,
+                organization_id=1,
+                project_id=1,
+            )
+
+        assert exc_info.value.status_code == 400
+        mock_session.rollback.assert_called_once()
+        mock_session.commit.assert_not_called()

@@ -71,36 +71,43 @@ def upload_stt_dataset(
         "has_ground_truth_count": sum(1 for s in samples if s.ground_truth),
     }
 
-    # Step 3: Create dataset record
-    dataset = create_stt_dataset(
-        session=session,
-        name=name,
-        org_id=organization_id,
-        project_id=project_id,
-        description=description,
-        language_id=language_id,
-        object_store_url=object_store_url,
-        dataset_metadata=metadata,
-    )
+    # Step 3: Create dataset and samples in a single transaction
+    try:
+        dataset = create_stt_dataset(
+            session=session,
+            name=name,
+            org_id=organization_id,
+            project_id=project_id,
+            description=description,
+            language_id=language_id,
+            object_store_url=object_store_url,
+            dataset_metadata=metadata,
+        )
 
-    logger.info(
-        f"[upload_stt_dataset] Created dataset record | "
-        f"id={dataset.id} | name={name}"
-    )
+        logger.info(
+            f"[upload_stt_dataset] Created dataset record | "
+            f"id={dataset.id} | name={name}"
+        )
 
-    # Step 4: Create sample records
-    created_samples = create_stt_samples(
-        session=session,
-        dataset=dataset,
-        samples=samples,
-    )
+        # Step 4: Create sample records
+        created_samples = create_stt_samples(
+            session=session,
+            dataset=dataset,
+            samples=samples,
+        )
 
-    logger.info(
-        f"[upload_stt_dataset] Created sample records | "
-        f"dataset_id={dataset.id} | sample_count={len(created_samples)}"
-    )
+        logger.info(
+            f"[upload_stt_dataset] Created sample records | "
+            f"dataset_id={dataset.id} | sample_count={len(created_samples)}"
+        )
 
-    return dataset, created_samples
+        session.commit()
+
+        return dataset, created_samples
+
+    except Exception:
+        session.rollback()
+        raise
 
 
 def _upload_samples_to_object_store(

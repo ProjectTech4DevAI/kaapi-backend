@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.post(
-    "/files/audio",
+    "/files",
     response_model=APIResponse[AudioUploadResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Upload audio file",
