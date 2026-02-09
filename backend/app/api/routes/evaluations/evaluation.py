@@ -27,7 +27,7 @@ from app.utils import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Evaluation"])
+router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
 
 
 @router.post(
