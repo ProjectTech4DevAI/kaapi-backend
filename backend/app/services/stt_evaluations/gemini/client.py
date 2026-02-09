@@ -91,23 +91,3 @@ class GeminiClient:
             f"org_id: {org_id}, project_id: {project_id}"
         )
         return cls(api_key=api_key)
-
-    def validate_connection(self) -> bool:
-        """Validate that the client can connect to Gemini.
-
-        Returns:
-            bool: True if connection is valid
-        """
-        try:
-            # List models to verify connection
-            models = list(self._client.models.list())
-            logger.info(
-                f"[validate_connection] Connection validated | "
-                f"available_models_count: {len(models)}"
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                f"[validate_connection] Connection validation failed | error: {str(e)}"
-            )
-            return False

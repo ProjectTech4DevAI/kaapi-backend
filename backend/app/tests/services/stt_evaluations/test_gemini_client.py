@@ -111,63 +111,6 @@ class TestGeminiClientFromCredentials:
         assert "missing api_key" in str(exc_info.value)
 
 
-class TestGeminiClientValidateConnection:
-    """Test cases for GeminiClient.validate_connection method."""
-
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
-    def test_successful_validation(self, mock_genai_client):
-        """Test successful connection validation."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.models.list.return_value = [
-            MagicMock(),
-            MagicMock(),
-        ]
-        mock_genai_client.return_value = mock_client_instance
-
-        client = GeminiClient(api_key="valid-api-key")
-        result = client.validate_connection()
-
-        assert result is True
-        mock_client_instance.models.list.assert_called_once()
-
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
-    def test_validation_with_api_error(self, mock_genai_client):
-        """Test validation returns False on API error."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.models.list.side_effect = Exception("API error")
-        mock_genai_client.return_value = mock_client_instance
-
-        client = GeminiClient(api_key="invalid-api-key")
-        result = client.validate_connection()
-
-        assert result is False
-
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
-    def test_validation_with_auth_error(self, mock_genai_client):
-        """Test validation returns False on authentication error."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.models.list.side_effect = Exception("Invalid API key")
-        mock_genai_client.return_value = mock_client_instance
-
-        client = GeminiClient(api_key="wrong-api-key")
-        result = client.validate_connection()
-
-        assert result is False
-
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
-    def test_validation_with_empty_models_list(self, mock_genai_client):
-        """Test validation succeeds with empty models list."""
-        mock_client_instance = MagicMock()
-        mock_client_instance.models.list.return_value = []
-        mock_genai_client.return_value = mock_client_instance
-
-        client = GeminiClient(api_key="valid-api-key")
-        result = client.validate_connection()
-
-        # Empty list is still a valid response
-        assert result is True
-
-
 class TestGeminiClientError:
     """Test cases for GeminiClientError exception."""
 

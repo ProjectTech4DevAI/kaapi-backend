@@ -1,5 +1,7 @@
 """Tests for STT evaluation API routes."""
 
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -538,7 +540,59 @@ class TestSTTEvaluationRun:
                 project_id=user_api_key.project_id,
                 file_id=file.id,
             )
+        # Update metadata to reflect actual sample count
+        dataset.dataset_metadata = {"sample_count": 3, "has_ground_truth_count": 0}
+        db.add(dataset)
+        db.commit()
+        db.refresh(dataset)
         return dataset
+
+    @patch("app.api.routes.stt_evaluations.evaluation.start_stt_evaluation_batch")
+    def test_start_stt_evaluation_success(
+        self,
+        mock_start_batch,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        """Test successfully starting an STT evaluation run."""
+        dataset = test_dataset_with_samples
+        mock_start_batch.return_value = {
+            "success": True,
+            "run_id": 1,
+            "batch_jobs": {"gemini-2.5-pro": {"batch_job_id": 1}},
+            "sample_count": 3,
+        }
+
+        response = client.post(
+            "/api/v1/evaluations/stt/runs",
+            json={
+                "run_name": "success_test_run",
+                "dataset_id": dataset.id,
+                "models": ["gemini-2.5-pro"],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+
+        assert data["run_name"] == "success_test_run"
+        assert data["dataset_id"] == dataset.id
+        assert data["dataset_name"] == dataset.name
+        assert data["type"] == "stt"
+        assert data["models"] == ["gemini-2.5-pro"]
+        assert data["total_items"] == 3  # 3 samples × 1 model
+        assert data["status"] in ("pending", "processing")
+        assert data["organization_id"] == user_api_key.organization_id
+        assert data["project_id"] == user_api_key.project_id
+        assert data["error_message"] is None
+
+        mock_start_batch.assert_called_once()
 
     def test_start_stt_evaluation_invalid_dataset(
         self,
@@ -554,6 +608,30 @@ class TestSTTEvaluationRun:
                 "models": ["gemini-2.5-pro"],
             },
             headers=user_api_key_header,
+        )
+
+        assert response.status_code == 404
+        response_data = response.json()
+        error_str = response_data.get("detail", response_data.get("error", ""))
+        assert "not found" in error_str.lower()
+
+    def test_start_stt_evaluation_cross_org_access(
+        self,
+        client: TestClient,
+        superuser_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        """Test that a user from another organization cannot start a run on a dataset they don't own."""
+        dataset = test_dataset_with_samples  # belongs to user_api_key (Dalgo org)
+
+        response = client.post(
+            "/api/v1/evaluations/stt/runs",
+            json={
+                "run_name": "cross_org_run",
+                "dataset_id": dataset.id,
+                "models": ["gemini-2.5-pro"],
+            },
+            headers=superuser_api_key_header,  # Glific org
         )
 
         assert response.status_code == 404
