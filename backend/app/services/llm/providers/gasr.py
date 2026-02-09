@@ -22,7 +22,7 @@ from app.services.llm.providers.base import BaseProvider
 
 logger = logging.getLogger(__name__)
 
-
+# Google Speech-to-Text provider implementation using Google Cloud's Speech-to-Text API (speech_v2)
 class GoogleSpeechtoTextAIProvider(BaseProvider):
     def __init__(self, client: speech_v2.SpeechClient, project_id: str):
         super().__init__(client)
