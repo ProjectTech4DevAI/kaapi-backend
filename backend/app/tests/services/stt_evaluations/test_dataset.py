@@ -260,12 +260,12 @@ class TestUploadSTTDataset:
             organization_id=1,
             project_id=1,
             description="Test description",
-            language="en",
+            language_id=1,
         )
 
         call_kwargs = mock_create_dataset.call_args.kwargs
         assert call_kwargs["description"] == "Test description"
-        assert call_kwargs["language"] == "en"
+        assert call_kwargs["language_id"] == 1
 
     @patch("app.services.stt_evaluations.dataset._upload_samples_to_object_store")
     @patch("app.services.stt_evaluations.dataset.create_stt_samples")
