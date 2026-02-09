@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
+
+from app.models.job import JobStatus
 from sqlmodel import SQLModel
 
 from app.core.util import now
@@ -23,14 +25,6 @@ class EvaluationType(str, Enum):
     TEXT = "text"
     STT = "stt"
     TTS = "tts"
-
-
-class STTResultStatus(str, Enum):
-    """Status of an STT result."""
-
-    PENDING = "pending"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class STTSample(SQLModel, table=True):
@@ -141,10 +135,10 @@ class STTResult(SQLModel, table=True):
     )
 
     status: str = SQLField(
-        default=STTResultStatus.PENDING.value,
+        default=JobStatus.PENDING.value,
         max_length=20,
-        description="Result status: pending, completed, failed",
-        sa_column_kwargs={"comment": "Result status: pending, completed, failed"},
+        description="Result status: PENDING, SUCCESS, FAILED",
+        sa_column_kwargs={"comment": "Result status: PENDING, SUCCESS, FAILED"},
     )
 
     score: dict[str, Any] | None = SQLField(

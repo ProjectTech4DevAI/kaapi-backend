@@ -312,8 +312,8 @@ def upgrade():
             "status",
             sa.String(length=20),
             nullable=False,
-            server_default="pending",
-            comment="Result status: pending, completed, failed",
+            server_default="PENDING",
+            comment="Result status: PENDING, SUCCESS, FAILED",
         ),
         sa.Column(
             "score",

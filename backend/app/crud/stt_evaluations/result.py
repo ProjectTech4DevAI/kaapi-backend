@@ -8,9 +8,9 @@ from sqlmodel import Session, select, func
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.file import File
+from app.models.job import JobStatus
 from app.models.stt_evaluation import (
     STTResult,
-    STTResultStatus,
     STTSample,
     STTSamplePublic,
     STTResultWithSample,
@@ -57,7 +57,7 @@ def create_stt_results(
             organization_id=org_id,
             project_id=project_id,
             provider=model,
-            status=STTResultStatus.PENDING.value,
+            status=JobStatus.PENDING.value,
             inserted_at=timestamp,
             updated_at=timestamp,
         )
@@ -318,7 +318,7 @@ def get_pending_results_for_run(
     """
     where_clauses = [
         STTResult.evaluation_run_id == run_id,
-        STTResult.status == STTResultStatus.PENDING.value,
+        STTResult.status == JobStatus.PENDING.value,
     ]
 
     if provider is not None:

@@ -18,7 +18,8 @@ from app.crud.stt_evaluations.result import (
 )
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
-from app.models.stt_evaluation import STTResultStatus, STTSample
+from app.models.job import JobStatus
+from app.models.stt_evaluation import STTSample
 from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def start_stt_evaluation_batch(
                 update_stt_result(
                     session=session,
                     result_id=result.id,
-                    status=STTResultStatus.FAILED.value,
+                    status=JobStatus.FAILED.value,
                     error_message=f"Failed to generate signed URL: {str(e)}",
                 )
             session.commit()
@@ -183,7 +184,7 @@ def start_stt_evaluation_batch(
                 update_stt_result(
                     session=session,
                     result_id=result.id,
-                    status=STTResultStatus.FAILED.value,
+                    status=JobStatus.FAILED.value,
                     error_message=f"Batch submission failed for {model}: {str(e)}",
                 )
             session.commit()

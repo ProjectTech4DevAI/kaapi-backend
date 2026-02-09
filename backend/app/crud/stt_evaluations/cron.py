@@ -19,7 +19,8 @@ from app.crud.stt_evaluations.result import count_results_by_status, update_stt_
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
-from app.models.stt_evaluation import EvaluationType, STTResult, STTResultStatus
+from app.models.job import JobStatus
+from app.models.stt_evaluation import EvaluationType, STTResult
 from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
@@ -345,8 +346,8 @@ async def poll_stt_run(
 
     # All batch jobs are done - finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
-    pending = status_counts.get(STTResultStatus.PENDING.value, 0)
-    failed_count = status_counts.get(STTResultStatus.FAILED.value, 0)
+    pending = status_counts.get(JobStatus.PENDING.value, 0)
+    failed_count = status_counts.get(JobStatus.FAILED.value, 0)
 
     final_status = "completed" if pending == 0 else "processing"
     error_message = None
@@ -439,14 +440,14 @@ async def process_completed_stt_batch(
                         session=session,
                         result_id=result_record.id,
                         transcription=text,
-                        status=STTResultStatus.COMPLETED.value,
+                        status=JobStatus.SUCCESS.value,
                     )
                     processed_count += 1
                 else:
                     update_stt_result(
                         session=session,
                         result_id=result_record.id,
-                        status=STTResultStatus.FAILED.value,
+                        status=JobStatus.FAILED.value,
                         error_message=batch_result.get("error", "Unknown error"),
                     )
                     failed_count += 1
