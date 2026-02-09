@@ -25,8 +25,7 @@ from app.api.routes import (
     model_evaluation,
     collection_job,
 )
-from app.api.routes.evaluations import dataset as evaluation_dataset, evaluation
-from app.api.routes import stt_evaluations
+from app.api.routes import evaluations
 from app.core.config import settings
 
 api_router = APIRouter()
@@ -39,9 +38,7 @@ api_router.include_router(credentials.router)
 api_router.include_router(cron.router)
 api_router.include_router(documents.router)
 api_router.include_router(doc_transformation_job.router)
-api_router.include_router(evaluation_dataset.router)
-api_router.include_router(evaluation.router)
-api_router.include_router(stt_evaluations.router)
+api_router.include_router(evaluations.router)
 api_router.include_router(languages.router)
 api_router.include_router(llm.router)
 api_router.include_router(login.router)

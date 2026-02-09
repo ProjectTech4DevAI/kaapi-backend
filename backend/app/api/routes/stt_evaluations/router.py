@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from . import dataset, evaluation, files, result
 
-router = APIRouter(prefix="/evaluations/stt", tags=["STT Evaluation"])
+router = APIRouter(prefix="/stt", tags=["STT Evaluation"])
 
 # Include all sub-routers
 router.include_router(files.router)

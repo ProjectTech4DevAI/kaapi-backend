@@ -12,7 +12,6 @@ from app.core.storage_utils import (
     generate_timestamped_filename,
     get_mime_from_url,
     load_json_from_object_store,
-    upload_csv_to_object_store,
     upload_jsonl_to_object_store,
     upload_to_object_store,
 )
@@ -151,44 +150,6 @@ class TestUploadToObjectStore:
         )
 
         assert result is None
-
-
-class TestUploadCsvToObjectStore:
-    """Test cases for upload_csv_to_object_store function."""
-
-    @pytest.fixture
-    def mock_storage(self):
-        """Create a mock CloudStorage instance."""
-        storage = MagicMock()
-        storage.put.return_value = "s3://bucket/datasets/data.csv"
-        return storage
-
-    def test_successful_csv_upload(self, mock_storage):
-        """Test successful CSV upload."""
-        csv_content = b"col1,col2\nval1,val2"
-        result = upload_csv_to_object_store(
-            storage=mock_storage,
-            csv_content=csv_content,
-            filename="data.csv",
-        )
-
-        assert result == "s3://bucket/datasets/data.csv"
-        mock_storage.put.assert_called_once()
-
-    def test_csv_upload_with_custom_subdirectory(self, mock_storage):
-        """Test CSV upload with custom subdirectory."""
-        csv_content = b"col1,col2\nval1,val2"
-        result = upload_csv_to_object_store(
-            storage=mock_storage,
-            csv_content=csv_content,
-            filename="data.csv",
-            subdirectory="stt_datasets",
-        )
-
-        assert result is not None
-        call_args = mock_storage.put.call_args
-        file_path = call_args.kwargs["file_path"]
-        assert "stt_datasets" in str(file_path)
 
 
 class TestUploadJsonlToObjectStore:

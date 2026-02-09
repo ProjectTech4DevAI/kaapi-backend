@@ -18,9 +18,7 @@ from sqlmodel import Session, select
 from app.core.cloud.storage import CloudStorage
 from app.core.storage_utils import (
     generate_timestamped_filename,
-)
-from app.core.storage_utils import (
-    upload_csv_to_object_store as shared_upload_csv,
+    upload_to_object_store,
 )
 from app.core.util import now
 from app.models import EvaluationDataset, EvaluationRun
@@ -237,11 +235,12 @@ def upload_csv_to_object_store(
     filename = generate_timestamped_filename(dataset_name, extension="csv")
 
     # Use shared utility for upload
-    return shared_upload_csv(
+    return upload_to_object_store(
         storage=storage,
-        csv_content=csv_content,
+        content=csv_content,
         filename=filename,
         subdirectory="datasets",
+        content_type="text/csv",
     )
 
 
