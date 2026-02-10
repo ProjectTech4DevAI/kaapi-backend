@@ -213,13 +213,19 @@ class AmazonCloudStorage(CloudStorage):
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
 
+    # Maximum allowed expiry for signed URLs (24 hours)
+    MAX_SIGNED_URL_EXPIRY = 86400
+
     def get_signed_url(self, url: str, expires_in: int = 3600) -> str:
         """
         Generate a signed S3 URL for the given file.
         :param url: S3 url (e.g., s3://bucket/key)
-        :param expires_in: Expiry time in seconds (default: 1 hour)
+        :param expires_in: Expiry time in seconds (default: 1 hour, max: 24 hours)
         :return: Signed URL as string
         """
+        # Cap expiry at maximum allowed value to prevent excessively long-lived URLs
+        expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
+
         name = SimpleStorageName.from_url(url)
         try:
             signed_url = self.aws.client.generate_presigned_url(

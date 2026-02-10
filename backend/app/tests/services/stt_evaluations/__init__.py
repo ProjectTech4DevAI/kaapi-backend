@@ -1,0 +1,1 @@
+"""STT evaluation service tests."""

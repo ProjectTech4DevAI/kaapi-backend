@@ -80,3 +80,9 @@ from .model_evaluation import (
 )
 
 from .onboarding import onboard_project
+
+from .file import (
+    create_file,
+    get_file_by_id,
+    get_files_by_ids,
+)
