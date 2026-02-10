@@ -149,10 +149,10 @@ if __name__ == "__main__":
             provider="sarvamai-native",
             type="stt",
             params={
-                "model": "saarika:v2.5", # Using SarvamAI's model for STT
-                # SarvamAI's transcribe method doesn't directly take 'instructions' or 'input_language' params yet
-                # "instructions": "Please transcribe this audio accurately.",
-                # "input_language": "en-US",
+                #"model": "saarika:v2.5", # Using SarvamAI's model for STT
+                "model": "saaras:v3", # Using SarvamAI's model for STT
+                "input_language":"unknown",  # Let SarvamAI auto-detect the language with 'unknown' or specify if known (e.g., "ta-IN", "hi-IN")
+                # SarvamAI's transcribe method doesn't directly take 'prompt instructions' like LLMs 
             },
         )
 

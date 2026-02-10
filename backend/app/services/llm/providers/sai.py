@@ -44,13 +44,11 @@ class SarvamAIProvider(BaseProvider):
         return SarvamAI(api_subscription_key=credentials["api_key"])
 
     def _parse_input(self, query_input: Any, completion_type: str, provider: str) -> str:
-        # For STT, we expect query_input to be a file path
         if completion_type == "stt":
             if isinstance(query_input, str) and os.path.exists(query_input):
                 return query_input
             else:
                 raise ValueError(f"{provider} STT requires a valid file path as input")
-        # Add parsing logic for other types if SarvamAI supports them later
         raise ValueError(f"Unsupported completion type '{completion_type}' for {provider}")
 
     def _execute_stt(
@@ -75,6 +73,10 @@ class SarvamAIProvider(BaseProvider):
         model = generation_params.get("model")
         if not model:
             return None, "Missing 'model' in native params for SarvamAI STT"
+        
+        inputlanguageofaudio = generation_params.get("input_language")
+        if not inputlanguageofaudio:
+          inputlanguageofaudio = "unknown" #'unknown' for automatic language detection or ISO 639 language code like 'hi-IN'. SarvamAI's Saarika model supports mixed language content with automatic detection of languages within the sentence, so this parameter is optional and can be set to "unknown" if not provided. 
 
         # Parse and validate input
         parsed_input_path = self._parse_input(
@@ -89,7 +91,7 @@ class SarvamAIProvider(BaseProvider):
                     file=audio_file,
                     model=model,
                     # SarvamAI's flagship STT model  Saarika supports mixed language content with automatic detection of languages within the sentance    
-                    # language_code=generation_params.get("input_language"),
+                    language_code=inputlanguageofaudio, # Optional, can be set to "unknown" for automatic detection or specific ISO 639 language code like 'hi-IN'
                 )
 
             # SarvamAI does not provide token usage directly for STT, so we'll use placeholders
