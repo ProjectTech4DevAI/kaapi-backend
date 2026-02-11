@@ -79,6 +79,8 @@ from .evaluation import (
     EvaluationRunPublic,
 )
 
+from .file import File, FilePublic, FileType
+
 from .fine_tuning import (
     FineTuningJobBase,
     Fine_Tuning,

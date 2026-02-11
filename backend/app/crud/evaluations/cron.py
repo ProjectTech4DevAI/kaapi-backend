@@ -12,6 +12,7 @@ from typing import Any
 from sqlmodel import Session
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
+from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
 
     Delegates to poll_all_pending_evaluations which fetches all processing
     evaluation runs in a single query, groups by project, and processes them.
+    Also polls STT evaluations similarly.
 
     Args:
         session: Database session
@@ -32,20 +34,32 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     logger.info("[process_all_pending_evaluations] Starting evaluation processing")
 
     try:
-        summary = await poll_all_pending_evaluations(session=session)
+        # Poll text evaluations (single query, grouped by project)
+        text_summary = await poll_all_pending_evaluations(session=session)
+
+        # Poll STT evaluations (single query, grouped by project)
+        stt_summary = await poll_all_pending_stt_evaluations(session=session)
+
+        # Merge summaries
+        total_processed = text_summary["processed"] + stt_summary["processed"]
+        total_failed = text_summary["failed"] + stt_summary["failed"]
+        total_still_processing = (
+            text_summary["still_processing"] + stt_summary["still_processing"]
+        )
+        all_details = text_summary.get("details", []) + stt_summary.get("details", [])
 
         logger.info(
             f"[process_all_pending_evaluations] Completed: "
-            f"{summary['processed']} processed, {summary['failed']} failed, "
-            f"{summary['still_processing']} still processing"
+            f"{total_processed} processed, {total_failed} failed, "
+            f"{total_still_processing} still processing"
         )
 
         return {
             "status": "success",
-            "total_processed": summary["processed"],
-            "total_failed": summary["failed"],
-            "total_still_processing": summary["still_processing"],
-            "results": summary["details"],
+            "total_processed": total_processed,
+            "total_failed": total_failed,
+            "total_still_processing": total_still_processing,
+            "results": all_details,
         }
 
     except Exception as e:

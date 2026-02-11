@@ -666,9 +666,11 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [...]
         }
     """
-    # Single query to fetch all processing evaluation runs
+    # Single query to fetch all processing text evaluation runs
+    # STT/TTS evaluations have their own polling
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
+        EvaluationRun.type == "text",
     )
     pending_runs = session.exec(statement).all()
 

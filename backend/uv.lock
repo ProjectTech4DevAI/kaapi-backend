@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12, <4.0"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -225,6 +225,7 @@ dependencies = [
     { name = "pytest" },
     { name = "python-multipart" },
     { name = "redis" },
+    { name = "requests" },
     { name = "scikit-learn" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlmodel" },
@@ -272,6 +273,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=7.4.4" },
     { name = "python-multipart", specifier = ">=0.0.22,<1.0.0" },
     { name = "redis", specifier = ">=5.0.0,<6.0.0" },
+    { name = "requests", specifier = ">=2.31.0" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "sqlmodel", specifier = ">=0.0.21,<1.0.0" },

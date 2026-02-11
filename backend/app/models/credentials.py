@@ -86,8 +86,8 @@ class Credential(CredsBase, table=True):
     provider: str = Field(
         index=True,
         nullable=False,
-        description="Provider name like 'openai', 'gemini'",
-        sa_column_kwargs={"comment": "Provider name like 'openai', 'gemini'"},
+        description="Provider name like 'openai', 'google'",
+        sa_column_kwargs={"comment": "Provider name like 'openai', 'google'"},
     )
     credential: str = Field(
         nullable=False,
