@@ -255,6 +255,10 @@ class TestExecuteJob:
             patch("app.services.llm.jobs.Session") as mock_session_class,
             patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
             patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+            patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([], []),
+            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -761,7 +765,11 @@ class TestExecuteJob:
                 "callback_url": None,
             }
 
-            result = self._execute_job(job_for_execution, db, request_data)
+            with patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([{"type": "pii_remover"}], []),
+            ):
+                result = self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
         assert "[REDACTED]" in provider_query.input
@@ -801,7 +809,11 @@ class TestExecuteJob:
                 "output_guardrails": [{"type": "pii_remover"}],
             }
 
-            result = self._execute_job(job_for_execution, db, request_data)
+            with patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([], [{"type": "pii_remover"}]),
+            ):
+                result = self._execute_job(job_for_execution, db, request_data)
 
         assert "REDACTED" in result["data"]["response"]["output"]["text"]
 
@@ -837,7 +849,11 @@ class TestExecuteJob:
                 "input_guardrails": [{"type": "pii_remover"}],
             }
 
-            self._execute_job(job_for_execution, db, request_data)
+            with patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([{"type": "pii_remover"}], []),
+            ):
+                self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
         assert provider_query.input == unsafe_input
@@ -866,7 +882,11 @@ class TestExecuteJob:
                 "input_guardrails": [{"type": "uli_slur_match"}],
             }
 
-            result = self._execute_job(job_for_execution, db, request_data)
+            with patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([{"type": "uli_slur_match"}], []),
+            ):
+                result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
         assert "Unsafe content" in result["error"]
@@ -900,7 +920,11 @@ class TestExecuteJob:
                 "input_guardrails": [{"type": "policy"}],
             }
 
-            result = self._execute_job(job_for_execution, db, request_data)
+            with patch(
+                "app.services.llm.jobs.fetch_guardrails_config",
+                return_value=([{"type": "policy"}], []),
+            ):
+                result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
         env["provider"].execute.assert_not_called()

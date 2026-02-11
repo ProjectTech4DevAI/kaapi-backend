@@ -14,6 +14,7 @@ from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
 from app.services.llm.guardrails import call_guardrails
+from app.services.llm.guardrails_config import fetch_guardrails_config
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback
@@ -136,8 +137,10 @@ def execute_job(
     # one of (id, version) or blob is guaranteed to be present due to prior validation
     config = request.config
     input_query = request.query.input
-    input_guardrails = request.input_guardrails
-    output_guardrails = request.output_guardrails
+    input_guardrails, output_guardrails = fetch_guardrails_config(
+        organization_id=organization_id,
+        project_id=project_id,
+    )
     callback_response = None
     config_blob: ConfigBlob | None = None
 
