@@ -2,10 +2,12 @@
 
 import logging
 
+from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.celery.utils import start_low_priority_job
 from app.crud.stt_evaluations import (
     create_stt_run,
     create_stt_results,
@@ -14,7 +16,6 @@ from app.crud.stt_evaluations import (
     get_stt_dataset_by_id,
     get_stt_run_by_id,
     list_stt_runs,
-    start_stt_evaluation_batch,
     update_stt_run,
 )
 from app.models.stt_evaluation import (
@@ -98,38 +99,36 @@ def start_stt_evaluation(
         models=run_create.models,
     )
 
+    # Offload batch submission to Celery worker
+    trace_id = correlation_id.get() or "N/A"
     try:
-        batch_result = start_stt_evaluation_batch(
-            session=_session,
-            run=run,
-            samples=samples,
-            org_id=auth_context.organization_.id,
+        celery_task_id = start_low_priority_job(
+            function_path="app.services.stt_evaluations.batch_job.execute_batch_submission",
             project_id=auth_context.project_.id,
+            job_id=str(run.id),
+            trace_id=trace_id,
+            organization_id=auth_context.organization_.id,
+            dataset_id=run_create.dataset_id,
         )
         logger.info(
-            f"[start_stt_evaluation] STT evaluation batch submitted | "
-            f"run_id: {run.id}, batch_jobs: {list(batch_result.get('batch_jobs', {}).keys())}"
+            f"[start_stt_evaluation] Batch submission queued | "
+            f"run_id: {run.id}, celery_task_id: {celery_task_id}"
         )
     except Exception as e:
         logger.error(
-            f"[start_stt_evaluation] Batch submission failed | "
+            f"[start_stt_evaluation] Failed to queue batch submission | "
             f"run_id: {run.id}, error: {str(e)}"
         )
         update_stt_run(
             session=_session,
             run_id=run.id,
             status="failed",
-            error_message=str(e),
+            error_message=f"Failed to queue batch submission: {str(e)}",
         )
-        raise HTTPException(status_code=500, detail=f"Batch submission failed: {e}")
-
-    # Refresh run to get updated status
-    run = get_stt_run_by_id(
-        session=_session,
-        run_id=run.id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-    )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to queue batch submission: {e}",
+        )
 
     return APIResponse.success_response(
         data=STTEvaluationRunPublic(

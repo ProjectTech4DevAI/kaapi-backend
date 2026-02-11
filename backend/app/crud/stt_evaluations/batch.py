@@ -1,6 +1,7 @@
 """Batch submission functions for STT evaluation processing."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from sqlmodel import Session
@@ -88,39 +89,57 @@ def start_stt_evaluation_batch(
     )
     file_map = {f.id: f for f in file_records}
 
-    # Generate signed URLs for audio files (shared across all models)
+    # Generate signed URLs for audio files concurrently (shared across all models)
     signed_urls: list[str] = []
     sample_keys: list[str] = []
+    failed_samples: list[tuple[STTSample, str]] = []
 
-    for sample in samples:
+    def _generate_signed_url(
+        sample: STTSample,
+    ) -> tuple[STTSample, str | None, str | None]:
+        """Generate a signed URL for a single sample. Thread-safe."""
+        file_record = file_map.get(sample.file_id)
+        if not file_record:
+            return sample, None, f"File record not found for file_id: {sample.file_id}"
         try:
-            # Get object_store_url from file record
-            file_record = file_map.get(sample.file_id)
-            if not file_record:
-                raise ValueError(f"File record not found for file_id: {sample.file_id}")
-
-            signed_url = storage.get_signed_url(
+            url = storage.get_signed_url(
                 file_record.object_store_url, expires_in=signed_url_expires_in
             )
-            signed_urls.append(signed_url)
-            sample_keys.append(str(sample.id))
-
+            return sample, url, None
         except Exception as e:
-            logger.error(
-                f"[start_stt_evaluation_batch] Failed to generate signed URL | "
-                f"sample_id: {sample.id}, error: {str(e)}"
-            )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, sample_id=sample.id
-            )
-            for result in pending:
-                update_stt_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Failed to generate signed URL: {str(e)}",
+            return sample, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(_generate_signed_url, sample): sample for sample in samples
+        }
+
+        for future in as_completed(futures):
+            sample, url, error = future.result()
+            if url:
+                signed_urls.append(url)
+                sample_keys.append(str(sample.id))
+            else:
+                failed_samples.append((sample, error))
+                logger.error(
+                    f"[start_stt_evaluation_batch] Failed to generate signed URL | "
+                    f"sample_id: {sample.id}, error: {error}"
                 )
-            session.commit()
+
+    # Mark failed samples in DB
+    for sample, error in failed_samples:
+        pending = get_pending_results_for_run(
+            session=session, run_id=run.id, sample_id=sample.id
+        )
+        for result in pending:
+            update_stt_result(
+                session=session,
+                result_id=result.id,
+                status=JobStatus.FAILED.value,
+                error_message=f"Failed to generate signed URL: {error}",
+            )
+    if failed_samples:
+        session.commit()
 
     if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
