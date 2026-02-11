@@ -46,12 +46,26 @@ jobs:
           TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
         run: |
           CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
-          aws ecs run-task \
+
+          TASK_ARN=$(aws ecs run-task \
             --cluster $CLUSTER \
             --launch-type EC2 \
             --task-definition $TASK_DEF \
             --count 1 \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}"
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migration task started: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster $CLUSTER --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='$CONTAINER_NAME'].exitCode | [0]" --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "Migration completed successfully"
 
       - name: Deploy to ECS
         run: |
