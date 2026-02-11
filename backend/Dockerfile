@@ -47,7 +47,7 @@ COPY alembic.ini /app/alembic.ini
 EXPOSE 80
 
 
-CMD ["bash", "scripts/start.sh"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
 
 # command for Celery worker
 # CMD ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]

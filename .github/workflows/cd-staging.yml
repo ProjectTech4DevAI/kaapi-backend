@@ -40,6 +40,19 @@ jobs:
           docker build -t $REGISTRY/$REPOSITORY:latest ./backend
           docker push $REGISTRY/$REPOSITORY:latest
 
+      - name: Run database migrations
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
+        run: |
+          CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          aws ecs run-task \
+            --cluster $CLUSTER \
+            --launch-type EC2 \
+            --task-definition $TASK_DEF \
+            --count 1 \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}"
+
       - name: Deploy to ECS
         run: |
           aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
