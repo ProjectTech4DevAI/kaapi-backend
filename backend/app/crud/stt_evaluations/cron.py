@@ -125,7 +125,7 @@ async def poll_all_pending_stt_evaluations(
                 except Exception as e:
                     logger.error(
                         f"[poll_all_pending_stt_evaluations] Failed to poll STT run | "
-                        f"run_id={run.id} | {e}",
+                        f"run_id: {run.id}, error: {e}",
                         exc_info=True,
                     )
                     update_stt_run(
@@ -148,7 +148,7 @@ async def poll_all_pending_stt_evaluations(
         except Exception as e:
             logger.error(
                 f"[poll_all_pending_stt_evaluations] Failed to process project | "
-                f"project_id={project_id} | {e}",
+                f"project_id: {project_id}, error: {e}",
                 exc_info=True,
             )
             for run in project_runs:
@@ -179,8 +179,8 @@ async def poll_all_pending_stt_evaluations(
 
     logger.info(
         f"[poll_all_pending_stt_evaluations] Polling summary | "
-        f"processed={total_processed} | failed={total_failed} | "
-        f"still_processing={total_still_processing}"
+        f"processed: {total_processed}, failed: {total_failed}, "
+        f"still_processing: {total_still_processing}"
     )
 
     return summary
@@ -228,8 +228,10 @@ async def poll_stt_run(
     Returns:
         dict: Status result with run details and action taken
     """
-    log_prefix = f"[org={org_id}][project={run.project_id}][eval={run.id}]"
-    logger.info(f"[poll_stt_run] {log_prefix} Polling run")
+    logger.info(
+        f"[poll_stt_run] Polling run | "
+        f"run_id: {run.id}, org_id: {org_id}, project_id: {run.project_id}"
+    )
 
     previous_status = run.status
 
@@ -237,7 +239,7 @@ async def poll_stt_run(
     batch_jobs = _get_batch_jobs_for_run(session=session, run=run)
 
     if not batch_jobs:
-        logger.warning(f"[poll_stt_run] {log_prefix} No batch jobs found")
+        logger.warning(f"[poll_stt_run] No batch jobs found | run_id: {run.id}")
         update_stt_run(
             session=session,
             run_id=run.id,
@@ -284,9 +286,9 @@ async def poll_stt_run(
         provider_status = batch_job.provider_status
 
         logger.info(
-            f"[poll_stt_run] {log_prefix} Batch status | "
-            f"batch_job_id={batch_job.id} | provider={provider_name} | "
-            f"state={provider_status}"
+            f"[poll_stt_run] Batch status | "
+            f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
+            f"provider: {provider_name}, state: {provider_status}"
         )
 
         if provider_status not in TERMINAL_STATES:

@@ -16,7 +16,6 @@ from app.models.stt_evaluation import (
     STTSample,
     STTSampleCreate,
     STTDatasetPublic,
-    STTSamplePublic,
 )
 
 logger = logging.getLogger(__name__)
