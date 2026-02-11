@@ -13,13 +13,8 @@ from app.core.batch import (
 )
 from app.core.cloud.storage import get_cloud_storage
 from app.crud.file import get_files_by_ids
-from app.crud.stt_evaluations.result import (
-    get_pending_results_for_run,
-    update_stt_result,
-)
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
-from app.models.job import JobStatus
 from app.models.stt_evaluation import STTSample
 from app.services.stt_evaluations.gemini import GeminiClient
 
@@ -126,20 +121,12 @@ def start_stt_evaluation_batch(
                     f"sample_id: {sample.id}, error: {error}"
                 )
 
-    # Mark failed samples in DB
-    for sample, error in failed_samples:
-        pending = get_pending_results_for_run(
-            session=session, run_id=run.id, sample_id=sample.id
-        )
-        for result in pending:
-            update_stt_result(
-                session=session,
-                result_id=result.id,
-                status=JobStatus.FAILED.value,
-                error_message=f"Failed to generate signed URL: {error}",
-            )
     if failed_samples:
-        session.commit()
+        logger.warning(
+            f"[start_stt_evaluation_batch] Signed URL failures | "
+            f"run_id: {run.id}, failed_count: {len(failed_samples)}, "
+            f"succeeded_count: {len(signed_urls)}"
+        )
 
     if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
@@ -196,17 +183,6 @@ def start_stt_evaluation_batch(
                 f"[start_stt_evaluation_batch] Failed to submit batch | "
                 f"model: {model}, error: {str(e)}"
             )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, provider=model
-            )
-            for result in pending:
-                update_stt_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Batch submission failed for {model}: {str(e)}",
-                )
-            session.commit()
 
     if not batch_jobs:
         raise Exception("Batch submission failed for all models")

@@ -10,9 +10,7 @@ from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_low_priority_job
 from app.crud.stt_evaluations import (
     create_stt_run,
-    create_stt_results,
     get_results_by_run_id,
-    get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     get_stt_run_by_id,
     list_stt_runs,
@@ -81,25 +79,7 @@ def start_stt_evaluation(
         total_items=sample_count * len(run_create.models),
     )
 
-    # Get samples for the dataset
-    samples = get_samples_by_dataset_id(
-        session=_session,
-        dataset_id=run_create.dataset_id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-    )
-
-    # Create result records for each sample and model
-    create_stt_results(
-        session=_session,
-        samples=samples,
-        evaluation_run_id=run.id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-        models=run_create.models,
-    )
-
-    # Offload batch submission to Celery worker
+    # Offload batch submission (signed URLs, JSONL, Gemini upload) to Celery worker
     trace_id = correlation_id.get() or "N/A"
     try:
         celery_task_id = start_low_priority_job(
