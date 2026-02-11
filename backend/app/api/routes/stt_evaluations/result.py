@@ -40,18 +40,6 @@ def update_result_feedback(
         f"result_id: {result_id}, is_correct: {feedback.is_correct}"
     )
 
-    # Verify result exists and belongs to this project
-    existing = get_stt_result_by_id(
-        session=_session,
-        result_id=result_id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-    )
-
-    if not existing:
-        raise HTTPException(status_code=404, detail="Result not found")
-
-    # Update feedback
     result = update_human_feedback(
         session=_session,
         result_id=result_id,

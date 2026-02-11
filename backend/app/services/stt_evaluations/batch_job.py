@@ -62,6 +62,7 @@ def execute_batch_submission(
             dataset_id=dataset_id,
             org_id=organization_id,
             project_id=project_id,
+            limit=run.total_items,
         )
 
         if not samples:
