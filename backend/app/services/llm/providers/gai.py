@@ -1,7 +1,11 @@
 import logging
 
 from google import genai
-from google.genai.types import GenerateContentResponse
+from google.genai.types import (
+    GenerateContentResponse,
+    GenerateContentConfig,
+    ThinkingConfig,
+)
 from typing import Any
 
 from app.models.llm import (
@@ -53,7 +57,6 @@ class GoogleAIProvider(BaseProvider):
         """
         provider = completion_config.provider
         generation_params = completion_config.params
-
         # Validate input is a file path string
         if not isinstance(resolved_input, str):
             return None, f"{provider} STT requires file path as string"
@@ -65,6 +68,7 @@ class GoogleAIProvider(BaseProvider):
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
+        temperature = generation_params.get("temperature", 0.7)
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -95,7 +99,13 @@ class GoogleAIProvider(BaseProvider):
         contents.append(gemini_file)
 
         response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=contents
+            model=model,
+            contents=contents,
+            # switch back default thinking configs for reasoning supported models in future
+            config=GenerateContentConfig(
+                # thinking_config=ThinkingConfig(thinking_level="low"),
+                temperature=temperature
+            ),
         )
 
         # Validate response has required fields

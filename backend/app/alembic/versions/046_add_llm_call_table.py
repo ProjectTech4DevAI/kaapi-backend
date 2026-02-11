@@ -1,7 +1,7 @@
 """add_llm_call_table
 
-Revision ID: 045
-Revises: 044
+Revision ID: 046
+Revises: 045
 Create Date: 2026-01-26 15:20:23.873332
 
 """
@@ -11,8 +11,8 @@ import sqlmodel.sql.sqltypes
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "045"
-down_revision = "044"
+revision = "046"
+down_revision = "045"
 branch_labels = None
 depends_on = None
 

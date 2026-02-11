@@ -96,7 +96,7 @@ class ConfigVersionCreate(ConfigVersionBase):
     )
 
 
-class ConfigVersionUpdatePartial(SQLModel):
+class ConfigVersionUpdate(SQLModel):
     """
     Partial update model for creating a new config version.
 

@@ -13,7 +13,7 @@ from app.models import (
     Config,
     ConfigVersion,
     ConfigVersionCreate,
-    ConfigVersionUpdatePartial,
+    ConfigVersionUpdate,
     ConfigVersionItems,
 )
 from app.models.llm.request import ConfigBlob
@@ -76,7 +76,7 @@ class ConfigVersionCrud:
             )
 
     def create_from_partial_or_raise(
-        self, version_create: ConfigVersionUpdatePartial
+        self, version_create: ConfigVersionUpdate
     ) -> ConfigVersion:
         """
         Create a new version from a partial config update.
