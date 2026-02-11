@@ -1071,6 +1071,252 @@ class TestGetEvaluationRunStatus:
         )
 
 
+class TestListDatasets:
+    """Test GET /evaluations/datasets endpoint."""
+
+    @pytest.fixture
+    def create_test_datasets(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> list[EvaluationDataset]:
+        """Create multiple test datasets."""
+        datasets = []
+        for i in range(3):
+            dataset = create_test_evaluation_dataset(
+                db=db,
+                organization_id=user_api_key.organization_id,
+                project_id=user_api_key.project_id,
+                name=f"test_dataset_list_{i}",
+                description=f"Test dataset {i}",
+                original_items_count=i + 1,
+                duplication_factor=1,
+            )
+            datasets.append(dataset)
+        return datasets
+
+    def test_list_datasets_success(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        create_test_datasets: list[EvaluationDataset],
+    ) -> None:
+        """Test listing datasets returns all datasets."""
+        response = client.get(
+            "/api/v1/evaluations/datasets",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert isinstance(data, list)
+        assert len(data) >= 3
+
+    def test_list_datasets_empty(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test listing datasets when none exist returns empty list."""
+        response = client.get(
+            "/api/v1/evaluations/datasets",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert isinstance(data, list)
+
+    def test_list_datasets_pagination(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        create_test_datasets: list[EvaluationDataset],
+    ) -> None:
+        """Test listing datasets with pagination."""
+        response = client.get(
+            "/api/v1/evaluations/datasets",
+            params={"limit": 2, "offset": 0},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert isinstance(data, list)
+        assert len(data) <= 2
+
+    def test_list_datasets_without_authentication(
+        self,
+        client: TestClient,
+    ) -> None:
+        """Test listing datasets requires authentication."""
+        response = client.get("/api/v1/evaluations/datasets")
+        assert response.status_code == 401
+
+
+class TestListEvaluationRuns:
+    """Test GET /evaluations endpoint."""
+
+    @pytest.fixture
+    def create_test_dataset(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> EvaluationDataset:
+        """Create a test dataset for evaluation runs."""
+        return create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="test_dataset_for_list_runs",
+            description="Test dataset",
+            original_items_count=3,
+            duplication_factor=1,
+        )
+
+    def test_list_evaluation_runs_success(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        create_test_dataset: EvaluationDataset,
+    ) -> None:
+        """Test listing evaluation runs returns results."""
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
+        for i in range(2):
+            eval_run = EvaluationRun(
+                run_name=f"test_list_run_{i}",
+                dataset_name=create_test_dataset.name,
+                dataset_id=create_test_dataset.id,
+                config_id=config.id,
+                config_version=1,
+                status="completed",
+                total_items=3,
+                organization_id=user_api_key.organization_id,
+                project_id=user_api_key.project_id,
+            )
+            db.add(eval_run)
+        db.commit()
+
+        response = client.get(
+            "/api/v1/evaluations",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert isinstance(data, list)
+        assert len(data) >= 2
+
+    def test_list_evaluation_runs_empty(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test listing evaluation runs when none exist."""
+        response = client.get(
+            "/api/v1/evaluations",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+        assert isinstance(data, list)
+
+    def test_list_evaluation_runs_without_authentication(
+        self,
+        client: TestClient,
+    ) -> None:
+        """Test listing evaluation runs requires authentication."""
+        response = client.get("/api/v1/evaluations")
+        assert response.status_code == 401
+
+
+class TestEvaluationRouterOrdering:
+    """Regression tests for router ordering (evaluation vs dataset/stt routes).
+
+    The evaluation router has GET /evaluations/{evaluation_id} which can intercept
+    requests to GET /evaluations/datasets if registered before the dataset router.
+    These tests ensure the router ordering is correct.
+    """
+
+    def test_dataset_list_not_intercepted_by_evaluation_route(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """GET /evaluations/datasets must route to dataset list, not evaluation get.
+
+        If evaluation router is registered before dataset router,
+        GET /evaluations/datasets would match GET /evaluations/{evaluation_id}
+        with evaluation_id='datasets', returning a 422 instead of the dataset list.
+        """
+        response = client.get(
+            "/api/v1/evaluations/datasets",
+            headers=user_api_key_header,
+        )
+
+        # Must be 200 (dataset list), not 422 (type validation error)
+        assert response.status_code == 200, (
+            f"Expected 200 but got {response.status_code}. "
+            f"This likely means the evaluation router's "
+            f"GET /evaluations/{{evaluation_id}} is intercepting "
+            f"GET /evaluations/datasets. Check router ordering in "
+            f"app/api/routes/evaluations/__init__.py"
+        )
+        response_data = response.json()
+        assert response_data["success"] is True
+        assert isinstance(response_data["data"], list)
+
+    def test_evaluation_get_by_id_still_works(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """GET /evaluations/{id} still works correctly after router reordering."""
+        dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
+        eval_run = EvaluationRun(
+            run_name="test_router_ordering",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config_id=config.id,
+            config_version=1,
+            status="completed",
+            total_items=3,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response = client.get(
+            f"/api/v1/evaluations/{eval_run.id}",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        assert response_data["data"]["id"] == eval_run.id
+
+
 class TestGetDataset:
     """Test GET /evaluations/datasets/{dataset_id} endpoint."""
 
