@@ -97,38 +97,11 @@ async def poll_all_pending_stt_evaluations(
         org_id = project_runs[0].organization_id
 
         try:
-            # Initialize Gemini client for this project
-            try:
-                gemini_client = GeminiClient.from_credentials(
-                    session=session,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-            except Exception as client_err:
-                logger.error(
-                    f"[poll_all_pending_stt_evaluations] Failed to get Gemini client | "
-                    f"org_id={org_id} | project_id={project_id} | error={client_err}"
-                )
-                # Mark all runs in this project as failed
-                for run in project_runs:
-                    update_stt_run(
-                        session=session,
-                        run_id=run.id,
-                        status="failed",
-                        error_message=f"Gemini client initialization failed: {str(client_err)}",
-                    )
-                    all_results.append(
-                        {
-                            "run_id": run.id,
-                            "run_name": run.run_name,
-                            "type": "stt",
-                            "action": "failed",
-                            "error": str(client_err),
-                        }
-                    )
-                    total_failed += 1
-                continue
-
+            gemini_client = GeminiClient.from_credentials(
+                session=session,
+                org_id=org_id,
+                project_id=project_id,
+            )
             batch_provider = GeminiBatchProvider(client=gemini_client.client)
 
             # Process each run in this project
@@ -194,7 +167,7 @@ async def poll_all_pending_stt_evaluations(
                         "error": f"Project processing failed: {str(e)}",
                     }
                 )
-                total_failed += 1
+            total_failed += len(project_runs)
 
     summary = {
         "total": len(pending_runs),
