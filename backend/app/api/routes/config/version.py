@@ -38,7 +38,7 @@ def create_version(
     version_crud = ConfigVersionCrud(
         session=session, project_id=current_user.project_.id, config_id=config_id
     )
-    version = version_crud.create_from_partial_or_raise(version_create=version_create)
+    version = version_crud.create_or_raise(version_create=version_create)
 
     return APIResponse.success_response(
         data=ConfigVersionPublic(**version.model_dump()),

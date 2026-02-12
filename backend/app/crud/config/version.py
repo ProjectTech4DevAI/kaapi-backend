@@ -31,53 +31,7 @@ class ConfigVersionCrud:
         self.project_id = project_id
         self.config_id = config_id
 
-    def create_or_raise(self, version_create: ConfigVersionCreate) -> ConfigVersion:
-        """
-        Create a new version for an existing configuration.
-        Automatically increments the version number.
-        Validates that the config type (text/stt/tts) remains consistent.
-        """
-        self._config_exists_or_raise(self.config_id)
-
-        # Validate that config type doesn't change
-        self._validate_config_type_unchanged(version_create)
-
-        try:
-            next_version = self._get_next_version(self.config_id)
-
-            version = ConfigVersion(
-                config_id=self.config_id,
-                version=next_version,
-                config_blob=version_create.config_blob.model_dump(),
-                commit_message=version_create.commit_message,
-            )
-
-            self.session.add(version)
-            self.session.commit()
-            self.session.refresh(version)
-
-            logger.info(
-                f"[ConfigVersionCrud.create] Version created successfully | "
-                f"{{'config_id': '{self.config_id}', 'version_id': '{version.id}'}}"
-            )
-
-            return version
-
-        except Exception as e:
-            self.session.rollback()
-            logger.error(
-                f"[ConfigVersionCrud.create] Failed to create version | "
-                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Unexpected error occurred: failed to create version",
-            )
-
-    def create_from_partial_or_raise(
-        self, version_create: ConfigVersionUpdate
-    ) -> ConfigVersion:
+    def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:
         """
         Create a new version from a partial config update.
 
