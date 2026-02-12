@@ -41,6 +41,10 @@ dependencies = [
 ]
 
 [tool.uv]
+override-dependencies = [
+    "pillow>=12.1.1",
+    "cryptography>=46.0.5",
+]
 dev-dependencies = [
     "pytest<8.0.0,>=7.4.3",
     "mypy<2.0.0,>=1.8.0",
