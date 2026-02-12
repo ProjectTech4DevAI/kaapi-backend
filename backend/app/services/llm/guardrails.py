@@ -151,7 +151,7 @@ def get_validators_config(
         "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
     }
 
-    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/{config_id}"
+    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/{config_id}"
 
     try:
         with httpx.Client(timeout=10.0) as client:
