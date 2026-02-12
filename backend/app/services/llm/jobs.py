@@ -182,9 +182,6 @@ def execute_job(
                     return handle_job_error(
                         job_id, request.callback_url, callback_response
                     )
-                if config_blob and config_blob.guardrails:
-                    input_guardrails = config_blob.guardrails.input or []
-                    output_guardrails = config_blob.guardrails.output or []
 
             else:
                 config_blob = config.blob
