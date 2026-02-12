@@ -1018,7 +1018,7 @@ class TestResolveConfigBlob:
 
     def test_resolve_config_blob_with_multiple_versions(self, db: Session):
         """Test resolving specific version when multiple versions exist."""
-        from app.models.config import ConfigVersionCreate
+        from app.models.config import ConfigVersionUpdate
 
         project = get_project(db)
 
@@ -1046,11 +1046,11 @@ class TestResolveConfigBlob:
                 params={"model": "gpt-4", "temperature": 0.9},
             )
         )
-        version_create = ConfigVersionCreate(
-            config_blob=config_blob_v2,
+        version_update = ConfigVersionUpdate(
+            config_blob=config_blob_v2.model_dump(),
             commit_message="Updated to gpt-4",
         )
-        config_version_crud.create_or_raise(version_create)
+        config_version_crud.create_or_raise(version_update)
         db.commit()
 
         # Test resolving version 1
