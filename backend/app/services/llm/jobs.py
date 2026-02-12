@@ -13,8 +13,7 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
-from app.services.llm.guardrails import call_guardrails
-from app.services.llm.guardrails_config import fetch_guardrails_config
+from app.services.llm.guardrails import get_validators_config, run_guardrails_validation
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback
@@ -94,6 +93,19 @@ def resolve_config_blob(
     """
     try:
         config_version = config_crud.exists_or_raise(version_number=config.version)
+        config_blob_data = dict(config_version.config_blob)
+
+        if config_version.guardrails_config_id:
+            input_guardrails, output_guardrails = get_validators_config(
+                config_id=config_version.guardrails_config_id,
+                organization_id=config_crud.organization_id,
+                project_id=config_crud.project_id,
+            )
+            config_blob_data["guardrails"] = {
+                "input": input_guardrails,
+                "output": output_guardrails,
+            }
+
     except HTTPException as e:
         return None, f"Failed to retrieve stored configuration: {e.detail}"
     except Exception:
@@ -105,7 +117,8 @@ def resolve_config_blob(
         return None, "Unexpected error occurred while retrieving stored configuration"
 
     try:
-        return ConfigBlob(**config_version.config_blob), None
+        config_blob, error = ConfigBlob(**config_blob_data), None
+        return config_blob, error
     except (TypeError, ValueError) as e:
         return None, f"Stored configuration blob is invalid: {str(e)}"
     except Exception:
@@ -137,10 +150,6 @@ def execute_job(
     # one of (id, version) or blob is guaranteed to be present due to prior validation
     config = request.config
     input_query = request.query.input
-    input_guardrails, output_guardrails = fetch_guardrails_config(
-        organization_id=organization_id,
-        project_id=project_id,
-    )
     callback_response = None
     config_blob: ConfigBlob | None = None
 
@@ -149,8 +158,46 @@ def execute_job(
     )
 
     try:
+        with Session(engine) as session:
+            # Update job status to PROCESSING
+            job_crud = JobCrud(session=session)
+            job_crud.update(
+                job_id=job_id, job_update=JobUpdate(status=JobStatus.PROCESSING)
+            )
+
+            # if stored config, fetch blob from DB
+            if config.is_stored_config:
+                config_crud = ConfigVersionCrud(
+                    session=session, project_id=project_id, config_id=config.id, organization_id=organization_id
+                )
+
+                # blob is dynamic, need to resolve to ConfigBlob format
+                config_blob, error = resolve_config_blob(config_crud, config)
+
+                if error:
+                    callback_response = APIResponse.failure_response(
+                        error=error,
+                        metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_id, request.callback_url, callback_response
+                    )
+                if config_blob and config_blob.guardrails:
+                    input_guardrails = config_blob.guardrails.input or []
+                    output_guardrails = config_blob.guardrails.output or []
+
+            else:
+                config_blob = config.blob
+
+        if config_blob is not None and config_blob.guardrails is not None:
+            input_guardrails = config_blob.guardrails.input or []
+            output_guardrails = config_blob.guardrails.output or []
+        else:
+            input_guardrails = []
+            output_guardrails = []
+
         if input_guardrails:
-            safe_input = call_guardrails(input_query, input_guardrails, job_id)
+            safe_input = run_guardrails_validation(input_query, input_guardrails, job_id)
 
             logger.info(
                 f"[execute_job] Input guardrail validation | success={safe_input['success']}."
@@ -179,33 +226,6 @@ def execute_job(
                 )
                 return handle_job_error(job_id, request.callback_url, callback_response)
 
-        with Session(engine) as session:
-            # Update job status to PROCESSING
-            job_crud = JobCrud(session=session)
-            job_crud.update(
-                job_id=job_id, job_update=JobUpdate(status=JobStatus.PROCESSING)
-            )
-
-            # if stored config, fetch blob from DB
-            if config.is_stored_config:
-                config_crud = ConfigVersionCrud(
-                    session=session, project_id=project_id, config_id=config.id
-                )
-
-                # blob is dynamic, need to resolve to ConfigBlob format
-                config_blob, error = resolve_config_blob(config_crud, config)
-
-                if error:
-                    callback_response = APIResponse.failure_response(
-                        error=error,
-                        metadata=request.request_metadata,
-                    )
-                    return handle_job_error(
-                        job_id, request.callback_url, callback_response
-                    )
-
-            else:
-                config_blob = config.blob
 
             try:
                 # Transform Kaapi config to native config if needed (before getting provider)
@@ -265,7 +285,7 @@ def execute_job(
         if response:
             if output_guardrails:
                 output_text = response.response.output.text
-                safe_output = call_guardrails(output_text, output_guardrails, job_id)
+                safe_output = run_guardrails_validation(output_text, output_guardrails, job_id)
 
                 logger.info(
                     f"[execute_job] Output guardrail validation | success={safe_output['success']}."

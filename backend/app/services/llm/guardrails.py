@@ -125,6 +125,69 @@ def create_validators_batch(
         raise
 
 
+def get_validators_config(
+    config_id: UUID | str,
+    organization_id: int | None,
+    project_id: int | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Fetch validator configuration for a specific config id and split by stage.
+
+    Calls:
+        GET /validators/configs/{config_id}?organization_id={organization_id}&project_id={project_id}
+    """
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
+    }
+
+    endpoint = (
+        f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/{config_id}"
+    )
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                endpoint,
+                params={
+                    "organization_id": organization_id,
+                    "project_id": project_id,
+                },
+                headers=headers,
+            )
+            response.raise_for_status()
+
+            payload = response.json()
+            validators = payload.get("data", []) if isinstance(payload, dict) else []
+
+            if not isinstance(validators, list):
+                raise ValueError(
+                    "Invalid validators response format: `data` must be a list."
+                )
+
+            input_guardrails = [
+                validator
+                for validator in validators
+                if isinstance(validator, dict)
+                and str(validator.get("stage", "")).lower() == "input"
+            ]
+            output_guardrails = [
+                validator
+                for validator in validators
+                if isinstance(validator, dict)
+                and str(validator.get("stage", "")).lower() == "output"
+            ]
+
+            return input_guardrails, output_guardrails
+
+    except Exception as e:
+        logger.error(
+            "[get_validators_config] Failed to fetch validator config. "
+            f"config_id={config_id}, organization_id={organization_id}, project_id={project_id}, error={e}"
+        )
+        raise
+
+
 def build_staged_validators(
     guardrails: GuardrailsConfig | None,
 ) -> list[dict[str, Any]]:
