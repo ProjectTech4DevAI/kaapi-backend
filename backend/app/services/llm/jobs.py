@@ -95,16 +95,26 @@ def resolve_config_blob(
         config_version = config_crud.exists_or_raise(version_number=config.version)
         config_blob_data = dict(config_version.config_blob)
 
-        if config_version.guardrails_config_id:
-            input_guardrails, output_guardrails = get_validators_config(
-                config_id=config_version.guardrails_config_id,
-                organization_id=config_crud.organization_id,
-                project_id=config_crud.project_id,
-            )
-            config_blob_data["guardrails"] = {
-                "input": input_guardrails,
-                "output": output_guardrails,
-            }
+        if (
+            config_version.guardrails_config_id
+            and config_crud.organization_id is not None
+            and config_crud.project_id is not None
+        ):
+            try:
+                input_guardrails, output_guardrails = get_validators_config(
+                    config_id=config_version.guardrails_config_id,
+                    organization_id=config_crud.organization_id,
+                    project_id=config_crud.project_id,
+                )
+                config_blob_data["guardrails"] = {
+                    "input": input_guardrails,
+                    "output": output_guardrails,
+                }
+            except Exception as e:
+                logger.warning(
+                    f"[resolve_config_blob] Failed to fetch guardrails validators for config version. "
+                    f"guardrails_config_id={config_version.guardrails_config_id}, error={e}"
+                )
 
     except HTTPException as e:
         return None, f"Failed to retrieve stored configuration: {e.detail}"
@@ -147,11 +157,11 @@ def execute_job(
     request = LLMCallRequest(**request_data)
     job_id: UUID = UUID(job_id)
 
-    # one of (id, version) or blob is guaranteed to be present due to prior validation
     config = request.config
-    input_query = request.query.input
     callback_response = None
     config_blob: ConfigBlob | None = None
+    input_guardrails: list[dict] = []
+    output_guardrails: list[dict] = []
 
     logger.info(
         f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "
@@ -168,7 +178,10 @@ def execute_job(
             # if stored config, fetch blob from DB
             if config.is_stored_config:
                 config_crud = ConfigVersionCrud(
-                    session=session, project_id=project_id, config_id=config.id, organization_id=organization_id
+                    session=session,
+                    project_id=project_id,
+                    config_id=config.id,
+                    organization_id=organization_id,
                 )
 
                 # blob is dynamic, need to resolve to ConfigBlob format
@@ -186,43 +199,45 @@ def execute_job(
             else:
                 config_blob = config.blob
 
-        if config_blob is not None and config_blob.guardrails is not None:
-            input_guardrails = config_blob.guardrails.input or []
-            output_guardrails = config_blob.guardrails.output or []
-        else:
-            input_guardrails = []
-            output_guardrails = []
+            if config_blob is not None and config_blob.guardrails is not None:
+                input_guardrails = config_blob.guardrails.input or []
+                output_guardrails = config_blob.guardrails.output or []
 
-        if input_guardrails:
-            safe_input = run_guardrails_validation(input_query, input_guardrails, job_id)
+            if input_guardrails:
+                safe_input = run_guardrails_validation(
+                    request.query.input, input_guardrails, job_id
+                )
 
-            logger.info(
-                f"[execute_job] Input guardrail validation | success={safe_input['success']}."
-            )
+                logger.info(
+                    f"[execute_job] Input guardrail validation | success={safe_input['success']}."
+                )
 
-            if safe_input.get("bypassed"):
-                logger.info("[execute_job] Guardrails bypassed (service unavailable)")
+                if safe_input.get("bypassed"):
+                    logger.info(
+                        "[execute_job] Guardrails bypassed (service unavailable)"
+                    )
 
-            elif safe_input["success"]:
-                request.query.input = safe_input["data"]["safe_text"]
+                elif safe_input["success"]:
+                    request.query.input = safe_input["data"]["safe_text"]
 
-                if safe_input["data"]["rephrase_needed"]:
+                    if safe_input["data"]["rephrase_needed"]:
+                        callback_response = APIResponse.failure_response(
+                            error=request.query.input,
+                            metadata=request.request_metadata,
+                        )
+                        return handle_job_error(
+                            job_id, request.callback_url, callback_response
+                        )
+                else:
+                    request.query.input = safe_input["error"]
+
                     callback_response = APIResponse.failure_response(
-                        error=request.query.input,
+                        error=safe_input["error"],
                         metadata=request.request_metadata,
                     )
                     return handle_job_error(
                         job_id, request.callback_url, callback_response
                     )
-            else:
-                request.query.input = safe_input["error"]
-
-                callback_response = APIResponse.failure_response(
-                    error=safe_input["error"],
-                    metadata=request.request_metadata,
-                )
-                return handle_job_error(job_id, request.callback_url, callback_response)
-
 
             try:
                 # Transform Kaapi config to native config if needed (before getting provider)
@@ -244,7 +259,7 @@ def execute_job(
             try:
                 provider_instance = get_llm_provider(
                     session=session,
-                    provider_type=completion_config.provider,  # Now always native provider type
+                    provider_type=completion_config.provider,
                     project_id=project_id,
                     organization_id=organization_id,
                 )
@@ -282,7 +297,9 @@ def execute_job(
         if response:
             if output_guardrails:
                 output_text = response.response.output.text
-                safe_output = run_guardrails_validation(output_text, output_guardrails, job_id)
+                safe_output = run_guardrails_validation(
+                    output_text, output_guardrails, job_id
+                )
 
                 logger.info(
                     f"[execute_job] Output guardrail validation | success={safe_output['success']}."

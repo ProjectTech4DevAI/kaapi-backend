@@ -22,7 +22,9 @@ class ConfigCrud:
     CRUD operations for configurations scoped to a project.
     """
 
-    def __init__(self, session: Session, project_id: int, organization_id: Optional[int] = None):
+    def __init__(
+        self, session: Session, project_id: int, organization_id: Optional[int] = None
+    ):
         self.session = session
         self.project_id = project_id
         self.organization_id = organization_id
@@ -36,7 +38,7 @@ class ConfigCrud:
         self._check_unique_name_or_raise(config_create.name)
 
         try:
-            guardrails_config_id=uuid4()
+            guardrails_config_id = uuid4()
             config = Config(
                 name=config_create.name,
                 description=config_create.description,
@@ -46,9 +48,7 @@ class ConfigCrud:
             self.session.add(config)
             self.session.flush()  # Flush to get the config.id
 
-            config_blob = config_create.config_blob.model_dump(
-                exclude={"guardrails"}
-            )
+            config_blob = config_create.config_blob.model_dump(exclude={"guardrails"})
             create_guardrails_validators_if_present(
                 guardrails=config_create.config_blob.guardrails,
                 guardrails_config_id=guardrails_config_id,

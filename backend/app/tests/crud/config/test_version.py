@@ -1,4 +1,5 @@
 from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 from sqlmodel import Session
@@ -35,7 +36,7 @@ def test_create_version(db: Session, example_config_blob: ConfigBlob) -> None:
         session=db, project_id=config.project_id, config_id=config.id
     )
 
-    config_blob = example_config_blob.model_dump()
+    config_blob = example_config_blob.model_dump(exclude={"guardrails"})
     version_create = ConfigVersionCreate(
         config_blob=config_blob,
         commit_message="Updated model and parameters",
@@ -49,6 +50,41 @@ def test_create_version(db: Session, example_config_blob: ConfigBlob) -> None:
     assert version.config_blob == config_blob
     assert version.commit_message == "Updated model and parameters"
     assert version.deleted_at is None
+
+
+def test_create_version_with_guardrails_excludes_guardrails_from_blob(
+    db: Session,
+) -> None:
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db,
+        project_id=config.project_id,
+        config_id=config.id,
+        organization_id=1,
+    )
+
+    version_create = ConfigVersionCreate(
+        config_blob=ConfigBlob(
+            completion=NativeCompletionConfig(
+                provider="openai-native",
+                params={"model": "gpt-4"},
+            ),
+            guardrails={
+                "input": [{"type": "pii_remover"}],
+                "output": [{"type": "gender_assumption_bias"}],
+            },
+        ),
+        commit_message="Guardrails version",
+    )
+
+    with patch(
+        "app.crud.config.version.create_guardrails_validators_if_present"
+    ) as mock_create_guardrails:
+        version = version_crud.create_or_raise(version_create)
+
+    mock_create_guardrails.assert_called_once()
+    assert "guardrails" not in version.config_blob
+    assert version.guardrails_config_id is not None
 
 
 def test_create_version_auto_increment(
@@ -118,7 +154,9 @@ def test_read_one_version(db: Session, example_config_blob: ConfigBlob) -> None:
     assert fetched_version.id == version.id
     assert fetched_version.version == version.version
     assert fetched_version.config_id == config.id
-    assert fetched_version.config_blob == example_config_blob.model_dump()
+    assert fetched_version.config_blob == example_config_blob.model_dump(
+        exclude={"guardrails"}
+    )
 
 
 def test_read_one_version_not_found(db: Session) -> None:

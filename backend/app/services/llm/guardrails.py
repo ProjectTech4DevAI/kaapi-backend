@@ -63,7 +63,7 @@ def run_guardrails_validation(
 
 def create_validators_batch(
     validators: list[dict[str, Any]],
-    config_id: UUID | None, 
+    config_id: UUID | None,
     organization_id: int | None,
     project_id: int | None,
 ) -> list[dict[str, Any]]:
@@ -88,18 +88,14 @@ def create_validators_batch(
         payload: dict[str, Any] | list[dict]
 
         if config_id is None:
-            raise ValueError(
-                "config_id must be provided"
-            )
+            raise ValueError("config_id must be provided")
 
         payload = {
             "config_id": str(config_id) if config_id is not None else None,
             "validators": validators,
         }
 
-        logging.info(
-            f"[create_validators_batch] payload: {payload}"
-        )
+        logging.info(f"[create_validators_batch] payload: {payload}")
 
         with httpx.Client(timeout=10.0) as client:
             response = client.post(
@@ -141,9 +137,7 @@ def get_validators_config(
         "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
     }
 
-    endpoint = (
-        f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/{config_id}"
-    )
+    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/{config_id}"
 
     try:
         with httpx.Client(timeout=10.0) as client:

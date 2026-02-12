@@ -255,10 +255,6 @@ class TestExecuteJob:
             patch("app.services.llm.jobs.Session") as mock_session_class,
             patch("app.services.llm.jobs.get_llm_provider") as mock_get_provider,
             patch("app.services.llm.jobs.send_callback") as mock_send_callback,
-            patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([], []),
-            ),
         ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
@@ -739,7 +735,9 @@ class TestExecuteJob:
 
         unsafe_input = "My credit card is 4111 1111 1111 1111"
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with patch(
+            "app.services.llm.jobs.run_guardrails_validation"
+        ) as mock_guardrails:
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -756,20 +754,17 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "guardrails": {
+                            "input": [{"type": "pii_remover"}],
+                            "output": [],
+                        },
                     }
                 },
-                "input_guardrails": [{"type": "pii_remover"}],
-                "output_guardrails": [],
                 "include_provider_raw_response": False,
                 "callback_url": None,
             }
-
-            with patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([{"type": "pii_remover"}], []),
-            ):
-                result = self._execute_job(job_for_execution, db, request_data)
+            result = self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
         assert "[REDACTED]" in provider_query.input
@@ -785,7 +780,9 @@ class TestExecuteJob:
         env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with patch(
+            "app.services.llm.jobs.run_guardrails_validation"
+        ) as mock_guardrails:
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -802,18 +799,15 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "guardrails": {
+                            "input": [],
+                            "output": [{"type": "pii_remover"}],
+                        },
                     }
                 },
-                "input_guardrails": [],
-                "output_guardrails": [{"type": "pii_remover"}],
             }
-
-            with patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([], [{"type": "pii_remover"}]),
-            ):
-                result = self._execute_job(job_for_execution, db, request_data)
+            result = self._execute_job(job_for_execution, db, request_data)
 
         assert "REDACTED" in result["data"]["response"]["output"]["text"]
 
@@ -826,7 +820,9 @@ class TestExecuteJob:
 
         unsafe_input = "4111 1111 1111 1111"
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with patch(
+            "app.services.llm.jobs.run_guardrails_validation"
+        ) as mock_guardrails:
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": True,
@@ -843,17 +839,15 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "guardrails": {
+                            "input": [{"type": "pii_remover"}],
+                            "output": [],
+                        },
                     }
                 },
-                "input_guardrails": [{"type": "pii_remover"}],
             }
-
-            with patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([{"type": "pii_remover"}], []),
-            ):
-                self._execute_job(job_for_execution, db, request_data)
+            self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
         assert provider_query.input == unsafe_input
@@ -863,7 +857,9 @@ class TestExecuteJob:
     ):
         env = job_env
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with patch(
+            "app.services.llm.jobs.run_guardrails_validation"
+        ) as mock_guardrails:
             mock_guardrails.return_value = {
                 "success": False,
                 "error": "Unsafe content detected",
@@ -876,17 +872,15 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "guardrails": {
+                            "input": [{"type": "uli_slur_match"}],
+                            "output": [],
+                        },
                     }
                 },
-                "input_guardrails": [{"type": "uli_slur_match"}],
             }
-
-            with patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([{"type": "uli_slur_match"}], []),
-            ):
-                result = self._execute_job(job_for_execution, db, request_data)
+            result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
         assert "Unsafe content" in result["error"]
@@ -897,7 +891,9 @@ class TestExecuteJob:
     ):
         env = job_env
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with patch(
+            "app.services.llm.jobs.run_guardrails_validation"
+        ) as mock_guardrails:
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -914,17 +910,15 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "guardrails": {
+                            "input": [{"type": "policy"}],
+                            "output": [],
+                        },
                     }
                 },
-                "input_guardrails": [{"type": "policy"}],
             }
-
-            with patch(
-                "app.services.llm.jobs.fetch_guardrails_config",
-                return_value=([{"type": "policy"}], []),
-            ):
-                result = self._execute_job(job_for_execution, db, request_data)
+            result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
         env["provider"].execute.assert_not_called()
@@ -958,6 +952,45 @@ class TestResolveConfigBlob:
         assert resolved_blob.completion.provider == "openai-native"
         assert resolved_blob.completion.params["model"] == "gpt-4"
         assert resolved_blob.completion.params["temperature"] == 0.8
+
+    def test_resolve_config_blob_fetches_guardrails_by_guardrails_config_id(
+        self, db: Session
+    ):
+        project = get_project(db)
+        config = create_test_config(db, project_id=project.id)
+        db.commit()
+
+        statement = select(ConfigVersion).where(
+            (ConfigVersion.config_id == config.id) & (ConfigVersion.version == 1)
+        )
+        config_version = db.exec(statement).one()
+
+        config_crud = ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=config.id, organization_id=1
+        )
+        llm_call_config = LLMCallConfig(id=str(config.id), version=1)
+
+        with patch("app.services.llm.jobs.get_validators_config") as mock_fetch:
+            mock_fetch.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [{"type": "gender_assumption_bias", "stage": "output"}],
+            )
+            resolved_blob, error = resolve_config_blob(config_crud, llm_call_config)
+
+        assert error is None
+        assert resolved_blob is not None
+        assert resolved_blob.guardrails is not None
+        assert resolved_blob.guardrails.input == [
+            {"type": "pii_remover", "stage": "input"}
+        ]
+        assert resolved_blob.guardrails.output == [
+            {"type": "gender_assumption_bias", "stage": "output"}
+        ]
+        mock_fetch.assert_called_once_with(
+            config_id=config_version.guardrails_config_id,
+            organization_id=1,
+            project_id=project.id,
+        )
 
     def test_resolve_config_blob_version_not_found(self, db: Session):
         """Test resolve_config_blob when version doesn't exist."""

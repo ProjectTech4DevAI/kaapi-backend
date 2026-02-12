@@ -65,7 +65,9 @@ class ConfigVersion(ConfigVersionBase, table=True):
 
     guardrails_config_id: UUID = Field(
         nullable=True,
-        sa_column_kwargs={"comment": "Reference to the kaapi_guardrails validator configuration"},
+        sa_column_kwargs={
+            "comment": "Reference to the kaapi_guardrails validator configuration"
+        },
     )
 
     version: int = Field(

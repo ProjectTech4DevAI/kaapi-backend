@@ -119,6 +119,7 @@ CompletionConfig = Annotated[
     Field(discriminator="provider"),
 ]
 
+
 class GuardrailsConfig(SQLModel):
     """Guardrails configuration applied during validation."""
 
@@ -131,6 +132,7 @@ class GuardrailsConfig(SQLModel):
         default=None,
         description="Guardrails applied to validate/sanitize the output after the LLM call",
     )
+
 
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""

@@ -1,4 +1,5 @@
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -55,6 +56,44 @@ def test_create_version_success(
     assert data["data"]["config_blob"] == version_data["config_blob"]
     assert data["data"]["commit_message"] == version_data["commit_message"]
     assert data["data"]["config_id"] == str(config.id)
+
+
+def test_create_version_with_guardrails_excludes_guardrails_from_blob(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="test-config-guardrails",
+    )
+
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "openai-native",
+                "params": {"model": "gpt-4-turbo"},
+            },
+            "guardrails": {
+                "input": [{"type": "pii_remover"}],
+                "output": [{"type": "gender_assumption_bias"}],
+            },
+        },
+        "commit_message": "Guardrails config",
+    }
+
+    with patch("app.crud.config.version.create_guardrails_validators_if_present"):
+        response = client.post(
+            f"{settings.API_V1_STR}/configs/{config.id}/versions",
+            headers={"X-API-KEY": user_api_key.key},
+            json=version_data,
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    assert "guardrails" not in data["data"]["config_blob"]
 
 
 def test_create_version_empty_blob_fails(

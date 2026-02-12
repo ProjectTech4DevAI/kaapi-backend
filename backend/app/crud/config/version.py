@@ -19,7 +19,13 @@ class ConfigVersionCrud:
     CRUD operations for configuration versions scoped to a project.
     """
 
-    def __init__(self, session: Session, config_id: UUID, project_id: int, organization_id: Optional[int] = None):
+    def __init__(
+        self,
+        session: Session,
+        config_id: UUID,
+        project_id: int,
+        organization_id: Optional[int] = None,
+    ):
         self.session = session
         self.project_id = project_id
         self.config_id = config_id
@@ -33,7 +39,7 @@ class ConfigVersionCrud:
         self._config_exists_or_raise(self.config_id)
         try:
             next_version = self._get_next_version(self.config_id)
-            guardrails_config_id=uuid4()
+            guardrails_config_id = uuid4()
 
             version = ConfigVersion(
                 config_id=self.config_id,
@@ -42,7 +48,7 @@ class ConfigVersionCrud:
                     exclude={"guardrails"}
                 ),
                 commit_message=version_create.commit_message,
-                guardrails_config_id=guardrails_config_id
+                guardrails_config_id=guardrails_config_id,
             )
 
             create_guardrails_validators_if_present(
