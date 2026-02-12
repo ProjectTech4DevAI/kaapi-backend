@@ -95,11 +95,15 @@ def create_validators_batch(
             "validators": validators,
         }
 
-        logging.info(f"[create_validators_batch] payload: {payload}")
+        logger.info(
+            "[create_validators_batch] Requesting validator batch creation. "
+            f"config_id={config_id}, organization_id={organization_id}, "
+            f"project_id={project_id}, validators_count={len(validators)}"
+        )
 
         with httpx.Client(timeout=10.0) as client:
             response = client.post(
-                f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/batch",
+                f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/batch",
                 params={
                     "organization_id": organization_id,
                     "project_id": project_id,
@@ -111,8 +115,18 @@ def create_validators_batch(
             response.raise_for_status()
 
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError(
+                    "Invalid response format from guardrails service: expected object."
+                )
 
-            return data["data"]
+            validators_data = data.get("data")
+            if not isinstance(validators_data, list):
+                raise ValueError(
+                    "Invalid response format from guardrails service: `data` must be a list."
+                )
+
+            return validators_data
 
     except Exception as e:
         logger.error(
