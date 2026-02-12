@@ -105,12 +105,12 @@ def start_stt_evaluation_batch(
             return sample, None, str(e)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
+        sign_url_tasks = {
             executor.submit(_generate_signed_url, sample): sample for sample in samples
         }
 
-        for future in as_completed(futures):
-            sample, url, error = future.result()
+        for completed_task in as_completed(sign_url_tasks):
+            sample, url, error = completed_task.result()
             if url:
                 signed_urls.append(url)
                 sample_keys.append(str(sample.id))
