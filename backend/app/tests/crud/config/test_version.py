@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 
-from app.models import ConfigVersionCreate, ConfigBlob
+from app.models import ConfigVersionCreate, ConfigBlob, Project
 from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigVersionCrud
 from app.tests.utils.test_data import (
@@ -56,11 +56,13 @@ def test_create_version_with_guardrails_excludes_guardrails_from_blob(
     db: Session,
 ) -> None:
     config = create_test_config(db)
+    project = db.get(Project, config.project_id)
+    assert project is not None
     version_crud = ConfigVersionCrud(
         session=db,
         project_id=config.project_id,
         config_id=config.id,
-        organization_id=1,
+        organization_id=project.organization_id,
     )
 
     version_create = ConfigVersionCreate(
