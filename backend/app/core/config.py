@@ -51,7 +51,6 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = ""
     KAAPI_GUARDRAILS_AUTH: str = ""
     KAAPI_GUARDRAILS_URL: str = ""
-    KAAPI_GUARDRAILS_CONFIG_URL: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
