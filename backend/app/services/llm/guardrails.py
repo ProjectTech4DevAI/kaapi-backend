@@ -5,11 +5,12 @@ import logging
 import httpx
 
 from app.core.config import settings
+from app.models.llm.request import GuardrailsConfig
 
 logger = logging.getLogger(__name__)
 
 
-def call_guardrails(
+def run_guardrails_validation(
     input_text: str, guardrail_config: list[dict], job_id: UUID
 ) -> dict[str, Any]:
     """
@@ -47,7 +48,7 @@ def call_guardrails(
             return response.json()
     except Exception as e:
         logger.warning(
-            f"[call_guardrails] Service unavailable. Bypassing guardrails. job_id={job_id}. error={e}"
+            f"[run_guardrails_validation] Service unavailable. Bypassing guardrails. job_id={job_id}. error={e}"
         )
 
         return {
@@ -58,3 +59,100 @@ def call_guardrails(
                 "rephrase_needed": False,
             },
         }
+
+
+def create_validators_batch(
+    validators: list[dict[str, Any]],
+    config_id: UUID | None, 
+    organization_id: int | None,
+    project_id: int | None,
+) -> list[dict[str, Any]]:
+    """
+    Batch create validator configs via Kaapi Guardrails service.
+
+    Args:
+        validators: List of validator creation payloads
+        config_id: Optional config UUID associated with this batch
+
+    Returns:
+        List of created validator objects (includes UUIDs)
+    """
+
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        payload: dict[str, Any] | list[dict]
+
+        if config_id is None:
+            raise ValueError(
+                "config_id must be provided"
+            )
+
+        payload = {
+            "config_id": str(config_id) if config_id is not None else None,
+            "validators": validators,
+        }
+
+        logging.info(
+            f"[create_validators_batch] payload: {payload}"
+        )
+
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                f"{settings.KAAPI_GUARDRAILS_URL}validators/configs/batch",
+                params={
+                    "organization_id": organization_id,
+                    "project_id": project_id,
+                },
+                json=payload,
+                headers=headers,
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            return data["data"]
+
+    except Exception as e:
+        logger.error(
+            f"[create_validators_batch] Failed to create validators. error={e}"
+        )
+        raise
+
+
+def build_staged_validators(
+    guardrails: GuardrailsConfig | None,
+) -> list[dict[str, Any]]:
+    validators: list[dict[str, Any]] = []
+    if guardrails is None:
+        return validators
+
+    for validator in guardrails.input or []:
+        validators.append({"stage": "input", **validator})
+    for validator in guardrails.output or []:
+        validators.append({"stage": "output", **validator})
+
+    return validators
+
+
+def create_guardrails_validators_if_present(
+    guardrails: GuardrailsConfig | None,
+    guardrails_config_id: UUID,
+    organization_id: int | None,
+    project_id: int | None,
+) -> None:
+    validators = build_staged_validators(guardrails)
+    if not validators:
+        return
+
+    create_validators_batch(
+        validators=validators,
+        config_id=guardrails_config_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )

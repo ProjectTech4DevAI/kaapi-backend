@@ -1,6 +1,6 @@
 import logging
-from uuid import UUID
-from typing import Tuple
+from uuid import UUID, uuid4
+from typing import Optional, Tuple
 
 from sqlmodel import Session, select, and_
 from fastapi import HTTPException
@@ -12,6 +12,7 @@ from app.models import (
     ConfigVersion,
 )
 from app.core.util import now
+from app.services.llm.guardrails import create_guardrails_validators_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,10 @@ class ConfigCrud:
     CRUD operations for configurations scoped to a project.
     """
 
-    def __init__(self, session: Session, project_id: int):
+    def __init__(self, session: Session, project_id: int, organization_id: Optional[int] = None):
         self.session = session
         self.project_id = project_id
+        self.organization_id = organization_id
 
     def create_or_raise(
         self, config_create: ConfigCreate
@@ -34,6 +36,7 @@ class ConfigCrud:
         self._check_unique_name_or_raise(config_create.name)
 
         try:
+            guardrails_config_id=uuid4()
             config = Config(
                 name=config_create.name,
                 description=config_create.description,
@@ -43,12 +46,24 @@ class ConfigCrud:
             self.session.add(config)
             self.session.flush()  # Flush to get the config.id
 
-            # Create the initial version
+            config_blob = config_create.config_blob.model_dump(
+                exclude={"guardrails"}
+            )
+            create_guardrails_validators_if_present(
+                guardrails=config_create.config_blob.guardrails,
+                guardrails_config_id=guardrails_config_id,
+                organization_id=self.organization_id,
+                project_id=self.project_id,
+            )
+
+            # Create the initial version. Guardrails are stored externally via
+            # guardrails_config_id and should not be persisted in config_blob.
             version = ConfigVersion(
                 config_id=config.id,
                 version=1,
-                config_blob=config_create.config_blob.model_dump(),
+                config_blob=config_blob,
                 commit_message=config_create.commit_message,
+                guardrails_config_id=guardrails_config_id,
             )
 
             self.session.add(version)

@@ -33,7 +33,9 @@ def create_config(
     """
     create new config along with initial version
     """
-    config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
+    project_id = current_user.project_.id
+    organization_id = current_user.organization_.id
+    config_crud = ConfigCrud(session, project_id, organization_id)
     config, version = config_crud.create_or_raise(config_create)
 
     response = ConfigWithVersion(**config.model_dump(), version=version)
