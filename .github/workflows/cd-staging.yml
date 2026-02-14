@@ -53,6 +53,7 @@ jobs:
             --task-definition $TASK_DEF \
             --count 1 \
             --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_IDS }}],assignPublicIp=ENABLED}" \
             --query 'tasks[0].taskArn' --output text)
 
           echo "Migration task started: $TASK_ARN"
