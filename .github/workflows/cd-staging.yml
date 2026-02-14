@@ -22,7 +22,8 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5 # More information on this action can be found below in the 'AWS Credentials' section
+        # More information on this action can be found below in the 'AWS Credentials' section
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::024209611402:role/github-action-role
           aws-region: ap-south-1
@@ -40,6 +41,40 @@ jobs:
           docker build -t $REGISTRY/$REPOSITORY:latest ./backend
           docker push $REGISTRY/$REPOSITORY:latest
 
+      - name: Run database migrations
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
+        run: |
+          CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
+
+          NETWORK_CONFIG=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE \
+            --query 'services[0].networkConfiguration' --output json | jq -c '.')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster $CLUSTER \
+            --launch-type FARGATE \
+            --task-definition $TASK_DEF \
+            --count 1 \
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_IDS }}],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migration task started: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster $CLUSTER --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='$CONTAINER_NAME'].exitCode | [0]" --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "Migration completed successfully"
+
       - name: Deploy to ECS
+        if: false
         run: |
           aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
