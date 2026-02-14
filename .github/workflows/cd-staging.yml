@@ -75,6 +75,5 @@ jobs:
           echo "Migration completed successfully"
 
       - name: Deploy to ECS
-        if: false
         run: |
           aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment

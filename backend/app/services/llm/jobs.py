@@ -11,11 +11,14 @@ from app.core.langfuse.langfuse import observe_llm_execution
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
-from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
+from app.crud.llm import create_llm_call, update_llm_call_response
+from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, Job
 from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
 from app.services.llm.guardrails import call_guardrails
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
+from app.services.llm.input_resolver import resolve_input, cleanup_temp_file
+
 from app.utils import APIResponse, send_callback
 
 logger = logging.getLogger(__name__)
@@ -28,6 +31,14 @@ def start_job(
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
     job = job_crud.create(job_type=JobType.LLM_API, trace_id=trace_id)
+
+    # Explicitly flush to ensure job is persisted before Celery task starts
+    db.flush()
+    db.commit()
+
+    logger.info(
+        f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
+    )
 
     try:
         task_id = start_high_priority_job(
@@ -140,6 +151,7 @@ def execute_job(
     output_guardrails = request.output_guardrails
     callback_response = None
     config_blob: ConfigBlob | None = None
+    llm_call_id: UUID | None = None  # Track the LLM call record
 
     logger.info(
         f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, "
@@ -157,18 +169,20 @@ def execute_job(
                 logger.info("[execute_job] Guardrails bypassed (service unavailable)")
 
             elif safe_input["success"]:
-                request.query.input = safe_input["data"]["safe_text"]
+                # Update the text value within the QueryInput structure
+                request.query.input.content.value = safe_input["data"]["safe_text"]
 
                 if safe_input["data"]["rephrase_needed"]:
                     callback_response = APIResponse.failure_response(
-                        error=request.query.input,
+                        error=safe_input["data"]["safe_text"],
                         metadata=request.request_metadata,
                     )
                     return handle_job_error(
                         job_id, request.callback_url, callback_response
                     )
             else:
-                request.query.input = safe_input["error"]
+                # Update the text value with error message
+                request.query.input.content.value = safe_input["error"]
 
                 callback_response = APIResponse.failure_response(
                     error=safe_input["error"],
@@ -179,6 +193,24 @@ def execute_job(
         with Session(engine) as session:
             # Update job status to PROCESSING
             job_crud = JobCrud(session=session)
+            logger.info(f"[execute_job] Attempting to fetch job | job_id={job_id}")
+            job = session.get(Job, job_id)
+            if not job:
+                # Log all jobs to see what's in the database
+                from sqlmodel import select
+
+                all_jobs = session.exec(
+                    select(Job).order_by(Job.created_at.desc()).limit(5)
+                ).all()
+                logger.error(
+                    f"[execute_job] Job not found! | job_id={job_id} | "
+                    f"Recent jobs in DB: {[(j.id, j.status) for j in all_jobs]}"
+                )
+            else:
+                logger.info(
+                    f"[execute_job] Found job | job_id={job_id}, status={job.status}"
+                )
+
             job_crud.update(
                 job_id=job_id, job_update=JobUpdate(status=JobStatus.PROCESSING)
             )
@@ -204,16 +236,26 @@ def execute_job(
             else:
                 config_blob = config.blob
 
+            user_sent_config_provider = ""
+
             try:
                 # Transform Kaapi config to native config if needed (before getting provider)
                 completion_config = config_blob.completion
+
+                original_provider = (
+                    config_blob.completion.provider
+                )  # openai, google or prefixed
+
                 if isinstance(completion_config, KaapiCompletionConfig):
                     completion_config, warnings = transform_kaapi_config_to_native(
                         completion_config
                     )
+
                     if request.request_metadata is None:
                         request.request_metadata = {}
                     request.request_metadata.setdefault("warnings", []).extend(warnings)
+                else:
+                    pass
             except Exception as e:
                 callback_response = APIResponse.failure_response(
                     error=f"Error processing configuration: {str(e)}",
@@ -221,10 +263,39 @@ def execute_job(
                 )
                 return handle_job_error(job_id, request.callback_url, callback_response)
 
+            # Create LLM call record before execution
+            try:
+                # Rebuild ConfigBlob with transformed native config
+                resolved_config_blob = ConfigBlob(completion=completion_config)
+
+                llm_call = create_llm_call(
+                    session,
+                    request=request,
+                    job_id=job_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                    resolved_config=resolved_config_blob,
+                    original_provider=original_provider,
+                )
+                llm_call_id = llm_call.id
+                logger.info(
+                    f"[execute_job] Created LLM call record | llm_call_id={llm_call_id}, job_id={job_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[execute_job] Failed to create LLM call record: {str(e)} | job_id={job_id}",
+                    exc_info=True,
+                )
+                callback_response = APIResponse.failure_response(
+                    error=f"Failed to create LLM call record: {str(e)}",
+                    metadata=request.request_metadata,
+                )
+                return handle_job_error(job_id, request.callback_url, callback_response)
+
             try:
                 provider_instance = get_llm_provider(
                     session=session,
-                    provider_type=completion_config.provider,  # Now always native provider type
+                    provider_type=completion_config.provider,  # Now always native provider type i.e openai-native, google-native regardless
                     project_id=project_id,
                     organization_id=organization_id,
                 )
@@ -247,21 +318,36 @@ def execute_job(
         if request.query.conversation and request.query.conversation.id:
             conversation_id = request.query.conversation.id
 
+        # Resolve input (handles text, audio_base64, audio_url)
+        resolved_input, resolve_error = resolve_input(request.query.input)
+        if resolve_error:
+            callback_response = APIResponse.failure_response(
+                error=resolve_error,
+                metadata=request.request_metadata,
+            )
+            return handle_job_error(job_id, request.callback_url, callback_response)
+
         # Apply Langfuse observability decorator to provider execute method
         decorated_execute = observe_llm_execution(
             credentials=langfuse_credentials,
             session_id=conversation_id,
         )(provider_instance.execute)
 
-        response, error = decorated_execute(
-            completion_config=completion_config,
-            query=request.query,
-            include_provider_raw_response=request.include_provider_raw_response,
-        )
+        try:
+            response, error = decorated_execute(
+                completion_config=completion_config,
+                query=request.query,
+                resolved_input=resolved_input,
+                include_provider_raw_response=request.include_provider_raw_response,
+            )
+        finally:
+            # Clean up temp files for audio inputs
+            if resolved_input and resolved_input != request.query.input:
+                cleanup_temp_file(resolved_input)
 
         if response:
             if output_guardrails:
-                output_text = response.response.output.text
+                output_text = response.response.output.content.value
                 safe_output = call_guardrails(output_text, output_guardrails, job_id)
 
                 logger.info(
@@ -274,7 +360,9 @@ def execute_job(
                     )
 
                 elif safe_output["success"]:
-                    response.response.output.text = safe_output["data"]["safe_text"]
+                    response.response.output.content.value = safe_output["data"][
+                        "safe_text"
+                    ]
 
                     if safe_output["data"]["rephrase_needed"] == True:
                         callback_response = APIResponse.failure_response(
@@ -307,6 +395,27 @@ def execute_job(
 
             with Session(engine) as session:
                 job_crud = JobCrud(session=session)
+
+                # Update LLM call record with response data
+                if llm_call_id:
+                    try:
+                        update_llm_call_response(
+                            session,
+                            llm_call_id=llm_call_id,
+                            provider_response_id=response.response.provider_response_id,
+                            content=response.response.output.model_dump(),
+                            usage=response.usage.model_dump(),
+                            conversation_id=response.response.conversation_id,
+                        )
+                        logger.info(
+                            f"[execute_job] Updated LLM call record | llm_call_id={llm_call_id}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[execute_job] Failed to update LLM call record: {str(e)} | llm_call_id={llm_call_id}",
+                            exc_info=True,
+                        )
+                        # Don't fail the job if updating the record fails
 
                 job_crud.update(
                     job_id=job_id, job_update=JobUpdate(status=JobStatus.SUCCESS)

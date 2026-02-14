@@ -16,6 +16,7 @@ from app.crud.evaluations import (
     start_evaluation_batch,
 )
 from app.models.evaluation import EvaluationRun
+from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
 from app.core.cloud.storage import get_cloud_storage
@@ -141,12 +142,21 @@ def start_evaluation(
 
     # Step 4: Start the batch evaluation
     try:
+        # Convert params dict to appropriate model instance based on type
+        param_models = {
+            "text": TextLLMParams,
+            "stt": STTLLMParams,
+            "tts": TTSLLMParams,
+        }
+        model_class = param_models[config.completion.type]
+        validated_params = model_class.model_validate(config.completion.params)
+
         eval_run = start_evaluation_batch(
             langfuse=langfuse,
             openai_client=openai_client,
             session=session,
             eval_run=eval_run,
-            config=config.completion.params,
+            config=validated_params,
         )
 
         logger.info(

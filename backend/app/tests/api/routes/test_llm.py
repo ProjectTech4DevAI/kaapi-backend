@@ -7,7 +7,6 @@ from app.models.llm.request import (
     QueryParams,
     LLMCallConfig,
     ConfigBlob,
-    KaapiLLMParams,
     KaapiCompletionConfig,
     NativeCompletionConfig,
 )
@@ -26,6 +25,7 @@ def test_llm_call_success(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,
@@ -64,11 +64,12 @@ def test_llm_call_with_kaapi_config(
                 blob=ConfigBlob(
                     completion=KaapiCompletionConfig(
                         provider="openai",
-                        params=KaapiLLMParams(
-                            model="gpt-4o",
-                            instructions="You are a physics expert",
-                            temperature=0.5,
-                        ),
+                        type="text",
+                        params={
+                            "model": "gpt-4o",
+                            "instructions": "You are a physics expert",
+                            "temperature": 0.5,
+                        },
                     )
                 )
             ),
@@ -99,6 +100,7 @@ def test_llm_call_with_native_config(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.9,
@@ -192,6 +194,7 @@ def test_llm_call_success_with_guardrails(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4o",
                             "temperature": 0.7,
@@ -247,6 +250,7 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,

@@ -1,24 +1,20 @@
 from typing import Annotated, Any, Literal, Union
 
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel
 from pydantic import Discriminator, model_validator, HttpUrl
+from datetime import datetime
+from app.core.util import now
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Field, SQLModel, Index, text
 
 
-class KaapiLLMParams(SQLModel):
-    """
-    Kaapi-abstracted parameters for LLM providers.
-    These parameters are mapped internally to provider-specific API parameters.
-    Provides a unified contract across all LLM providers (OpenAI, Claude, Gemini, etc.).
-    Provider-specific mappings are handled at the mapper level.
-    """
-
-    model: str = Field(
-        description="Model identifier to use for completion (e.g., 'gpt-4o', 'gpt-5')",
-    )
+class TextLLMParams(SQLModel):
+    model: str
     instructions: str | None = Field(
         default=None,
-        description="System instructions to guide the model's behavior",
     )
     knowledge_base_ids: list[str] | None = Field(
         default=None,
@@ -32,13 +28,71 @@ class KaapiLLMParams(SQLModel):
         default=None,
         ge=0.0,
         le=2.0,
-        description="Sampling temperature between 0 and 2",
     )
     max_num_results: int | None = Field(
         default=None,
         ge=1,
-        description="Maximum number of results to return",
+        description="Maximum number of candidate results to return",
     )
+
+
+class STTLLMParams(SQLModel):
+    model: str
+    instructions: str
+    input_language: str | None = None
+    output_language: str | None = None
+    response_format: Literal["text"] | None = Field(
+        None,
+        description="Currently supports text type",
+    )
+    temperature: float | None = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+    )
+
+
+class TTSLLMParams(SQLModel):
+    model: str
+    voice: str
+    language: str
+    response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
+
+
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams]
+
+
+# Input type models for discriminated union
+class TextContent(SQLModel):
+    format: Literal["text"] = "text"
+    value: str = Field(..., description="Text content")
+
+
+class AudioContent(SQLModel):
+    format: Literal["base64"] = "base64"
+    value: str = Field(..., min_length=1, description="Base64 encoded audio")
+    # keeping the mime_type liberal here, since does not affect transcription type
+    mime_type: str | None = Field(
+        None,
+        description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
+    )
+
+
+class TextInput(SQLModel):
+    type: Literal["text"] = "text"
+    content: TextContent
+
+
+class AudioInput(SQLModel):
+    type: Literal["audio"] = "audio"
+    content: AudioContent
+
+
+# Discriminated union for query input types
+QueryInput = Annotated[
+    Union[TextInput, AudioInput],
+    Field(discriminator="type"),
+]
 
 
 class ConversationConfig(SQLModel):
@@ -71,15 +125,29 @@ class ConversationConfig(SQLModel):
 class QueryParams(SQLModel):
     """Query-specific parameters for each LLM call."""
 
-    input: str = Field(
+    input: str | QueryInput = Field(
         ...,
-        min_length=1,
-        description="User input question/query/prompt, used to generate a response.",
+        description=(
+            "User input - either a plain string (text) or a structured input object. "
+        ),
     )
     conversation: ConversationConfig | None = Field(
         default=None,
         description="Conversation control configuration for context handling.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_input(cls, data: Any) -> Any:
+        """Normalize plain string input to TextInput for consistency."""
+        if isinstance(data, dict) and "input" in data:
+            input_val = data["input"]
+            if isinstance(input_val, str):
+                data["input"] = {
+                    "type": "text",
+                    "content": {"format": "text", "value": input_val},
+                }
+        return data
 
 
 class NativeCompletionConfig(SQLModel):
@@ -89,13 +157,16 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native"] = Field(
-        default="openai-native",
+    provider: Literal["openai-native", "google-native"] = Field(
+        ...,
         description="Native provider type (e.g., openai-native)",
     )
     params: dict[str, Any] = Field(
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
+    )
+    type: Literal["text", "stt", "tts"] = Field(
+        ..., description="Completion config type. Params schema varies by type"
     )
 
 
@@ -106,11 +177,30 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai"] = Field(..., description="LLM provider (openai)")
-    params: KaapiLLMParams = Field(
+    provider: Literal["openai", "google"] = Field(
+        ..., description="LLM provider (openai)"
+    )
+
+    type: Literal["text", "stt", "tts"] = Field(
+        ..., description="Completion config type. Params schema varies by type"
+    )
+    params: dict[str, Any] = Field(
         ...,
         description="Kaapi-standardized parameters mapped to provider-specific API",
     )
+
+    # validate all these 3 config types
+    @model_validator(mode="after")
+    def validate_params(self):
+        param_models = {
+            "text": TextLLMParams,
+            "stt": STTLLMParams,
+            "tts": TTSLLMParams,
+        }
+        model_class = param_models[self.type]
+        validated = model_class.model_validate(self.params)
+        self.params = validated.model_dump(exclude_none=True)
+        return self
 
 
 # Discriminated union for completion configs based on provider field
@@ -236,4 +326,173 @@ class LLMCallRequest(SQLModel):
             "Use this to correlate responses with requests or track request state. "
             "The exact dictionary provided here will be returned in the response metadata field."
         ),
+    )
+
+
+class LlmCall(SQLModel, table=True):
+    """
+    Database model for tracking LLM API call requests and responses.
+
+    Stores both request inputs and response outputs for traceability,
+    supporting multimodal inputs (text, audio, image) and various completion types.
+    """
+
+    __tablename__ = "llm_call"
+    __table_args__ = (
+        Index(
+            "idx_llm_call_job_id",
+            "job_id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "idx_llm_call_conversation_id",
+            "conversation_id",
+            postgresql_where=text("conversation_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        primary_key=True,
+        sa_column_kwargs={"comment": "Unique identifier for the LLM call record"},
+    )
+
+    job_id: UUID = Field(
+        foreign_key="job.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the parent job (status tracked in job table)"
+        },
+    )
+
+    project_id: int = Field(
+        foreign_key="project.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the project this LLM call belongs to"
+        },
+    )
+
+    organization_id: int = Field(
+        foreign_key="organization.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the organization this LLM call belongs to"
+        },
+    )
+
+    # Request fields
+    input: str = Field(
+        ...,
+        sa_column_kwargs={
+            "comment": "User input - text string, binary data, or file path for multimodal"
+        },
+    )
+
+    input_type: Literal["text", "audio", "image"] = Field(
+        ...,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=False,
+            comment="Input type: text, audio, image",
+        ),
+    )
+
+    output_type: Literal["text", "audio", "image"] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=True,
+            comment="Expected output type: text, audio, image",
+        ),
+    )
+
+    # Provider and model info
+    provider: str = Field(
+        ...,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=False,
+            comment="AI provider as sent by user (e.g openai, -native, google)",
+        ),
+    )
+
+    model: str = Field(
+        ...,
+        sa_column_kwargs={
+            "comment": "Specific model used e.g. 'gpt-4o', 'gemini-2.5-pro'"
+        },
+    )
+
+    # Response fields
+    provider_response_id: str | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Original response ID from the provider (e.g., OpenAI's response ID)"
+        },
+    )
+
+    content: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Response content: {text: '...'}, {audio_bytes: '...'}, or {image: '...'}",
+        ),
+    )
+
+    usage: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Token usage: {input_tokens, output_tokens, reasoning_tokens}",
+        ),
+    )
+
+    # Conversation tracking
+    conversation_id: str | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Identifier linking this response to its conversation thread"
+        },
+    )
+
+    auto_create: bool | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "Whether to auto-create conversation if conversation_id doesn't exist (OpenAI specific)"
+        },
+    )
+
+    # Configuration - stores either {config_id, config_version} or {config_blob}
+    config: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Configuration: {config_id, config_version} for stored config OR {config_blob} for ad-hoc config",
+        ),
+    )
+
+    # Timestamps
+    created_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the LLM call was created"},
+    )
+
+    updated_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the LLM call was last updated"},
+    )
+
+    deleted_at: datetime | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Timestamp when the record was soft-deleted"},
     )
