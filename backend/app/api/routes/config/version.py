@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Path
 from app.api.deps import SessionDep, AuthContextDep
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models import (
-    ConfigVersionCreate,
+    ConfigVersionUpdate,
     ConfigVersionPublic,
     Message,
     ConfigVersionItems,
@@ -24,13 +24,16 @@ router = APIRouter()
 )
 def create_version(
     config_id: UUID,
-    version_create: ConfigVersionCreate,
+    version_create: ConfigVersionUpdate,
     current_user: AuthContextDep,
     session: SessionDep,
 ):
     """
     Create a new version for an existing configuration.
-    The version number is automatically incremented.
+
+    Only include the fields you want to update in config_blob.
+    Provider, model, and params can be changed.
+    Type is inherited from existing config and cannot be changed.
     """
     version_crud = ConfigVersionCrud(
         session=session, project_id=current_user.project_.id, config_id=config_id

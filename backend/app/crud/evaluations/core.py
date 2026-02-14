@@ -497,5 +497,10 @@ def resolve_model_from_config(
             f"(config_id={eval_run.config_id}, version={eval_run.config_version}): {error}"
         )
 
-    model = config.completion.params.model
+    # params is a dict, not a Pydantic model, so use dict access
+    model = config.completion.params.get("model")
+    if not model:
+        raise ValueError(
+            f"Config for evaluation {eval_run.id} does not contain a 'model' parameter"
+        )
     return model

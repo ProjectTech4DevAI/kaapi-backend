@@ -17,7 +17,7 @@ from app.models import (
     Config,
     ConfigCreate,
     ConfigVersion,
-    ConfigVersionCreate,
+    ConfigVersionUpdate,
     EvaluationDataset,
 )
 from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
@@ -269,10 +269,11 @@ def create_test_config(
             config_blob = ConfigBlob(
                 completion=KaapiCompletionConfig(
                     provider="openai",
-                    params=KaapiLLMParams(
-                        model="gpt-4",
-                        temperature=0.7,
-                    ),
+                    type="text",
+                    params={
+                        "model": "gpt-4",
+                        "temperature": 0.7,
+                    },
                 )
             )
         else:
@@ -280,6 +281,7 @@ def create_test_config(
             config_blob = ConfigBlob(
                 completion=NativeCompletionConfig(
                     provider="openai-native",
+                    type="text",
                     params={
                         "model": "gpt-4",
                         "temperature": 0.7,
@@ -311,29 +313,87 @@ def create_test_version(
     """
     Creates and returns a test version for an existing configuration.
 
+    If config_blob is not provided, fetches the latest version and creates
+    a new version with the same type, provider, and similar params.
+
     Persists the version to the database.
     """
     if config_blob is None:
-        config_blob = ConfigBlob(
-            completion=NativeCompletionConfig(
-                provider="openai-native",
-                params={
-                    "model": "gpt-4",
-                    "temperature": 0.8,
-                    "max_tokens": 1500,
-                },
-            )
-        )
+        # Fetch the latest version to maintain type consistency
+        from sqlmodel import select, and_
+        from app.models import ConfigVersion
 
-    version_create = ConfigVersionCreate(
-        config_blob=config_blob,
+        stmt = (
+            select(ConfigVersion)
+            .where(
+                and_(
+                    ConfigVersion.config_id == config_id,
+                    ConfigVersion.deleted_at.is_(None),
+                )
+            )
+            .order_by(ConfigVersion.version.desc())
+            .limit(1)
+        )
+        latest_version = db.exec(stmt).first()
+
+        if latest_version:
+            # Extract the type and provider from the latest version
+            completion_config = latest_version.config_blob.get("completion", {})
+            config_type = completion_config.get("type")
+            provider = completion_config.get("provider", "openai-native")
+
+            # Create a new config_blob maintaining the same type and provider
+            if provider in ["openai-native", "google-native"]:
+                config_blob = ConfigBlob(
+                    completion=NativeCompletionConfig(
+                        provider=provider,
+                        type=config_type,
+                        params={
+                            "model": completion_config.get("params", {}).get(
+                                "model", "gpt-4"
+                            ),
+                            "temperature": 0.8,
+                            "max_tokens": 1500,
+                        },
+                    )
+                )
+            else:
+                # For Kaapi providers (openai, google)
+                config_blob = ConfigBlob(
+                    completion=KaapiCompletionConfig(
+                        provider=provider,
+                        type=config_type,
+                        params={
+                            "model": completion_config.get("params", {}).get(
+                                "model", "gpt-4"
+                            ),
+                            "temperature": 0.8,
+                        },
+                    )
+                )
+        else:
+            # Fallback if no previous version exists (shouldn't happen in normal flow)
+            config_blob = ConfigBlob(
+                completion=NativeCompletionConfig(
+                    provider="openai-native",
+                    type="text",
+                    params={
+                        "model": "gpt-4",
+                        "temperature": 0.8,
+                        "max_tokens": 1500,
+                    },
+                )
+            )
+
+    version_update = ConfigVersionUpdate(
+        config_blob=config_blob.model_dump(),
         commit_message=commit_message or "Test version commit",
     )
 
     version_crud = ConfigVersionCrud(
         session=db, project_id=project_id, config_id=config_id
     )
-    version = version_crud.create_or_raise(version_create=version_create)
+    version = version_crud.create_or_raise(version_create=version_update)
 
     return version
 

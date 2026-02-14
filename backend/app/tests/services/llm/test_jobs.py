@@ -14,9 +14,10 @@ from app.models.llm import (
     QueryParams,
     LLMCallResponse,
     LLMResponse,
-    LLMOutput,
     Usage,
-    KaapiLLMParams,
+    TextOutput,
+    TextContent,
+    # KaapiLLMParams,
     KaapiCompletionConfig,
 )
 from app.models.llm.request import ConfigBlob, LLMCallConfig
@@ -41,6 +42,7 @@ class TestStartJob:
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={"model": "gpt-4"},
                     )
                 )
@@ -121,9 +123,10 @@ class TestHandleJobError:
         callback_url = "https://example.com/callback"
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -158,9 +161,10 @@ class TestHandleJobError:
 
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -189,9 +193,10 @@ class TestHandleJobError:
             error="Test error with callback failure"
         )
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -225,6 +230,7 @@ class TestExecuteJob:
             "config": {
                 "blob": {
                     "completion": {
+                        "type": "text",
                         "provider": "openai-native",
                         "params": {"model": "gpt-4"},
                     }
@@ -242,7 +248,7 @@ class TestExecuteJob:
                 conversation_id=None,
                 model="gpt-4",
                 provider="openai",
-                output=LLMOutput(text="Test response"),
+                output=TextOutput(content=TextContent(value="Test response")),
             ),
             usage=Usage(input_tokens=10, output_tokens=20, total_tokens=30),
             provider_raw_response=None,
@@ -400,6 +406,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.7},
             )
         )
@@ -449,6 +456,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -497,6 +505,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -532,11 +541,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -578,10 +588,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-3.5-turbo",
-                    temperature=0.5,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-3.5-turbo",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -628,10 +640,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="o1",  # Reasoning model
-                    temperature=0.7,  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "o1",  # Reasoning model
+                    "temperature": 0.7,  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -677,10 +690,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",  # Non-reasoning model
-                    reasoning="high",  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",  # Non-reasoning model
+                    "reasoning": "high",  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -751,6 +765,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -764,8 +779,8 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert "[REDACTED]" in provider_query.input
-        assert "4111" not in provider_query.input
+        assert "[REDACTED]" in provider_query.input.content.value
+        assert "4111" not in provider_query.input.content.value
 
         assert result["success"]
 
@@ -774,7 +789,7 @@ class TestExecuteJob:
     ):
         env = job_env
 
-        env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
+        env["mock_llm_response"].response.output.content.value = "Aadhar no 123-45-6789"
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
@@ -793,6 +808,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -803,7 +819,7 @@ class TestExecuteJob:
 
             result = self._execute_job(job_for_execution, db, request_data)
 
-        assert "REDACTED" in result["data"]["response"]["output"]["text"]
+        assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
 
     def test_guardrails_bypass_does_not_modify_input(
         self, db, job_env, job_for_execution
@@ -830,6 +846,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -840,7 +857,7 @@ class TestExecuteJob:
             self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert provider_query.input == unsafe_input
+        assert provider_query.input.content.value == unsafe_input
 
     def test_guardrails_validation_failure_blocks_job(
         self, db, job_env, job_for_execution
@@ -859,6 +876,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -893,6 +911,7 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         }
                     }
@@ -916,6 +935,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.8},
             )
         )
@@ -942,6 +962,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -967,6 +988,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -996,7 +1018,7 @@ class TestResolveConfigBlob:
 
     def test_resolve_config_blob_with_multiple_versions(self, db: Session):
         """Test resolving specific version when multiple versions exist."""
-        from app.models.config import ConfigVersionCreate
+        from app.models.config import ConfigVersionUpdate
 
         project = get_project(db)
 
@@ -1004,6 +1026,7 @@ class TestResolveConfigBlob:
         config_blob_v1 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -1019,14 +1042,15 @@ class TestResolveConfigBlob:
         config_blob_v2 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.9},
             )
         )
-        version_create = ConfigVersionCreate(
-            config_blob=config_blob_v2,
+        version_update = ConfigVersionUpdate(
+            config_blob=config_blob_v2.model_dump(),
             commit_message="Updated to gpt-4",
         )
-        config_version_crud.create_or_raise(version_create)
+        config_version_crud.create_or_raise(version_update)
         db.commit()
 
         # Test resolving version 1
@@ -1058,11 +1082,12 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.8,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.8,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -1079,10 +1104,10 @@ class TestResolveConfigBlob:
         assert resolved_blob is not None
         assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
         assert resolved_blob.completion.provider == "openai"
-        assert resolved_blob.completion.params.model == "gpt-4"
-        assert resolved_blob.completion.params.temperature == 0.8
+        assert resolved_blob.completion.params["model"] == "gpt-4"
+        assert resolved_blob.completion.params["temperature"] == 0.8
         assert (
-            resolved_blob.completion.params.instructions
+            resolved_blob.completion.params["instructions"]
             == "You are a helpful assistant"
         )
 
@@ -1094,6 +1119,7 @@ class TestResolveConfigBlob:
         native_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -1105,10 +1131,11 @@ class TestResolveConfigBlob:
         kaapi_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                },
             )
         )
         kaapi_config = create_test_config(
