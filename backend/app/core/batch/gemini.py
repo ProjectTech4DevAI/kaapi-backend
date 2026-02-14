@@ -441,3 +441,72 @@ def create_stt_batch_requests(
     logger.info(f"[create_stt_batch_requests] Created {len(requests)} batch requests")
 
     return requests
+
+
+def create_tts_batch_requests(
+    texts: list[str],
+    voice_name: str,
+    style_prompt: str | None = None,
+    keys: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Create batch API requests for Gemini TTS.
+
+    Generates request payloads in Gemini's JSONL batch format for
+    text-to-speech synthesis with audio output.
+
+    Args:
+        texts: List of text strings to synthesize
+        voice_name: Prebuilt voice name (e.g., "Kore")
+        style_prompt: Optional style/tone instructions prepended to text
+        keys: Optional list of custom IDs for tracking results. If not provided,
+              uses 0-indexed integers as strings.
+
+    Returns:
+        List of batch request dicts in Gemini JSONL format
+
+    Example:
+        >>> texts = ["Hello, how can I help you?"]
+        >>> requests = create_tts_batch_requests(
+        ...     texts, voice_name="Kore",
+        ...     style_prompt="Read in a calm tone",
+        ...     keys=["result-1"]
+        ... )
+    """
+    if keys is not None and len(keys) != len(texts):
+        raise ValueError(
+            f"Length of keys ({len(keys)}) must match texts ({len(texts)})"
+        )
+
+    requests = []
+    for i, text in enumerate(texts):
+        key = keys[i] if keys is not None else str(i)
+
+        # Prepend style prompt if provided
+        content_text = f"{style_prompt}: {text}" if style_prompt else text
+
+        request = {
+            "key": key,
+            "request": {
+                "contents": [
+                    {
+                        "parts": [{"text": content_text}],
+                        "role": "user",
+                    }
+                ],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": voice_name,
+                            }
+                        }
+                    },
+                },
+            },
+        }
+        requests.append(request)
+
+    logger.info(f"[create_tts_batch_requests] Created {len(requests)} batch requests")
+
+    return requests

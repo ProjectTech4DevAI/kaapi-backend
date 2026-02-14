@@ -1,7 +1,12 @@
 """Batch processing infrastructure for LLM providers."""
 
 from .base import BatchProvider
-from .gemini import BatchJobState, GeminiBatchProvider, create_stt_batch_requests
+from .gemini import (
+    BatchJobState,
+    GeminiBatchProvider,
+    create_stt_batch_requests,
+    create_tts_batch_requests,
+)
 from .openai import OpenAIBatchProvider
 from .operations import (
     download_batch_results,
@@ -17,6 +22,7 @@ __all__ = [
     "GeminiBatchProvider",
     "OpenAIBatchProvider",
     "create_stt_batch_requests",
+    "create_tts_batch_requests",
     "start_batch_job",
     "download_batch_results",
     "process_completed_batch",
