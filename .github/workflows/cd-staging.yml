@@ -3,7 +3,7 @@ name: Deploy Kaapi to ECS
 on:
   push:
     branches:
-      - enhancement/auto-run-migrations-on-deploy
+      - main
 
 jobs:
   build:
@@ -51,7 +51,6 @@ jobs:
 
           NETWORK_CONFIG=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE \
             --query 'services[0].networkConfiguration' --output json | jq -c '.')
-          echo "Network config: $NETWORK_CONFIG"
 
           TASK_ARN=$(aws ecs run-task \
             --cluster $CLUSTER \
