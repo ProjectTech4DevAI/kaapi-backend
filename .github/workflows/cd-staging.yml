@@ -32,13 +32,13 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
 
-      # - name: Build and Push Docker Image
-      #   env:
-      #     REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      #     REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
-      #   run: |
-      #     docker build -t $REGISTRY/$REPOSITORY:latest ./backend
-      #     docker push $REGISTRY/$REPOSITORY:latest
+      - name: Build and Push Docker Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:latest ./backend
+          docker push $REGISTRY/$REPOSITORY:latest
 
       - name: Run database migrations
         env:
@@ -67,6 +67,6 @@ jobs:
           fi
           echo "Migration completed successfully"
 
-      # - name: Deploy to ECS
-      #   run: |
-      #     aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
