@@ -43,15 +43,21 @@ jobs:
       - name: Run database migrations
         env:
           CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
           TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
         run: |
           CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
+
+          NETWORK_CONFIG=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE \
+            --query 'services[0].networkConfiguration' --output json | jq -c '.')
+          echo "Network config: $NETWORK_CONFIG"
 
           TASK_ARN=$(aws ecs run-task \
             --cluster $CLUSTER \
             --launch-type EC2 \
             --task-definition $TASK_DEF \
             --count 1 \
+            --network-configuration "$NETWORK_CONFIG" \
             --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
             --query 'tasks[0].taskArn' --output text)
 
