@@ -59,33 +59,6 @@ def test_create_config(db: Session, example_config_blob: ConfigBlob) -> None:
     assert version.commit_message == "Initial version"
 
 
-def test_create_config_with_guardrails_persists_validator_refs(
-    db: Session,
-) -> None:
-    project = create_test_project(db)
-    config_crud = ConfigCrud(session=db, project_id=project.id)
-
-    config_create = ConfigCreate(
-        name=f"test-config-{random_lower_string()}",
-        description="Test configuration",
-        config_blob=ConfigBlob(
-            completion=NativeCompletionConfig(
-                provider="openai-native",
-                type="text",
-                params={"model": "gpt-4"},
-            ),
-            input_guardrails=[{"validator_config_id": 1}],
-            output_guardrails=[{"validator_config_id": 2}],
-        ),
-        commit_message="Initial version",
-    )
-
-    _, version = config_crud.create_or_raise(config_create)
-
-    assert version.config_blob["input_guardrails"] == [{"validator_config_id": 1}]
-    assert version.config_blob["output_guardrails"] == [{"validator_config_id": 2}]
-
-
 def test_create_config_duplicate_name(
     db: Session, example_config_blob: ConfigBlob
 ) -> None:

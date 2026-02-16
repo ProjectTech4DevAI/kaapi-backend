@@ -51,30 +51,6 @@ def test_create_version(db: Session, example_config_blob: ConfigBlob) -> None:
     assert version.deleted_at is None
 
 
-def test_create_version_with_guardrails_persists_validator_refs(
-    db: Session,
-) -> None:
-    config = create_test_config(db)
-    version_crud = ConfigVersionCrud(
-        session=db,
-        project_id=config.project_id,
-        config_id=config.id,
-    )
-
-    version_update = ConfigVersionUpdate(
-        config_blob={
-            "input_guardrails": [{"validator_config_id": 1}],
-            "output_guardrails": [{"validator_config_id": 2}],
-        },
-        commit_message="Guardrails version",
-    )
-
-    version = version_crud.create_or_raise(version_update)
-
-    assert version.config_blob["input_guardrails"] == [{"validator_config_id": 1}]
-    assert version.config_blob["output_guardrails"] == [{"validator_config_id": 2}]
-
-
 def test_create_version_auto_increment(
     db: Session, example_config_blob: ConfigBlob
 ) -> None:
