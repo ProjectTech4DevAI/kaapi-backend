@@ -17,7 +17,6 @@ from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
     KaapiCompletionConfig,
-    Validator,
 )
 from app.services.llm.guardrails import get_validators_config, run_guardrails_validation
 from app.services.llm.providers.registry import get_llm_provider
@@ -208,14 +207,14 @@ def execute_job(
                 config_blob = config.blob
 
             if config_blob is not None:
-                validator_configs: list[Validator] = [
+                validator_config_ids: list[UUID] = [
                     *(config_blob.input_guardrails or []),
                     *(config_blob.output_guardrails or []),
                 ]
 
-                if validator_configs:
+                if validator_config_ids:
                     input_guardrails, output_guardrails = get_validators_config(
-                        validator_configs=validator_configs,
+                        validator_config_ids=validator_config_ids,
                         organization_id=organization_id,
                         project_id=project_id,
                     )
@@ -381,13 +380,11 @@ def execute_job(
                     )
 
                 elif safe_output["success"]:
-                    response.response.output.content.value = safe_output["data"][
-                        "safe_text"
-                    ]
+                    response.response.output.content.value = safe_output["data"]["safe_text"]
 
                     if safe_output["data"]["rephrase_needed"] == True:
                         callback_response = APIResponse.failure_response(
-                            error=request.query.input,
+                            error=output_text,
                             metadata=request.request_metadata,
                         )
                         return handle_job_error(
@@ -395,7 +392,7 @@ def execute_job(
                         )
 
                 else:
-                    response.response.output.text = safe_output["error"]
+                    response.response.output.content.value = safe_output["error"]
 
                     callback_response = APIResponse.failure_response(
                         error=safe_output["error"],

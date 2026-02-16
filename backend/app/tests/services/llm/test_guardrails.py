@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from app.core.config import settings
-from app.models.llm.request import Validator
 from app.services.llm.guardrails import (
     get_validators_config,
     run_guardrails_validation,
@@ -85,9 +84,7 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
     mock_client.post.return_value = mock_response
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
-    run_guardrails_validation(
-        TEST_TEXT, [Validator(validator_config_id=123)], TEST_JOB_ID
-    )
+    run_guardrails_validation(TEST_TEXT, [{"validator_config_id": 123}], TEST_JOB_ID)
 
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["validators"] == [{"validator_config_id": 123}]
@@ -95,10 +92,10 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
 
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_get_validators_config_splits_input_output(mock_client_cls) -> None:
-    validator_configs = [
-        Validator(validator_config_id=5),
-        Validator(validator_config_id=6),
-        Validator(validator_config_id=7),
+    validator_config_ids = [
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
     ]
 
     mock_response = MagicMock()
@@ -117,11 +114,11 @@ def test_get_validators_config_splits_input_output(mock_client_cls) -> None:
     }
 
     mock_client = MagicMock()
-    mock_client.post.return_value = mock_response
+    mock_client.get.return_value = mock_response
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
     input_guardrails, output_guardrails = get_validators_config(
-        validator_configs=validator_configs,
+        validator_config_ids=validator_config_ids,
         organization_id=1,
         project_id=1,
     )
@@ -130,8 +127,8 @@ def test_get_validators_config_splits_input_output(mock_client_cls) -> None:
     assert len(output_guardrails) == 1
     assert all(g["stage"] == "input" for g in input_guardrails)
     assert all(g["stage"] == "output" for g in output_guardrails)
-    _, kwargs = mock_client.post.call_args
-    assert kwargs["json"] == [v.model_dump() for v in validator_configs]
+    _, kwargs = mock_client.get.call_args
+    assert kwargs["params"]["ids"] == [str(v) for v in validator_config_ids]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -139,7 +136,7 @@ def test_get_validators_config_empty_short_circuits_without_http(
     mock_client_cls,
 ) -> None:
     input_guardrails, output_guardrails = get_validators_config(
-        validator_configs=[],
+        validator_config_ids=[],
         organization_id=1,
         project_id=1,
     )

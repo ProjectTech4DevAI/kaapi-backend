@@ -5,13 +5,12 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
 
 
 def run_guardrails_validation(
-    input_text: str, guardrail_config: list[dict[str, Any] | Validator], job_id: UUID
+    input_text: str, guardrail_config: list[dict[str, Any]], job_id: UUID
 ) -> dict[str, Any]:
     """
     Call the Kaapi guardrails service to validate and process input text.
@@ -24,15 +23,10 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
-    validators_payload = [
-        validator.model_dump() if isinstance(validator, Validator) else validator
-        for validator in guardrail_config
-    ]
-
     payload = {
         "request_id": str(job_id),
         "input": input_text,
-        "validators": validators_payload,
+        "validators": guardrail_config,
     }
 
     headers = {
@@ -67,17 +61,17 @@ def run_guardrails_validation(
 
 
 def get_validators_config(
-    validator_configs: list[Validator] | None,
+    validator_config_ids: list[UUID] | None,
     organization_id: int | None,
     project_id: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Fetch validator configurations from batch payload and split by stage.
+    Fetch validator configurations by IDs and split by stage.
 
     Calls:
-        POST /validators/configs/batch/fetch?organization_id={organization_id}&project_id={project_id}
+        GET /validators/configs/?organization_id={organization_id}&project_id={project_id}&ids={uuid}
     """
-    if not validator_configs:
+    if not validator_config_ids:
         return [], []
 
     headers = {
@@ -86,17 +80,20 @@ def get_validators_config(
         "Content-Type": "application/json",
     }
 
-    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/batch/fetch"
+    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/"
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.post(
+            response = client.get(
                 endpoint,
                 params={
                     "organization_id": organization_id,
                     "project_id": project_id,
+                    "ids": [
+                        str(validator_config_id)
+                        for validator_config_id in validator_config_ids
+                    ],
                 },
-                json=[validator.model_dump() for validator in validator_configs],
                 headers=headers,
             )
             response.raise_for_status()
@@ -134,7 +131,7 @@ def get_validators_config(
     except Exception as e:
         logger.error(
             "[get_validators_config] Failed to fetch validator config. "
-            f"validator_configs={validator_configs}, organization_id={organization_id}, project_id={project_id}, "
+            f"validator_config_ids={validator_config_ids}, organization_id={organization_id}, project_id={project_id}, "
             f"endpoint={endpoint}, error={e}"
         )
         raise
