@@ -213,6 +213,7 @@ CompletionConfig = Annotated[
 class Validator(SQLModel):
     validator_config_id: UUID
 
+
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
