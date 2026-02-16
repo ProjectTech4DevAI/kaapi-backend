@@ -21,9 +21,7 @@ class ConfigCrud:
     CRUD operations for configurations scoped to a project.
     """
 
-    def __init__(
-        self, session: Session, project_id: int
-    ):
+    def __init__(self, session: Session, project_id: int):
         self.session = session
         self.project_id = project_id
 
