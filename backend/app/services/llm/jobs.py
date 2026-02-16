@@ -17,13 +17,7 @@ from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
     KaapiCompletionConfig,
-    TextContent,
-    TextInput,
     Validator,
-)
-from app.services.llm.guardrails import (
-    list_validators_config,
-    run_guardrails_validation,
 )
 from app.services.llm.guardrails import (
     list_validators_config,
