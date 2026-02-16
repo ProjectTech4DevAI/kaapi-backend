@@ -5,12 +5,15 @@ import logging
 import httpx
 
 from app.core.config import settings
+from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
 
 
 def run_guardrails_validation(
-    input_text: str, guardrail_config: list[dict[str, Any]], job_id: UUID
+    input_text: str,
+    guardrail_config: list[Validator | dict[str, Any]],
+    job_id: UUID,
 ) -> dict[str, Any]:
     """
     Call the Kaapi guardrails service to validate and process input text.
@@ -23,10 +26,15 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
+    validators = [
+        validator.model_dump() if isinstance(validator, Validator) else validator
+        for validator in guardrail_config
+    ]
+
     payload = {
         "request_id": str(job_id),
         "input": input_text,
-        "validators": guardrail_config,
+        "validators": validators,
     }
 
     headers = {
@@ -61,9 +69,9 @@ def run_guardrails_validation(
 
 
 def list_validators_config(
-    validator_config_ids: list[UUID] | None,
     organization_id: int | None,
     project_id: int | None,
+    validator_configs: list[Validator] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Fetch validator configurations by IDs and split by stage.
@@ -71,6 +79,11 @@ def list_validators_config(
     Calls:
         GET /validators/configs/?organization_id={organization_id}&project_id={project_id}&ids={uuid}
     """
+    validator_config_ids = [
+        validator_config.validator_config_id
+        for validator_config in (validator_configs or [])
+    ]
+
     if not validator_config_ids:
         return [], []
 

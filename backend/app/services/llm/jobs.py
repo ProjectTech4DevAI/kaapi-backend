@@ -17,6 +17,7 @@ from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
     KaapiCompletionConfig,
+    Validator,
 )
 from app.services.llm.guardrails import (
     list_validators_config,
@@ -210,16 +211,16 @@ def execute_job(
                 config_blob = config.blob
 
             if config_blob is not None:
-                validator_config_ids: list[UUID] = [
+                validator_configs: list[Validator] = [
                     *(config_blob.input_guardrails or []),
                     *(config_blob.output_guardrails or []),
                 ]
 
-                if validator_config_ids:
+                if validator_configs:
                     input_guardrails, output_guardrails = list_validators_config(
-                        validator_config_ids=validator_config_ids,
                         organization_id=organization_id,
                         project_id=project_id,
+                        validator_configs=validator_configs,
                     )
 
             if input_guardrails:
@@ -287,7 +288,11 @@ def execute_job(
             # Create LLM call record before execution
             try:
                 # Rebuild ConfigBlob with transformed native config
-                resolved_config_blob = ConfigBlob(completion=completion_config)
+                resolved_config_blob = ConfigBlob(
+                    completion=completion_config,
+                    input_guardrails=config_blob.input_guardrails,
+                    output_guardrails=config_blob.output_guardrails,
+                )
 
                 llm_call = create_llm_call(
                     session,

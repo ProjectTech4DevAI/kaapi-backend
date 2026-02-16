@@ -210,17 +210,20 @@ CompletionConfig = Annotated[
 ]
 
 
+class Validator(SQLModel):
+    validator_config_id: UUID
+
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
 
-    input_guardrails: list[UUID] | None = Field(
+    input_guardrails: list[Validator] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the input before the LLM call",
     )
 
-    output_guardrails: list[UUID] | None = Field(
+    output_guardrails: list[Validator] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the output after the LLM call",
     )
