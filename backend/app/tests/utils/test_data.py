@@ -17,7 +17,7 @@ from app.models import (
     Config,
     ConfigCreate,
     ConfigVersion,
-    ConfigVersionCreate,
+    ConfigVersionUpdate,
     EvaluationDataset,
 )
 from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
@@ -385,15 +385,15 @@ def create_test_version(
                 )
             )
 
-    version_create = ConfigVersionCreate(
-        config_blob=config_blob,
+    version_update = ConfigVersionUpdate(
+        config_blob=config_blob.model_dump(),
         commit_message=commit_message or "Test version commit",
     )
 
     version_crud = ConfigVersionCrud(
         session=db, project_id=project_id, config_id=config_id
     )
-    version = version_crud.create_or_raise(version_create=version_create)
+    version = version_crud.create_or_raise(version_create=version_update)
 
     return version
 
