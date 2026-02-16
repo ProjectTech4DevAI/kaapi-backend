@@ -209,6 +209,7 @@ CompletionConfig = Annotated[
     Field(discriminator="provider"),
 ]
 
+
 class Validator(SQLModel):
     validator_config_id: int = Field(..., description="Validator config")
 

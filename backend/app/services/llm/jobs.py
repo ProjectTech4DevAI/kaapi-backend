@@ -367,7 +367,9 @@ def execute_job(
         if response:
             if output_guardrails:
                 output_text = response.response.output.content.value
-                safe_output = run_guardrails_validation(output_text, output_guardrails, job_id)
+                safe_output = run_guardrails_validation(
+                    output_text, output_guardrails, job_id
+                )
 
                 logger.info(
                     f"[execute_job] Output guardrail validation | success={safe_output['success']}."

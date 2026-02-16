@@ -65,6 +65,7 @@ def run_guardrails_validation(
             },
         }
 
+
 def get_validators_config(
     validator_configs: list[Validator] | None,
     organization_id: int | None,
@@ -137,4 +138,3 @@ def get_validators_config(
             f"endpoint={endpoint}, error={e}"
         )
         raise
-

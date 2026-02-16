@@ -58,6 +58,7 @@ def test_create_config_success(
         == 0.8
     )
 
+
 def test_create_config_with_guardrails_persists_validator_refs(
     db: Session,
     client: TestClient,
@@ -93,6 +94,7 @@ def test_create_config_with_guardrails_persists_validator_refs(
     assert data["data"]["version"]["config_blob"]["output_guardrails"] == [
         {"validator_config_id": 2}
     ]
+
 
 def test_create_config_empty_blob_fails(
     db: Session,

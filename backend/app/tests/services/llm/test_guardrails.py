@@ -135,7 +135,9 @@ def test_get_validators_config_splits_input_output(mock_client_cls) -> None:
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_get_validators_config_empty_short_circuits_without_http(mock_client_cls) -> None:
+def test_get_validators_config_empty_short_circuits_without_http(
+    mock_client_cls,
+) -> None:
     input_guardrails, output_guardrails = get_validators_config(
         validator_configs=[],
         organization_id=1,

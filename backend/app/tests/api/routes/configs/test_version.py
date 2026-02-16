@@ -88,6 +88,7 @@ def test_create_version_nonexistent_config(
     )
     assert response.status_code == 404
 
+
 def test_create_version_with_guardrails_persists_validator_refs(
     db: Session,
     client: TestClient,
@@ -155,6 +156,7 @@ def test_create_version_empty_blob_creates_noop_version(
     data = response.json()
     assert data["success"] is True
     assert data["data"]["version"] == 2
+
 
 def test_create_version_different_project_fails(
     db: Session,
