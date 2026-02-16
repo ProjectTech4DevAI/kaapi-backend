@@ -1,6 +1,4 @@
 from uuid import uuid4
-from unittest.mock import patch
-
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -46,10 +44,15 @@ def test_create_config_success(
     assert "id" in data["data"]
     assert "version" in data["data"]
     assert data["data"]["version"]["version"] == 1
-    assert data["data"]["version"]["config_blob"] == config_data["config_blob"]
+    assert (
+        data["data"]["version"]["config_blob"]["completion"]
+        == config_data["config_blob"]["completion"]
+    )
+    assert data["data"]["version"]["config_blob"]["input_guardrails"] is None
+    assert data["data"]["version"]["config_blob"]["output_guardrails"] is None
 
 
-def test_create_config_with_guardrails_excludes_guardrails_from_blob(
+def test_create_config_with_guardrails_persists_validator_refs(
     db: Session,
     client: TestClient,
     user_api_key: TestAuthContext,
@@ -62,25 +65,27 @@ def test_create_config_with_guardrails_excludes_guardrails_from_blob(
                 "provider": "openai-native",
                 "params": {"model": "gpt-4"},
             },
-            "guardrails": {
-                "input": [{"type": "pii_remover"}],
-                "output": [{"type": "gender_assumption_bias"}],
-            },
+            "input_guardrails": [{"validator_config_id": 1}],
+            "output_guardrails": [{"validator_config_id": 2}],
         },
         "commit_message": "Initial configuration",
     }
 
-    with patch("app.crud.config.config.create_guardrails_validators_if_present"):
-        response = client.post(
-            f"{settings.API_V1_STR}/configs/",
-            headers={"X-API-KEY": user_api_key.key},
-            json=config_data,
-        )
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/",
+        headers={"X-API-KEY": user_api_key.key},
+        json=config_data,
+    )
 
     assert response.status_code == 201
     data = response.json()
     assert data["success"] is True
-    assert "guardrails" not in data["data"]["version"]["config_blob"]
+    assert data["data"]["version"]["config_blob"]["input_guardrails"] == [
+        {"validator_config_id": 1}
+    ]
+    assert data["data"]["version"]["config_blob"]["output_guardrails"] == [
+        {"validator_config_id": 2}
+    ]
 
 
 def test_create_config_empty_blob_fails(

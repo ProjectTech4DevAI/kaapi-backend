@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlmodel import Session, select, and_, func
 from fastapi import HTTPException
@@ -9,7 +9,6 @@ from sqlalchemy.orm import defer
 from .config import ConfigCrud
 from app.core.util import now
 from app.models import Config, ConfigVersion, ConfigVersionCreate, ConfigVersionItems
-from app.services.llm.guardrails import create_guardrails_validators_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -39,23 +38,12 @@ class ConfigVersionCrud:
         self._config_exists_or_raise(self.config_id)
         try:
             next_version = self._get_next_version(self.config_id)
-            guardrails_config_id = uuid4()
 
             version = ConfigVersion(
                 config_id=self.config_id,
                 version=next_version,
-                config_blob=version_create.config_blob.model_dump(
-                    exclude={"guardrails"}
-                ),
+                config_blob=version_create.config_blob.model_dump(),
                 commit_message=version_create.commit_message,
-                guardrails_config_id=guardrails_config_id,
-            )
-
-            create_guardrails_validators_if_present(
-                guardrails=version_create.config_blob.guardrails,
-                guardrails_config_id=guardrails_config_id,
-                organization_id=self.organization_id,
-                project_id=self.project_id,
             )
 
             self.session.add(version)

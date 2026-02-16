@@ -1,5 +1,5 @@
 import logging
-from uuid import UUID, uuid4
+from uuid import UUID
 from typing import Optional, Tuple
 
 from sqlmodel import Session, select, and_
@@ -12,7 +12,6 @@ from app.models import (
     ConfigVersion,
 )
 from app.core.util import now
-from app.services.llm.guardrails import create_guardrails_validators_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,6 @@ class ConfigCrud:
         self._check_unique_name_or_raise(config_create.name)
 
         try:
-            guardrails_config_id = uuid4()
             config = Config(
                 name=config_create.name,
                 description=config_create.description,
@@ -48,22 +46,12 @@ class ConfigCrud:
             self.session.add(config)
             self.session.flush()  # Flush to get the config.id
 
-            config_blob = config_create.config_blob.model_dump(exclude={"guardrails"})
-            create_guardrails_validators_if_present(
-                guardrails=config_create.config_blob.guardrails,
-                guardrails_config_id=guardrails_config_id,
-                organization_id=self.organization_id,
-                project_id=self.project_id,
-            )
-
-            # Create the initial version. Guardrails are stored externally via
-            # guardrails_config_id and should not be persisted in config_blob.
+            # Create the initial version
             version = ConfigVersion(
                 config_id=config.id,
                 version=1,
-                config_blob=config_blob,
+                config_blob=config_create.config_blob.model_dump(),
                 commit_message=config_create.commit_message,
-                guardrails_config_id=guardrails_config_id,
             )
 
             self.session.add(version)

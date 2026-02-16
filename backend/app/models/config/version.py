@@ -62,15 +62,6 @@ class ConfigVersion(ConfigVersionBase, table=True):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the parent configuration"},
     )
-
-    guardrails_config_id: UUID | None = Field(
-        default=None,
-        nullable=True,
-        sa_column_kwargs={
-            "comment": "Reference to the kaapi_guardrails validator configuration"
-        },
-    )
-
     version: int = Field(
         nullable=False,
         description="Version number starting at 1",

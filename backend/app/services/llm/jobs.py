@@ -12,7 +12,12 @@ from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest
-from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
+from app.models.llm.request import (
+    ConfigBlob,
+    LLMCallConfig,
+    KaapiCompletionConfig,
+    Validator,
+)
 from app.services.llm.guardrails import get_validators_config, run_guardrails_validation
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
@@ -94,27 +99,6 @@ def resolve_config_blob(
     try:
         config_version = config_crud.exists_or_raise(version_number=config.version)
         config_blob_data = dict(config_version.config_blob)
-
-        if (
-            config_version.guardrails_config_id
-            and config_crud.organization_id is not None
-            and config_crud.project_id is not None
-        ):
-            try:
-                input_guardrails, output_guardrails = get_validators_config(
-                    config_id=config_version.guardrails_config_id,
-                    organization_id=config_crud.organization_id,
-                    project_id=config_crud.project_id,
-                )
-                config_blob_data["guardrails"] = {
-                    "input": input_guardrails,
-                    "output": output_guardrails,
-                }
-            except Exception as e:
-                logger.warning(
-                    f"[resolve_config_blob] Failed to fetch guardrails validators for config version. "
-                    f"guardrails_config_id={config_version.guardrails_config_id}, error={e}"
-                )
 
     except HTTPException as e:
         return None, f"Failed to retrieve stored configuration: {e.detail}"
@@ -199,9 +183,18 @@ def execute_job(
             else:
                 config_blob = config.blob
 
-            if config_blob is not None and config_blob.guardrails is not None:
-                input_guardrails = config_blob.guardrails.input or []
-                output_guardrails = config_blob.guardrails.output or []
+            if config_blob is not None:
+                validator_configs: list[Validator] = [
+                    *(config_blob.input_guardrails or []),
+                    *(config_blob.output_guardrails or []),
+                ]
+
+                if validator_configs:
+                    input_guardrails, output_guardrails = get_validators_config(
+                        validator_configs=validator_configs,
+                        organization_id=organization_id,
+                        project_id=project_id,
+                    )
 
             if input_guardrails:
                 safe_input = run_guardrails_validation(

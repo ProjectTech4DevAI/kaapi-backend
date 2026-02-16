@@ -1,6 +1,4 @@
 from uuid import uuid4
-from unittest.mock import patch
-
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -53,12 +51,16 @@ def test_create_version_success(
     assert (
         data["data"]["version"] == 2
     )  # First version created with config, this is second
-    assert data["data"]["config_blob"] == version_data["config_blob"]
+    assert data["data"]["config_blob"]["completion"] == version_data["config_blob"][
+        "completion"
+    ]
+    assert data["data"]["config_blob"]["input_guardrails"] is None
+    assert data["data"]["config_blob"]["output_guardrails"] is None
     assert data["data"]["commit_message"] == version_data["commit_message"]
     assert data["data"]["config_id"] == str(config.id)
 
 
-def test_create_version_with_guardrails_excludes_guardrails_from_blob(
+def test_create_version_with_guardrails_persists_validator_refs(
     db: Session,
     client: TestClient,
     user_api_key: TestAuthContext,
@@ -75,25 +77,27 @@ def test_create_version_with_guardrails_excludes_guardrails_from_blob(
                 "provider": "openai-native",
                 "params": {"model": "gpt-4-turbo"},
             },
-            "guardrails": {
-                "input": [{"type": "pii_remover"}],
-                "output": [{"type": "gender_assumption_bias"}],
-            },
+            "input_guardrails": [{"validator_config_id": 1}],
+            "output_guardrails": [{"validator_config_id": 2}],
         },
         "commit_message": "Guardrails config",
     }
 
-    with patch("app.crud.config.version.create_guardrails_validators_if_present"):
-        response = client.post(
-            f"{settings.API_V1_STR}/configs/{config.id}/versions",
-            headers={"X-API-KEY": user_api_key.key},
-            json=version_data,
-        )
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
 
     assert response.status_code == 201
     data = response.json()
     assert data["success"] is True
-    assert "guardrails" not in data["data"]["config_blob"]
+    assert data["data"]["config_blob"]["input_guardrails"] == [
+        {"validator_config_id": 1}
+    ]
+    assert data["data"]["config_blob"]["output_guardrails"] == [
+        {"validator_config_id": 2}
+    ]
 
 
 def test_create_version_empty_blob_fails(

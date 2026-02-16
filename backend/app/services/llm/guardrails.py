@@ -5,13 +5,13 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.models.llm.request import GuardrailsConfig
+from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
 
 
 def run_guardrails_validation(
-    input_text: str, guardrail_config: list[dict], job_id: UUID
+    input_text: str, guardrail_config: list[dict[str, Any] | Validator], job_id: UUID
 ) -> dict[str, Any]:
     """
     Call the Kaapi guardrails service to validate and process input text.
@@ -24,10 +24,15 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
+    validators_payload = [
+        validator.model_dump() if isinstance(validator, Validator) else validator
+        for validator in guardrail_config
+    ]
+
     payload = {
         "request_id": str(job_id),
         "input": input_text,
-        "validators": guardrail_config,
+        "validators": validators_payload,
     }
 
     headers = {
@@ -136,38 +141,50 @@ def create_validators_batch(
 
 
 def get_validators_config(
-    config_id: UUID | str,
+    validator_configs: list[Validator] | None,
     organization_id: int | None,
     project_id: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Fetch validator configuration for a specific config id and split by stage.
+    Fetch validator configurations from batch payload and split by stage.
 
     Calls:
-        GET /validators/configs/{config_id}?organization_id={organization_id}&project_id={project_id}
+        POST /validators/configs/batch/fetch?organization_id={organization_id}&project_id={project_id}
     """
+    if not validator_configs:
+        return [], []
+
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
+        "Content-Type": "application/json",
     }
 
-    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/{config_id}"
+    endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/batch/fetch"
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(
+            response = client.post(
                 endpoint,
                 params={
                     "organization_id": organization_id,
                     "project_id": project_id,
                 },
+                json=[validator.model_dump() for validator in validator_configs],
                 headers=headers,
             )
             response.raise_for_status()
 
             payload = response.json()
-            validators = payload.get("data", []) if isinstance(payload, dict) else []
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    "Invalid validators response format: expected JSON object."
+                )
 
+            if not payload.get("success", False):
+                raise ValueError("Validator config fetch failed: `success` is false.")
+
+            validators = payload.get("data", [])
             if not isinstance(validators, list):
                 raise ValueError(
                     "Invalid validators response format: `data` must be a list."
@@ -191,39 +208,8 @@ def get_validators_config(
     except Exception as e:
         logger.error(
             "[get_validators_config] Failed to fetch validator config. "
-            f"config_id={config_id}, organization_id={organization_id}, project_id={project_id}, error={e}"
+            f"validator_configs={validator_configs}, organization_id={organization_id}, project_id={project_id}, "
+            f"endpoint={endpoint}, error={e}"
         )
         raise
 
-
-def build_staged_validators(
-    guardrails: GuardrailsConfig | None,
-) -> list[dict[str, Any]]:
-    validators: list[dict[str, Any]] = []
-    if guardrails is None:
-        return validators
-
-    for validator in guardrails.input or []:
-        validators.append({"stage": "input", **validator})
-    for validator in guardrails.output or []:
-        validators.append({"stage": "output", **validator})
-
-    return validators
-
-
-def create_guardrails_validators_if_present(
-    guardrails: GuardrailsConfig | None,
-    guardrails_config_id: UUID,
-    organization_id: int | None,
-    project_id: int | None,
-) -> None:
-    validators = build_staged_validators(guardrails)
-    if not validators:
-        return
-
-    create_validators_batch(
-        validators=validators,
-        config_id=guardrails_config_id,
-        organization_id=organization_id,
-        project_id=project_id,
-    )

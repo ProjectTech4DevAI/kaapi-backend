@@ -119,19 +119,8 @@ CompletionConfig = Annotated[
     Field(discriminator="provider"),
 ]
 
-
-class GuardrailsConfig(SQLModel):
-    """Guardrails configuration applied during validation."""
-
-    input: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Guardrails applied to validate/sanitize the input before the LLM call",
-    )
-
-    output: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Guardrails applied to validate/sanitize the output after the LLM call",
-    )
+class Validator(SQLModel):
+    validator_config_id: int = Field(..., description="Validator config")
 
 
 class ConfigBlob(SQLModel):
@@ -139,9 +128,14 @@ class ConfigBlob(SQLModel):
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
 
-    guardrails: GuardrailsConfig | None = Field(
+    input_guardrails: list[Validator] | None = Field(
         default=None,
-        description="Optional guardrails configuration for input/output validation",
+        description="Guardrails applied to validate/sanitize the input before the LLM call",
+    )
+
+    output_guardrails: list[Validator] | None = Field(
+        default=None,
+        description="Guardrails applied to validate/sanitize the output after the LLM call",
     )
     # Future additions:
     # classifier: ClassifierConfig | None = None

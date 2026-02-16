@@ -1,6 +1,4 @@
 from uuid import uuid4
-from unittest.mock import patch
-
 import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
@@ -56,11 +54,11 @@ def test_create_config(db: Session, example_config_blob: ConfigBlob) -> None:
     assert version.id is not None
     assert version.config_id == config.id
     assert version.version == 1
-    assert version.config_blob == example_config_blob.model_dump(exclude={"guardrails"})
+    assert version.config_blob == example_config_blob.model_dump()
     assert version.commit_message == "Initial version"
 
 
-def test_create_config_with_guardrails_excludes_guardrails_from_blob(
+def test_create_config_with_guardrails_persists_validator_refs(
     db: Session,
 ) -> None:
     project = create_test_project(db)
@@ -78,22 +76,16 @@ def test_create_config_with_guardrails_excludes_guardrails_from_blob(
                 provider="openai-native",
                 params={"model": "gpt-4"},
             ),
-            guardrails={
-                "input": [{"type": "pii_remover"}],
-                "output": [{"type": "gender_assumption_bias"}],
-            },
+            input_guardrails=[{"validator_config_id": 1}],
+            output_guardrails=[{"validator_config_id": 2}],
         ),
         commit_message="Initial version",
     )
 
-    with patch(
-        "app.crud.config.config.create_guardrails_validators_if_present"
-    ) as mock_create_guardrails:
-        _, version = config_crud.create_or_raise(config_create)
+    _, version = config_crud.create_or_raise(config_create)
 
-    mock_create_guardrails.assert_called_once()
-    assert "guardrails" not in version.config_blob
-    assert version.guardrails_config_id is not None
+    assert version.config_blob["input_guardrails"] == [{"validator_config_id": 1}]
+    assert version.config_blob["output_guardrails"] == [{"validator_config_id": 2}]
 
 
 def test_create_config_duplicate_name(
