@@ -6,9 +6,43 @@ from functools import wraps
 from asgi_correlation_id import correlation_id
 from langfuse import Langfuse
 from langfuse.client import StatefulGenerationClient, StatefulTraceClient
-from app.models.llm import NativeCompletionConfig, QueryParams, LLMCallResponse
+from app.models.llm import (
+    NativeCompletionConfig,
+    QueryParams,
+    LLMCallResponse,
+    TextOutput,
+    AudioOutput,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def extract_output_value(
+    llm_output: TextOutput | AudioOutput | None,
+) -> str | dict[str, Any]:
+    """Extract output value from LLM output for logging/tracing.
+
+    Args:
+        llm_output: The output (TextOutput, AudioOutput, or None)
+
+    Returns:
+        String value for text output, or dict with metadata for audio output
+    """
+    if not llm_output:
+        return ""
+
+    if isinstance(llm_output, TextOutput):
+        return llm_output.content.value
+    elif isinstance(llm_output, AudioOutput):
+        # For audio, return metadata instead of the full base64 data
+        return {
+            "type": "audio",
+            "format": llm_output.content.format,
+            "mime_type": llm_output.content.mime_type,
+            "length": len(llm_output.content.value),
+        }
+    else:
+        return str(llm_output)
 
 
 class LangfuseTracer:
@@ -228,7 +262,7 @@ def observe_llm_execution(
                         generation.end,
                         output={
                             "status": "success",
-                            "output": response.response.output.text,
+                            "output": extract_output_value(response.response.output),
                         },
                         usage_details={
                             "input": response.usage.input_tokens,
@@ -241,7 +275,7 @@ def observe_llm_execution(
                         trace.update,
                         output={
                             "status": "success",
-                            "output": response.response.output.text,
+                            "output": extract_output_value(response.response.output),
                         },
                         session_id=session_id or response.response.conversation_id,
                     )

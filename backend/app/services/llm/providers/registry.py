@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 import logging
 
 from sqlmodel import Session
@@ -5,8 +7,23 @@ from openai import OpenAI
 
 from app.crud import get_provider_credential
 from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.openai import OpenAIProvider
+from app.services.llm.providers.oai import OpenAIProvider
+from app.services.llm.providers.gai import GoogleAIProvider
 
+from google.genai.types import GenerateContentConfig
+
+# temporary import
+
+from app.models.llm import (
+    NativeCompletionConfig,
+    LLMCallResponse,
+    QueryParams,
+    LLMOutput,
+    LLMResponse,
+    Usage,
+)
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -16,23 +33,23 @@ class LLMProvider:
     OPENAI = "openai"
     # Future constants for native providers:
     # CLAUDE_NATIVE = "claude-native"
-    # GEMINI_NATIVE = "gemini-native"
+    GOOGLE_NATIVE = "google-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI_NATIVE: OpenAIProvider,
         OPENAI: OpenAIProvider,
         # Future native providers:
         # CLAUDE_NATIVE: ClaudeProvider,
-        # GEMINI_NATIVE: GeminiProvider,
+        GOOGLE_NATIVE: GoogleAIProvider,
     }
 
     @classmethod
-    def get(cls, name: str) -> type[BaseProvider]:
+    def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         """Return the provider class for a given name."""
-        provider = cls._registry.get(name)
+        provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
-                f"Provider '{name}' is not supported. "
+                f"Provider '{provider_type}' is not supported. "
                 f"Supported providers: {', '.join(cls._registry.keys())}"
             )
         return provider
@@ -46,7 +63,10 @@ class LLMProvider:
 def get_llm_provider(
     session: Session, provider_type: str, project_id: int, organization_id: int
 ) -> BaseProvider:
-    provider_class = LLMProvider.get(provider_type)
+    provider_class = LLMProvider.get_provider_class(provider_type)
+
+    # e.g "openai-native" -> "openai", "claude-native" -> "claude"
+    credential_provider = provider_type.replace("-native", "")
 
     # e.g., "openai-native" → "openai", "claude-native" → "claude"
     credential_provider = provider_type.replace("-native", "")
@@ -63,14 +83,12 @@ def get_llm_provider(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )
 
-    if provider_type == LLMProvider.OPENAI_NATIVE:
-        if "api_key" not in credentials:
-            raise ValueError("OpenAI credentials not configured for this project.")
-        client = OpenAI(api_key=credentials["api_key"])
-    else:
-        logger.error(
-            f"[get_llm_provider] Unsupported provider type requested: {provider_type}"
-        )
-        raise ValueError(f"Provider '{provider_type}' is not supported.")
-
-    return provider_class(client=client)
+    try:
+        client = provider_class.create_client(credentials=credentials)
+        return provider_class(client=client)
+    except ValueError:
+        # Re-raise ValueError for credential/configuration errors
+        raise
+    except Exception as e:
+        logger.error(f"Failed to initialize {provider_type} client: {e}", exc_info=True)
+        raise RuntimeError(f"Could not connect to {provider_type} services.")

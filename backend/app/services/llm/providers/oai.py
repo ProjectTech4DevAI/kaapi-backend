@@ -4,13 +4,15 @@ import openai
 from openai import OpenAI
 from openai.types.responses.response import Response
 
+from typing import Any
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
     QueryParams,
-    LLMOutput,
     LLMResponse,
     Usage,
+    TextOutput,
+    TextContent,
 )
 from app.services.llm.providers.base import BaseProvider
 
@@ -28,10 +30,17 @@ class OpenAIProvider(BaseProvider):
         super().__init__(client)
         self.client = client
 
+    @staticmethod
+    def create_client(credentials: dict[str, Any]) -> Any:
+        if "api_key" not in credentials:
+            raise ValueError("OpenAI credentials not configured for this project.")
+        return OpenAI(api_key=credentials["api_key"])
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
+        resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         response: Response | None = None
@@ -41,7 +50,7 @@ class OpenAIProvider(BaseProvider):
             params = {
                 **completion_config.params,
             }
-            params["input"] = query.input
+            params["input"] = resolved_input
 
             conversation_cfg = query.conversation
 
@@ -69,7 +78,7 @@ class OpenAIProvider(BaseProvider):
                     conversation_id=conversation_id,
                     model=response.model,
                     provider=completion_config.provider,
-                    output=LLMOutput(text=response.output_text),
+                    output=TextOutput(content=TextContent(value=response.output_text)),
                 ),
                 usage=Usage(
                     input_tokens=response.usage.input_tokens,

@@ -34,6 +34,7 @@ from .config import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
+    ConfigVersionUpdate,
     ConfigVersionPublic,
     ConfigVersionItems,
 )
@@ -103,6 +104,7 @@ from .llm import (
     CompletionConfig,
     LLMCallRequest,
     LLMCallResponse,
+    LlmCall,
 )
 
 from .message import Message

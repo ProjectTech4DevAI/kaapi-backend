@@ -18,6 +18,7 @@ def example_config_blob():
     return ConfigBlob(
         completion=NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={
                 "model": "gpt-4",
                 "temperature": 0.8,
@@ -35,12 +36,12 @@ def test_create_version(db: Session, example_config_blob: ConfigBlob) -> None:
     )
 
     config_blob = example_config_blob.model_dump()
-    version_create = ConfigVersionCreate(
+    version_update = ConfigVersionUpdate(
         config_blob=config_blob,
         commit_message="Updated model and parameters",
     )
 
-    version = version_crud.create_or_raise(version_create)
+    version = version_crud.create_or_raise(version_update)
 
     assert version.id is not None
     assert version.config_id == config.id
@@ -92,13 +93,19 @@ def test_create_version_auto_increment(
 
     # Create multiple versions
     version2 = version_crud.create_or_raise(
-        ConfigVersionCreate(config_blob=example_config_blob, commit_message="Version 2")
+        ConfigVersionUpdate(
+            config_blob=example_config_blob.model_dump(), commit_message="Version 2"
+        )
     )
     version3 = version_crud.create_or_raise(
-        ConfigVersionCreate(config_blob=example_config_blob, commit_message="Version 3")
+        ConfigVersionUpdate(
+            config_blob=example_config_blob.model_dump(), commit_message="Version 3"
+        )
     )
     version4 = version_crud.create_or_raise(
-        ConfigVersionCreate(config_blob=example_config_blob, commit_message="Version 4")
+        ConfigVersionUpdate(
+            config_blob=example_config_blob.model_dump(), commit_message="Version 4"
+        )
     )
 
     assert version2.version == 2
@@ -117,14 +124,14 @@ def test_create_version_config_not_found(
         session=db, project_id=project.id, config_id=non_existent_config_id
     )
 
-    version_create = ConfigVersionCreate(
-        config_blob=example_config_blob, commit_message="Test"
+    version_update = ConfigVersionUpdate(
+        config_blob=example_config_blob.model_dump(), commit_message="Test"
     )
 
     with pytest.raises(
         HTTPException, match=f"config with id '{non_existent_config_id}' not found"
     ):
-        version_crud.create_or_raise(version_create)
+        version_crud.create_or_raise(version_update)
 
 
 def test_read_one_version(db: Session, example_config_blob: ConfigBlob) -> None:
@@ -420,7 +427,9 @@ def test_create_version_different_configs(
         session=db, project_id=project.id, config_id=config1.id
     )
     version2_config1 = version_crud1.create_or_raise(
-        ConfigVersionCreate(config_blob=example_config_blob, commit_message="V2")
+        ConfigVersionUpdate(
+            config_blob=example_config_blob.model_dump(), commit_message="V2"
+        )
     )
 
     # Create versions for config2
@@ -428,7 +437,9 @@ def test_create_version_different_configs(
         session=db, project_id=project.id, config_id=config2.id
     )
     version2_config2 = version_crud2.create_or_raise(
-        ConfigVersionCreate(config_blob=example_config_blob, commit_message="V2")
+        ConfigVersionUpdate(
+            config_blob=example_config_blob.model_dump(), commit_message="V2"
+        )
     )
 
     # Both should have version 2 (independent numbering)

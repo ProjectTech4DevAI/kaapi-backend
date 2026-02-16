@@ -96,6 +96,26 @@ class ConfigVersionCreate(ConfigVersionBase):
     )
 
 
+class ConfigVersionUpdate(SQLModel):
+    """
+    Partial update model for creating a new config version.
+
+    Only the fields that need to change should be provided.
+    Fields like 'type'(text, stt,tts) are inherited from the existing config
+    and cannot be changed,
+    """
+
+    config_blob: dict[str, Any] = Field(
+        description="Partial config blob. Only include fields you want to update. "
+        "Provider and type are inherited from existing config and cannot be changed.",
+    )
+    commit_message: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Optional message describing the changes in this version",
+    )
+
+
 class ConfigVersionPublic(ConfigVersionBase):
     id: UUID = Field(description="Unique id for the configuration version")
     config_id: UUID = Field(description="Id of the parent configuration")

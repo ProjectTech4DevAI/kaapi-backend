@@ -259,7 +259,7 @@ def test_langfuse_credential_validation(db: Session) -> None:
     invalid_credentials = {
         "langfuse": {
             "public_key": "test-public-key",
-            "secret_key": "test-secret-key"
+            "secret_key": "test-secret-key",
             # Missing host
         }
     }
