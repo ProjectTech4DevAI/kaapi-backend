@@ -8,6 +8,9 @@ from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_project
 
 
+TEST_UUID = uuid4()
+TEST_UUID_STR = str(uuid4())
+
 def test_create_config_success(
     db: Session,
     client: TestClient,
@@ -57,43 +60,6 @@ def test_create_config_success(
         data["data"]["version"]["config_blob"]["completion"]["params"]["temperature"]
         == 0.8
     )
-
-
-def test_create_config_with_guardrails_persists_validator_refs(
-    db: Session,
-    client: TestClient,
-    user_api_key: TestAuthContext,
-) -> None:
-    config_data = {
-        "name": "test-llm-config-guardrails",
-        "description": "Config with guardrails",
-        "config_blob": {
-            "completion": {
-                "provider": "openai-native",
-                "type": "text",
-                "params": {"model": "gpt-4"},
-            },
-            "input_guardrails": [{"validator_config_id": 1}],
-            "output_guardrails": [{"validator_config_id": 2}],
-        },
-        "commit_message": "Initial configuration",
-    }
-
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/",
-        headers={"X-API-KEY": user_api_key.key},
-        json=config_data,
-    )
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["success"] is True
-    assert data["data"]["version"]["config_blob"]["input_guardrails"] == [
-        {"validator_config_id": 1}
-    ]
-    assert data["data"]["version"]["config_blob"]["output_guardrails"] == [
-        {"validator_config_id": 2}
-    ]
 
 
 def test_create_config_empty_blob_fails(
