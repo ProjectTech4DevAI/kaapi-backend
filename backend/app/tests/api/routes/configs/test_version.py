@@ -51,9 +51,15 @@ def test_create_version_success(
     assert (
         data["data"]["version"] == 2
     )  # First version created with config, this is second
-    assert data["data"]["config_blob"]["completion"] == version_data["config_blob"][
-        "completion"
-    ]
+    assert data["data"]["config_blob"]["completion"]["provider"] == "openai-native"
+    assert data["data"]["config_blob"]["completion"]["type"] == "text"
+    assert (
+        data["data"]["config_blob"]["completion"]["params"]["model"] == "gpt-4-turbo"
+    )
+    assert (
+        data["data"]["config_blob"]["completion"]["params"]["temperature"] == 0.9
+    )
+    assert data["data"]["config_blob"]["completion"]["params"]["max_tokens"] == 3000
     assert data["data"]["config_blob"]["input_guardrails"] is None
     assert data["data"]["config_blob"]["output_guardrails"] is None
     assert data["data"]["commit_message"] == version_data["commit_message"]
@@ -79,6 +85,7 @@ def test_create_version_with_guardrails_persists_validator_refs(
         "config_blob": {
             "completion": {
                 "provider": "openai-native",
+                "type": "text",
                 "params": {"model": "gpt-4-turbo"},
             },
             "input_guardrails": [{"validator_config_id": 1}],
@@ -104,12 +111,12 @@ def test_create_version_with_guardrails_persists_validator_refs(
     ]
 
 
-def test_create_version_empty_blob_fails(
+def test_create_version_empty_blob_creates_noop_version(
     db: Session,
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test that creating a version with empty config_blob fails validation."""
+    """Empty partial update still creates a new version by inheriting previous blob."""
     config = create_test_config(
         db=db,
         project_id=user_api_key.project_id,
@@ -126,7 +133,10 @@ def test_create_version_empty_blob_fails(
         headers={"X-API-KEY": user_api_key.key},
         json=version_data,
     )
-    assert response.status_code == 422
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["version"] == 2
 
 
 def test_create_version_nonexistent_config(
@@ -140,6 +150,7 @@ def test_create_version_nonexistent_config(
         "config_blob": {
             "completion": {
                 "provider": "openai",
+                "type": "text",
                 "params": {"model": "gpt-4"},
             }
         },
@@ -171,6 +182,7 @@ def test_create_version_different_project_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
+                "type": "text",
                 "params": {"model": "gpt-4"},
             }
         },
@@ -203,6 +215,7 @@ def test_create_version_auto_increments(
             "config_blob": {
                 "completion": {
                     "provider": "openai",
+                    "type": "text",
                     "params": {"model": f"gpt-4-version-{i}"},
                 }
             },

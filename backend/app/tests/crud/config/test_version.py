@@ -3,7 +3,7 @@ import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 
-from app.models import ConfigVersionCreate, ConfigBlob, Project
+from app.models import ConfigVersionUpdate, ConfigBlob
 from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigVersionCrud
 from app.tests.utils.test_data import (
@@ -55,28 +55,21 @@ def test_create_version_with_guardrails_persists_validator_refs(
     db: Session,
 ) -> None:
     config = create_test_config(db)
-    project = db.get(Project, config.project_id)
-    assert project is not None
     version_crud = ConfigVersionCrud(
         session=db,
         project_id=config.project_id,
         config_id=config.id,
-        organization_id=project.organization_id,
     )
 
-    version_create = ConfigVersionCreate(
-        config_blob=ConfigBlob(
-            completion=NativeCompletionConfig(
-                provider="openai-native",
-                params={"model": "gpt-4"},
-            ),
-            input_guardrails=[{"validator_config_id": 1}],
-            output_guardrails=[{"validator_config_id": 2}],
-        ),
+    version_update = ConfigVersionUpdate(
+        config_blob={
+            "input_guardrails": [{"validator_config_id": 1}],
+            "output_guardrails": [{"validator_config_id": 2}],
+        },
         commit_message="Guardrails version",
     )
 
-    version = version_crud.create_or_raise(version_create)
+    version = version_crud.create_or_raise(version_update)
 
     assert version.config_blob["input_guardrails"] == [{"validator_config_id": 1}]
     assert version.config_blob["output_guardrails"] == [{"validator_config_id": 2}]

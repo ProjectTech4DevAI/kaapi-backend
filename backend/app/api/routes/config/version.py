@@ -35,9 +35,9 @@ def create_version(
     Provider, model, and params can be changed.
     Type is inherited from existing config and cannot be changed.
     """
-    project_id = current_user.project_.id
-    organization_id = current_user.organization_.id
-    version_crud = ConfigVersionCrud(session, config_id, project_id, organization_id)
+    version_crud = ConfigVersionCrud(
+        session=session, project_id=current_user.project_.id, config_id=config_id
+    )
     version = version_crud.create_or_raise(version_create=version_create)
 
     return APIResponse.success_response(

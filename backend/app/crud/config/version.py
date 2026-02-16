@@ -27,17 +27,10 @@ class ConfigVersionCrud:
     CRUD operations for configuration versions scoped to a project.
     """
 
-    def __init__(
-        self,
-        session: Session,
-        config_id: UUID,
-        project_id: int,
-        organization_id: Optional[int] = None,
-    ):
+    def __init__(self, session: Session, config_id: UUID, project_id: int):
         self.session = session
         self.project_id = project_id
         self.config_id = config_id
-        self.organization_id = organization_id
 
     def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:
         """

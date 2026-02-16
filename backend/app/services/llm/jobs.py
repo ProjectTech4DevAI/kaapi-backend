@@ -109,8 +109,6 @@ def resolve_config_blob(
     """
     try:
         config_version = config_crud.exists_or_raise(version_number=config.version)
-        config_blob_data = dict(config_version.config_blob)
-
     except HTTPException as e:
         return None, f"Failed to retrieve stored configuration: {e.detail}"
     except Exception:
@@ -122,8 +120,7 @@ def resolve_config_blob(
         return None, "Unexpected error occurred while retrieving stored configuration"
 
     try:
-        config_blob, error = ConfigBlob(**config_blob_data), None
-        return config_blob, error
+        return ConfigBlob(**config_version.config_blob), None
     except (TypeError, ValueError) as e:
         return None, f"Stored configuration blob is invalid: {str(e)}"
     except Exception:
@@ -192,10 +189,7 @@ def execute_job(
             # if stored config, fetch blob from DB
             if config.is_stored_config:
                 config_crud = ConfigVersionCrud(
-                    session=session,
-                    project_id=project_id,
-                    config_id=config.id,
-                    organization_id=organization_id,
+                    session=session, project_id=project_id, config_id=config.id
                 )
 
                 # blob is dynamic, need to resolve to ConfigBlob format

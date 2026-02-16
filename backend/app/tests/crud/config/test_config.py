@@ -63,11 +63,7 @@ def test_create_config_with_guardrails_persists_validator_refs(
     db: Session,
 ) -> None:
     project = create_test_project(db)
-    config_crud = ConfigCrud(
-        session=db,
-        project_id=project.id,
-        organization_id=project.organization_id,
-    )
+    config_crud = ConfigCrud(session=db, project_id=project.id)
 
     config_create = ConfigCreate(
         name=f"test-config-{random_lower_string()}",
@@ -75,6 +71,7 @@ def test_create_config_with_guardrails_persists_validator_refs(
         config_blob=ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             ),
             input_guardrails=[{"validator_config_id": 1}],

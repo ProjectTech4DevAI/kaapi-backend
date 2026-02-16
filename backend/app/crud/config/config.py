@@ -1,6 +1,6 @@
 import logging
 from uuid import UUID
-from typing import Optional, Tuple
+from typing import Tuple
 
 from sqlmodel import Session, select, and_
 from fastapi import HTTPException
@@ -22,11 +22,10 @@ class ConfigCrud:
     """
 
     def __init__(
-        self, session: Session, project_id: int, organization_id: Optional[int] = None
+        self, session: Session, project_id: int
     ):
         self.session = session
         self.project_id = project_id
-        self.organization_id = organization_id
 
     def create_or_raise(
         self, config_create: ConfigCreate

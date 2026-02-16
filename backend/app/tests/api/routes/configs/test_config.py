@@ -68,6 +68,7 @@ def test_create_config_with_guardrails_persists_validator_refs(
         "config_blob": {
             "completion": {
                 "provider": "openai-native",
+                "type": "text",
                 "params": {"model": "gpt-4"},
             },
             "input_guardrails": [{"validator_config_id": 1}],
