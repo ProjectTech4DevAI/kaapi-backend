@@ -1020,6 +1020,42 @@ class TestExecuteJob:
             UUID(VALIDATOR_CONFIG_ID_2),
         ]
 
+    def test_execute_job_continues_when_validator_config_fetch_fails(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+        ):
+            mock_fetch_configs.side_effect = Exception("validator service unavailable")
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
+
 
 class TestResolveConfigBlob:
     """Test suite for resolve_config_blob function."""

@@ -217,11 +217,20 @@ def execute_job(
                 ]
 
                 if validator_configs:
-                    input_guardrails, output_guardrails = list_validators_config(
-                        organization_id=organization_id,
-                        project_id=project_id,
-                        validator_configs=validator_configs,
-                    )
+                    try:
+                        input_guardrails, output_guardrails = list_validators_config(
+                            organization_id=organization_id,
+                            project_id=project_id,
+                            validator_configs=validator_configs,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "[execute_job] Failed to fetch guardrail validator configs. "
+                            "Proceeding without input/output guardrails for this job. "
+                            f"job_id={job_id}, error={e}",
+                            exc_info=True,
+                        )
+                        input_guardrails, output_guardrails = [], []
 
             if input_guardrails:
                 safe_input = run_guardrails_validation(

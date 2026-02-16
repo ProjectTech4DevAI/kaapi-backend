@@ -201,3 +201,29 @@ def test_list_validators_config_empty_short_circuits_without_http(
     assert input_guardrails == []
     assert output_guardrails == []
     mock_client_cls.assert_not_called()
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None:
+    validator_configs = [Validator(validator_config_id=uuid.uuid4())]
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"success": True, "data": []}
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    list_validators_config(
+        validator_configs=validator_configs,
+        organization_id=None,
+        project_id=None,
+    )
+
+    _, kwargs = mock_client.get.call_args
+    assert kwargs["params"]["ids"] == [
+        str(v.validator_config_id) for v in validator_configs
+    ]
+    assert "organization_id" not in kwargs["params"]
+    assert "project_id" not in kwargs["params"]
