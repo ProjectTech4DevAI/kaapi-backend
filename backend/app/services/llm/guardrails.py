@@ -60,7 +60,7 @@ def run_guardrails_validation(
         }
 
 
-def get_validators_config(
+def list_validators_config(
     validator_config_ids: list[UUID] | None,
     organization_id: int | None,
     project_id: int | None,
@@ -130,7 +130,7 @@ def get_validators_config(
 
     except Exception as e:
         logger.error(
-            "[get_validators_config] Failed to fetch validator config. "
+            "[list_validators_config] Failed to fetch validator config. "
             f"validator_config_ids={validator_config_ids}, organization_id={organization_id}, project_id={project_id}, "
             f"endpoint={endpoint}, error={e}"
         )

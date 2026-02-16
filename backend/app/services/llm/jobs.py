@@ -18,7 +18,10 @@ from app.models.llm.request import (
     LLMCallConfig,
     KaapiCompletionConfig,
 )
-from app.services.llm.guardrails import get_validators_config, run_guardrails_validation
+from app.services.llm.guardrails import (
+    list_validators_config,
+    run_guardrails_validation,
+)
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.input_resolver import resolve_input, cleanup_temp_file
@@ -213,7 +216,7 @@ def execute_job(
                 ]
 
                 if validator_config_ids:
-                    input_guardrails, output_guardrails = get_validators_config(
+                    input_guardrails, output_guardrails = list_validators_config(
                         validator_config_ids=validator_config_ids,
                         organization_id=organization_id,
                         project_id=project_id,
@@ -380,7 +383,9 @@ def execute_job(
                     )
 
                 elif safe_output["success"]:
-                    response.response.output.content.value = safe_output["data"]["safe_text"]
+                    response.response.output.content.value = safe_output["data"][
+                        "safe_text"
+                    ]
 
                     if safe_output["data"]["rephrase_needed"] == True:
                         callback_response = APIResponse.failure_response(
