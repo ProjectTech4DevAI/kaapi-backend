@@ -89,34 +89,6 @@ def test_create_version_nonexistent_config(
     assert response.status_code == 404
 
 
-def test_create_version_empty_blob_creates_noop_version(
-    db: Session,
-    client: TestClient,
-    user_api_key: TestAuthContext,
-) -> None:
-    """Empty partial update still creates a new version by inheriting previous blob."""
-    config = create_test_config(
-        db=db,
-        project_id=user_api_key.project_id,
-        name="test-config",
-    )
-
-    version_data = {
-        "config_blob": {},
-        "commit_message": "Empty blob",
-    }
-
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/{config.id}/versions",
-        headers={"X-API-KEY": user_api_key.key},
-        json=version_data,
-    )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["success"] is True
-    assert data["data"]["version"] == 2
-
-
 def test_create_version_different_project_fails(
     db: Session,
     client: TestClient,

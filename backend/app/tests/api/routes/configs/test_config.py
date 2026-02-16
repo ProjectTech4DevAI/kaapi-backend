@@ -8,9 +8,6 @@ from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_project
 
 
-TEST_UUID = uuid4()
-TEST_UUID_STR = str(uuid4())
-
 def test_create_config_success(
     db: Session,
     client: TestClient,
