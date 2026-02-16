@@ -86,7 +86,9 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
     vid = uuid.uuid4()
-    run_guardrails_validation(TEST_TEXT, [Validator(validator_config_id=vid)], TEST_JOB_ID)
+    run_guardrails_validation(
+        TEST_TEXT, [Validator(validator_config_id=vid)], TEST_JOB_ID
+    )
 
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["validators"] == [{"validator_config_id": str(vid)}]
