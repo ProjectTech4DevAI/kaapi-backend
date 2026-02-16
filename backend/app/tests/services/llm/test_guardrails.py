@@ -14,6 +14,8 @@ from app.services.llm.guardrails import (
 TEST_JOB_ID = uuid.uuid4()
 TEST_TEXT = "hello world"
 TEST_CONFIG = [{"type": "pii_remover"}]
+TEST_PROJECT_ID = 1
+TEST_ORGANIZATION_ID = 1
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -26,7 +28,13 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     mock_client.post.return_value = mock_response
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
-    result = run_guardrails_validation(TEST_TEXT, TEST_CONFIG, TEST_JOB_ID)
+    result = run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
 
     assert result == {"success": True}
     mock_client.post.assert_called_once()
@@ -35,6 +43,9 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     assert kwargs["json"]["input"] == TEST_TEXT
     assert kwargs["json"]["validators"] == TEST_CONFIG
     assert kwargs["json"]["request_id"] == str(TEST_JOB_ID)
+    assert kwargs["json"]["project_id"] == TEST_PROJECT_ID
+    assert kwargs["json"]["organization_id"] == TEST_ORGANIZATION_ID
+    assert kwargs["params"]["suppress_pass_logs"] == "true"
     assert kwargs["headers"]["Authorization"].startswith("Bearer ")
     assert kwargs["headers"]["Content-Type"] == "application/json"
 
@@ -50,7 +61,13 @@ def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     mock_client.post.return_value = mock_response
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
-    result = run_guardrails_validation(TEST_TEXT, TEST_CONFIG, TEST_JOB_ID)
+    result = run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
 
     assert result["success"] is False
     assert result["bypassed"] is True
@@ -67,7 +84,13 @@ def test_run_guardrails_validation_uses_settings(mock_client_cls) -> None:
     mock_client.post.return_value = mock_response
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
-    run_guardrails_validation(TEST_TEXT, TEST_CONFIG, TEST_JOB_ID)
+    run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
 
     _, kwargs = mock_client.post.call_args
     assert (
@@ -87,11 +110,40 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
 
     vid = uuid.uuid4()
     run_guardrails_validation(
-        TEST_TEXT, [Validator(validator_config_id=vid)], TEST_JOB_ID
+        TEST_TEXT,
+        [Validator(validator_config_id=vid)],
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
     )
 
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["validators"] == [{"validator_config_id": str(vid)}]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_allows_disable_suppress_pass_logs(
+    mock_client_cls,
+) -> None:
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"success": True}
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+        suppress_pass_logs=False,
+    )
+
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["params"]["suppress_pass_logs"] == "false"
 
 
 @patch("app.services.llm.guardrails.httpx.Client")

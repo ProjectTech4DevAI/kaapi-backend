@@ -225,7 +225,12 @@ def execute_job(
 
             if input_guardrails:
                 safe_input = run_guardrails_validation(
-                    request.query.input, input_guardrails, job_id
+                    request.query.input.content.value,
+                    input_guardrails,
+                    job_id,
+                    project_id,
+                    organization_id,
+                    suppress_pass_logs=True,
                 )
 
                 logger.info(
@@ -376,7 +381,12 @@ def execute_job(
             if output_guardrails:
                 output_text = response.response.output.content.value
                 safe_output = run_guardrails_validation(
-                    output_text, output_guardrails, job_id
+                    output_text,
+                    output_guardrails,
+                    job_id,
+                    project_id,
+                    organization_id,
+                    suppress_pass_logs=True,
                 )
 
                 logger.info(
