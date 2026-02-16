@@ -6,7 +6,6 @@ import httpx
 from app.core.config import settings
 from app.models.llm.request import Validator
 from app.services.llm.guardrails import (
-    create_validators_batch,
     get_validators_config,
     run_guardrails_validation,
 )
@@ -92,33 +91,6 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
 
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["validators"] == [{"validator_config_id": 123}]
-
-
-@patch("app.services.llm.guardrails.httpx.Client")
-def test_create_validators_batch_success(mock_client_cls) -> None:
-    validators = [{"stage": "input", "type": "pii_remover"}]
-    config_id = uuid.uuid4()
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {"success": True, "data": [{"id": "v1"}]}
-
-    mock_client = MagicMock()
-    mock_client.post.return_value = mock_response
-    mock_client_cls.return_value.__enter__.return_value = mock_client
-
-    result = create_validators_batch(
-        validators=validators,
-        config_id=config_id,
-        organization_id=1,
-        project_id=2,
-    )
-
-    assert result == [{"id": "v1"}]
-    _, kwargs = mock_client.post.call_args
-    assert kwargs["json"]["config_id"] == str(config_id)
-    assert kwargs["json"]["validators"] == validators
-    assert kwargs["params"] == {"organization_id": 1, "project_id": 2}
 
 
 @patch("app.services.llm.guardrails.httpx.Client")

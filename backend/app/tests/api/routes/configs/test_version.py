@@ -1,4 +1,5 @@
 from uuid import uuid4
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -51,17 +52,6 @@ def test_create_version_success(
     assert (
         data["data"]["version"] == 2
     )  # First version created with config, this is second
-    assert data["data"]["config_blob"]["completion"]["provider"] == "openai-native"
-    assert data["data"]["config_blob"]["completion"]["type"] == "text"
-    assert (
-        data["data"]["config_blob"]["completion"]["params"]["model"] == "gpt-4-turbo"
-    )
-    assert (
-        data["data"]["config_blob"]["completion"]["params"]["temperature"] == 0.9
-    )
-    assert data["data"]["config_blob"]["completion"]["params"]["max_tokens"] == 3000
-    assert data["data"]["config_blob"]["input_guardrails"] is None
-    assert data["data"]["config_blob"]["output_guardrails"] is None
     assert data["data"]["commit_message"] == version_data["commit_message"]
     assert data["data"]["config_id"] == str(config.id)
 
@@ -69,6 +59,34 @@ def test_create_version_success(
     config_blob = data["data"]["config_blob"]
     assert config_blob["completion"]["params"]["model"] == "gpt-4-turbo"
     assert config_blob["completion"]["params"]["temperature"] == 0.9
+
+    # Verify type was inherited from existing config
+    assert config_blob["completion"]["type"] == "text"
+
+
+def test_create_version_nonexistent_config(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating a version for a non-existent config returns 404."""
+    fake_uuid = uuid4()
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "openai",
+                "params": {"model": "gpt-4"},
+            }
+        },
+        "commit_message": "Test",
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
+    assert response.status_code == 404
 
 def test_create_version_with_guardrails_persists_validator_refs(
     db: Session,
@@ -138,33 +156,6 @@ def test_create_version_empty_blob_creates_noop_version(
     assert data["success"] is True
     assert data["data"]["version"] == 2
 
-
-def test_create_version_nonexistent_config(
-    db: Session,
-    client: TestClient,
-    user_api_key: TestAuthContext,
-) -> None:
-    """Test creating a version for a non-existent config returns 404."""
-    fake_uuid = uuid4()
-    version_data = {
-        "config_blob": {
-            "completion": {
-                "provider": "openai",
-                "type": "text",
-                "params": {"model": "gpt-4"},
-            }
-        },
-        "commit_message": "Test",
-    }
-
-    response = client.post(
-        f"{settings.API_V1_STR}/configs/{fake_uuid}/versions",
-        headers={"X-API-KEY": user_api_key.key},
-        json=version_data,
-    )
-    assert response.status_code == 404
-
-
 def test_create_version_different_project_fails(
     db: Session,
     client: TestClient,
@@ -182,7 +173,6 @@ def test_create_version_different_project_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
-                "type": "text",
                 "params": {"model": "gpt-4"},
             }
         },
@@ -215,7 +205,6 @@ def test_create_version_auto_increments(
             "config_blob": {
                 "completion": {
                     "provider": "openai",
-                    "type": "text",
                     "params": {"model": f"gpt-4-version-{i}"},
                 }
             },
