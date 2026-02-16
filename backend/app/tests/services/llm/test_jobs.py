@@ -751,7 +751,7 @@ class TestExecuteJob:
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -800,7 +800,7 @@ class TestExecuteJob:
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -844,7 +844,7 @@ class TestExecuteJob:
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -885,7 +885,7 @@ class TestExecuteJob:
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": False,
@@ -923,7 +923,7 @@ class TestExecuteJob:
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -963,7 +963,9 @@ class TestExecuteJob:
         env = job_env
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
-        with patch("app.services.llm.jobs.get_validators_config") as mock_fetch_configs:
+        with patch(
+            "app.services.llm.jobs.list_validators_config"
+        ) as mock_fetch_configs:
             mock_fetch_configs.return_value = ([], [])
 
             request_data = {

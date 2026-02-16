@@ -209,6 +209,7 @@ CompletionConfig = Annotated[
     Field(discriminator="provider"),
 ]
 
+
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
