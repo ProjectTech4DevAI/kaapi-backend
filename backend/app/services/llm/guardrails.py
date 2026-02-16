@@ -108,7 +108,9 @@ def list_validators_config(
     params = {
         "organization_id": organization_id,
         "project_id": project_id,
-        "ids": [str(validator_config_id) for validator_config_id in validator_config_ids],
+        "ids": [
+            str(validator_config_id) for validator_config_id in validator_config_ids
+        ],
     }
     params = {key: value for key, value in params.items() if value is not None}
 
