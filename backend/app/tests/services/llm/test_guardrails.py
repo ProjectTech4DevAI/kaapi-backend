@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from app.core.config import settings
+from app.models.llm.request import Validator
 from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
@@ -92,10 +93,9 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
 
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_list_validators_config_splits_input_output(mock_client_cls) -> None:
-    validator_config_ids = [
-        uuid.uuid4(),
-        uuid.uuid4(),
-        uuid.uuid4(),
+    validator_configs = [
+        Validator(validator_config_id=uuid.uuid4()),
+        Validator(validator_config_id=uuid.uuid4()),
     ]
 
     mock_response = MagicMock()
@@ -118,7 +118,7 @@ def test_list_validators_config_splits_input_output(mock_client_cls) -> None:
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
     input_guardrails, output_guardrails = list_validators_config(
-        validator_config_ids=validator_config_ids,
+        validator_configs=validator_configs,
         organization_id=1,
         project_id=1,
     )
@@ -128,7 +128,9 @@ def test_list_validators_config_splits_input_output(mock_client_cls) -> None:
     assert all(g["stage"] == "input" for g in input_guardrails)
     assert all(g["stage"] == "output" for g in output_guardrails)
     _, kwargs = mock_client.get.call_args
-    assert kwargs["params"]["ids"] == [str(v) for v in validator_config_ids]
+    assert kwargs["params"]["ids"] == [
+        str(v.validator_config_id) for v in validator_configs
+    ]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -136,7 +138,7 @@ def test_list_validators_config_empty_short_circuits_without_http(
     mock_client_cls,
 ) -> None:
     input_guardrails, output_guardrails = list_validators_config(
-        validator_config_ids=[],
+        validator_configs=[],
         organization_id=1,
         project_id=1,
     )

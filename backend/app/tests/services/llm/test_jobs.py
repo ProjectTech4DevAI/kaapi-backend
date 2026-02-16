@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -29,6 +30,9 @@ from app.services.llm.jobs import (
 )
 from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_config
+
+VALIDATOR_CONFIG_ID_1 = "00000000-0000-0000-0000-000000000001"
+VALIDATOR_CONFIG_ID_2 = "00000000-0000-0000-0000-000000000002"
 
 
 class TestStartJob:
@@ -214,6 +218,15 @@ class TestHandleJobError:
 
 class TestExecuteJob:
     """Test suite for execute_job."""
+
+    @pytest.fixture(autouse=True)
+    def mock_llm_call_crud(self):
+        with (
+            patch("app.services.llm.jobs.create_llm_call") as mock_create_llm_call,
+            patch("app.services.llm.jobs.update_llm_call_response"),
+        ):
+            mock_create_llm_call.return_value = MagicMock(id=uuid4())
+            yield
 
     @pytest.fixture
     def job_for_execution(self, db: Session):
@@ -775,7 +788,9 @@ class TestExecuteJob:
                             "type": "text",
                             "params": {"model": "gpt-4"},
                         },
-                        "input_guardrails": [{"validator_config_id": 1}],
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
                         "output_guardrails": [],
                     }
                 },
@@ -825,7 +840,9 @@ class TestExecuteJob:
                             "params": {"model": "gpt-4"},
                         },
                         "input_guardrails": [],
-                        "output_guardrails": [{"validator_config_id": 2}],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
                     }
                 },
             }
@@ -868,7 +885,9 @@ class TestExecuteJob:
                             "type": "text",
                             "params": {"model": "gpt-4"},
                         },
-                        "input_guardrails": [{"validator_config_id": 1}],
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
                         "output_guardrails": [],
                     }
                 },
@@ -905,7 +924,9 @@ class TestExecuteJob:
                             "type": "text",
                             "params": {"model": "gpt-4"},
                         },
-                        "input_guardrails": [{"validator_config_id": 1}],
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
                         "output_guardrails": [],
                     }
                 },
@@ -947,7 +968,9 @@ class TestExecuteJob:
                             "type": "text",
                             "params": {"model": "gpt-4"},
                         },
-                        "input_guardrails": [{"validator_config_id": 1}],
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
                         "output_guardrails": [],
                     }
                 },
@@ -974,10 +997,15 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
                         },
-                        "input_guardrails": [{"validator_config_id": 1}],
-                        "output_guardrails": [{"validator_config_id": 2}],
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
                     }
                 },
             }
@@ -987,7 +1015,10 @@ class TestExecuteJob:
         mock_fetch_configs.assert_called_once()
         _, kwargs = mock_fetch_configs.call_args
         validator_configs = kwargs["validator_configs"]
-        assert [v.validator_config_id for v in validator_configs] == [1, 2]
+        assert [v.validator_config_id for v in validator_configs] == [
+            UUID(VALIDATOR_CONFIG_ID_1),
+            UUID(VALIDATOR_CONFIG_ID_2),
+        ]
 
 
 class TestResolveConfigBlob:
@@ -1025,16 +1056,17 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             ),
-            input_guardrails=[{"validator_config_id": 1}],
-            output_guardrails=[{"validator_config_id": 2}],
+            input_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_1}],
+            output_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_2}],
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
         db.commit()
 
         config_crud = ConfigVersionCrud(
-            session=db, project_id=project.id, config_id=config.id, organization_id=1
+            session=db, project_id=project.id, config_id=config.id
         )
         llm_call_config = LLMCallConfig(id=str(config.id), version=1)
 
@@ -1043,10 +1075,10 @@ class TestResolveConfigBlob:
         assert error is None
         assert resolved_blob is not None
         assert [v.model_dump() for v in (resolved_blob.input_guardrails or [])] == [
-            {"validator_config_id": 1}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1)}
         ]
         assert [v.model_dump() for v in (resolved_blob.output_guardrails or [])] == [
-            {"validator_config_id": 2}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2)}
         ]
 
     def test_resolve_config_blob_version_not_found(self, db: Session):
