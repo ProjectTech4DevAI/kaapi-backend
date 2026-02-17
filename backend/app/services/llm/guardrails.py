@@ -82,20 +82,25 @@ def run_guardrails_validation(
 def list_validators_config(
     organization_id: int | None,
     project_id: int | None,
-    validator_configs: list[Validator] | None,
+    input_validator_configs: list[Validator] | None,
+    output_validator_configs: list[Validator] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Fetch validator configurations by IDs and split by stage.
+    Fetch validator configurations by IDs for input and output guardrails.
 
     Calls:
         GET /validators/configs/?organization_id={organization_id}&project_id={project_id}&ids={uuid}
     """
-    validator_config_ids = [
+    input_validator_config_ids = [
         validator_config.validator_config_id
-        for validator_config in (validator_configs or [])
+        for validator_config in (input_validator_configs or [])
+    ]
+    output_validator_config_ids = [
+        validator_config.validator_config_id
+        for validator_config in (output_validator_configs or [])
     ]
 
-    if not validator_config_ids:
+    if not input_validator_config_ids and not output_validator_config_ids:
         return [], []
 
     headers = {
@@ -105,58 +110,54 @@ def list_validators_config(
     }
 
     endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/"
-    params = {
-        "organization_id": organization_id,
-        "project_id": project_id,
-        "ids": [
-            str(validator_config_id) for validator_config_id in validator_config_ids
-        ],
-    }
-    params = {key: value for key, value in params.items() if value is not None}
+    def _build_params(validator_ids: list[UUID]) -> dict[str, Any]:
+        params = {
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "ids": [str(validator_config_id) for validator_config_id in validator_ids],
+        }
+        return {key: value for key, value in params.items() if value is not None}
 
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                endpoint,
-                params=params,
-                headers=headers,
-            )
-            response.raise_for_status()
+            def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
+                if not validator_ids:
+                    return []
 
-            payload = response.json()
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    "Invalid validators response format: expected JSON object."
+                response = client.get(
+                    endpoint,
+                    params=_build_params(validator_ids),
+                    headers=headers,
                 )
+                response.raise_for_status()
 
-            if not payload.get("success", False):
-                raise ValueError("Validator config fetch failed: `success` is false.")
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        "Invalid validators response format: expected JSON object."
+                    )
 
-            validators = payload.get("data", [])
-            if not isinstance(validators, list):
-                raise ValueError(
-                    "Invalid validators response format: `data` must be a list."
-                )
+                if not payload.get("success", False):
+                    raise ValueError("Validator config fetch failed: `success` is false.")
 
-            input_guardrails = [
-                validator
-                for validator in validators
-                if isinstance(validator, dict)
-                and str(validator.get("stage", "")).lower() == "input"
-            ]
-            output_guardrails = [
-                validator
-                for validator in validators
-                if isinstance(validator, dict)
-                and str(validator.get("stage", "")).lower() == "output"
-            ]
+                validators = payload.get("data", [])
+                if not isinstance(validators, list):
+                    raise ValueError(
+                        "Invalid validators response format: `data` must be a list."
+                    )
 
+                return [validator for validator in validators if isinstance(validator, dict)]
+
+            input_guardrails = _fetch_by_ids(input_validator_config_ids)
+            output_guardrails = _fetch_by_ids(output_validator_config_ids)
             return input_guardrails, output_guardrails
 
     except Exception as e:
-        logger.error(
-            "[list_validators_config] Failed to fetch validator config. "
-            f"validator_config_ids={validator_config_ids}, organization_id={organization_id}, project_id={project_id}, "
-            f"endpoint={endpoint}, error={e}"
+        logger.warning(
+            "[list_validators_config] Guardrails service unavailable or invalid response. "
+            "Proceeding without input/output guardrails. "
+            f"input_validator_config_ids={input_validator_config_ids}, output_validator_config_ids={output_validator_config_ids}, "
+            f"organization_id={organization_id}, "
+            f"project_id={project_id}, endpoint={endpoint}, error={e}"
         )
-        raise
+        return [], []

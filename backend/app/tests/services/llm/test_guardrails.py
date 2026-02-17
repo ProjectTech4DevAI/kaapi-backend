@@ -147,44 +147,45 @@ def test_run_guardrails_validation_allows_disable_suppress_pass_logs(
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_list_validators_config_splits_input_output(mock_client_cls) -> None:
-    validator_configs = [
-        Validator(validator_config_id=uuid.uuid4()),
-        Validator(validator_config_id=uuid.uuid4()),
-    ]
+def test_list_validators_config_fetches_input_and_output_by_refs(mock_client_cls) -> None:
+    input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
+    output_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
-    mock_response = MagicMock()
-    mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {
+    input_response = MagicMock()
+    input_response.raise_for_status.return_value = None
+    input_response.json.return_value = {
         "success": True,
-        "data": [
-            {"type": "gender_assumption_bias", "stage": "output"},
-            {
-                "type": "uli_slur_match",
-                "stage": "input",
-                "config": {"severity": "high"},
-            },
-            {"type": "pii_remover", "stage": "input"},
-        ],
+        "data": [{"type": "uli_slur_match", "config": {"severity": "high"}}],
+    }
+    output_response = MagicMock()
+    output_response.raise_for_status.return_value = None
+    output_response.json.return_value = {
+        "success": True,
+        "data": [{"type": "gender_assumption_bias"}],
     }
 
     mock_client = MagicMock()
-    mock_client.get.return_value = mock_response
+    mock_client.get.side_effect = [input_response, output_response]
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
     input_guardrails, output_guardrails = list_validators_config(
-        validator_configs=validator_configs,
+        input_validator_configs=input_validator_configs,
+        output_validator_configs=output_validator_configs,
         organization_id=1,
         project_id=1,
     )
 
-    assert len(input_guardrails) == 2
-    assert len(output_guardrails) == 1
-    assert all(g["stage"] == "input" for g in input_guardrails)
-    assert all(g["stage"] == "output" for g in output_guardrails)
-    _, kwargs = mock_client.get.call_args
-    assert kwargs["params"]["ids"] == [
-        str(v.validator_config_id) for v in validator_configs
+    assert input_guardrails == [{"type": "uli_slur_match", "config": {"severity": "high"}}]
+    assert output_guardrails == [{"type": "gender_assumption_bias"}]
+    assert mock_client.get.call_count == 2
+
+    first_call_kwargs = mock_client.get.call_args_list[0].kwargs
+    second_call_kwargs = mock_client.get.call_args_list[1].kwargs
+    assert first_call_kwargs["params"]["ids"] == [
+        str(v.validator_config_id) for v in input_validator_configs
+    ]
+    assert second_call_kwargs["params"]["ids"] == [
+        str(v.validator_config_id) for v in output_validator_configs
     ]
 
 
@@ -193,7 +194,8 @@ def test_list_validators_config_empty_short_circuits_without_http(
     mock_client_cls,
 ) -> None:
     input_guardrails, output_guardrails = list_validators_config(
-        validator_configs=[],
+        input_validator_configs=[],
+        output_validator_configs=[],
         organization_id=1,
         project_id=1,
     )
@@ -205,7 +207,7 @@ def test_list_validators_config_empty_short_circuits_without_http(
 
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None:
-    validator_configs = [Validator(validator_config_id=uuid.uuid4())]
+    input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
     mock_response = MagicMock()
     mock_response.raise_for_status.return_value = None
@@ -216,14 +218,34 @@ def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None
     mock_client_cls.return_value.__enter__.return_value = mock_client
 
     list_validators_config(
-        validator_configs=validator_configs,
+        input_validator_configs=input_validator_configs,
+        output_validator_configs=[],
         organization_id=None,
         project_id=None,
     )
 
     _, kwargs = mock_client.get.call_args
     assert kwargs["params"]["ids"] == [
-        str(v.validator_config_id) for v in validator_configs
+        str(v.validator_config_id) for v in input_validator_configs
     ]
     assert "organization_id" not in kwargs["params"]
     assert "project_id" not in kwargs["params"]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_list_validators_config_network_error_fails_open(mock_client_cls) -> None:
+    input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
+
+    mock_client = MagicMock()
+    mock_client.get.side_effect = httpx.ConnectError("Network is unreachable")
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    input_guardrails, output_guardrails = list_validators_config(
+        input_validator_configs=input_validator_configs,
+        output_validator_configs=[],
+        organization_id=1,
+        project_id=1,
+    )
+
+    assert input_guardrails == []
+    assert output_guardrails == []

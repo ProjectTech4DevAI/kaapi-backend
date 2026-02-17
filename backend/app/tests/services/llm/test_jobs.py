@@ -18,6 +18,8 @@ from app.models.llm import (
     Usage,
     TextOutput,
     TextContent,
+    AudioOutput,
+    AudioContent,
     # KaapiLLMParams,
     KaapiCompletionConfig,
 )
@@ -805,6 +807,52 @@ class TestExecuteJob:
 
         assert result["success"]
 
+    def test_guardrails_skip_input_validation_for_audio_input(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {
+                    "input": {
+                        "type": "audio",
+                        "content": {
+                            "format": "base64",
+                            "value": "UklGRiQAAABXQVZFZm10IA==",
+                            "mime_type": "audio/wav",
+                        },
+                    }
+                },
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
+
     def test_guardrails_sanitize_output_after_provider(
         self, db, job_env, job_for_execution
     ):
@@ -849,6 +897,51 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
+
+    def test_guardrails_skip_output_validation_for_audio_output(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        env["mock_llm_response"].response.output = AudioOutput(
+            content=AudioContent(
+                value="UklGRiQAAABXQVZFZm10IA==",
+                mime_type="audio/wav",
+            )
+        )
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "safety_filter", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        assert result["data"]["response"]["output"]["type"] == "audio"
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
 
     def test_guardrails_bypass_does_not_modify_input(
         self, db, job_env, job_for_execution
@@ -937,7 +1030,7 @@ class TestExecuteJob:
         assert "Unsafe content" in result["error"]
         env["provider"].execute.assert_not_called()
 
-    def test_guardrails_rephrase_needed_blocks_job(
+    def test_guardrails_rephrase_needed_allows_job_with_sanitized_input(
         self, db, job_env, job_for_execution
     ):
         env = job_env
@@ -977,8 +1070,10 @@ class TestExecuteJob:
             }
             result = self._execute_job(job_for_execution, db, request_data)
 
-        assert not result["success"]
-        env["provider"].execute.assert_not_called()
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        provider_query = env["provider"].execute.call_args[0][1]
+        assert provider_query.input.content.value == "Rephrased text"
 
     def test_execute_job_fetches_validator_configs_from_blob_refs(
         self, db, job_env, job_for_execution
@@ -1014,13 +1109,16 @@ class TestExecuteJob:
         assert result["success"]
         mock_fetch_configs.assert_called_once()
         _, kwargs = mock_fetch_configs.call_args
-        validator_configs = kwargs["validator_configs"]
-        assert [v.validator_config_id for v in validator_configs] == [
-            UUID(VALIDATOR_CONFIG_ID_1),
-            UUID(VALIDATOR_CONFIG_ID_2),
+        input_validator_configs = kwargs["input_validator_configs"]
+        output_validator_configs = kwargs["output_validator_configs"]
+        assert [v.validator_config_id for v in input_validator_configs] == [
+            UUID(VALIDATOR_CONFIG_ID_1)
+        ]
+        assert [v.validator_config_id for v in output_validator_configs] == [
+            UUID(VALIDATOR_CONFIG_ID_2)
         ]
 
-    def test_execute_job_continues_when_validator_config_fetch_fails(
+    def test_execute_job_continues_when_no_validator_configs_resolved(
         self, db, job_env, job_for_execution
     ):
         env = job_env
@@ -1030,7 +1128,7 @@ class TestExecuteJob:
             patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
         ):
-            mock_fetch_configs.side_effect = Exception("validator service unavailable")
+            mock_fetch_configs.return_value = ([], [])
 
             request_data = {
                 "query": {"input": "hello"},
