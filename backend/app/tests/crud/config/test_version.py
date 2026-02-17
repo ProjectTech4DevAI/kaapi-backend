@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 
-from app.models import ConfigVersionUpdate, ConfigBlob, ConfigVersionCreate
+from app.models import ConfigVersionUpdate, ConfigBlob
 from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigVersionCrud
 from app.tests.utils.test_data import (
@@ -489,77 +489,6 @@ def test_validate_immutable_fields_legacy_config_rejects_non_text_update(
         match="Cannot change config type from 'text' to 'stt'",
     ):
         version_crud._validate_immutable_fields(legacy_blob, merged_blob)
-
-
-def test_validate_config_type_unchanged_legacy_config_allows_text(
-    db: Session,
-) -> None:
-    """Test that _validate_config_type_unchanged defaults legacy (null type) to 'text'."""
-    config = create_test_config(db)
-    version_crud = ConfigVersionCrud(
-        session=db, project_id=config.project_id, config_id=config.id
-    )
-
-    # Directly patch the latest version's config_blob to remove 'type' (simulate legacy)
-    latest_version = version_crud._get_latest_version()
-    blob = dict(latest_version.config_blob)
-    blob["completion"] = {k: v for k, v in blob["completion"].items() if k != "type"}
-    latest_version.config_blob = blob
-    db.add(latest_version)
-    db.commit()
-
-    # Creating a new version with type="text" should succeed
-    new_blob = ConfigBlob(
-        completion=NativeCompletionConfig(
-            provider="openai-native",
-            type="text",
-            params={"model": "gpt-4", "temperature": 0.8, "max_tokens": 1500},
-        )
-    )
-    version_create = ConfigVersionCreate(
-        config_blob=new_blob,
-        commit_message="Update after legacy",
-    )
-
-    # Should NOT raise
-    version_crud._validate_config_type_unchanged(version_create)
-
-
-def test_validate_config_type_unchanged_legacy_config_rejects_non_text(
-    db: Session,
-) -> None:
-    """Test that _validate_config_type_unchanged rejects non-text type for legacy configs."""
-    config = create_test_config(db)
-    version_crud = ConfigVersionCrud(
-        session=db, project_id=config.project_id, config_id=config.id
-    )
-
-    # Directly patch the latest version's config_blob to remove 'type' (simulate legacy)
-    latest_version = version_crud._get_latest_version()
-    blob = dict(latest_version.config_blob)
-    blob["completion"] = {k: v for k, v in blob["completion"].items() if k != "type"}
-    latest_version.config_blob = blob
-    db.add(latest_version)
-    db.commit()
-
-    # Creating a new version with type="stt" should fail
-    new_blob = ConfigBlob(
-        completion=NativeCompletionConfig(
-            provider="openai-native",
-            type="stt",
-            params={"model": "gpt-4", "temperature": 0.8, "max_tokens": 1500},
-        )
-    )
-    version_create = ConfigVersionCreate(
-        config_blob=new_blob,
-        commit_message="Change type after legacy",
-    )
-
-    with pytest.raises(
-        HTTPException,
-        match="Cannot change config type from 'text' to 'stt'",
-    ):
-        version_crud._validate_config_type_unchanged(version_create)
 
 
 def test_read_all_versions_config_not_found(db: Session) -> None:
