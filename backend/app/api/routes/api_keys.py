@@ -3,7 +3,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import SessionDep, AuthContextDep
 from app.crud.api_key import APIKeyCrud
-from app.models import APIKeyPublic, APIKeyCreateResponse, Message
+from app.models import (
+    APIKeyPublic,
+    APIKeyCreateResponse,
+    APIKeyVerifyResponse,
+    Message,
+)
 from app.utils import APIResponse, load_description
 from app.api.permissions import Permission, require_permission
 
@@ -71,3 +76,21 @@ def delete_api_key_route(
     api_key_crud.delete(key_id=key_id)
 
     return APIResponse.success_response(Message(message="API Key deleted successfully"))
+
+
+@router.get(
+    "/verify",
+    response_model=APIResponse[APIKeyVerifyResponse],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    description=load_description("api_keys/verify.md"),
+)
+def verify_api_key_route(
+    current_user: AuthContextDep,
+):
+    return APIResponse.success_response(
+        APIKeyVerifyResponse(
+            user_id=current_user.user.id,
+            organization_id=current_user.organization_.id,
+            project_id=current_user.project_.id,
+        )
+    )
