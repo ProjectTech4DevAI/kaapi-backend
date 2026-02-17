@@ -6,7 +6,7 @@ Upload a document to Kaapi.
 
 ### File Size Restrictions
 
-- **Maximum file size**: 50MB (configurable via `MAX_DOCUMENT_UPLOAD_SIZE_MB` environment variable)
+- **Maximum file size**: 512MB (configurable via `MAX_DOCUMENT_UPLOAD_SIZE_MB` environment variable)
 - Files exceeding the size limit will be rejected with a 413 (Payload Too Large) error
 - Empty files will be rejected with a 422 (Unprocessable Entity) error
 

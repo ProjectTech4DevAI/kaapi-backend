@@ -15,7 +15,7 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
     # Create composite index to optimize the get_conversation_by_ancestor_id query
     # This query filters by: ancestor_response_id, project_id, is_deleted
     # and orders by: inserted_at DESC
@@ -27,7 +27,7 @@ def upgrade():
     )
 
 
-def downgrade():
+def downgrade() -> None:
     op.drop_index(
         "ix_openai_conversation_ancestor_project_active_time",
         table_name="openai_conversation",
