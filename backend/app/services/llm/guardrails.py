@@ -110,6 +110,7 @@ def list_validators_config(
     }
 
     endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/"
+
     def _build_params(validator_ids: list[UUID]) -> dict[str, Any]:
         params = {
             "organization_id": organization_id,
@@ -120,6 +121,7 @@ def list_validators_config(
 
     try:
         with httpx.Client(timeout=10.0) as client:
+
             def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
                 if not validator_ids:
                     return []
@@ -138,7 +140,9 @@ def list_validators_config(
                     )
 
                 if not payload.get("success", False):
-                    raise ValueError("Validator config fetch failed: `success` is false.")
+                    raise ValueError(
+                        "Validator config fetch failed: `success` is false."
+                    )
 
                 validators = payload.get("data", [])
                 if not isinstance(validators, list):
@@ -146,7 +150,9 @@ def list_validators_config(
                         "Invalid validators response format: `data` must be a list."
                     )
 
-                return [validator for validator in validators if isinstance(validator, dict)]
+                return [
+                    validator for validator in validators if isinstance(validator, dict)
+                ]
 
             input_guardrails = _fetch_by_ids(input_validator_config_ids)
             output_guardrails = _fetch_by_ids(output_validator_config_ids)

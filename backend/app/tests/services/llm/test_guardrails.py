@@ -147,7 +147,9 @@ def test_run_guardrails_validation_allows_disable_suppress_pass_logs(
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_list_validators_config_fetches_input_and_output_by_refs(mock_client_cls) -> None:
+def test_list_validators_config_fetches_input_and_output_by_refs(
+    mock_client_cls,
+) -> None:
     input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
     output_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
@@ -175,7 +177,9 @@ def test_list_validators_config_fetches_input_and_output_by_refs(mock_client_cls
         project_id=1,
     )
 
-    assert input_guardrails == [{"type": "uli_slur_match", "config": {"severity": "high"}}]
+    assert input_guardrails == [
+        {"type": "uli_slur_match", "config": {"severity": "high"}}
+    ]
     assert output_guardrails == [{"type": "gender_assumption_bias"}]
     assert mock_client.get.call_count == 2
 
