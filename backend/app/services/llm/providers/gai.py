@@ -1,13 +1,15 @@
 import logging
 import base64
+from typing import Any
 from google import genai
 from google.genai.types import (
     GenerateContentResponse,
     GenerateContentConfig,
     ThinkingConfig,
+    SpeechConfig,
+    VoiceConfig,
+    PrebuiltVoiceConfig,
 )
-from typing import Any
-
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -204,13 +206,11 @@ class GoogleAIProvider(BaseProvider):
 
         director_notes = gemini_params.get("director_notes")
         # Build Gemini TTS config
-        from google.genai import types
-
         config_kwargs = {
             "response_modalities": ["AUDIO"],
-            "speech_config": types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+            "speech_config": SpeechConfig(
+                voice_config=VoiceConfig(
+                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice)
                 ),
                 language_code=language,
             ),
@@ -264,7 +264,11 @@ class GoogleAIProvider(BaseProvider):
                     "ascii"
                 )
                 actual_format = "ogg"
-
+            else:
+                logger.warning(
+                    f"[GoogleAIProvider._execute_tts] Unsupported response_format '{response_format}', returning native WAV"
+                )
+                response_format = "wav"
             logger.info(
                 f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(raw_audio_bytes)} bytes)"
             )

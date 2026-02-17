@@ -13,13 +13,17 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.crud.llm import create_llm_call, update_llm_call_response
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, Job
-from app.models.llm.request import ConfigBlob, LLMCallConfig, KaapiCompletionConfig
+from app.models.llm.request import (
+    ConfigBlob,
+    LLMCallConfig,
+    KaapiCompletionConfig,
+    TextInput,
+    AudioInput,
+)
 from app.services.llm.guardrails import call_guardrails
 from app.services.llm.providers.registry import get_llm_provider
 from app.services.llm.mappers import transform_kaapi_config_to_native
-from app.services.llm.input_resolver import resolve_input, cleanup_temp_file
-
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, send_callback, resolve_input, cleanup_temp_file
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +163,12 @@ def execute_job(
 
     try:
         if input_guardrails:
-            safe_input = call_guardrails(input_query, input_guardrails, job_id)
+            if not isinstance(request.query.input, TextInput):
+                logger.warning(
+                    "[execute_job] Input guardrails skipped for non-text input type"
+                )
+            else:
+                safe_input = call_guardrails(input_query, input_guardrails, job_id)
 
             logger.info(
                 f"[execute_job] Input guardrail validation | success={safe_input['success']}."
@@ -339,7 +348,7 @@ def execute_job(
             )
         finally:
             # Clean up temp files for audio inputs
-            if resolved_input and resolved_input != request.query.input:
+            if resolved_input and isinstance(resolve_input, AudioInput):
                 cleanup_temp_file(resolved_input)
 
         if response:

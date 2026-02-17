@@ -1,12 +1,3 @@
-"""
-CRUD operations for LLM calls.
-
-This module handles database operations for LLM calls including:
-1. Creating new LLM call records
-2. Updating LLM call responses
-3. Fetching LLM calls by ID
-"""
-
 import logging
 from typing import Any, Literal
 
@@ -42,7 +33,8 @@ def serialize_input(query_input: QueryInput | str) -> str:
                 "type": "audio",
                 "format": query_input.content.format,
                 "mime_type": query_input.content.mime_type,
-                "size_bytes": len(query_input.content.value),
+                # approximate byte size from b64encoded value
+                "size_bytes": len(query_input.content.value) * 3 // 4,
             }
         )
     else:

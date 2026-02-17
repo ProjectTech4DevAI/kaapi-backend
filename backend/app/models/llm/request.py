@@ -1,14 +1,12 @@
+import sqlalchemy as sa
 from typing import Annotated, Any, Literal, Union
-
 from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel
 from pydantic import Discriminator, model_validator, HttpUrl
 from datetime import datetime
-from app.core.util import now
-
-import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Index, text
+from app.core.util import now
 
 
 class TextLLMParams(SQLModel):
@@ -487,8 +485,13 @@ class LlmCall(SQLModel, table=True):
 
     updated_at: datetime = Field(
         default_factory=now,
-        nullable=False,
-        sa_column_kwargs={"comment": "Timestamp when the LLM call was last updated"},
+        sa_column=sa.Column(
+            sa.DateTime,
+            default=now,
+            nullable=False,
+            onupdate=now,
+            comment="Timestamp when the LLM call was last updated",
+        ),
     )
 
     deleted_at: datetime | None = Field(
