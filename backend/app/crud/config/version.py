@@ -79,7 +79,7 @@ class ConfigVersionCrud:
             version = ConfigVersion(
                 config_id=self.config_id,
                 version=next_version,
-                config_blob=validated_blob.model_dump(),
+                config_blob=validated_blob.model_dump(mode="json"),
                 commit_message=version_create.commit_message,
             )
 

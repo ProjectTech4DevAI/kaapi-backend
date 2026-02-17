@@ -2,7 +2,13 @@ from sqlmodel import SQLModel
 
 from .auth import AuthContext, Token, TokenPayload
 
-from .api_key import APIKey, APIKeyBase, APIKeyPublic, APIKeyCreateResponse
+from .api_key import (
+    APIKey,
+    APIKeyBase,
+    APIKeyPublic,
+    APIKeyCreateResponse,
+    APIKeyVerifyResponse,
+)
 
 from .assistants import Assistant, AssistantBase, AssistantCreate, AssistantUpdate
 
