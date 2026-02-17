@@ -25,10 +25,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        UPDATE config_version
-        SET config_blob = config_blob #- '{completion,type}'
-        WHERE config_blob->'completion'->>'type' = 'text'
-        """
-    )
+    # No-op: removing type='text' would drop a required field and break validation; NULL safely defaults to 'text'.
+    pass
