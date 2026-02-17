@@ -156,6 +156,10 @@ class ConfigVersionCrud:
         existing_type = existing_completion.get("type")
         merged_type = merged_completion.get("type")
 
+        # Legacy configs predate the 'type' field; all were text-only
+        if existing_type is None:
+            existing_type = "text"
+
         if existing_type != merged_type:
             raise HTTPException(
                 status_code=400,
@@ -274,7 +278,11 @@ class ConfigVersionCrud:
             version_create.config_blob.model_dump().get("completion", {}).get("type")
         )
 
-        if old_type is None or new_type is None:
+        # Legacy configs predate the 'type' field; all were text-only
+        if old_type is None:
+            old_type = "text"
+
+        if new_type is None:
             logger.error(
                 f"[ConfigVersionCrud._validate_config_type_unchanged] Missing type field | "
                 f"{{'config_id': '{self.config_id}', 'old_type': {old_type}, 'new_type': {new_type}}}"
