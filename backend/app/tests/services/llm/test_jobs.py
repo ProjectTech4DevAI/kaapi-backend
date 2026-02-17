@@ -1034,6 +1034,7 @@ class TestExecuteJob:
         self, db, job_env, job_for_execution
     ):
         env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
             patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
