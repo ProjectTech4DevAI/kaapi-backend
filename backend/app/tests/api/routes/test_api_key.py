@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
+from app.models import Organization, Project, User
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_api_key, create_test_project
 from app.tests.utils.user import create_random_user
@@ -112,3 +113,89 @@ def test_delete_api_key_nonexistent(
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 404
+
+
+def test_verify_api_key(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test API key verification endpoint with a valid API key."""
+    response = client.get(
+        f"{settings.API_V1_STR}/apikeys/verify",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["user_id"] == user_api_key.user_id
+    assert payload["data"]["organization_id"] == user_api_key.organization_id
+    assert payload["data"]["project_id"] == user_api_key.project_id
+
+
+def test_verify_api_key_invalid_key(client: TestClient) -> None:
+    """Test API key verification endpoint with an invalid API key."""
+    response = client.get(
+        f"{settings.API_V1_STR}/apikeys/verify",
+        headers={"X-API-KEY": "ApiKey InvalidKeyThatDoesNotExist123456789"},
+    )
+    assert response.status_code == 401
+
+
+def test_verify_api_key_missing_auth(client: TestClient) -> None:
+    """Test API key verification endpoint without any authentication."""
+    response = client.get(f"{settings.API_V1_STR}/apikeys/verify")
+    assert response.status_code == 401
+
+
+def test_verify_api_key_inactive_user(
+    db: Session,
+    client: TestClient,
+) -> None:
+    """Test API key verification fails when the user is inactive."""
+    api_key = create_test_api_key(db)
+    user = db.get(User, api_key.user_id)
+    user.is_active = False
+    db.add(user)
+    db.commit()
+
+    response = client.get(
+        f"{settings.API_V1_STR}/apikeys/verify",
+        headers={"X-API-KEY": api_key.key},
+    )
+    assert response.status_code == 403
+
+
+def test_verify_api_key_inactive_organization(
+    db: Session,
+    client: TestClient,
+) -> None:
+    """Test API key verification fails when the organization is inactive."""
+    api_key = create_test_api_key(db)
+    organization = db.get(Organization, api_key.organization_id)
+    organization.is_active = False
+    db.add(organization)
+    db.commit()
+
+    response = client.get(
+        f"{settings.API_V1_STR}/apikeys/verify",
+        headers={"X-API-KEY": api_key.key},
+    )
+    assert response.status_code == 403
+
+
+def test_verify_api_key_inactive_project(
+    db: Session,
+    client: TestClient,
+) -> None:
+    """Test API key verification fails when the project is inactive."""
+    api_key = create_test_api_key(db)
+    project = db.get(Project, api_key.project_id)
+    project.is_active = False
+    db.add(project)
+    db.commit()
+
+    response = client.get(
+        f"{settings.API_V1_STR}/apikeys/verify",
+        headers={"X-API-KEY": api_key.key},
+    )
+    assert response.status_code == 403

@@ -210,10 +210,24 @@ CompletionConfig = Annotated[
 ]
 
 
+class Validator(SQLModel):
+    validator_config_id: UUID
+
+
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    input_guardrails: list[Validator] | None = Field(
+        default=None,
+        description="Guardrails applied to validate/sanitize the input before the LLM call",
+    )
+
+    output_guardrails: list[Validator] | None = Field(
+        default=None,
+        description="Guardrails applied to validate/sanitize the output after the LLM call",
+    )
     # Future additions:
     # classifier: ClassifierConfig | None = None
     # pre_filter: PreFilterConfig | None = None
@@ -296,20 +310,6 @@ class LLMCallRequest(SQLModel):
             "Complete LLM call configuration, provided either by reference (id + version) "
             "or as config blob. Use the blob only for testing/validation; "
             "in production, always use the id + version."
-        ),
-    )
-    input_guardrails: list[dict[str, Any]] | None = Field(
-        default=None,
-        description=(
-            "Optional guardrails configuration to apply input validation. "
-            "If not provided, no guardrails will be applied."
-        ),
-    )
-    output_guardrails: list[dict[str, Any]] | None = Field(
-        default=None,
-        description=(
-            "Optional guardrails configuration to apply output validation. "
-            "If not provided, no guardrails will be applied."
         ),
     )
     callback_url: HttpUrl | None = Field(
