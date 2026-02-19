@@ -33,5 +33,5 @@ Configurations allow you to store and manage reusable LLM parameters
 
 The configuration name must be unique within your project. Once created,
 you can create additional versions to track parameter changes while
-maintaining the configuration history. Type "stt" and "tts" only applicable for Gemini models.
-Use type "text" if using OpenAI models.
+maintaining the configuration history. Type 'text' is applicable only for OpenAI models.
+Type "stt" and "tts" are only applicable for Gemini models.
