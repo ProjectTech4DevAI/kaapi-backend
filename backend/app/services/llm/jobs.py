@@ -20,8 +20,6 @@ from app.models.llm.request import (
     TextInput,
     AudioInput,
 )
-from app.services.llm.guardrails import call_guardrails
-)
 from app.models.llm.response import TextOutput
 from app.services.llm.guardrails import (
     list_validators_config,
@@ -462,18 +460,6 @@ def execute_job(
                         return handle_job_error(
                             job_id, request.callback_url, callback_response
                         )
-
-                else:
-                    response.response.output.content.value = safe_output["error"]
-
-                    callback_response = APIResponse.failure_response(
-                        error=safe_output["error"],
-                        metadata=request.request_metadata,
-                    )
-                    return handle_job_error(
-                        job_id, request.callback_url, callback_response
-                    )
-
             callback_response = APIResponse.success_response(
                 data=response, metadata=request.request_metadata
             )
