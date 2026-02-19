@@ -454,7 +454,6 @@ def resolve_input(query_input) -> tuple[str, str | None]:
         (content_string, None) on success - for text returns content value, for audio returns temp file path
         ("", error_message) on failure
     """
-    # Import here to avoid circular imports
     from app.models.llm.request import TextInput, AudioInput
 
     try:

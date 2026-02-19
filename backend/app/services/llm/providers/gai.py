@@ -219,7 +219,7 @@ class GoogleAIProvider(BaseProvider):
         if director_notes:
             config_kwargs["system_instruction"] = director_notes
 
-        config = types.GenerateContentConfig(**config_kwargs)
+        config = GenerateContentConfig(**config_kwargs)
 
         # Execute TTS
         response: GenerateContentResponse = self.client.models.generate_content(

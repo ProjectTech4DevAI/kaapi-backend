@@ -67,8 +67,10 @@ def create_llm_call(
     """
     # Determine input/output types based on completion config type
     completion_config = resolved_config.completion
-    completion_type = completion_config.type or getattr(
-        completion_config.params, "type", "text"
+    completion_type = completion_config.type or (
+        completion_config.params.get("type", "text")
+        if isinstance(completion_config.params, dict)
+        else getattr(completion_config.params, "type", "text")
     )
 
     input_type: Literal["text", "audio", "image"]
@@ -85,9 +87,9 @@ def create_llm_call(
         output_type = "text"
 
     model = (
-        completion_config.params.model
-        if hasattr(completion_config.params, "model")
-        else completion_config.params.get("model", "")
+        completion_config.params.get("model", "")
+        if isinstance(completion_config.params, dict)
+        else getattr(completion_config.params, "model", "")
     )
 
     # Build config dict for storage

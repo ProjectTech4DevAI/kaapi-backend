@@ -1,8 +1,7 @@
 import sqlalchemy as sa
 from typing import Annotated, Any, Literal, Union
 from uuid import UUID, uuid4
-from sqlmodel import Field, SQLModel
-from pydantic import Discriminator, model_validator, HttpUrl
+from pydantic import model_validator, HttpUrl
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel, Index, text
@@ -69,8 +68,8 @@ class TextContent(SQLModel):
 class AudioContent(SQLModel):
     format: Literal["base64"] = "base64"
     value: str = Field(..., description="Base64 encoded audio")
-    # keeping the mime_type liberal here, since does not affect transcription type
-    mime_type: str = Field(
+    # keeping the mime_type liberal here, since does not affect base64 encoding
+    mime_type: str | None = Field(
         None,
         description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
     )
