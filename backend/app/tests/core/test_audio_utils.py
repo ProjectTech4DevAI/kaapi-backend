@@ -1,5 +1,28 @@
 """Tests for audio utility functions."""
+import subprocess
+import pytest
 from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
+
+
+def _is_ffmpeg_available() -> bool:
+    """Check if ffmpeg is available in the system."""
+    try:
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+# Skip all tests in this module if ffmpeg is not available
+pytestmark = pytest.mark.skipif(
+    not _is_ffmpeg_available(),
+    reason="ffmpeg not available in environment",
+)
 
 
 def test_convert_pcm_to_mp3_success() -> None:
