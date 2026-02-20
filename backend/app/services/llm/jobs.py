@@ -5,6 +5,7 @@ from uuid import UUID
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
+
 from app.celery.utils import start_high_priority_job
 from app.core.db import engine
 from app.core.langfuse.langfuse import observe_llm_execution

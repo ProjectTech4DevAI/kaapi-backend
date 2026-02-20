@@ -1,6 +1,7 @@
 import logging
 import base64
 from typing import Any
+
 from google import genai
 from google.genai.types import (
     GenerateContentResponse,
@@ -10,6 +11,7 @@ from google.genai.types import (
     VoiceConfig,
     PrebuiltVoiceConfig,
 )
+
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
