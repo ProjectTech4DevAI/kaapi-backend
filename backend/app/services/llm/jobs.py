@@ -293,8 +293,6 @@ def apply_output_guardrails(
 
     if safe["success"]:
         result.response.response.output.content.value = safe["data"]["safe_text"]
-        if safe["data"].get("rephrase_needed"):
-            return result, result.response.response.output.content.value
         return result, None
 
     return result, safe["error"]
@@ -468,7 +466,8 @@ def execute_job(
 ) -> dict:
     """Celery task to process an LLM request asynchronously.
 
-    Uses centralized functions: apply_input_guardrails, apply_output_guardrails, execute_llm_call.
+    Returns:
+        dict: Serialized APIResponse[LLMCallResponse] on success, APIResponse[None] on failure
     """
     request = LLMCallRequest(**request_data)
     job_id: UUID = UUID(job_id)
@@ -594,7 +593,11 @@ def execute_chain_job(
     task_id: str,
     task_instance,
 ) -> dict:
-    """Celery task entry point for LLM chain execution."""
+    """Celery task to process an LLM Chain request asynchronously.
+
+    Returns:
+        dict: Serialized APIResponse[LLMChainResponse] on success, APIResponse[None] on failure
+    """
     # imports to avoid circular dependency:
     from app.services.llm.chain.chain import ChainBlock, ChainContext, LLMChain
     from app.services.llm.chain.executor import ChainExecutor

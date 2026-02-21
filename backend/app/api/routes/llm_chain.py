@@ -31,7 +31,7 @@ def llm_callback_notification(body: APIResponse[LLMChainResponse]):
 
 @router.post(
     "/llm/chain",
-    description=load_description("llm/llm_call.md"),
+    description=load_description("llm/llm_chain.md"),
     response_model=APIResponse[Message],
     callbacks=llm_callback_router.routes,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
