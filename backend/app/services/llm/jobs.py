@@ -335,6 +335,16 @@ def execute_llm_call(
                 interpolated = template.replace("{{input}}", query.input.content.value)
                 query.input.content.value = interpolated
 
+            query, input_error = apply_input_guardrails(
+                config_blob=config_blob,
+                query=query,
+                job_id=job_id,
+                project_id=project_id,
+                organization_id=organization_id,
+            )
+            if input_error:
+                return BlockResult(error=input_error)
+
             completion_config = config_blob.completion
             original_provider = completion_config.provider
 
@@ -433,12 +443,23 @@ def execute_llm_call(
                             f"llm_call_id={llm_call_id}",
                             exc_info=True,
                         )
-
-            return BlockResult(
+            result = BlockResult(
                 response=response,
                 llm_call_id=llm_call_id,
                 usage=response.usage,
             )
+
+            result, output_error = apply_output_guardrails(
+                config_blob=config_blob,
+                result=result,
+                job_id=job_id,
+                project_id=project_id,
+                organization_id=organization_id,
+            )
+            if output_error:
+                return BlockResult(error=output_error, llm_call_id=llm_call_id)
+
+            return result
 
         return BlockResult(
             error=error or "Unknown error occurred",
@@ -471,8 +492,6 @@ def execute_job(
     """
     request = LLMCallRequest(**request_data)
     job_id: UUID = UUID(job_id)
-    config = request.config
-    config_blob: ConfigBlob | None = None
 
     logger.info(
         f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}"
@@ -484,36 +503,6 @@ def execute_job(
             job_crud.update(
                 job_id=job_id, job_update=JobUpdate(status=JobStatus.PROCESSING)
             )
-
-            if config.is_stored_config:
-                config_crud = ConfigVersionCrud(
-                    session=session, project_id=project_id, config_id=config.id
-                )
-                config_blob, error = resolve_config_blob(config_crud, config)
-                if error:
-                    callback_response = APIResponse.failure_response(
-                        error=error,
-                        metadata=request.request_metadata,
-                    )
-                    return handle_job_error(
-                        job_id, request.callback_url, callback_response
-                    )
-            else:
-                config_blob = config.blob
-
-            request.query, input_error = apply_input_guardrails(
-                config_blob=config_blob,
-                query=request.query,
-                job_id=job_id,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
-            if input_error:
-                callback_response = APIResponse.failure_response(
-                    error=input_error,
-                    metadata=request.request_metadata,
-                )
-                return handle_job_error(job_id, request.callback_url, callback_response)
 
             langfuse_credentials = get_provider_credential(
                 session=session,
@@ -534,20 +523,6 @@ def execute_job(
         )
 
         if result.success:
-            result, output_error = apply_output_guardrails(
-                config_blob=config_blob,
-                result=result,
-                job_id=job_id,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
-            if output_error:
-                callback_response = APIResponse.failure_response(
-                    error=output_error,
-                    metadata=request.request_metadata,
-                )
-                return handle_job_error(job_id, request.callback_url, callback_response)
-
             callback_response = APIResponse.success_response(
                 data=result.response, metadata=request.request_metadata
             )

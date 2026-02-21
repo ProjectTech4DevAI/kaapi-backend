@@ -3,23 +3,16 @@ import logging
 from sqlmodel import Session
 
 from app.core.db import engine
-from app.crud.config import ConfigVersionCrud
 from app.crud.jobs import JobCrud
 from app.crud.llm_chain import update_llm_chain_status
 from app.models import JobStatus, JobUpdate
 from app.models.llm.request import (
     ChainStatus,
-    ConfigBlob,
     LLMChainRequest,
 )
 from app.models.llm.response import LLMChainResponse
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
-from app.services.llm.jobs import (
-    apply_input_guardrails,
-    apply_output_guardrails,
-    resolve_config_blob,
-)
 from app.utils import APIResponse, send_callback
 
 logger = logging.getLogger(__name__)
@@ -44,72 +37,12 @@ class ChainExecutor:
         try:
             self._setup()
 
-            first_config_blob, resolve_error = self._resolve_block_config_blob(0)
-            if resolve_error:
-                return self._handle_error(resolve_error)
-
-            query, error = apply_input_guardrails(
-                config_blob=first_config_blob,
-                query=self._request.query,
-                job_id=self._context.job_id,
-                project_id=self._context.project_id,
-                organization_id=self._context.organization_id,
-            )
-            if error:
-                return self._handle_error(error)
-
-            result = self._chain.execute(query)
-
-            if result.success:
-                last_config_blob, resolve_error = self._resolve_block_config_blob(
-                    len(self._request.blocks) - 1
-                )
-                if resolve_error:
-                    return self._handle_error(resolve_error)
-
-                result, error = apply_output_guardrails(
-                    config_blob=last_config_blob,
-                    result=result,
-                    job_id=self._context.job_id,
-                    project_id=self._context.project_id,
-                    organization_id=self._context.organization_id,
-                )
-                if error:
-                    return self._handle_error(error)
+            result = self._chain.execute(self._request.query)
 
             return self._teardown(result)
 
         except Exception as e:
             return self._handle_unexpected_error(e)
-
-    def _resolve_block_config_blob(
-        self, block_index: int
-    ) -> tuple[ConfigBlob | None, str | None]:
-        """Resolve a block's config to its ConfigBlob.
-
-        Uses is_stored_config property (same pattern as execute_job in jobs.py):
-        - Stored config (is_stored_config=True): fetch from DB via resolve_config_blob()
-        - Ad-hoc config (blob provided): return blob directly
-
-        Returns:
-            (config_blob, error): ConfigBlob on success, or error string on failure
-        """
-        block = self._request.blocks[block_index]
-        config = block.config
-
-        if not config.is_stored_config:
-            return config.blob, None
-
-        with Session(engine) as session:
-            config_crud = ConfigVersionCrud(
-                session=session,
-                project_id=self._context.project_id,
-                config_id=config.id,
-            )
-            config_blob, error = resolve_config_blob(config_crud, config)
-            if error:
-                return None, error
-            return config_blob, None
 
     def _setup(self) -> None:
         with Session(engine) as session:
