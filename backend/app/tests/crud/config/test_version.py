@@ -419,6 +419,78 @@ def test_create_version_different_configs(
     assert version2_config2.config_id == config2.id
 
 
+def test_validate_immutable_fields_legacy_config_allows_text_update(
+    db: Session, example_config_blob: ConfigBlob
+) -> None:
+    """Test that a legacy config (no type field) allows updates with type='text'."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db, project_id=config.project_id, config_id=config.id
+    )
+
+    # Simulate a legacy config_blob without 'type' in completion
+    legacy_blob = {
+        "completion": {
+            "provider": "openai-native",
+            "params": {
+                "model": "gpt-4",
+                "temperature": 0.7,
+                "max_tokens": 1000,
+            },
+        }
+    }
+    merged_blob = {
+        "completion": {
+            "provider": "openai-native",
+            "type": "text",
+            "params": {
+                "model": "gpt-4",
+                "temperature": 0.8,
+                "max_tokens": 1500,
+            },
+        }
+    }
+
+    # Should NOT raise — legacy configs default to "text"
+    version_crud._validate_immutable_fields(legacy_blob, merged_blob)
+
+
+def test_validate_immutable_fields_legacy_config_rejects_non_text_update(
+    db: Session, example_config_blob: ConfigBlob
+) -> None:
+    """Test that a legacy config (no type field) rejects updates with type != 'text'."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db, project_id=config.project_id, config_id=config.id
+    )
+
+    legacy_blob = {
+        "completion": {
+            "provider": "openai-native",
+            "params": {
+                "model": "gpt-4",
+                "temperature": 0.7,
+            },
+        }
+    }
+    merged_blob = {
+        "completion": {
+            "provider": "openai-native",
+            "type": "stt",
+            "params": {
+                "model": "gpt-4",
+                "temperature": 0.8,
+            },
+        }
+    }
+
+    with pytest.raises(
+        HTTPException,
+        match="Cannot change config type from 'text' to 'stt'",
+    ):
+        version_crud._validate_immutable_fields(legacy_blob, merged_blob)
+
+
 def test_read_all_versions_config_not_found(db: Session) -> None:
     """Test reading versions for a non-existent config raises HTTPException."""
     project = create_test_project(db)
