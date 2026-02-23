@@ -1,10 +1,10 @@
 import logging
+from typing import Any
 
 import openai
 from openai import OpenAI
 from openai.types.responses.response import Response
 
-from typing import Any
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
