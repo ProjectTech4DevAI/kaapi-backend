@@ -3,19 +3,31 @@ LLM response models.
 
 This module contains structured response models for LLM API calls.
 """
+
 from sqlmodel import SQLModel, Field
+from typing import Literal, Annotated
+from app.models.llm.request import AudioContent, TextContent
 
 
 class Usage(SQLModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    reasoning_tokens: int | None = None
 
 
-class LLMOutput(SQLModel):
-    """Standardized output format for LLM responses."""
+class TextOutput(SQLModel):
+    type: Literal["text"] = "text"
+    content: TextContent
 
-    text: str = Field(..., description="Primary text content of the LLM response.")
+
+class AudioOutput(SQLModel):
+    type: Literal["audio"] = "audio"
+    content: AudioContent
+
+
+# Type alias for LLM output (discriminated union)
+LLMOutput = Annotated[TextOutput | AudioOutput | None, Field(discriminator="type")]
 
 
 class LLMResponse(SQLModel):

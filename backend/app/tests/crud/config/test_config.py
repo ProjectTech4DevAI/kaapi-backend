@@ -21,6 +21,7 @@ def example_config_blob():
     return ConfigBlob(
         completion=NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={
                 "model": "gpt-4",
                 "temperature": 0.8,

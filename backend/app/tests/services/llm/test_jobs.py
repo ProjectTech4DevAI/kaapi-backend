@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -14,9 +15,12 @@ from app.models.llm import (
     QueryParams,
     LLMCallResponse,
     LLMResponse,
-    LLMOutput,
     Usage,
-    KaapiLLMParams,
+    TextOutput,
+    TextContent,
+    AudioOutput,
+    AudioContent,
+    # KaapiLLMParams,
     KaapiCompletionConfig,
 )
 from app.models.llm.request import ConfigBlob, LLMCallConfig
@@ -28,6 +32,9 @@ from app.services.llm.jobs import (
 )
 from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_config
+
+VALIDATOR_CONFIG_ID_1 = "00000000-0000-0000-0000-000000000001"
+VALIDATOR_CONFIG_ID_2 = "00000000-0000-0000-0000-000000000002"
 
 
 class TestStartJob:
@@ -41,6 +48,7 @@ class TestStartJob:
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={"model": "gpt-4"},
                     )
                 )
@@ -121,9 +129,10 @@ class TestHandleJobError:
         callback_url = "https://example.com/callback"
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -158,9 +167,10 @@ class TestHandleJobError:
 
         callback_response = APIResponse.failure_response(error="Test error occurred")
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -189,9 +199,10 @@ class TestHandleJobError:
             error="Test error with callback failure"
         )
 
-        with patch("app.services.llm.jobs.Session") as mock_session_class, patch(
-            "app.services.llm.jobs.send_callback"
-        ) as mock_send_callback:
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
             mock_session_class.return_value.__enter__.return_value = db
             mock_session_class.return_value.__exit__.return_value = None
 
@@ -210,6 +221,15 @@ class TestHandleJobError:
 class TestExecuteJob:
     """Test suite for execute_job."""
 
+    @pytest.fixture(autouse=True)
+    def mock_llm_call_crud(self):
+        with (
+            patch("app.services.llm.jobs.create_llm_call") as mock_create_llm_call,
+            patch("app.services.llm.jobs.update_llm_call_response"),
+        ):
+            mock_create_llm_call.return_value = MagicMock(id=uuid4())
+            yield
+
     @pytest.fixture
     def job_for_execution(self, db: Session):
         job = JobCrud(session=db).create(
@@ -225,6 +245,7 @@ class TestExecuteJob:
             "config": {
                 "blob": {
                     "completion": {
+                        "type": "text",
                         "provider": "openai-native",
                         "params": {"model": "gpt-4"},
                     }
@@ -242,7 +263,7 @@ class TestExecuteJob:
                 conversation_id=None,
                 model="gpt-4",
                 provider="openai",
-                output=LLMOutput(text="Test response"),
+                output=TextOutput(content=TextContent(value="Test response")),
             ),
             usage=Usage(input_tokens=10, output_tokens=20, total_tokens=30),
             provider_raw_response=None,
@@ -400,6 +421,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.7},
             )
         )
@@ -449,6 +471,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -497,6 +520,7 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -532,11 +556,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -578,10 +603,12 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-3.5-turbo",
-                    temperature=0.5,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-3.5-turbo",
+                    "temperature": 0.7,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -628,10 +655,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="o1",  # Reasoning model
-                    temperature=0.7,  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "o1",  # Reasoning model
+                    "temperature": 0.7,  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -677,10 +705,11 @@ class TestExecuteJob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",  # Non-reasoning model
-                    reasoning="high",  # This will be suppressed with warning
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",  # Non-reasoning model
+                    "reasoning": "high",  # This will be suppressed with warning
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -735,7 +764,10 @@ class TestExecuteJob:
 
         unsafe_input = "My credit card is 4111 1111 1111 1111"
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -744,6 +776,10 @@ class TestExecuteJob:
                     "rephrase_needed": False,
                 },
             }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
 
             request_data = {
                 "query": {"input": unsafe_input},
@@ -751,33 +787,84 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
                     }
                 },
-                "input_guardrails": [{"type": "pii_remover"}],
-                "output_guardrails": [],
                 "include_provider_raw_response": False,
                 "callback_url": None,
             }
-
             result = self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert "[REDACTED]" in provider_query.input
-        assert "4111" not in provider_query.input
+        assert "[REDACTED]" in provider_query.input.content.value
+        assert "4111" not in provider_query.input.content.value
 
         assert result["success"]
+
+    def test_guardrails_skip_input_validation_for_audio_input(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {
+                    "input": {
+                        "type": "audio",
+                        "content": {
+                            "format": "base64",
+                            "value": "UklGRiQAAABXQVZFZm10IA==",
+                            "mime_type": "audio/wav",
+                        },
+                    }
+                },
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
 
     def test_guardrails_sanitize_output_after_provider(
         self, db, job_env, job_for_execution
     ):
         env = job_env
 
-        env["mock_llm_response"].response.output.text = "Aadhar no 123-45-6789"
+        env["mock_llm_response"].response.output.content.value = "Aadhar no 123-45-6789"
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -786,6 +873,10 @@ class TestExecuteJob:
                     "rephrase_needed": False,
                 },
             }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
 
             request_data = {
                 "query": {"input": "hello"},
@@ -793,17 +884,64 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
                     }
                 },
-                "input_guardrails": [],
-                "output_guardrails": [{"type": "pii_remover"}],
             }
-
             result = self._execute_job(job_for_execution, db, request_data)
 
-        assert "REDACTED" in result["data"]["response"]["output"]["text"]
+        assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
+
+    def test_guardrails_skip_output_validation_for_audio_output(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        env["mock_llm_response"].response.output = AudioOutput(
+            content=AudioContent(
+                value="UklGRiQAAABXQVZFZm10IA==",
+                mime_type="audio/wav",
+            )
+        )
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "safety_filter", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        assert result["data"]["response"]["output"]["type"] == "audio"
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
 
     def test_guardrails_bypass_does_not_modify_input(
         self, db, job_env, job_for_execution
@@ -814,7 +952,10 @@ class TestExecuteJob:
 
         unsafe_input = "4111 1111 1111 1111"
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": True,
@@ -823,6 +964,10 @@ class TestExecuteJob:
                     "rephrase_needed": False,
                 },
             }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
 
             request_data = {
                 "query": {"input": unsafe_input},
@@ -830,28 +975,38 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
                     }
                 },
-                "input_guardrails": [{"type": "pii_remover"}],
             }
-
             self._execute_job(job_for_execution, db, request_data)
 
         provider_query = env["provider"].execute.call_args[0][1]
-        assert provider_query.input == unsafe_input
+        assert provider_query.input.content.value == unsafe_input
 
     def test_guardrails_validation_failure_blocks_job(
         self, db, job_env, job_for_execution
     ):
         env = job_env
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
             mock_guardrails.return_value = {
                 "success": False,
                 "error": "Unsafe content detected",
             }
+            mock_fetch_configs.return_value = (
+                [{"type": "uli_slur_match", "stage": "input"}],
+                [],
+            )
 
             request_data = {
                 "query": {"input": "bad input"},
@@ -859,25 +1014,32 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
                     }
                 },
-                "input_guardrails": [{"type": "uli_slur_match"}],
             }
-
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
         assert "Unsafe content" in result["error"]
         env["provider"].execute.assert_not_called()
 
-    def test_guardrails_rephrase_needed_blocks_job(
+    def test_guardrails_rephrase_needed_allows_job_with_sanitized_input(
         self, db, job_env, job_for_execution
     ):
         env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
-        with patch("app.services.llm.jobs.call_guardrails") as mock_guardrails:
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
@@ -886,6 +1048,10 @@ class TestExecuteJob:
                     "rephrase_needed": True,
                 },
             }
+            mock_fetch_configs.return_value = (
+                [{"type": "policy", "stage": "input"}],
+                [],
+            )
 
             request_data = {
                 "query": {"input": "unsafe text"},
@@ -893,17 +1059,101 @@ class TestExecuteJob:
                     "blob": {
                         "completion": {
                             "provider": "openai-native",
+                            "type": "text",
                             "params": {"model": "gpt-4"},
-                        }
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
                     }
                 },
-                "input_guardrails": [{"type": "policy"}],
             }
-
             result = self._execute_job(job_for_execution, db, request_data)
 
-        assert not result["success"]
-        env["provider"].execute.assert_not_called()
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        provider_query = env["provider"].execute.call_args[0][1]
+        assert provider_query.input.content.value == "Rephrased text"
+
+    def test_execute_job_fetches_validator_configs_from_blob_refs(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with patch(
+            "app.services.llm.jobs.list_validators_config"
+        ) as mock_fetch_configs:
+            mock_fetch_configs.return_value = ([], [])
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+        mock_fetch_configs.assert_called_once()
+        _, kwargs = mock_fetch_configs.call_args
+        input_validator_configs = kwargs["input_validator_configs"]
+        output_validator_configs = kwargs["output_validator_configs"]
+        assert [v.validator_config_id for v in input_validator_configs] == [
+            UUID(VALIDATOR_CONFIG_ID_1)
+        ]
+        assert [v.validator_config_id for v in output_validator_configs] == [
+            UUID(VALIDATOR_CONFIG_ID_2)
+        ]
+
+    def test_execute_job_continues_when_no_validator_configs_resolved(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+        ):
+            mock_fetch_configs.return_value = ([], [])
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        env["provider"].execute.assert_called_once()
+        mock_guardrails.assert_not_called()
 
 
 class TestResolveConfigBlob:
@@ -916,6 +1166,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.8},
             )
         )
@@ -935,6 +1186,36 @@ class TestResolveConfigBlob:
         assert resolved_blob.completion.params["model"] == "gpt-4"
         assert resolved_blob.completion.params["temperature"] == 0.8
 
+    def test_resolve_config_blob_keeps_validator_refs(self, db: Session):
+        project = get_project(db)
+        config_blob = ConfigBlob(
+            completion=NativeCompletionConfig(
+                provider="openai-native",
+                type="text",
+                params={"model": "gpt-4"},
+            ),
+            input_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_1}],
+            output_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_2}],
+        )
+        config = create_test_config(db, project_id=project.id, config_blob=config_blob)
+        db.commit()
+
+        config_crud = ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=config.id
+        )
+        llm_call_config = LLMCallConfig(id=str(config.id), version=1)
+
+        resolved_blob, error = resolve_config_blob(config_crud, llm_call_config)
+
+        assert error is None
+        assert resolved_blob is not None
+        assert [v.model_dump() for v in (resolved_blob.input_guardrails or [])] == [
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1)}
+        ]
+        assert [v.model_dump() for v in (resolved_blob.output_guardrails or [])] == [
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2)}
+        ]
+
     def test_resolve_config_blob_version_not_found(self, db: Session):
         """Test resolve_config_blob when version doesn't exist."""
         project = get_project(db)
@@ -942,6 +1223,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -967,6 +1249,7 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4"},
             )
         )
@@ -996,7 +1279,7 @@ class TestResolveConfigBlob:
 
     def test_resolve_config_blob_with_multiple_versions(self, db: Session):
         """Test resolving specific version when multiple versions exist."""
-        from app.models.config import ConfigVersionCreate
+        from app.models.config import ConfigVersionUpdate
 
         project = get_project(db)
 
@@ -1004,6 +1287,7 @@ class TestResolveConfigBlob:
         config_blob_v1 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -1019,14 +1303,15 @@ class TestResolveConfigBlob:
         config_blob_v2 = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-4", "temperature": 0.9},
             )
         )
-        version_create = ConfigVersionCreate(
-            config_blob=config_blob_v2,
+        version_update = ConfigVersionUpdate(
+            config_blob=config_blob_v2.model_dump(),
             commit_message="Updated to gpt-4",
         )
-        config_version_crud.create_or_raise(version_create)
+        config_version_crud.create_or_raise(version_update)
         db.commit()
 
         # Test resolving version 1
@@ -1058,11 +1343,12 @@ class TestResolveConfigBlob:
         config_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.8,
-                    instructions="You are a helpful assistant",
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.8,
+                    "instructions": "You are a helpful assistant",
+                },
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -1079,10 +1365,10 @@ class TestResolveConfigBlob:
         assert resolved_blob is not None
         assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
         assert resolved_blob.completion.provider == "openai"
-        assert resolved_blob.completion.params.model == "gpt-4"
-        assert resolved_blob.completion.params.temperature == 0.8
+        assert resolved_blob.completion.params["model"] == "gpt-4"
+        assert resolved_blob.completion.params["temperature"] == 0.8
         assert (
-            resolved_blob.completion.params.instructions
+            resolved_blob.completion.params["instructions"]
             == "You are a helpful assistant"
         )
 
@@ -1094,6 +1380,7 @@ class TestResolveConfigBlob:
         native_blob = ConfigBlob(
             completion=NativeCompletionConfig(
                 provider="openai-native",
+                type="text",
                 params={"model": "gpt-3.5-turbo", "temperature": 0.5},
             )
         )
@@ -1105,10 +1392,11 @@ class TestResolveConfigBlob:
         kaapi_blob = ConfigBlob(
             completion=KaapiCompletionConfig(
                 provider="openai",
-                params=KaapiLLMParams(
-                    model="gpt-4",
-                    temperature=0.7,
-                ),
+                type="text",
+                params={
+                    "model": "gpt-4",
+                    "temperature": 0.7,
+                },
             )
         )
         kaapi_config = create_test_config(

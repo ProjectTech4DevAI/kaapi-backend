@@ -19,7 +19,8 @@ def test_create_config_success(
         "description": "A test LLM configuration",
         "config_blob": {
             "completion": {
-                "provider": "openai-native",
+                "provider": "openai",
+                "type": "text",
                 "params": {
                     "model": "gpt-4",
                     "temperature": 0.8,
@@ -45,7 +46,17 @@ def test_create_config_success(
     assert "id" in data["data"]
     assert "version" in data["data"]
     assert data["data"]["version"]["version"] == 1
-    assert data["data"]["version"]["config_blob"] == config_data["config_blob"]
+    # Kaapi config params are normalized - invalid fields like max_tokens are stripped
+    assert data["data"]["version"]["config_blob"]["completion"]["provider"] == "openai"
+    assert data["data"]["version"]["config_blob"]["completion"]["type"] == "text"
+    assert (
+        data["data"]["version"]["config_blob"]["completion"]["params"]["model"]
+        == "gpt-4"
+    )
+    assert (
+        data["data"]["version"]["config_blob"]["completion"]["params"]["temperature"]
+        == 0.8
+    )
 
 
 def test_create_config_empty_blob_fails(
@@ -88,6 +99,7 @@ def test_create_config_duplicate_name_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
+                "type": "text",
                 "params": {"model": "gpt-4"},
             }
         },

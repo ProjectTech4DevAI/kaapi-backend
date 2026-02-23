@@ -2,7 +2,13 @@ from sqlmodel import SQLModel
 
 from .auth import AuthContext, Token, TokenPayload
 
-from .api_key import APIKey, APIKeyBase, APIKeyPublic, APIKeyCreateResponse
+from .api_key import (
+    APIKey,
+    APIKeyBase,
+    APIKeyPublic,
+    APIKeyCreateResponse,
+    APIKeyVerifyResponse,
+)
 
 from .assistants import Assistant, AssistantBase, AssistantCreate, AssistantUpdate
 
@@ -34,6 +40,7 @@ from .config import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
+    ConfigVersionUpdate,
     ConfigVersionPublic,
     ConfigVersionItems,
 )
@@ -103,6 +110,7 @@ from .llm import (
     CompletionConfig,
     LLMCallRequest,
     LLMCallResponse,
+    LlmCall,
 )
 
 from .message import Message

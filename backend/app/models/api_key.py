@@ -45,6 +45,14 @@ class APIKeyCreateResponse(APIKeyPublic):
     key: str
 
 
+class APIKeyVerifyResponse(SQLModel):
+    """Response model for API key verification."""
+
+    user_id: int
+    organization_id: int
+    project_id: int
+
+
 class APIKey(APIKeyBase, table=True):
     """Database model for API keys."""
 

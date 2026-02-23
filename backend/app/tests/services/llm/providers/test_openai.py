@@ -1,6 +1,7 @@
 """
 Tests for the OpenAI provider.
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -11,8 +12,9 @@ from app.models.llm import (
     QueryParams,
 )
 from app.models.llm.request import ConversationConfig
-from app.services.llm.providers.openai import OpenAIProvider
-from app.tests.utils.llm_provider import mock_openai_response
+
+from app.services.llm.providers.oai import OpenAIProvider
+from app.tests.utils.openai import mock_openai_response
 
 
 class TestOpenAIProvider:
@@ -33,6 +35,7 @@ class TestOpenAIProvider:
         """Create a basic completion config."""
         return NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={"model": "gpt-4"},
         )
 
@@ -53,11 +56,11 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
-        assert result.response.output.text == mock_response.output_text
+        assert result.response.output.content.value == mock_response.output_text
         assert result.response.model == mock_response.model
         assert result.response.provider == "openai-native"
         assert result.response.conversation_id is None
@@ -82,7 +85,7 @@ class TestOpenAIProvider:
         )
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -93,7 +96,11 @@ class TestOpenAIProvider:
         assert call_args[1]["conversation"] == {"id": conversation_id}
 
     def test_execute_with_auto_create_conversation(
-        self, provider, mock_client, completion_config, query_params
+        self,
+        provider,
+        mock_client,
+        completion_config,
+        query_params,
     ):
         """Test execution with auto-create conversation."""
         new_conversation_id = "conv_auto_456"
@@ -110,7 +117,7 @@ class TestOpenAIProvider:
         )
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -133,7 +140,10 @@ class TestOpenAIProvider:
         mock_client.responses.create.return_value = mock_response
 
         result, error = provider.execute(
-            completion_config, query_params, include_provider_raw_response=True
+            completion_config,
+            query_params,
+            "Test query",
+            include_provider_raw_response=True,
         )
 
         assert error is None
@@ -150,7 +160,7 @@ class TestOpenAIProvider:
             "unexpected keyword argument 'invalid_param'"
         )
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
@@ -170,7 +180,9 @@ class TestOpenAIProvider:
         with patch("app.utils.handle_openai_error") as mock_handler:
             mock_handler.return_value = "API request failed: rate limit exceeded"
 
-            result, error = provider.execute(completion_config, query_params)
+            result, error = provider.execute(
+                completion_config, query_params, "Test query"
+            )
 
             assert result is None
             assert error is not None
@@ -183,7 +195,7 @@ class TestOpenAIProvider:
         """Test handling of unexpected exceptions."""
         mock_client.responses.create.side_effect = Exception("Timeout occurred")
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
@@ -198,7 +210,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -216,7 +228,7 @@ class TestOpenAIProvider:
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None
@@ -235,13 +247,14 @@ class TestOpenAIProvider:
         # Create a config with conversation in params (should be removed)
         completion_config = NativeCompletionConfig(
             provider="openai-native",
+            type="text",
             params={"model": "gpt-4", "conversation": {"id": "old_conv"}},
         )
 
         mock_response = mock_openai_response(text="Test response", model="gpt-4")
         mock_client.responses.create.return_value = mock_response
 
-        result, error = provider.execute(completion_config, query_params)
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert error is None
         assert result is not None

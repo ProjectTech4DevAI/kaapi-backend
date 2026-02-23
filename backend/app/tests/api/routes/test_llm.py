@@ -7,7 +7,6 @@ from app.models.llm.request import (
     QueryParams,
     LLMCallConfig,
     ConfigBlob,
-    KaapiLLMParams,
     KaapiCompletionConfig,
     NativeCompletionConfig,
 )
@@ -26,6 +25,7 @@ def test_llm_call_success(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,
@@ -64,11 +64,12 @@ def test_llm_call_with_kaapi_config(
                 blob=ConfigBlob(
                     completion=KaapiCompletionConfig(
                         provider="openai",
-                        params=KaapiLLMParams(
-                            model="gpt-4o",
-                            instructions="You are a physics expert",
-                            temperature=0.5,
-                        ),
+                        type="text",
+                        params={
+                            "model": "gpt-4o",
+                            "instructions": "You are a physics expert",
+                            "temperature": 0.5,
+                        },
                     )
                 )
             ),
@@ -99,6 +100,7 @@ def test_llm_call_with_native_config(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.9,
@@ -171,20 +173,8 @@ def test_llm_call_success_with_guardrails(
 ) -> None:
     """Test successful LLM call when guardrails are enabled (no validators)."""
 
-    with (
-        patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
-        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
-    ):
+    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
-
-        mock_guardrails.return_value = {
-            "success": True,
-            "bypassed": False,
-            "data": {
-                "safe_text": "What is the capital of France?",
-                "rephrase_needed": False,
-            },
-        }
 
         payload = LLMCallRequest(
             query=QueryParams(input="What is the capital of France?"),
@@ -192,6 +182,7 @@ def test_llm_call_success_with_guardrails(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4o",
                             "temperature": 0.7,
@@ -199,8 +190,6 @@ def test_llm_call_success_with_guardrails(
                     )
                 )
             ),
-            input_guardrails=[],
-            output_guardrails=[],
             callback_url="https://example.com/callback",
         )
 
@@ -217,7 +206,6 @@ def test_llm_call_success_with_guardrails(
         assert "response is being generated" in body["data"]["message"]
 
         mock_start_job.assert_called_once()
-        mock_guardrails.assert_not_called()
 
 
 def test_llm_call_guardrails_bypassed_still_succeeds(
@@ -226,20 +214,8 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
 ) -> None:
     """If guardrails service is unavailable (bypassed), request should still succeed."""
 
-    with (
-        patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job,
-        patch("app.services.llm.guardrails.call_guardrails") as mock_guardrails,
-    ):
+    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
-
-        mock_guardrails.return_value = {
-            "success": True,
-            "bypassed": True,
-            "data": {
-                "safe_text": "What is the capital of France?",
-                "rephrase_needed": False,
-            },
-        }
 
         payload = LLMCallRequest(
             query=QueryParams(input="What is the capital of France?"),
@@ -247,6 +223,7 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
                 blob=ConfigBlob(
                     completion=NativeCompletionConfig(
                         provider="openai-native",
+                        type="text",
                         params={
                             "model": "gpt-4",
                             "temperature": 0.7,
@@ -254,8 +231,6 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
                     )
                 )
             ),
-            input_guardrails=[{"type": "pii_remover"}],
-            output_guardrails=[],
             callback_url="https://example.com/callback",
         )
 
