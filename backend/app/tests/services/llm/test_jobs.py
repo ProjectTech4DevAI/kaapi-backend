@@ -367,7 +367,7 @@ class TestExecuteJob:
         result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
-        assert "Unexpected error occurred" in result["error"]
+        assert "Unexpected error during LLM execution" in result["error"]
 
     def test_exception_during_provider_retrieval(
         self, db, job_env, job_for_execution, request_data

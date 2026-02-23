@@ -1,18 +1,10 @@
-"""
-CRUD operations for LLM calls.
-
-This module handles database operations for LLM calls including:
-1. Creating new LLM call records
-2. Updating LLM call responses
-3. Fetching LLM calls by ID
-"""
-
 import logging
 from typing import Any, Literal
 
 from uuid import UUID
 from sqlmodel import Session, select
 from app.core.util import now
+import base64
 import json
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
 from app.models.llm.request import (
@@ -41,7 +33,8 @@ def serialize_input(query_input: QueryInput | str) -> str:
                 "type": "audio",
                 "format": query_input.content.format,
                 "mime_type": query_input.content.mime_type,
-                "size_bytes": len(query_input.content.value),
+                # approximate byte size from b64encoded value
+                "size_bytes": len(query_input.content.value) * 3 // 4,
             }
         )
     else:
@@ -74,8 +67,10 @@ def create_llm_call(
     """
     # Determine input/output types based on completion config type
     completion_config = resolved_config.completion
-    completion_type = completion_config.type or getattr(
-        completion_config.params, "type", "text"
+    completion_type = completion_config.type or (
+        completion_config.params.get("type", "text")
+        if isinstance(completion_config.params, dict)
+        else getattr(completion_config.params, "type", "text")
     )
 
     input_type: Literal["text", "audio", "image"]
@@ -92,9 +87,9 @@ def create_llm_call(
         output_type = "text"
 
     model = (
-        completion_config.params.model
-        if hasattr(completion_config.params, "model")
-        else completion_config.params.get("model", "")
+        completion_config.params.get("model", "")
+        if isinstance(completion_config.params, dict)
+        else getattr(completion_config.params, "model", "")
     )
 
     # Build config dict for storage
@@ -174,8 +169,23 @@ def update_llm_call_response(
 
     if provider_response_id is not None:
         db_llm_call.provider_response_id = provider_response_id
+
     if content is not None:
+        # For audio outputs (AudioOutput model): calculate size metadata from base64 content
+        # AudioOutput serializes as: {"type": "audio", "content": {"format": "base64", "value": "...", "mime_type": "..."}}
+        if content.get("type") == "audio":
+            audio_value = content.get("content", {}).get("value")
+            if audio_value:
+                try:
+                    audio_data = base64.b64decode(audio_value)
+                    content["audio_size_bytes"] = len(audio_data)
+                except Exception as e:
+                    logger.warning(
+                        f"[update_llm_call_response] Failed to calculate audio size: {e}"
+                    )
+
         db_llm_call.content = content
+
     if usage is not None:
         db_llm_call.usage = usage
     if conversation_id is not None:

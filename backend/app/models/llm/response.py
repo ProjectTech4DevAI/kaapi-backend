@@ -3,7 +3,6 @@ LLM response models.
 
 This module contains structured response models for LLM API calls.
 """
-
 from sqlmodel import SQLModel, Field
 from typing import Literal, Annotated
 from app.models.llm.request import AudioContent, TextContent
@@ -27,7 +26,7 @@ class AudioOutput(SQLModel):
 
 
 # Type alias for LLM output (discriminated union)
-LLMOutput = Annotated[TextOutput | AudioOutput | None, Field(discriminator="type")]
+LLMOutput = Annotated[TextOutput | AudioOutput, Field(discriminator="type")]
 
 
 class LLMResponse(SQLModel):
@@ -45,7 +44,7 @@ class LLMResponse(SQLModel):
     model: str = Field(
         ..., description="Model used by the provider (e.g., gpt-4-turbo)."
     )
-    output: LLMOutput = Field(
+    output: LLMOutput | None = Field(
         ...,
         description="Structured output containing text and optional additional data.",
     )
