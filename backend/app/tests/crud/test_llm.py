@@ -411,3 +411,139 @@ def test_update_llm_call_response_not_found(db: Session) -> None:
             llm_call_id=fake_id,
             provider_response_id="resp_123",
         )
+
+
+def test_update_llm_call_response_with_audio_content(
+    db: Session,
+    test_job,
+    test_project: Project,
+    test_organization: Organization,
+    tts_config_blob: ConfigBlob,
+) -> None:
+    """Test updating LLM call with audio content calculates size."""
+    import base64
+
+    request = LLMCallRequest(
+        query=QueryParams(input="Test input"),
+        config=LLMCallConfig(blob=tts_config_blob),
+    )
+
+    created = create_llm_call(
+        db,
+        request=request,
+        job_id=test_job.id,
+        project_id=test_project.id,
+        organization_id=test_organization.id,
+        resolved_config=tts_config_blob,
+        original_provider="openai",
+    )
+
+    # Create valid audio content with base64 data
+    audio_bytes = b"fake audio data for testing"
+    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    audio_content = {
+        "type": "audio",
+        "content": {
+            "format": "base64",
+            "value": audio_base64,
+            "mime_type": "audio/mp3",
+        },
+    }
+
+    updated = update_llm_call_response(
+        db,
+        llm_call_id=created.id,
+        content=audio_content,
+    )
+
+    # Verify audio size was calculated and added
+    assert updated.content is not None
+    assert updated.content["audio_size_bytes"] == len(audio_bytes)
+
+
+def test_update_llm_call_response_with_invalid_audio_base64(
+    db: Session,
+    test_job,
+    test_project: Project,
+    test_organization: Organization,
+    tts_config_blob: ConfigBlob,
+) -> None:
+    """Test updating LLM call with invalid audio base64 logs warning but continues."""
+    request = LLMCallRequest(
+        query=QueryParams(input="Test input"),
+        config=LLMCallConfig(blob=tts_config_blob),
+    )
+
+    created = create_llm_call(
+        db,
+        request=request,
+        job_id=test_job.id,
+        project_id=test_project.id,
+        organization_id=test_organization.id,
+        resolved_config=tts_config_blob,
+        original_provider="openai",
+    )
+
+    # Invalid base64 data
+    audio_content = {
+        "type": "audio",
+        "content": {
+            "format": "base64",
+            "value": "not-valid-base64!!!",
+            "mime_type": "audio/mp3",
+        },
+    }
+
+    # Should not raise error, just log warning
+    updated = update_llm_call_response(
+        db,
+        llm_call_id=created.id,
+        content=audio_content,
+    )
+
+    # Content should still be updated, just without audio_size_bytes
+    assert updated.content is not None
+    assert updated.content["type"] == "audio"
+    assert "audio_size_bytes" not in updated.content
+
+
+def test_update_llm_call_response_with_text_content_no_size_calculation(
+    db: Session,
+    test_job,
+    test_project: Project,
+    test_organization: Organization,
+    text_config_blob: ConfigBlob,
+) -> None:
+    """Test updating LLM call with text content does not calculate audio size."""
+    request = LLMCallRequest(
+        query=QueryParams(input="Test input"),
+        config=LLMCallConfig(blob=text_config_blob),
+    )
+
+    created = create_llm_call(
+        db,
+        request=request,
+        job_id=test_job.id,
+        project_id=test_project.id,
+        organization_id=test_organization.id,
+        resolved_config=text_config_blob,
+        original_provider="openai",
+    )
+
+    text_content = {
+        "type": "text",
+        "content": {
+            "value": "This is a text response",
+        },
+    }
+
+    updated = update_llm_call_response(
+        db,
+        llm_call_id=created.id,
+        content=text_content,
+    )
+
+    # Should not have audio_size_bytes
+    assert updated.content is not None
+    assert "audio_size_bytes" not in updated.content
