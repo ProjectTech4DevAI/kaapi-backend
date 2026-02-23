@@ -231,6 +231,7 @@ dependencies = [
     { name = "pytest" },
     { name = "python-multipart" },
     { name = "redis" },
+    { name = "sarvamai" },
     { name = "scikit-learn" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlmodel" },
@@ -278,6 +279,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=7.4.4" },
     { name = "python-multipart", specifier = ">=0.0.22,<1.0.0" },
     { name = "redis", specifier = ">=5.0.0,<6.0.0" },
+    { name = "sarvamai", specifier = ">=0.1.25" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "sqlmodel", specifier = ">=0.0.21,<1.0.0" },
@@ -3127,6 +3129,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/05/04/74127fc843314818edfa81b5540e26dd537353b123a4edc563109d8f17dd/s3transfer-0.16.0.tar.gz", hash = "sha256:8e990f13268025792229cd52fa10cb7163744bf56e719e0b9cb925ab79abf920", size = 153827, upload-time = "2025-12-01T02:30:59.114Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fc/51/727abb13f44c1fcf6d145979e1535a35794db0f6e450a0cb46aa24732fe2/s3transfer-0.16.0-py3-none-any.whl", hash = "sha256:18e25d66fed509e3868dc1572b3f427ff947dd2c56f844a5bf09481ad3f3b2fe", size = 86830, upload-time = "2025-12-01T02:30:57.729Z" },
+]
+
+[[package]]
+name = "sarvamai"
+version = "0.1.25"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/f7/f24106109458b01ae9317a885f991a7d91b3c09f3707365cccda5b6f860b/sarvamai-0.1.25.tar.gz", hash = "sha256:590c1b5d4337852529c26a3ecbb08acfd4692ce27089fd4ace3bc55b5f5b60f2", size = 107235, upload-time = "2026-02-10T13:52:25.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/78/f30a7cfab12fceeeaa7df0f40822c56e14544bb85a44c04f455aea792818/sarvamai-0.1.25-py3-none-any.whl", hash = "sha256:0daa7b8a48ad2696d323105e7f1fc06741068f4ad9c89688dfb81843b0892d17", size = 213774, upload-time = "2026-02-10T13:52:23.861Z" },
 ]
 
 [[package]]
