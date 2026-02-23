@@ -22,7 +22,10 @@ from app.models import (
     CollectionJobPublic,
     CreationRequest,
 )
-from app.services.collections.helpers import extract_error_message
+from app.services.collections.helpers import (
+    extract_error_message,
+    to_collection_public,
+)
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_low_priority_job
 from app.utils import send_callback, APIResponse
@@ -75,7 +78,7 @@ def build_success_payload(
       "metadata": null
     }
     """
-    collection_public = CollectionPublic.model_validate(collection)
+    collection_public = to_collection_public(collection)
     job_public = CollectionJobPublic.model_validate(
         collection_job,
         update={"collection": collection_public},
