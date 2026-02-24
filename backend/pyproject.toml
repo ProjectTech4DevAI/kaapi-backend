@@ -37,6 +37,7 @@ dependencies = [
     "redis>=5.0.0,<6.0.0",
     "flower>=2.0.1",
     "google-genai>=1.59.0",
+    "pydub>=0.25.1",
 ]
 
 [tool.uv]

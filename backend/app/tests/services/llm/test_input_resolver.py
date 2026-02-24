@@ -12,7 +12,7 @@ from unittest.mock import patch, Mock
 import pytest
 
 from app.models.llm.request import TextInput, AudioInput, TextContent, AudioContent
-from app.services.llm.input_resolver import (
+from app.utils import (
     get_file_extension,
     resolve_input,
     resolve_audio_base64,

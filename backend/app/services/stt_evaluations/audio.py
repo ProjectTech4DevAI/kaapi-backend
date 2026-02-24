@@ -87,11 +87,7 @@ def upload_audio_file(
     try:
         storage = get_cloud_storage(session=session, project_id=project_id)
         s3_url = str(storage.put(source=file, file_path=file_path))
-
-        try:
-            size_bytes = int(storage.get_file_size_kb(s3_url) * 1024)
-        except Exception:
-            size_bytes = file.size or 0
+        size_bytes = file.size or 0
 
         original_filename = file.filename or new_filename
         content_type = file.content_type or f"audio/{extension}"

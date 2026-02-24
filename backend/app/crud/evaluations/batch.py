@@ -14,6 +14,8 @@ from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session
 
+from app.core.batch.base import BATCH_KEY
+
 from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.models import EvaluationRun
 from app.models.llm.request import KaapiLLMParams
@@ -66,7 +68,7 @@ def build_evaluation_jsonl(
     Build JSONL data for evaluation batch using OpenAI Responses API.
 
     Each line is a dict with:
-    - custom_id: Unique identifier for the request (dataset item ID)
+    - BATCH_KEY: Unique identifier for the request (dataset item ID)
     - method: POST
     - url: /v1/responses
     - body: Response request using config as-is with input from dataset
@@ -124,7 +126,7 @@ def build_evaluation_jsonl(
             ]
 
         batch_request = {
-            "custom_id": item["id"],
+            BATCH_KEY: item["id"],
             "method": "POST",
             "url": "/v1/responses",
             "body": body,

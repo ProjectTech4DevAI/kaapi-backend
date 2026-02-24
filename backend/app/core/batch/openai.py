@@ -149,7 +149,7 @@ class OpenAIBatchProvider(BatchProvider):
 
         Returns:
             List of result dictionaries, each containing:
-                - custom_id: Item identifier from input
+                - BATCH_KEY: Item identifier from input
                 - response: OpenAI response data (body, status_code, request_id)
                 - error: Error info (if item failed)
 

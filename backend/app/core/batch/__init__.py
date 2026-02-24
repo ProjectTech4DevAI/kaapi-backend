@@ -1,6 +1,6 @@
 """Batch processing infrastructure for LLM providers."""
 
-from .base import BatchProvider
+from .base import BATCH_KEY, BatchProvider
 from .gemini import (
     BatchJobState,
     GeminiBatchProvider,
@@ -17,6 +17,7 @@ from .operations import (
 from .polling import poll_batch_status
 
 __all__ = [
+    "BATCH_KEY",
     "BatchProvider",
     "BatchJobState",
     "GeminiBatchProvider",

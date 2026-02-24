@@ -16,7 +16,6 @@ from app.models.stt_evaluation import (
     STTSample,
     STTSampleCreate,
     STTDatasetPublic,
-    STTSamplePublic,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,7 +295,8 @@ def get_samples_by_dataset_id(
     dataset_id: int,
     org_id: int,
     project_id: int,
-    limit: int = 100,
+    # removing limit for now since we need all samples for batch job, can add pagination later if needed
+    limit: int,
     offset: int = 0,
 ) -> list[STTSample]:
     """Get samples for a dataset.

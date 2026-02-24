@@ -60,6 +60,13 @@ jobs:
           uv run pre-commit run --all-files
         working-directory: backend
 
+        # Install ffmpeg for file conversion
+      - name: install ffmpeg
+        run: |
+          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get -y install ffmpeg
+
       - name: Run tests
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
