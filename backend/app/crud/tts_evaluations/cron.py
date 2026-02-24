@@ -24,7 +24,11 @@ from app.core.batch import (
 )
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import upload_to_object_store
-from app.crud.tts_evaluations.result import count_results_by_status, update_tts_result
+from app.crud.tts_evaluations.result import (
+    count_results_by_status,
+    get_pending_results_for_run,
+    update_tts_result,
+)
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
@@ -285,9 +289,26 @@ async def poll_tts_run(
     for batch_job in batch_jobs:
         provider_name = batch_job.config.get("tts_provider", "unknown")
 
-        # Skip batch jobs already in terminal state
+        # Handle batch jobs already in terminal state
         if batch_job.provider_status in TERMINAL_STATES:
             if batch_job.provider_status == BatchJobState.SUCCEEDED.value:
+                # Check if there are still unprocessed results for this batch.
+                # This handles retries when a previous processing attempt failed.
+                pending_results = get_pending_results_for_run(
+                    session=session, run_id=run.id, provider=provider_name
+                )
+                if pending_results:
+                    logger.info(
+                        f"[poll_tts_run] {log_prefix} Reprocessing SUCCEEDED batch "
+                        f"with {len(pending_results)} pending results | "
+                        f"batch_job_id={batch_job.id}"
+                    )
+                    await process_completed_tts_batch(
+                        session=session,
+                        run=run,
+                        batch_job=batch_job,
+                        batch_provider=batch_provider,
+                    )
                 any_succeeded = True
             else:
                 any_failed = True
