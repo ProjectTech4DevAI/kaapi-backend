@@ -153,21 +153,6 @@ def list_tts_datasets(
 
     datasets = session.exec(statement).all()
 
-    result = [
-        TTSDatasetPublic(
-            id=dataset.id,
-            name=dataset.name,
-            description=dataset.description,
-            type=dataset.type,
-            language_id=dataset.language_id,
-            object_store_url=dataset.object_store_url,
-            dataset_metadata=dataset.dataset_metadata,
-            organization_id=dataset.organization_id,
-            project_id=dataset.project_id,
-            inserted_at=dataset.inserted_at,
-            updated_at=dataset.updated_at,
-        )
-        for dataset in datasets
-    ]
+    result = [TTSDatasetPublic.from_model(dataset) for dataset in datasets]
 
     return result, total

@@ -6,6 +6,7 @@ from .gemini import (
     GeminiBatchProvider,
     create_stt_batch_requests,
     create_tts_batch_requests,
+    extract_text_from_response_dict,
 )
 from .openai import OpenAIBatchProvider
 from .operations import (
@@ -24,6 +25,7 @@ __all__ = [
     "OpenAIBatchProvider",
     "create_stt_batch_requests",
     "create_tts_batch_requests",
+    "extract_text_from_response_dict",
     "start_batch_job",
     "download_batch_results",
     "process_completed_batch",

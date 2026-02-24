@@ -8,19 +8,26 @@ processing runs, grouped by project_id for credential management.
 """
 
 import logging
-from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import Integer
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.core.batch import (
     BATCH_KEY,
     BatchJobState,
     GeminiBatchProvider,
+    extract_text_from_response_dict,
     poll_batch_status,
 )
 from app.core.util import now
+from app.crud.evaluations.cron_utils import (
+    TERMINAL_STATES,
+    fetch_processing_runs,
+    get_batch_jobs_for_run,
+    group_runs_by_project,
+    make_empty_summary,
+    make_failure_result,
+)
 from app.crud.stt_evaluations.result import count_results_by_status
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
@@ -30,28 +37,6 @@ from app.models.stt_evaluation import EvaluationType, STTResult
 from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_text_from_response(response: dict[str, Any]) -> str:
-    """Extract text from a raw Gemini response dict."""
-    if "text" in response:
-        return response["text"]
-    text = ""
-    for candidate in response.get("candidates", []):
-        content = candidate.get("content", {})
-        for part in content.get("parts", []):
-            if "text" in part:
-                text += part["text"]
-    return text
-
-
-# Terminal states that indicate batch processing is complete
-TERMINAL_STATES = {
-    BatchJobState.SUCCEEDED.value,
-    BatchJobState.FAILED.value,
-    BatchJobState.CANCELLED.value,
-    BatchJobState.EXPIRED.value,
-}
 
 
 async def poll_all_pending_stt_evaluations(
@@ -78,32 +63,17 @@ async def poll_all_pending_stt_evaluations(
     """
     logger.info("[poll_all_pending_stt_evaluations] Starting STT evaluation polling")
 
-    # Single query to fetch all processing STT evaluation runs
-    statement = select(EvaluationRun).where(
-        EvaluationRun.type == EvaluationType.STT.value,
-        EvaluationRun.status == "processing",
-        EvaluationRun.batch_job_id.is_not(None),
-    )
-    pending_runs = session.exec(statement).all()
+    pending_runs = fetch_processing_runs(session, EvaluationType.STT.value)
 
     if not pending_runs:
         logger.info("[poll_all_pending_stt_evaluations] No pending STT runs found")
-        return {
-            "total": 0,
-            "processed": 0,
-            "failed": 0,
-            "still_processing": 0,
-            "details": [],
-        }
+        return make_empty_summary()
 
     logger.info(
         f"[poll_all_pending_stt_evaluations] Found {len(pending_runs)} pending STT runs"
     )
 
-    # Group evaluations by project_id since credentials are per project
-    evaluations_by_project: dict[int, list[EvaluationRun]] = defaultdict(list)
-    for run in pending_runs:
-        evaluations_by_project[run.project_id].append(run)
+    evaluations_by_project = group_runs_by_project(pending_runs)
 
     # Process each project separately
     all_results: list[dict[str, Any]] = []
@@ -153,15 +123,7 @@ async def poll_all_pending_stt_evaluations(
                         status="failed",
                         error_message=f"Polling failed: {str(e)}",
                     )
-                    all_results.append(
-                        {
-                            "run_id": run.id,
-                            "run_name": run.run_name,
-                            "type": "stt",
-                            "action": "failed",
-                            "error": str(e),
-                        }
-                    )
+                    all_results.append(make_failure_result(run, "stt", str(e)))
                     total_failed += 1
 
         except Exception as e:
@@ -178,13 +140,9 @@ async def poll_all_pending_stt_evaluations(
                     error_message=f"Project processing failed: {str(e)}",
                 )
                 all_results.append(
-                    {
-                        "run_id": run.id,
-                        "run_name": run.run_name,
-                        "type": "stt",
-                        "action": "failed",
-                        "error": f"Project processing failed: {str(e)}",
-                    }
+                    make_failure_result(
+                        run, "stt", f"Project processing failed: {str(e)}"
+                    )
                 )
             total_failed += len(project_runs)
 
@@ -203,28 +161,6 @@ async def poll_all_pending_stt_evaluations(
     )
 
     return summary
-
-
-def _get_batch_jobs_for_run(
-    session: Session,
-    run: EvaluationRun,
-) -> list[BatchJob]:
-    """Find all batch jobs associated with an STT evaluation run.
-
-    Queries batch_job table where config contains the evaluation_run_id.
-
-    Args:
-        session: Database session
-        run: The evaluation run
-
-    Returns:
-        list[BatchJob]: All batch jobs for this run
-    """
-    stmt = select(BatchJob).where(
-        BatchJob.job_type == "stt_evaluation",
-        BatchJob.config["evaluation_run_id"].astext.cast(Integer) == run.id,
-    )
-    return list(session.exec(stmt).all())
 
 
 async def poll_stt_run(
@@ -255,7 +191,9 @@ async def poll_stt_run(
     previous_status = run.status
 
     # Find all batch jobs for this run
-    batch_jobs = _get_batch_jobs_for_run(session=session, run=run)
+    batch_jobs = get_batch_jobs_for_run(
+        session=session, run=run, job_type="stt_evaluation"
+    )
 
     if not batch_jobs:
         logger.warning(f"[poll_stt_run] No batch jobs found | run_id: {run.id}")
@@ -373,7 +311,7 @@ async def poll_stt_run(
 async def process_completed_stt_batch(
     session: Session,
     run: EvaluationRun,
-    batch_job: Any,
+    batch_job: BatchJob,
     batch_provider: GeminiBatchProvider,
 ) -> None:
     """Process completed Gemini batch - download results and create STT result records.
@@ -433,7 +371,9 @@ async def process_completed_stt_batch(
             }
 
             if response.get("response"):
-                row["transcription"] = _extract_text_from_response(response["response"])
+                row["transcription"] = extract_text_from_response_dict(
+                    response["response"]
+                )
                 row["status"] = JobStatus.SUCCESS.value
                 success_count += 1
             else:

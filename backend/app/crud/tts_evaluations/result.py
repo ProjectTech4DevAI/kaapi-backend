@@ -104,22 +104,14 @@ def get_results_by_run_id(
     run_id: int,
     org_id: int,
     project_id: int,
-    provider: str | None = None,
-    status: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
 ) -> tuple[list[TTSResultPublic], int]:
-    """Get results for an evaluation run.
+    """Get all results for an evaluation run.
 
     Args:
         session: Database session
         run_id: Run ID
         org_id: Organization ID
         project_id: Project ID
-        provider: Optional filter by provider
-        status: Optional filter by status
-        limit: Maximum results to return
-        offset: Number of results to skip
 
     Returns:
         tuple[list[TTSResultPublic], int]: Results and total count
@@ -130,46 +122,12 @@ def get_results_by_run_id(
         TTSResult.project_id == project_id,
     ]
 
-    if provider is not None:
-        where_clauses.append(TTSResult.provider == provider)
-
-    if status is not None:
-        where_clauses.append(TTSResult.status == status)
-
-    count_stmt = select(func.count(TTSResult.id)).where(*where_clauses)
-    total = session.exec(count_stmt).one()
-
-    statement = (
-        select(TTSResult)
-        .where(*where_clauses)
-        .order_by(TTSResult.id)
-        .offset(offset)
-        .limit(limit)
-    )
+    statement = select(TTSResult).where(*where_clauses).order_by(TTSResult.id)
 
     rows = session.exec(statement).all()
+    total = len(rows)
 
-    results = [
-        TTSResultPublic(
-            id=result.id,
-            sample_text=result.sample_text,
-            object_store_url=result.object_store_url,
-            duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
-            size_bytes=(result.metadata_ or {}).get("size_bytes"),
-            provider=result.provider,
-            status=result.status,
-            score=result.score,
-            is_correct=result.is_correct,
-            comment=result.comment,
-            error_message=result.error_message,
-            evaluation_run_id=result.evaluation_run_id,
-            organization_id=result.organization_id,
-            project_id=result.project_id,
-            inserted_at=result.inserted_at,
-            updated_at=result.updated_at,
-        )
-        for result in rows
-    ]
+    results = [TTSResultPublic.from_model(result) for result in rows]
 
     return results, total
 

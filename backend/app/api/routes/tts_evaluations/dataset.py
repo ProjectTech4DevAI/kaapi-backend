@@ -56,21 +56,7 @@ def create_dataset(
         language_id=dataset_create.language_id,
     )
 
-    return APIResponse.success_response(
-        data=TTSDatasetPublic(
-            id=dataset.id,
-            name=dataset.name,
-            description=dataset.description,
-            type=dataset.type,
-            language_id=dataset.language_id,
-            object_store_url=dataset.object_store_url,
-            dataset_metadata=dataset.dataset_metadata,
-            organization_id=dataset.organization_id,
-            project_id=dataset.project_id,
-            inserted_at=dataset.inserted_at,
-            updated_at=dataset.updated_at,
-        )
-    )
+    return APIResponse.success_response(data=TTSDatasetPublic.from_model(dataset))
 
 
 @router.get(
@@ -125,19 +111,7 @@ def get_dataset(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     return APIResponse.success_response(
-        data=TTSDatasetPublic(
-            id=dataset.id,
-            name=dataset.name,
-            description=dataset.description,
-            type=dataset.type,
-            language_id=dataset.language_id,
-            object_store_url=dataset.object_store_url,
-            dataset_metadata=dataset.dataset_metadata,
-            organization_id=dataset.organization_id,
-            project_id=dataset.project_id,
-            inserted_at=dataset.inserted_at,
-            updated_at=dataset.updated_at,
-        ),
+        data=TTSDatasetPublic.from_model(dataset),
         metadata={
             "sample_count": (dataset.dataset_metadata or {}).get("sample_count", 0)
         },

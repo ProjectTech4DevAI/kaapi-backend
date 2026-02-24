@@ -61,26 +61,7 @@ def update_result_feedback(
         comment=feedback.comment,
     )
 
-    return APIResponse.success_response(
-        data=TTSResultPublic(
-            id=result.id,
-            sample_text=result.sample_text,
-            object_store_url=result.object_store_url,
-            duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
-            size_bytes=(result.metadata_ or {}).get("size_bytes"),
-            provider=result.provider,
-            status=result.status,
-            score=result.score,
-            is_correct=result.is_correct,
-            comment=result.comment,
-            error_message=result.error_message,
-            evaluation_run_id=result.evaluation_run_id,
-            organization_id=result.organization_id,
-            project_id=result.project_id,
-            inserted_at=result.inserted_at,
-            updated_at=result.updated_at,
-        )
-    )
+    return APIResponse.success_response(data=TTSResultPublic.from_model(result))
 
 
 @router.get(
@@ -106,23 +87,4 @@ def get_result(
     if not result:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    return APIResponse.success_response(
-        data=TTSResultPublic(
-            id=result.id,
-            sample_text=result.sample_text,
-            object_store_url=result.object_store_url,
-            duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
-            size_bytes=(result.metadata_ or {}).get("size_bytes"),
-            provider=result.provider,
-            status=result.status,
-            score=result.score,
-            is_correct=result.is_correct,
-            comment=result.comment,
-            error_message=result.error_message,
-            evaluation_run_id=result.evaluation_run_id,
-            organization_id=result.organization_id,
-            project_id=result.project_id,
-            inserted_at=result.inserted_at,
-            updated_at=result.updated_at,
-        )
-    )
+    return APIResponse.success_response(data=TTSResultPublic.from_model(result))

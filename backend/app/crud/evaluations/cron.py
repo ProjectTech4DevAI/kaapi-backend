@@ -13,8 +13,6 @@ from typing import Any
 from sqlmodel import Session
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
-from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
-from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +36,10 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     try:
         # Poll text evaluations (single query, grouped by project)
         text_summary = await poll_all_pending_evaluations(session=session)
+
+        # Lazy imports to avoid circular dependency with cron_utils
+        from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
+        from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
 
         # Poll STT evaluations (single query, grouped by project)
         stt_summary = await poll_all_pending_stt_evaluations(session=session)

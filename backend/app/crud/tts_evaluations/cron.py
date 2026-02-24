@@ -9,17 +9,23 @@ processing runs, grouped by project_id for credential management.
 """
 
 import logging
-from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import Integer
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.celery.utils import start_low_priority_job
 from app.core.batch import (
     BatchJobState,
     GeminiBatchProvider,
     poll_batch_status,
+)
+from app.crud.evaluations.cron_utils import (
+    TERMINAL_STATES,
+    fetch_processing_runs,
+    get_batch_jobs_for_run,
+    group_runs_by_project,
+    make_empty_summary,
+    make_failure_result,
 )
 from app.crud.tts_evaluations.result import (
     count_results_by_status,
@@ -33,14 +39,6 @@ from app.models.stt_evaluation import EvaluationType
 from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
-
-# Terminal states that indicate batch processing is complete
-TERMINAL_STATES = {
-    BatchJobState.SUCCEEDED.value,
-    BatchJobState.FAILED.value,
-    BatchJobState.CANCELLED.value,
-    BatchJobState.EXPIRED.value,
-}
 
 # Function path for Celery task dispatch
 _TTS_RESULT_PROCESSING_PATH = (
@@ -65,32 +63,17 @@ async def poll_all_pending_tts_evaluations(
     """
     logger.info("[poll_all_pending_tts_evaluations] Starting TTS evaluation polling")
 
-    # Single query to fetch all processing TTS evaluation runs
-    statement = select(EvaluationRun).where(
-        EvaluationRun.type == EvaluationType.TTS.value,
-        EvaluationRun.status == "processing",
-        EvaluationRun.batch_job_id.is_not(None),
-    )
-    pending_runs = session.exec(statement).all()
+    pending_runs = fetch_processing_runs(session, EvaluationType.TTS.value)
 
     if not pending_runs:
         logger.info("[poll_all_pending_tts_evaluations] No pending TTS runs found")
-        return {
-            "total": 0,
-            "processed": 0,
-            "failed": 0,
-            "still_processing": 0,
-            "details": [],
-        }
+        return make_empty_summary()
 
     logger.info(
         f"[poll_all_pending_tts_evaluations] Found {len(pending_runs)} pending TTS runs"
     )
 
-    # Group evaluations by project_id since credentials are per project
-    evaluations_by_project: dict[int, list[EvaluationRun]] = defaultdict(list)
-    for run in pending_runs:
-        evaluations_by_project[run.project_id].append(run)
+    evaluations_by_project = group_runs_by_project(pending_runs)
 
     # Process each project separately
     all_results: list[dict[str, Any]] = []
@@ -120,15 +103,7 @@ async def poll_all_pending_tts_evaluations(
                         status="failed",
                         error_message=f"Gemini client initialization failed: {str(client_err)}",
                     )
-                    all_results.append(
-                        {
-                            "run_id": run.id,
-                            "run_name": run.run_name,
-                            "type": "tts",
-                            "action": "failed",
-                            "error": str(client_err),
-                        }
-                    )
+                    all_results.append(make_failure_result(run, "tts", str(client_err)))
                     total_failed += 1
                 continue
 
@@ -163,15 +138,7 @@ async def poll_all_pending_tts_evaluations(
                         status="failed",
                         error_message=f"Polling failed: {str(e)}",
                     )
-                    all_results.append(
-                        {
-                            "run_id": run.id,
-                            "run_name": run.run_name,
-                            "type": "tts",
-                            "action": "failed",
-                            "error": str(e),
-                        }
-                    )
+                    all_results.append(make_failure_result(run, "tts", str(e)))
                     total_failed += 1
 
         except Exception as e:
@@ -188,13 +155,9 @@ async def poll_all_pending_tts_evaluations(
                     error_message=f"Project processing failed: {str(e)}",
                 )
                 all_results.append(
-                    {
-                        "run_id": run.id,
-                        "run_name": run.run_name,
-                        "type": "tts",
-                        "action": "failed",
-                        "error": f"Project processing failed: {str(e)}",
-                    }
+                    make_failure_result(
+                        run, "tts", f"Project processing failed: {str(e)}"
+                    )
                 )
                 total_failed += 1
 
@@ -213,26 +176,6 @@ async def poll_all_pending_tts_evaluations(
     )
 
     return summary
-
-
-def _get_batch_jobs_for_run(
-    session: Session,
-    run: EvaluationRun,
-) -> list[BatchJob]:
-    """Find all batch jobs associated with a TTS evaluation run.
-
-    Args:
-        session: Database session
-        run: The evaluation run
-
-    Returns:
-        list[BatchJob]: All batch jobs for this run
-    """
-    stmt = select(BatchJob).where(
-        BatchJob.job_type == "tts_evaluation",
-        BatchJob.config["evaluation_run_id"].astext.cast(Integer) == run.id,
-    )
-    return list(session.exec(stmt).all())
 
 
 def _dispatch_tts_result_processing(
@@ -296,7 +239,9 @@ async def poll_tts_run(
 
     previous_status = run.status
 
-    batch_jobs = _get_batch_jobs_for_run(session=session, run=run)
+    batch_jobs = get_batch_jobs_for_run(
+        session=session, run=run, job_type="tts_evaluation"
+    )
 
     if not batch_jobs:
         logger.warning(f"[poll_tts_run] {log_prefix} No batch jobs found")

@@ -173,6 +173,23 @@ class TTSDatasetPublic(BaseModel):
     inserted_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def from_model(cls, dataset: "EvaluationDataset") -> "TTSDatasetPublic":
+        """Create from an EvaluationDataset model instance."""
+        return cls(
+            id=dataset.id,
+            name=dataset.name,
+            description=dataset.description,
+            type=dataset.type,
+            language_id=dataset.language_id,
+            object_store_url=dataset.object_store_url,
+            dataset_metadata=dataset.dataset_metadata,
+            organization_id=dataset.organization_id,
+            project_id=dataset.project_id,
+            inserted_at=dataset.inserted_at,
+            updated_at=dataset.updated_at,
+        )
+
 
 class TTSResultPublic(BaseModel):
     """Public model for TTS results."""
@@ -193,6 +210,28 @@ class TTSResultPublic(BaseModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_model(cls, result: "TTSResult") -> "TTSResultPublic":
+        """Create from a TTSResult model instance."""
+        return cls(
+            id=result.id,
+            sample_text=result.sample_text,
+            object_store_url=result.object_store_url,
+            duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
+            size_bytes=(result.metadata_ or {}).get("size_bytes"),
+            provider=result.provider,
+            status=result.status,
+            score=result.score,
+            is_correct=result.is_correct,
+            comment=result.comment,
+            error_message=result.error_message,
+            evaluation_run_id=result.evaluation_run_id,
+            organization_id=result.organization_id,
+            project_id=result.project_id,
+            inserted_at=result.inserted_at,
+            updated_at=result.updated_at,
+        )
 
 
 class TTSFeedbackUpdate(BaseModel):

@@ -18,6 +18,29 @@ from .base import BATCH_KEY, BatchProvider
 logger = logging.getLogger(__name__)
 
 
+def extract_text_from_response_dict(response: dict[str, Any]) -> str:
+    """Extract text content from a Gemini response dictionary.
+
+    Args:
+        response: Gemini response as a dictionary
+
+    Returns:
+        str: Extracted text
+    """
+    # Try direct text field first
+    if "text" in response:
+        return response["text"]
+
+    # Extract from candidates structure
+    text = ""
+    for candidate in response.get("candidates", []):
+        content = candidate.get("content", {})
+        for part in content.get("parts", []):
+            if "text" in part:
+                text += part["text"]
+    return text
+
+
 class BatchJobState(str, Enum):
     """Gemini batch job states."""
 
@@ -269,26 +292,8 @@ class GeminiBatchProvider(BatchProvider):
 
     @staticmethod
     def _extract_text_from_response_dict(response: dict[str, Any]) -> str:
-        """Extract text content from a Gemini response dictionary.
-
-        Args:
-            response: Gemini response as a dictionary
-
-        Returns:
-            str: Extracted text
-        """
-        # Try direct text field first
-        if "text" in response:
-            return response["text"]
-
-        # Extract from candidates structure
-        text = ""
-        for candidate in response.get("candidates", []):
-            content = candidate.get("content", {})
-            for part in content.get("parts", []):
-                if "text" in part:
-                    text += part["text"]
-        return text
+        """Extract text content from a Gemini response dictionary."""
+        return extract_text_from_response_dict(response)
 
     def upload_file(self, content: str, purpose: str = "batch") -> str:
         """Upload a JSONL file to Gemini Files API.

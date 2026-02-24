@@ -243,10 +243,6 @@ def get_tts_evaluation_run(
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
-    result_limit: int = Query(100, ge=1, le=1000, description="Max results to return"),
-    result_offset: int = Query(0, ge=0, description="Result offset"),
-    provider: str | None = Query(None, description="Filter results by provider"),
-    status: str | None = Query(None, description="Filter results by status"),
 ) -> APIResponse[TTSEvaluationRunWithResults]:
     """Get a TTS evaluation run with results."""
     run = get_tts_run_by_id(
@@ -268,10 +264,6 @@ def get_tts_evaluation_run(
             run_id=run_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
-            provider=provider,
-            status=status,
-            limit=result_limit,
-            offset=result_offset,
         )
 
     return APIResponse.success_response(
