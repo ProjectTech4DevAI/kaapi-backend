@@ -1,7 +1,6 @@
 """Audio processing utilities for TTS evaluation."""
 
 import io
-import struct
 import wave
 
 

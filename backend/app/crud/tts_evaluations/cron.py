@@ -21,11 +21,8 @@ from app.core.batch import (
 )
 from app.crud.evaluations.cron_utils import (
     TERMINAL_STATES,
-    fetch_processing_runs,
     get_batch_jobs_for_run,
-    group_runs_by_project,
-    make_empty_summary,
-    make_failure_result,
+    poll_all_pending_evaluations_by_type,
 )
 from app.crud.tts_evaluations.result import (
     count_results_by_status,
@@ -36,7 +33,6 @@ from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
-from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -51,131 +47,20 @@ async def poll_all_pending_tts_evaluations(
 ) -> dict[str, Any]:
     """Poll all pending TTS evaluations across all organizations.
 
-    Fetches all TTS evaluation runs with status='processing' in a single query,
-    groups them by project_id, and processes each project with its own
-    Gemini client.
-
     Args:
         session: Database session
 
     Returns:
         Summary dict with total, processed, failed, still_processing counts
     """
-    logger.info("[poll_all_pending_tts_evaluations] Starting TTS evaluation polling")
-
-    pending_runs = fetch_processing_runs(session, EvaluationType.TTS.value)
-
-    if not pending_runs:
-        logger.info("[poll_all_pending_tts_evaluations] No pending TTS runs found")
-        return make_empty_summary()
-
-    logger.info(
-        f"[poll_all_pending_tts_evaluations] Found {len(pending_runs)} pending TTS runs"
+    return await poll_all_pending_evaluations_by_type(
+        session,
+        eval_type="tts",
+        eval_type_enum_value=EvaluationType.TTS.value,
+        update_run_fn=update_tts_run,
+        poll_run_fn=poll_tts_run,
+        success_actions=("completed", "processed", "dispatched"),
     )
-
-    evaluations_by_project = group_runs_by_project(pending_runs)
-
-    # Process each project separately
-    all_results: list[dict[str, Any]] = []
-    total_processed = 0
-    total_failed = 0
-    total_still_processing = 0
-
-    for project_id, project_runs in evaluations_by_project.items():
-        org_id = project_runs[0].organization_id
-
-        try:
-            try:
-                gemini_client = GeminiClient.from_credentials(
-                    session=session,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-            except Exception as client_err:
-                logger.error(
-                    f"[poll_all_pending_tts_evaluations] Failed to get Gemini client | "
-                    f"org_id={org_id} | project_id={project_id} | error={client_err}"
-                )
-                for run in project_runs:
-                    update_tts_run(
-                        session=session,
-                        run_id=run.id,
-                        status="failed",
-                        error_message=f"Gemini client initialization failed: {str(client_err)}",
-                    )
-                    all_results.append(make_failure_result(run, "tts", str(client_err)))
-                    total_failed += 1
-                continue
-
-            batch_provider = GeminiBatchProvider(client=gemini_client.client)
-
-            for run in project_runs:
-                try:
-                    result = await poll_tts_run(
-                        session=session,
-                        run=run,
-                        batch_provider=batch_provider,
-                        org_id=org_id,
-                    )
-                    all_results.append(result)
-
-                    if result["action"] in ("completed", "processed", "dispatched"):
-                        total_processed += 1
-                    elif result["action"] == "failed":
-                        total_failed += 1
-                    else:
-                        total_still_processing += 1
-
-                except Exception as e:
-                    logger.error(
-                        f"[poll_all_pending_tts_evaluations] Failed to poll TTS run | "
-                        f"run_id={run.id} | {e}",
-                        exc_info=True,
-                    )
-                    update_tts_run(
-                        session=session,
-                        run_id=run.id,
-                        status="failed",
-                        error_message=f"Polling failed: {str(e)}",
-                    )
-                    all_results.append(make_failure_result(run, "tts", str(e)))
-                    total_failed += 1
-
-        except Exception as e:
-            logger.error(
-                f"[poll_all_pending_tts_evaluations] Failed to process project | "
-                f"project_id={project_id} | {e}",
-                exc_info=True,
-            )
-            for run in project_runs:
-                update_tts_run(
-                    session=session,
-                    run_id=run.id,
-                    status="failed",
-                    error_message=f"Project processing failed: {str(e)}",
-                )
-                all_results.append(
-                    make_failure_result(
-                        run, "tts", f"Project processing failed: {str(e)}"
-                    )
-                )
-                total_failed += 1
-
-    summary = {
-        "total": len(pending_runs),
-        "processed": total_processed,
-        "failed": total_failed,
-        "still_processing": total_still_processing,
-        "details": all_results,
-    }
-
-    logger.info(
-        f"[poll_all_pending_tts_evaluations] Polling summary | "
-        f"processed={total_processed} | failed={total_failed} | "
-        f"still_processing={total_still_processing}"
-    )
-
-    return summary
 
 
 def _dispatch_tts_result_processing(

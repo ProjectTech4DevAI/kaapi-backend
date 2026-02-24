@@ -162,6 +162,41 @@ def _samples_to_csv(samples: list[TTSSampleCreate]) -> bytes:
     return output.getvalue().encode("utf-8")
 
 
+def get_sample_texts_from_dataset(
+    session: Session,
+    dataset: "EvaluationDataset",
+    project_id: int,
+) -> list[str]:
+    """Extract sample texts from a TTS dataset's CSV in S3.
+
+    Args:
+        session: Database session
+        dataset: The evaluation dataset record
+        project_id: Project ID
+
+    Returns:
+        List of text strings
+    """
+    if not dataset.object_store_url:
+        logger.warning(
+            f"[get_sample_texts_from_dataset] No object_store_url | "
+            f"dataset_id={dataset.id}"
+        )
+        return []
+
+    try:
+        storage = get_cloud_storage(session=session, project_id=project_id)
+        csv_bytes = storage.stream(dataset.object_store_url).read()
+        samples = parse_tts_samples_from_csv(csv_bytes)
+        return [s["text"] for s in samples]
+    except Exception as e:
+        logger.error(
+            f"[get_sample_texts_from_dataset] Failed to load CSV | "
+            f"dataset_id={dataset.id}, error={str(e)}"
+        )
+        return []
+
+
 def parse_tts_samples_from_csv(csv_content: bytes) -> list[dict[str, Any]]:
     """Parse TTS samples from CSV content.
 

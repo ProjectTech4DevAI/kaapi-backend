@@ -151,26 +151,7 @@ def list_tts_runs(
 
     runs = session.exec(statement).all()
 
-    result = [
-        TTSEvaluationRunPublic(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
-        )
-        for run in runs
-    ]
+    result = [TTSEvaluationRunPublic.from_model(run) for run in runs]
 
     return result, total
 

@@ -20,13 +20,12 @@ from app.models.tts_evaluation import (
     TTSEvaluationRunCreate,
     TTSEvaluationRunPublic,
     TTSEvaluationRunWithResults,
-    TTSSampleCreate,
 )
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
 )
-from app.services.tts_evaluations.dataset import parse_tts_samples_from_csv
+from app.services.tts_evaluations.dataset import get_sample_texts_from_dataset
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -70,7 +69,7 @@ def start_tts_evaluation(
         raise HTTPException(status_code=400, detail="Dataset has no samples")
 
     # Get sample texts from the dataset CSV
-    sample_texts = _get_sample_texts_from_dataset(
+    sample_texts = get_sample_texts_from_dataset(
         _session, dataset, auth_context.project_.id
     )
 
@@ -138,65 +137,14 @@ def start_tts_evaluation(
     )
 
     return APIResponse.success_response(
-        data=TTSEvaluationRunPublic(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
+        data=TTSEvaluationRunPublic.from_model(
+            run,
             run_metadata={
                 "voice_name": DEFAULT_VOICE_NAME,
                 "style_prompt": DEFAULT_STYLE_PROMPT,
             },
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
         )
     )
-
-
-def _get_sample_texts_from_dataset(
-    session: "SessionDep",
-    dataset: "EvaluationDataset",
-    project_id: int,
-) -> list[str]:
-    """Extract sample texts from a TTS dataset's CSV in S3.
-
-    Args:
-        session: Database session
-        dataset: The evaluation dataset record
-        project_id: Project ID
-
-    Returns:
-        List of text strings
-    """
-    if not dataset.object_store_url:
-        logger.warning(
-            f"[_get_sample_texts_from_dataset] No object_store_url | "
-            f"dataset_id={dataset.id}"
-        )
-        return []
-
-    try:
-        from app.core.cloud.storage import get_cloud_storage
-
-        storage = get_cloud_storage(session=session, project_id=project_id)
-        csv_bytes = storage.stream(dataset.object_store_url).read()
-        samples = parse_tts_samples_from_csv(csv_bytes)
-        return [s["text"] for s in samples]
-    except Exception as e:
-        logger.error(
-            f"[_get_sample_texts_from_dataset] Failed to load CSV | "
-            f"dataset_id={dataset.id}, error={str(e)}"
-        )
-        return []
 
 
 @router.get(
@@ -267,22 +215,8 @@ def get_tts_evaluation_run(
         )
 
     return APIResponse.success_response(
-        data=TTSEvaluationRunWithResults(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
+        data=TTSEvaluationRunWithResults.from_model(
+            run,
             results=results,
             results_total=results_total,
         ),

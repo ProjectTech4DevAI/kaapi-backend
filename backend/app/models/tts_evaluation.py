@@ -1,7 +1,9 @@
 """TTS Evaluation models for Text-to-Speech evaluation feature."""
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
@@ -12,6 +14,9 @@ from sqlmodel import SQLModel
 from app.core.util import now
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
+
+if TYPE_CHECKING:
+    from app.models import EvaluationDataset, EvaluationRun
 
 # Supported TTS models for evaluation
 SUPPORTED_TTS_MODELS = ["gemini-2.5-pro-preview-tts"]
@@ -174,7 +179,7 @@ class TTSDatasetPublic(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, dataset: "EvaluationDataset") -> "TTSDatasetPublic":
+    def from_model(cls, dataset: EvaluationDataset) -> TTSDatasetPublic:
         """Create from an EvaluationDataset model instance."""
         return cls(
             id=dataset.id,
@@ -212,7 +217,7 @@ class TTSResultPublic(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, result: "TTSResult") -> "TTSResultPublic":
+    def from_model(cls, result: TTSResult) -> TTSResultPublic:
         """Create from a TTSResult model instance."""
         return cls(
             id=result.id,
@@ -256,17 +261,17 @@ class TTSEvaluationRunCreate(BaseModel):
 
     @field_validator("models")
     @classmethod
-    def validate_models(cls, valid_model: list[str]) -> list[str]:
+    def validate_models(cls, models: list[str]) -> list[str]:
         """Validate that all models are supported."""
-        if not valid_model:
+        if not models:
             raise ValueError("At least one model must be specified")
-        unsupported = [m for m in valid_model if m not in SUPPORTED_TTS_MODELS]
+        unsupported = [m for m in models if m not in SUPPORTED_TTS_MODELS]
         if unsupported:
             raise ValueError(
                 f"Unsupported model(s): {', '.join(unsupported)}. "
                 f"Supported models are: {', '.join(SUPPORTED_TTS_MODELS)}"
             )
-        return valid_model
+        return models
 
 
 class TTSEvaluationRunPublic(BaseModel):
@@ -289,9 +294,67 @@ class TTSEvaluationRunPublic(BaseModel):
     inserted_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def from_model(
+        cls,
+        run: EvaluationRun,
+        *,
+        run_metadata: dict[str, Any] | None = None,
+    ) -> TTSEvaluationRunPublic:
+        """Create from an EvaluationRun model instance."""
+        return cls(
+            id=run.id,
+            run_name=run.run_name,
+            dataset_name=run.dataset_name,
+            type=run.type,
+            language_id=run.language_id,
+            models=run.providers,
+            dataset_id=run.dataset_id,
+            status=run.status,
+            total_items=run.total_items,
+            score=run.score,
+            error_message=run.error_message,
+            run_metadata=run_metadata,
+            organization_id=run.organization_id,
+            project_id=run.project_id,
+            inserted_at=run.inserted_at,
+            updated_at=run.updated_at,
+        )
+
 
 class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
     """TTS evaluation run with embedded results."""
 
     results: list[TTSResultPublic]
     results_total: int = Field(0, description="Total number of results")
+
+    @classmethod
+    def from_model(
+        cls,
+        run: EvaluationRun,
+        *,
+        results: list[TTSResultPublic] | None = None,
+        results_total: int = 0,
+        run_metadata: dict[str, Any] | None = None,
+    ) -> TTSEvaluationRunWithResults:
+        """Create from an EvaluationRun model instance with results."""
+        return cls(
+            id=run.id,
+            run_name=run.run_name,
+            dataset_name=run.dataset_name,
+            type=run.type,
+            language_id=run.language_id,
+            models=run.providers,
+            dataset_id=run.dataset_id,
+            status=run.status,
+            total_items=run.total_items,
+            score=run.score,
+            error_message=run.error_message,
+            run_metadata=run_metadata,
+            organization_id=run.organization_id,
+            project_id=run.project_id,
+            inserted_at=run.inserted_at,
+            updated_at=run.updated_at,
+            results=results or [],
+            results_total=results_total,
+        )
