@@ -44,7 +44,7 @@ class BaseProvider(ABC):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str,
+        resolved_input: str | list[dict],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute LLM API call.

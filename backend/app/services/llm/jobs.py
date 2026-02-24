@@ -20,6 +20,8 @@ from app.models.llm.request import (
     KaapiCompletionConfig,
     TextInput,
     AudioInput,
+    ImageInput,
+    PDFInput,
 )
 from app.models.llm.response import TextOutput
 from app.services.llm.guardrails import (

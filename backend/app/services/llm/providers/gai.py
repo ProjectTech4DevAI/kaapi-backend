@@ -333,7 +333,6 @@ class GoogleAIProvider(BaseProvider):
     ) -> tuple[LLMCallResponse | None, str | None]:
         try:
             completion_type = completion_config.type
-
             if completion_type == "stt":
                 return self._execute_stt(
                     completion_config=completion_config,
@@ -346,6 +345,7 @@ class GoogleAIProvider(BaseProvider):
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
+            
             else:
                 return (
                     None,

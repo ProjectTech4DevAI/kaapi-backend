@@ -47,10 +47,17 @@ class OpenAIProvider(BaseProvider):
         error_message: str | None = None
 
         try:
+            # if completeiton_type is not text: -> return Nonne , error we don't 
             params = {
                 **completion_config.params,
             }
-            params["input"] = resolved_input
+            if isinstance(resolved_input, list):
+                params["input"] = [{
+                    "role": "user",
+                    "content": resolved_input # [{"type": "text", "value": "hello world"}, {"type": "image", "value": "base64encodedstring"}, {"type": "pdf", "value": "base64encodedstring"}]
+                }]
+            else:
+                params["input"] = resolved_input
 
             conversation_cfg = query.conversation
 
