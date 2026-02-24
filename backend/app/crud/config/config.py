@@ -47,7 +47,7 @@ class ConfigCrud:
             version = ConfigVersion(
                 config_id=config.id,
                 version=1,
-                config_blob=config_create.config_blob.model_dump(),
+                config_blob=config_create.config_blob.model_dump(mode="json"),
                 commit_message=config_create.commit_message,
             )
 

@@ -13,6 +13,7 @@ WORKDIR /app/
 RUN apt-get update && apt-get install -y \
     curl \
     poppler-utils \
+    ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 # Install uv package manager

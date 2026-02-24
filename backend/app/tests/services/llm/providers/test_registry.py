@@ -1,6 +1,7 @@
 """
 Tests for the LLM provider registry.
 """
+
 import pytest
 from unittest.mock import patch
 
@@ -8,7 +9,7 @@ from sqlmodel import Session
 from openai import OpenAI
 
 from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.openai import OpenAIProvider
+from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.registry import (
     LLMProvider,
     get_llm_provider,

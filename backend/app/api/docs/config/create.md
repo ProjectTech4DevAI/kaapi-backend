@@ -9,6 +9,7 @@ Configurations allow you to store and manage reusable LLM parameters
 * Stores provider-specific parameters as flexible JSON (config_blob)
 * Supports optional commit messages for tracking changes
 * Provider-agnostic storage - params are passed through to the provider as-is
+* Supports three types of config blob types; "text", "stt" and "tts".
 
 
 **Example for the config blob: OpenAI Responses API with File Search -**
@@ -17,6 +18,7 @@ Configurations allow you to store and manage reusable LLM parameters
 "config_blob": {
     "completion": {
       "provider": "openai",
+      "type":"text",
       "params": {
         "model": "gpt-4o-mini",
         "instructions": "You are a helpful assistant for farming communities...",
@@ -31,4 +33,5 @@ Configurations allow you to store and manage reusable LLM parameters
 
 The configuration name must be unique within your project. Once created,
 you can create additional versions to track parameter changes while
-maintaining the configuration history.
+maintaining the configuration history. Type 'text' is applicable only for OpenAI models.
+Type "stt" and "tts" are only applicable for Gemini models.
