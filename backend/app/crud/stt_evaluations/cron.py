@@ -15,6 +15,7 @@ from sqlalchemy import Integer
 from sqlmodel import Session, select
 
 from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
+from app.core.batch.base import BATCH_KEY
 from app.core.util import now
 from app.crud.stt_evaluations.result import count_results_by_status
 from app.crud.stt_evaluations.run import update_stt_run
@@ -392,13 +393,13 @@ async def process_completed_stt_batch(
         stt_result_rows: list[dict] = []
 
         for response in batch_responses:
-            raw_sample_id = response["custom_id"]
+            raw_sample_id = response[BATCH_KEY]
             try:
                 stt_sample_id = int(raw_sample_id)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"[process_completed_stt_batch] Invalid custom_id | "
-                    f"batch_job_id={batch_job.id}, custom_id={raw_sample_id}"
+                    f"[process_completed_stt_batch] Invalid {BATCH_KEY} | "
+                    f"batch_job_id={batch_job.id}, {BATCH_KEY}={raw_sample_id}"
                 )
                 failure_count += 1
                 continue

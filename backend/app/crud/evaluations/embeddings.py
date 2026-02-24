@@ -16,6 +16,7 @@ from openai import OpenAI
 from sqlmodel import Session
 
 from app.core.batch import OpenAIBatchProvider, start_batch_job
+from app.core.batch.base import BATCH_KEY
 from app.core.util import now
 from app.models import EvaluationRun
 
@@ -58,7 +59,7 @@ def build_embedding_jsonl(
     Build JSONL data for embedding batch using OpenAI Embeddings API.
 
     Each line is a dict with:
-    - custom_id: Langfuse trace_id (for direct score updates)
+    - BATCH_KEY: Langfuse trace_id (for direct score updates)
     - method: POST
     - url: /v1/embeddings
     - body: Embedding request with input array [output, ground_truth]
@@ -110,9 +111,9 @@ def build_embedding_jsonl(
             continue
 
         # Build the batch request object for Embeddings API
-        # Use trace_id as custom_id for direct score updates
+        # Use trace_id as BATCH_KEY for direct score updates
         batch_request = {
-            "custom_id": trace_id,
+            BATCH_KEY: trace_id,
             "method": "POST",
             "url": "/v1/embeddings",
             "body": {
@@ -155,10 +156,10 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
 
     for line_num, response in enumerate(raw_results, 1):
         try:
-            # Extract custom_id (which is now the Langfuse trace_id)
-            trace_id = response.get("custom_id")
+            # Extract BATCH_KEY (which is now the Langfuse trace_id)
+            trace_id = response.get(BATCH_KEY)
             if not trace_id:
-                logger.warning(f"Line {line_num}: No custom_id found, skipping")
+                logger.warning(f"Line {line_num}: No {BATCH_KEY} found, skipping")
                 continue
 
             # Handle errors in batch processing
