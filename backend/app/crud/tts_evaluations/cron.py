@@ -16,7 +16,12 @@ from typing import Any
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
-from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
+from app.core.batch import (
+    BATCH_KEY,
+    BatchJobState,
+    GeminiBatchProvider,
+    poll_batch_status,
+)
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import upload_to_object_store
 from app.crud.tts_evaluations.result import count_results_by_status, update_tts_result
@@ -412,13 +417,13 @@ async def process_completed_tts_batch(
         )
 
         for batch_result in results:
-            custom_id = batch_result["custom_id"]
+            custom_id = batch_result[BATCH_KEY]
             try:
                 result_id = int(custom_id)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"[process_completed_tts_batch] Invalid custom_id | "
-                    f"batch_job_id={batch_job.id}, custom_id={custom_id}"
+                    f"[process_completed_tts_batch] Invalid {BATCH_KEY} | "
+                    f"batch_job_id={batch_job.id}, {BATCH_KEY}={custom_id}"
                 )
                 failed_count += 1
                 continue
