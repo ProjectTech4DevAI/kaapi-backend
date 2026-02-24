@@ -234,7 +234,7 @@ class CollectionPublic(SQLModel):
     deleted_at: datetime | None = None
 
     @model_validator(mode="after")
-    def validate_service_fields(self):
+    def validate_service_fields(self) -> "CollectionPublic":
         """Ensure either LLM service fields or knowledge base fields are set, not both."""
         has_llm = self.llm_service_id is not None or self.llm_service_name is not None
         has_kb = (
@@ -268,7 +268,7 @@ class CollectionPublic(SQLModel):
         return self
 
     @model_serializer(mode="wrap", when_used="json")
-    def _serialize_model(self, serializer, info):
+    def _serialize_model(self, serializer: Any, info: Any) -> dict[str, Any]:
         """Exclude unused service fields from JSON serialization."""
         data = serializer(self)
 

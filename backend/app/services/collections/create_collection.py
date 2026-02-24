@@ -79,9 +79,11 @@ def build_success_payload(
     }
     """
     collection_public = to_collection_public(collection)
+    collection_dict = collection_public.model_dump(mode="json", exclude_none=True)
+
     job_public = CollectionJobPublic.model_validate(
         collection_job,
-        update={"collection": collection_public},
+        update={"collection": collection_dict},
     )
     return APIResponse.success_response(job_public).model_dump(
         mode="json", exclude={"data": {"error_message"}}
