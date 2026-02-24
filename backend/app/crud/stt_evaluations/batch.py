@@ -1,6 +1,7 @@
 """Batch submission functions for STT evaluation processing."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from sqlmodel import Session
@@ -12,13 +13,8 @@ from app.core.batch import (
 )
 from app.core.cloud.storage import get_cloud_storage
 from app.crud.file import get_files_by_ids
-from app.crud.stt_evaluations.result import (
-    get_pending_results_for_run,
-    update_stt_result,
-)
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
-from app.models.job import JobStatus
 from app.models.stt_evaluation import STTSample
 from app.services.stt_evaluations.gemini import GeminiClient
 
@@ -88,39 +84,49 @@ def start_stt_evaluation_batch(
     )
     file_map = {f.id: f for f in file_records}
 
-    # Generate signed URLs for audio files (shared across all models)
+    # Generate signed URLs for audio files concurrently (shared across all models)
     signed_urls: list[str] = []
     sample_keys: list[str] = []
+    failed_samples: list[tuple[STTSample, str]] = []
 
-    for sample in samples:
+    def _generate_signed_url(
+        sample: STTSample,
+    ) -> tuple[STTSample, str | None, str | None]:
+        """Generate a signed URL for a single sample. Thread-safe."""
+        file_record = file_map.get(sample.file_id)
+        if not file_record:
+            return sample, None, f"File record not found for file_id: {sample.file_id}"
         try:
-            # Get object_store_url from file record
-            file_record = file_map.get(sample.file_id)
-            if not file_record:
-                raise ValueError(f"File record not found for file_id: {sample.file_id}")
-
-            signed_url = storage.get_signed_url(
+            url = storage.get_signed_url(
                 file_record.object_store_url, expires_in=signed_url_expires_in
             )
-            signed_urls.append(signed_url)
-            sample_keys.append(str(sample.id))
-
+            return sample, url, None
         except Exception as e:
-            logger.error(
-                f"[start_stt_evaluation_batch] Failed to generate signed URL | "
-                f"sample_id: {sample.id}, error: {str(e)}"
-            )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, sample_id=sample.id
-            )
-            for result in pending:
-                update_stt_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Failed to generate signed URL: {str(e)}",
+            return sample, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        sign_url_tasks = {
+            executor.submit(_generate_signed_url, sample): sample for sample in samples
+        }
+
+        for completed_task in as_completed(sign_url_tasks):
+            sample, url, error = completed_task.result()
+            if url:
+                signed_urls.append(url)
+                sample_keys.append(str(sample.id))
+            else:
+                failed_samples.append((sample, error))
+                logger.error(
+                    f"[start_stt_evaluation_batch] Failed to generate signed URL | "
+                    f"sample_id: {sample.id}, error: {error}"
                 )
-            session.commit()
+
+    if failed_samples:
+        logger.warning(
+            f"[start_stt_evaluation_batch] Signed URL failures | "
+            f"run_id: {run.id}, failed_count: {len(failed_samples)}, "
+            f"succeeded_count: {len(signed_urls)}"
+        )
 
     if not signed_urls:
         raise Exception("Failed to generate signed URLs for any audio files")
@@ -177,17 +183,6 @@ def start_stt_evaluation_batch(
                 f"[start_stt_evaluation_batch] Failed to submit batch | "
                 f"model: {model}, error: {str(e)}"
             )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, provider=model
-            )
-            for result in pending:
-                update_stt_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Batch submission failed for {model}: {str(e)}",
-                )
-            session.commit()
 
     if not batch_jobs:
         raise Exception("Batch submission failed for all models")

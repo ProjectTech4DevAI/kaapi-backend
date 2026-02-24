@@ -16,7 +16,6 @@ from .run import (
     update_stt_run,
 )
 from .result import (
-    create_stt_results,
     get_stt_result_by_id,
     get_results_by_run_id,
     update_human_feedback,
@@ -39,7 +38,6 @@ __all__ = [
     "list_stt_runs",
     "update_stt_run",
     # Result
-    "create_stt_results",
     "get_stt_result_by_id",
     "get_results_by_run_id",
     "update_human_feedback",

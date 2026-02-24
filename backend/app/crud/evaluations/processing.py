@@ -25,6 +25,7 @@ from app.core.batch import (
     poll_batch_status,
     upload_batch_results_to_object_store,
 )
+from app.core.batch.base import BATCH_KEY
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import update_evaluation_run, resolve_model_from_config
 from app.crud.evaluations.embeddings import (
@@ -81,11 +82,11 @@ def parse_evaluation_output(
 
     for line_num, response in enumerate(raw_results, 1):
         try:
-            # Extract custom_id (which is our dataset item ID)
-            item_id = response.get("custom_id")
+            # Extract BATCH_KEY (which is our dataset item ID)
+            item_id = response.get(BATCH_KEY)
             if not item_id:
                 logger.warning(
-                    f"[parse_evaluation_output] No custom_id found, skipping | line={line_num}"
+                    f"[parse_evaluation_output] No {BATCH_KEY} found, skipping | line={line_num}"
                 )
                 continue
 

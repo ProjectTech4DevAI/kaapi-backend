@@ -1,14 +1,12 @@
 """CRUD operations for STT evaluation results."""
 
 import logging
-from typing import Any
 
 from sqlmodel import Session, select, func
 
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.file import File
-from app.models.job import JobStatus
 from app.models.stt_evaluation import (
     STTResult,
     STTSample,
@@ -17,64 +15,6 @@ from app.models.stt_evaluation import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def create_stt_results(
-    *,
-    session: Session,
-    samples: list[STTSample],
-    evaluation_run_id: int,
-    org_id: int,
-    project_id: int,
-    models: list[str],
-) -> list[STTResult]:
-    """Create STT result records for all samples and models.
-
-    Creates one result per sample per model.
-
-    Args:
-        session: Database session
-        samples: List of samples
-        evaluation_run_id: Run ID
-        org_id: Organization ID
-        project_id: Project ID
-        models: List of STT models
-
-    Returns:
-        list[STTResult]: Created results
-    """
-    logger.info(
-        f"[create_stt_results] Creating STT results | "
-        f"run_id: {evaluation_run_id}, sample_count: {len(samples)}, "
-        f"model_count: {len(models)}"
-    )
-
-    timestamp = now()
-    results = [
-        STTResult(
-            stt_sample_id=sample.id,
-            evaluation_run_id=evaluation_run_id,
-            organization_id=org_id,
-            project_id=project_id,
-            provider=model,
-            status=JobStatus.PENDING.value,
-            inserted_at=timestamp,
-            updated_at=timestamp,
-        )
-        for sample in samples
-        for model in models
-    ]
-
-    session.add_all(results)
-    session.flush()
-    session.commit()
-
-    logger.info(
-        f"[create_stt_results] STT results created | "
-        f"run_id: {evaluation_run_id}, result_count: {len(results)}"
-    )
-
-    return results
 
 
 def get_stt_result_by_id(
@@ -196,53 +136,6 @@ def get_results_by_run_id(
     return results, total
 
 
-def update_stt_result(
-    *,
-    session: Session,
-    result_id: int,
-    transcription: str | None = None,
-    status: str | None = None,
-    score: dict[str, Any] | None = None,
-    error_message: str | None = None,
-) -> STTResult | None:
-    """Update an STT result with transcription data.
-
-    Args:
-        session: Database session
-        result_id: Result ID
-        transcription: Generated transcription
-        status: New status
-        score: Evaluation metrics (e.g., wer, cer)
-        error_message: Error message if failed
-
-    Returns:
-        STTResult | None: Updated result
-    """
-    statement = select(STTResult).where(STTResult.id == result_id)
-    result = session.exec(statement).one_or_none()
-
-    if not result:
-        return None
-
-    updates = {
-        "transcription": transcription,
-        "status": status,
-        "score": score,
-        "error_message": error_message,
-    }
-
-    for field, value in updates.items():
-        if value is not None:
-            setattr(result, field, value)
-
-    result.updated_at = now()
-
-    session.add(result)
-    session.flush()
-
-    return result
-
-
 def update_human_feedback(
     *,
     session: Session,
@@ -296,40 +189,6 @@ def update_human_feedback(
     )
 
     return result
-
-
-def get_pending_results_for_run(
-    *,
-    session: Session,
-    run_id: int,
-    provider: str | None = None,
-    sample_id: int | None = None,
-) -> list[STTResult]:
-    """Get all pending results for a run.
-
-    Args:
-        session: Database session
-        run_id: Run ID
-        provider: Optional filter by provider
-        sample_id: Optional filter by sample ID
-
-    Returns:
-        list[STTResult]: Pending results
-    """
-    where_clauses = [
-        STTResult.evaluation_run_id == run_id,
-        STTResult.status == JobStatus.PENDING.value,
-    ]
-
-    if provider is not None:
-        where_clauses.append(STTResult.provider == provider)
-
-    if sample_id is not None:
-        where_clauses.append(STTResult.stt_sample_id == sample_id)
-
-    statement = select(STTResult).where(*where_clauses)
-
-    return list(session.exec(statement).all())
 
 
 def count_results_by_status(

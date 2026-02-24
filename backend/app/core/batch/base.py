@@ -3,6 +3,10 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+# Unified key used across all batch providers to identify individual requests/responses.
+# OpenAI uses "custom_id" natively; Gemini uses "key" but we normalize to this constant.
+BATCH_KEY = "custom_id"
+
 
 class BatchProvider(ABC):
     """Abstract base class for LLM batch providers (OpenAI, Anthropic, etc.)."""
@@ -61,7 +65,7 @@ class BatchProvider(ABC):
 
         Returns:
             List of result dictionaries, each containing:
-                - custom_id: Item identifier from input
+                - BATCH_KEY: Item identifier from input
                 - response: Provider's response data
                 - error: Error info (if item failed)
                 - Any other provider-specific result data
