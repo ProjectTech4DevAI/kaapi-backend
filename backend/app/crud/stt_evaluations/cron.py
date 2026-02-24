@@ -14,8 +14,12 @@ from typing import Any
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
-from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
-from app.core.batch.base import BATCH_KEY
+from app.core.batch import (
+    BATCH_KEY,
+    BatchJobState,
+    GeminiBatchProvider,
+    poll_batch_status,
+)
 from app.core.util import now
 from app.crud.stt_evaluations.result import count_results_by_status
 from app.crud.stt_evaluations.run import update_stt_run
@@ -26,6 +30,20 @@ from app.models.stt_evaluation import EvaluationType, STTResult
 from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_text_from_response(response: dict[str, Any]) -> str:
+    """Extract text from a raw Gemini response dict."""
+    if "text" in response:
+        return response["text"]
+    text = ""
+    for candidate in response.get("candidates", []):
+        content = candidate.get("content", {})
+        for part in content.get("parts", []):
+            if "text" in part:
+                text += part["text"]
+    return text
+
 
 # Terminal states that indicate batch processing is complete
 TERMINAL_STATES = {
@@ -415,7 +433,7 @@ async def process_completed_stt_batch(
             }
 
             if response.get("response"):
-                row["transcription"] = response["response"].get("text", "")
+                row["transcription"] = _extract_text_from_response(response["response"])
                 row["status"] = JobStatus.SUCCESS.value
                 success_count += 1
             else:

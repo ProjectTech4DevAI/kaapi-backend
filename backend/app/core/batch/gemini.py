@@ -219,14 +219,14 @@ class GeminiBatchProvider(BatchProvider):
                         parsed = json.loads(line)
                         custom_id = parsed.get("key", str(i))
 
-                        # Extract text from response
+                        # Return the raw response so callers can extract
+                        # text (STT) or audio (TTS) as needed.
                         response_obj = parsed.get("response")
                         if response_obj:
-                            text = self._extract_text_from_response_dict(response_obj)
                             results.append(
                                 {
                                     BATCH_KEY: custom_id,
-                                    "response": {"text": text},
+                                    "response": response_obj,
                                     "error": None,
                                 }
                             )
