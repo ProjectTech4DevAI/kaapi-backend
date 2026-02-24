@@ -1,7 +1,7 @@
 """add tts evaluation tables
 
-Revision ID: 047
-Revises: 046
+Revision ID: 048
+Revises: 047
 Create Date: 2026-02-14 12:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "047"
-down_revision = "046"
+revision = "048"
+down_revision = "047"
 branch_labels = None
 depends_on = None
 
