@@ -207,11 +207,19 @@ class GeminiBatchProvider(BatchProvider):
             results: list[dict[str, Any]] = []
 
             # Handle file-based results (keys are included in each response line)
-            if (
+            has_dest_file = (
                 batch_job.dest
                 and hasattr(batch_job.dest, "file_name")
                 and batch_job.dest.file_name
-            ):
+            )
+            if not has_dest_file:
+                logger.warning(
+                    f"[download_batch_results] No dest file found | "
+                    f"batch_id={output_file_id} | "
+                    f"dest={batch_job.dest} | "
+                    f"dest_attrs={dir(batch_job.dest) if batch_job.dest else 'None'}"
+                )
+            if has_dest_file:
                 file_content = self.download_file(batch_job.dest.file_name)
                 lines = file_content.strip().split("\n")
                 for i, line in enumerate(lines):

@@ -1,42 +1,36 @@
 """Cron processing functions for TTS evaluations.
 
 This module provides functions that are called periodically to process
-pending TTS evaluations - polling batch status and processing completed batches.
+pending TTS evaluations - polling batch status and dispatching result
+processing to Celery workers.
 
 Follows the same pattern as STT evaluations: single query to fetch all
 processing runs, grouped by project_id for credential management.
 """
 
-import base64
 import logging
-import uuid
 from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
+from app.celery.utils import start_low_priority_job
 from app.core.batch import (
-    BATCH_KEY,
     BatchJobState,
     GeminiBatchProvider,
     poll_batch_status,
 )
-from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import upload_to_object_store
 from app.crud.tts_evaluations.result import (
     count_results_by_status,
     get_pending_results_for_run,
-    update_tts_result,
 )
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
-from app.models.tts_evaluation import TTSResult
 from app.services.stt_evaluations.gemini import GeminiClient
-from app.services.tts_evaluations.audio import calculate_duration, pcm_to_wav
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +41,11 @@ TERMINAL_STATES = {
     BatchJobState.CANCELLED.value,
     BatchJobState.EXPIRED.value,
 }
+
+# Function path for Celery task dispatch
+_TTS_RESULT_PROCESSING_PATH = (
+    "app.services.tts_evaluations.batch_result_processing.execute_tts_result_processing"
+)
 
 
 async def poll_all_pending_tts_evaluations(
@@ -145,7 +144,7 @@ async def poll_all_pending_tts_evaluations(
                     )
                     all_results.append(result)
 
-                    if result["action"] in ("completed", "processed"):
+                    if result["action"] in ("completed", "processed", "dispatched"):
                         total_processed += 1
                     elif result["action"] == "failed":
                         total_failed += 1
@@ -236,6 +235,42 @@ def _get_batch_jobs_for_run(
     return list(session.exec(stmt).all())
 
 
+def _dispatch_tts_result_processing(
+    run: EvaluationRun,
+    batch_job: BatchJob,
+    org_id: int,
+    provider_name: str,
+) -> str:
+    """Dispatch TTS result processing to Celery low priority queue.
+
+    Args:
+        run: The evaluation run
+        batch_job: The batch job record
+        org_id: Organization ID
+        provider_name: TTS provider/model name
+
+    Returns:
+        str: Celery task ID
+    """
+    celery_task_id = start_low_priority_job(
+        function_path=_TTS_RESULT_PROCESSING_PATH,
+        project_id=run.project_id,
+        job_id=str(batch_job.id),
+        organization_id=org_id,
+        evaluation_run_id=run.id,
+        tts_provider=provider_name,
+        provider_batch_id=batch_job.provider_batch_id,
+    )
+
+    logger.info(
+        f"[_dispatch_tts_result_processing] Dispatched to Celery | "
+        f"run_id={run.id}, batch_job_id={batch_job.id}, "
+        f"provider={provider_name}, celery_task_id={celery_task_id}"
+    )
+
+    return celery_task_id
+
+
 async def poll_tts_run(
     session: Session,
     run: EvaluationRun,
@@ -245,7 +280,7 @@ async def poll_tts_run(
     """Poll a single TTS evaluation run's batch status.
 
     Finds all batch jobs for this run (one per provider) and polls each.
-    Only marks the run as complete when all batch jobs are in terminal states.
+    When a batch reaches SUCCEEDED, dispatches result processing to Celery.
 
     Args:
         session: Database session
@@ -284,6 +319,7 @@ async def poll_tts_run(
     all_terminal = True
     any_succeeded = False
     any_failed = False
+    dispatched = False
     errors: list[str] = []
 
     for batch_job in batch_jobs:
@@ -299,16 +335,17 @@ async def poll_tts_run(
                 )
                 if pending_results:
                     logger.info(
-                        f"[poll_tts_run] {log_prefix} Reprocessing SUCCEEDED batch "
-                        f"with {len(pending_results)} pending results | "
+                        f"[poll_tts_run] {log_prefix} Dispatching reprocessing for "
+                        f"{len(pending_results)} pending results | "
                         f"batch_job_id={batch_job.id}"
                     )
-                    await process_completed_tts_batch(
-                        session=session,
+                    _dispatch_tts_result_processing(
                         run=run,
                         batch_job=batch_job,
-                        batch_provider=batch_provider,
+                        org_id=org_id,
+                        provider_name=provider_name,
                     )
+                    dispatched = True
                 any_succeeded = True
             else:
                 any_failed = True
@@ -337,15 +374,16 @@ async def poll_tts_run(
             all_terminal = False
             continue
 
-        # Batch reached terminal state - process it
+        # Batch reached terminal state - dispatch processing to Celery
         if provider_status == BatchJobState.SUCCEEDED.value:
-            await process_completed_tts_batch(
-                session=session,
+            _dispatch_tts_result_processing(
                 run=run,
                 batch_job=batch_job,
-                batch_provider=batch_provider,
+                org_id=org_id,
+                provider_name=provider_name,
             )
             any_succeeded = True
+            dispatched = True
         else:
             any_failed = True
             errors.append(
@@ -362,7 +400,19 @@ async def poll_tts_run(
             "action": "no_change",
         }
 
-    # All batch jobs are done - finalize the run
+    # If we dispatched processing to Celery, keep the run as "processing".
+    # The Celery task will finalize the run status when done.
+    if dispatched:
+        return {
+            "run_id": run.id,
+            "run_name": run.run_name,
+            "type": "tts",
+            "previous_status": previous_status,
+            "current_status": "processing",
+            "action": "dispatched",
+        }
+
+    # All batch jobs are done and no dispatching needed - finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
     pending = status_counts.get(JobStatus.PENDING.value, 0)
     failed_count = status_counts.get(JobStatus.FAILED.value, 0)
@@ -392,181 +442,3 @@ async def poll_tts_run(
         "action": action,
         **({"error": error_message} if error_message else {}),
     }
-
-
-async def process_completed_tts_batch(
-    session: Session,
-    run: EvaluationRun,
-    batch_job: Any,
-    batch_provider: GeminiBatchProvider,
-) -> None:
-    """Process completed Gemini batch - download results, convert audio, upload to S3.
-
-    For each result:
-    1. Download JSONL results from Gemini
-    2. Extract base64-encoded PCM audio from response
-    3. Decode base64 -> raw PCM bytes
-    4. Wrap in WAV container (24kHz, 16-bit, mono)
-    5. Upload WAV to S3
-    6. Update TTSResult with object_store_url and metadata
-
-    Args:
-        session: Database session
-        run: The evaluation run
-        batch_job: The BatchJob record
-        batch_provider: Initialized GeminiBatchProvider
-    """
-    logger.info(
-        f"[process_completed_tts_batch] Processing batch results | "
-        f"run_id={run.id}, batch_job_id={batch_job.id}"
-    )
-
-    tts_provider = batch_job.config.get("tts_provider", "gemini-2.5-pro-preview-tts")
-
-    # Get cloud storage for S3 uploads
-    storage = get_cloud_storage(session=session, project_id=run.project_id)
-
-    processed_count = 0
-    failed_count = 0
-
-    try:
-        results = batch_provider.download_batch_results(batch_job.provider_batch_id)
-
-        logger.info(
-            f"[process_completed_tts_batch] Got batch results | "
-            f"batch_job_id={batch_job.id}, result_count={len(results)}"
-        )
-
-        for batch_result in results:
-            custom_id = batch_result[BATCH_KEY]
-            try:
-                result_id = int(custom_id)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"[process_completed_tts_batch] Invalid {BATCH_KEY} | "
-                    f"batch_job_id={batch_job.id}, {BATCH_KEY}={custom_id}"
-                )
-                failed_count += 1
-                continue
-
-            # Find result record
-            stmt = select(TTSResult).where(
-                TTSResult.id == result_id,
-                TTSResult.evaluation_run_id == run.id,
-                TTSResult.provider == tts_provider,
-            )
-            result_record = session.exec(stmt).one_or_none()
-
-            if not result_record:
-                logger.warning(
-                    f"[process_completed_tts_batch] Result record not found | "
-                    f"result_id={result_id}"
-                )
-                failed_count += 1
-                continue
-
-            if batch_result.get("response"):
-                try:
-                    # Extract base64 audio from Gemini TTS response
-                    audio_b64 = _extract_audio_from_response(batch_result["response"])
-
-                    if not audio_b64:
-                        update_tts_result(
-                            session=session,
-                            result_id=result_record.id,
-                            status=JobStatus.FAILED.value,
-                            error_message="No audio data in response",
-                        )
-                        failed_count += 1
-                        continue
-
-                    # Decode base64 -> raw PCM bytes
-                    pcm_data = base64.b64decode(audio_b64)
-
-                    # Wrap in WAV container
-                    wav_data = pcm_to_wav(pcm_data)
-
-                    # Calculate duration
-                    duration = calculate_duration(len(pcm_data))
-
-                    # Upload WAV to S3
-                    audio_filename = f"{uuid.uuid4()}.wav"
-                    audio_url = upload_to_object_store(
-                        storage=storage,
-                        content=wav_data,
-                        filename=audio_filename,
-                        subdirectory=f"evaluations/tts/audio",
-                        content_type="audio/wav",
-                    )
-
-                    # Update result
-                    update_tts_result(
-                        session=session,
-                        result_id=result_record.id,
-                        object_store_url=audio_url,
-                        metadata={
-                            "duration_seconds": round(duration, 3),
-                            "size_bytes": len(wav_data),
-                        },
-                        status=JobStatus.SUCCESS.value,
-                    )
-                    processed_count += 1
-
-                except Exception as audio_err:
-                    logger.error(
-                        f"[process_completed_tts_batch] Audio processing failed | "
-                        f"result_id={result_id}, error={str(audio_err)}"
-                    )
-                    update_tts_result(
-                        session=session,
-                        result_id=result_record.id,
-                        status=JobStatus.FAILED.value,
-                        error_message=f"Audio processing failed: {str(audio_err)}",
-                    )
-                    failed_count += 1
-            else:
-                update_tts_result(
-                    session=session,
-                    result_id=result_record.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=batch_result.get("error", "Unknown error"),
-                )
-                failed_count += 1
-
-        session.commit()
-
-    except Exception as e:
-        logger.error(
-            f"[process_completed_tts_batch] Failed to process batch results | "
-            f"batch_job_id={batch_job.id}, error={str(e)}",
-            exc_info=True,
-        )
-        raise
-
-    logger.info(
-        f"[process_completed_tts_batch] Batch results processed | "
-        f"run_id={run.id}, provider={tts_provider}, "
-        f"processed={processed_count}, failed={failed_count}"
-    )
-
-
-def _extract_audio_from_response(response: dict[str, Any]) -> str | None:
-    """Extract base64-encoded audio data from a Gemini TTS response.
-
-    Gemini TTS returns audio as base64-encoded PCM data in the
-    inlineData field of the response parts.
-
-    Args:
-        response: Gemini response dictionary
-
-    Returns:
-        Base64 encoded audio string, or None if not found
-    """
-    # Navigate: candidates -> content -> parts -> inlineData -> data
-    for candidate in response.get("candidates", []):
-        content = candidate.get("content", {})
-        for part in content.get("parts", []):
-            inline_data = part.get("inlineData", {})
-            if inline_data.get("data"):
-                return inline_data["data"]
-    return None
