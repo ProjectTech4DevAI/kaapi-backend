@@ -1,6 +1,7 @@
 """CRUD operations for TTS evaluation results."""
 
 import logging
+from enum import Enum
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -9,6 +10,15 @@ from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult, TTSResultPublic
+
+
+class _Unset(Enum):
+    """Sentinel to distinguish 'not provided' from None."""
+
+    UNSET = "UNSET"
+
+
+UNSET = _Unset.UNSET
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +146,8 @@ def update_tts_result(
     *,
     session: Session,
     result_id: int,
+    org_id: int | None = None,
+    project_id: int | None = None,
     object_store_url: str | None = None,
     metadata: dict[str, Any] | None = None,
     status: str | None = None,
@@ -146,6 +158,8 @@ def update_tts_result(
     Args:
         session: Database session
         result_id: Result ID
+        org_id: Organization ID (optional, for scoping)
+        project_id: Project ID (optional, for scoping)
         object_store_url: S3 URL of generated WAV
         metadata: Audio metadata (duration_seconds, size_bytes)
         status: New status
@@ -154,7 +168,13 @@ def update_tts_result(
     Returns:
         TTSResult | None: Updated result
     """
-    statement = select(TTSResult).where(TTSResult.id == result_id)
+    where_clauses = [TTSResult.id == result_id]
+    if org_id is not None:
+        where_clauses.append(TTSResult.organization_id == org_id)
+    if project_id is not None:
+        where_clauses.append(TTSResult.project_id == project_id)
+
+    statement = select(TTSResult).where(*where_clauses)
     result = session.exec(statement).one_or_none()
 
     if not result:
@@ -183,18 +203,21 @@ def update_tts_human_feedback(
     result_id: int,
     org_id: int,
     project_id: int,
-    is_correct: bool | None = None,
-    comment: str | None = None,
+    is_correct: bool | None | _Unset = UNSET,
+    comment: str | None | _Unset = UNSET,
 ) -> TTSResult | None:
     """Update human feedback on a TTS result.
+
+    Uses a sentinel to distinguish "not provided" from "explicitly None".
+    Passing is_correct=None clears the value; omitting it leaves it unchanged.
 
     Args:
         session: Database session
         result_id: Result ID
         org_id: Organization ID
         project_id: Project ID
-        is_correct: Human verification of quality
-        comment: Feedback comment
+        is_correct: Human verification of quality (UNSET = don't change)
+        comment: Feedback comment (UNSET = don't change)
 
     Returns:
         TTSResult | None: Updated result
@@ -212,10 +235,10 @@ def update_tts_human_feedback(
     if not result:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    if is_correct is not None:
+    if is_correct is not UNSET:
         result.is_correct = is_correct
 
-    if comment is not None:
+    if comment is not UNSET:
         result.comment = comment
 
     result.updated_at = now()

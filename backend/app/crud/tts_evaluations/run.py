@@ -160,6 +160,8 @@ def update_tts_run(
     *,
     session: Session,
     run_id: int,
+    org_id: int | None = None,
+    project_id: int | None = None,
     status: str | None = None,
     score: dict[str, Any] | None = None,
     error_message: str | None = None,
@@ -171,6 +173,8 @@ def update_tts_run(
     Args:
         session: Database session
         run_id: Run ID
+        org_id: Organization ID (optional, for scoping)
+        project_id: Project ID (optional, for scoping)
         status: New status
         score: Score data
         error_message: Error message
@@ -180,7 +184,13 @@ def update_tts_run(
     Returns:
         EvaluationRun | None: Updated run
     """
-    statement = select(EvaluationRun).where(EvaluationRun.id == run_id)
+    where_clauses = [EvaluationRun.id == run_id]
+    if org_id is not None:
+        where_clauses.append(EvaluationRun.organization_id == org_id)
+    if project_id is not None:
+        where_clauses.append(EvaluationRun.project_id == project_id)
+
+    statement = select(EvaluationRun).where(*where_clauses)
     run = session.exec(statement).one_or_none()
 
     if not run:

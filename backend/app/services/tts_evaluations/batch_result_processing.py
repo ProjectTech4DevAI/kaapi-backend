@@ -166,6 +166,15 @@ def execute_tts_result_processing(
                             content_type="audio/wav",
                         )
 
+                        if not audio_url:
+                            result_record.status = JobStatus.FAILED.value
+                            result_record.error_message = (
+                                "Audio upload to object store failed"
+                            )
+                            result_record.updated_at = now()
+                            failed_count += 1
+                            continue
+
                         # Update result
                         result_record.object_store_url = audio_url
                         result_record.metadata_ = {

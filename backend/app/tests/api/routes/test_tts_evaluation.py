@@ -226,6 +226,79 @@ class TestTTSDatasetCreate:
 
         assert response.status_code == 422
 
+    def test_create_dataset_whitespace_only_text(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test creating a TTS dataset with whitespace-only text fails."""
+        response = client.post(
+            "/api/v1/evaluations/tts/datasets",
+            json={
+                "name": "whitespace_dataset",
+                "samples": [{"text": "   "}],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 422
+
+    @patch("app.api.routes.tts_evaluations.dataset.upload_tts_dataset")
+    def test_create_dataset_text_is_stripped(
+        self,
+        mock_upload: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that sample text is stripped of leading/trailing whitespace."""
+        mock_dataset = EvaluationDataset(
+            id=1,
+            name="strip_test",
+            description=None,
+            type=EvaluationType.TTS.value,
+            language_id=None,
+            object_store_url=None,
+            dataset_metadata={"sample_count": 1},
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            inserted_at=now(),
+            updated_at=now(),
+        )
+        mock_upload.return_value = mock_dataset
+
+        response = client.post(
+            "/api/v1/evaluations/tts/datasets",
+            json={
+                "name": "strip_test",
+                "samples": [{"text": "  Hello world  "}],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        # Verify the upload was called with stripped text
+        call_args = mock_upload.call_args
+        samples = call_args.kwargs.get("samples") or call_args[1].get("samples")
+        assert samples[0].text == "Hello world"
+
+    def test_create_dataset_name_too_long(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test creating a TTS dataset with a name exceeding 255 chars fails."""
+        response = client.post(
+            "/api/v1/evaluations/tts/datasets",
+            json={
+                "name": "x" * 256,
+                "samples": [{"text": "Hello"}],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 422
+
     def test_create_dataset_without_authentication(
         self,
         client: TestClient,
@@ -1229,6 +1302,146 @@ class TestTTSResultFeedback:
         )
 
         assert response.status_code == 404
+
+    def test_update_feedback_on_pending_result(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that feedback on PENDING result is rejected."""
+        dataset = create_test_tts_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="pending_feedback_dataset",
+            dataset_metadata={"sample_count": 1},
+        )
+        run = create_tts_run(
+            session=db,
+            run_name="pending_feedback_run",
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            org_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["gemini-2.5-pro-preview-tts"],
+            total_items=1,
+        )
+        result = create_test_tts_result(
+            db=db,
+            evaluation_run_id=run.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            status=JobStatus.PENDING.value,
+        )
+
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{result.id}",
+            json={"is_correct": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 400
+        assert "status" in response.json()["error"].lower()
+
+    def test_update_feedback_on_failed_result(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that feedback on FAILED result is rejected."""
+        dataset = create_test_tts_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="failed_feedback_dataset",
+            dataset_metadata={"sample_count": 1},
+        )
+        run = create_tts_run(
+            session=db,
+            run_name="failed_feedback_run",
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            org_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["gemini-2.5-pro-preview-tts"],
+            total_items=1,
+        )
+        result = create_test_tts_result(
+            db=db,
+            evaluation_run_id=run.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            status=JobStatus.FAILED.value,
+        )
+
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{result.id}",
+            json={"is_correct": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 400
+        assert "status" in response.json()["error"].lower()
+
+    def test_clear_feedback_to_none(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_result: TTSResult,
+    ) -> None:
+        """Test that sending is_correct=null clears the feedback value."""
+        # First set feedback
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{test_result.id}",
+            json={"is_correct": True, "comment": "Good"},
+            headers=user_api_key_header,
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["is_correct"] is True
+
+        # Now clear is_correct by sending null
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{test_result.id}",
+            json={"is_correct": None},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["is_correct"] is None
+        # comment should remain unchanged
+        assert data["comment"] == "Good"
+
+    def test_omitted_fields_not_cleared(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_result: TTSResult,
+    ) -> None:
+        """Test that omitting a field does not clear its existing value."""
+        # Set both fields
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{test_result.id}",
+            json={"is_correct": True, "comment": "Keep this"},
+            headers=user_api_key_header,
+        )
+        assert response.status_code == 200
+
+        # Update only comment, omit is_correct
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{test_result.id}",
+            json={"comment": "Updated comment"},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["is_correct"] is True  # unchanged
+        assert data["comment"] == "Updated comment"
 
     def test_update_feedback_without_authentication(
         self,

@@ -148,11 +148,19 @@ class TTSSampleCreate(BaseModel):
         ..., description="Text to synthesize", min_length=1, max_length=5000
     )
 
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Text must not be empty or whitespace-only")
+        return stripped
+
 
 class TTSDatasetCreate(BaseModel):
     """Request model for creating a TTS dataset."""
 
-    name: str = Field(..., description="Dataset name", min_length=1)
+    name: str = Field(..., description="Dataset name", min_length=1, max_length=255)
     description: str | None = Field(None, description="Dataset description")
     language_id: int | None = Field(
         None, description="ID of the language from global languages table"

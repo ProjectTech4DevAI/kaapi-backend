@@ -10,6 +10,7 @@ from app.crud.tts_evaluations import (
     get_tts_result_by_id,
     update_tts_human_feedback,
 )
+from app.models.job import JobStatus
 from app.models.tts_evaluation import (
     TTSFeedbackUpdate,
     TTSResultPublic,
@@ -51,14 +52,30 @@ def update_result_feedback(
     if not existing:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    # Update feedback
+    if existing.status != JobStatus.SUCCESS.value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot provide feedback on result with status '{existing.status}'. "
+                "Only completed results accept feedback."
+            ),
+        )
+
+    # Build kwargs only for explicitly provided fields so that
+    # sending {"is_correct": null} clears the value, while omitting
+    # the field leaves it unchanged.
+    update_kwargs: dict = {}
+    if "is_correct" in feedback.model_fields_set:
+        update_kwargs["is_correct"] = feedback.is_correct
+    if "comment" in feedback.model_fields_set:
+        update_kwargs["comment"] = feedback.comment
+
     result = update_tts_human_feedback(
         session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        is_correct=feedback.is_correct,
-        comment=feedback.comment,
+        **update_kwargs,
     )
 
     return APIResponse.success_response(data=TTSResultPublic.from_model(result))
