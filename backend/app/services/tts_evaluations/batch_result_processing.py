@@ -15,10 +15,8 @@ from app.core.batch import BATCH_KEY, GeminiBatchProvider
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.core.storage_utils import upload_to_object_store
-from app.crud.tts_evaluations.result import (
-    count_results_by_status,
-    update_tts_result,
-)
+from app.core.util import now
+from app.crud.tts_evaluations.result import count_results_by_status
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
@@ -93,6 +91,21 @@ def execute_tts_result_processing(
                     f"response_keys={list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__}"
                 )
 
+            # Pre-fetch all TTSResult records for this run+provider
+            prefetch_stmt = select(TTSResult).where(
+                TTSResult.evaluation_run_id == evaluation_run_id,
+                TTSResult.provider == tts_provider,
+            )
+            result_map: dict[int, TTSResult] = {
+                r.id: r for r in session.exec(prefetch_stmt).all()  # type: ignore[misc]
+            }
+
+            logger.info(
+                f"[execute_tts_result_processing] Pre-fetched result records | "
+                f"run_id={evaluation_run_id}, provider={tts_provider}, "
+                f"count={len(result_map)}"
+            )
+
             processed_count = 0
             failed_count = 0
 
@@ -108,13 +121,8 @@ def execute_tts_result_processing(
                     failed_count += 1
                     continue
 
-                # Find result record
-                stmt = select(TTSResult).where(
-                    TTSResult.id == result_id,
-                    TTSResult.evaluation_run_id == evaluation_run_id,
-                    TTSResult.provider == tts_provider,
-                )
-                result_record = session.exec(stmt).one_or_none()
+                # Look up result record from pre-fetched map
+                result_record = result_map.get(result_id)
 
                 if not result_record:
                     logger.warning(
@@ -131,12 +139,9 @@ def execute_tts_result_processing(
                         )
 
                         if not audio_b64:
-                            update_tts_result(
-                                session=session,
-                                result_id=result_record.id,
-                                status=JobStatus.FAILED.value,
-                                error_message="No audio data in response",
-                            )
+                            result_record.status = JobStatus.FAILED.value
+                            result_record.error_message = "No audio data in response"
+                            result_record.updated_at = now()
                             failed_count += 1
                             continue
 
@@ -160,16 +165,13 @@ def execute_tts_result_processing(
                         )
 
                         # Update result
-                        update_tts_result(
-                            session=session,
-                            result_id=result_record.id,
-                            object_store_url=audio_url,
-                            metadata={
-                                "duration_seconds": round(duration, 3),
-                                "size_bytes": len(wav_data),
-                            },
-                            status=JobStatus.SUCCESS.value,
-                        )
+                        result_record.object_store_url = audio_url
+                        result_record.metadata_ = {
+                            "duration_seconds": round(duration, 3),
+                            "size_bytes": len(wav_data),
+                        }
+                        result_record.status = JobStatus.SUCCESS.value
+                        result_record.updated_at = now()
                         processed_count += 1
 
                     except Exception as audio_err:
@@ -177,20 +179,18 @@ def execute_tts_result_processing(
                             f"[execute_tts_result_processing] Audio processing failed | "
                             f"result_id={result_id}, error={str(audio_err)}"
                         )
-                        update_tts_result(
-                            session=session,
-                            result_id=result_record.id,
-                            status=JobStatus.FAILED.value,
-                            error_message=f"Audio processing failed: {str(audio_err)}",
+                        result_record.status = JobStatus.FAILED.value
+                        result_record.error_message = (
+                            f"Audio processing failed: {str(audio_err)}"
                         )
+                        result_record.updated_at = now()
                         failed_count += 1
                 else:
-                    update_tts_result(
-                        session=session,
-                        result_id=result_record.id,
-                        status=JobStatus.FAILED.value,
-                        error_message=batch_result.get("error", "Unknown error"),
+                    result_record.status = JobStatus.FAILED.value
+                    result_record.error_message = batch_result.get(
+                        "error", "Unknown error"
                     )
+                    result_record.updated_at = now()
                     failed_count += 1
 
             session.commit()

@@ -2,18 +2,18 @@
 
 import logging
 
+from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.celery.utils import start_low_priority_job
 from app.crud.tts_evaluations import (
     create_tts_run,
-    create_tts_results,
     get_results_by_run_id,
     get_tts_dataset_by_id,
     get_tts_run_by_id,
     list_tts_runs,
-    start_tts_evaluation_batch,
     update_tts_run,
 )
 from app.models.tts_evaluation import (
@@ -25,7 +25,6 @@ from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
 )
-from app.services.tts_evaluations.dataset import get_sample_texts_from_dataset
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -68,16 +67,6 @@ def start_tts_evaluation(
     if sample_count == 0:
         raise HTTPException(status_code=400, detail="Dataset has no samples")
 
-    # Get sample texts from the dataset CSV
-    sample_texts = get_sample_texts_from_dataset(
-        _session, dataset, auth_context.project_.id
-    )
-
-    if not sample_texts:
-        raise HTTPException(
-            status_code=400, detail="Could not load samples from dataset"
-        )
-
     language_id = dataset.language_id
 
     # Create run record
@@ -90,51 +79,40 @@ def start_tts_evaluation(
         project_id=auth_context.project_.id,
         models=run_create.models,
         language_id=language_id,
-        total_items=len(sample_texts) * len(run_create.models),
+        total_items=sample_count * len(run_create.models),
     )
 
-    # Create result records for each sample text and model
-    results = create_tts_results(
-        session=_session,
-        sample_texts=sample_texts,
-        evaluation_run_id=run.id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-        models=run_create.models,
-    )
-
+    # Offload batch submission (result creation, JSONL, Gemini upload) to Celery worker
+    trace_id = correlation_id.get() or "N/A"
     try:
-        batch_result = start_tts_evaluation_batch(
-            session=_session,
-            run=run,
-            results=results,
-            org_id=auth_context.organization_.id,
+        celery_task_id = start_low_priority_job(
+            function_path="app.services.tts_evaluations.batch_job.execute_batch_submission",
             project_id=auth_context.project_.id,
+            job_id=str(run.id),
+            trace_id=trace_id,
+            organization_id=auth_context.organization_.id,
+            dataset_id=run_create.dataset_id,
+            models=run_create.models,
         )
         logger.info(
-            f"[start_tts_evaluation] TTS evaluation batch submitted | "
-            f"run_id: {run.id}, batch_jobs: {list(batch_result.get('batch_jobs', {}).keys())}"
+            f"[start_tts_evaluation] Batch submission queued | "
+            f"run_id: {run.id}, celery_task_id: {celery_task_id}"
         )
     except Exception as e:
         logger.error(
-            f"[start_tts_evaluation] Batch submission failed | "
+            f"[start_tts_evaluation] Failed to queue batch submission | "
             f"run_id: {run.id}, error: {str(e)}"
         )
         update_tts_run(
             session=_session,
             run_id=run.id,
             status="failed",
-            error_message=str(e),
+            error_message=f"Failed to queue batch submission: {str(e)}",
         )
-        raise HTTPException(status_code=500, detail=f"Batch submission failed: {e}")
-
-    # Refresh run to get updated status
-    run = get_tts_run_by_id(
-        session=_session,
-        run_id=run.id,
-        org_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-    )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to queue batch submission: {e}",
+        )
 
     return APIResponse.success_response(
         data=TTSEvaluationRunPublic.from_model(

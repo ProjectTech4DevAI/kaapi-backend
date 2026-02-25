@@ -137,11 +137,11 @@ class TTSResult(SQLModel, table=True):
     updated_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
-        sa_column_kwargs={"comment": "Timestamp when the result was last updated"},
+        sa_column_kwargs={
+            "comment": "Timestamp when the result was last updated",
+            "onupdate": now,
+        },
     )
-
-
-# --- Pydantic request/response models ---
 
 
 class TTSSampleCreate(BaseModel):
