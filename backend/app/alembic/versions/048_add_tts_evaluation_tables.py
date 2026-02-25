@@ -31,7 +31,7 @@ def upgrade():
             "sample_text",
             sa.Text(),
             nullable=False,
-            comment="Input text that was synthesized to speech",
+            comment="Input text that will be synthesized to speech",
         ),
         sa.Column(
             "object_store_url",
@@ -62,19 +62,19 @@ def upgrade():
             "score",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
-            comment="Extensible evaluation metrics (null in Phase 1)",
+            comment="Extensible evaluation metrics",
         ),
         sa.Column(
             "is_correct",
             sa.Boolean(),
             nullable=True,
-            comment="Human feedback: audio quality correctness (null=not reviewed)",
+            comment="Human feedback flag on audio quality correctness",
         ),
         sa.Column(
             "comment",
             sa.Text(),
             nullable=True,
-            comment="Human feedback comment",
+            comment="Human feedback comment on audio quality",
         ),
         sa.Column(
             "error_message",
