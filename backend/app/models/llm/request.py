@@ -208,7 +208,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: Literal["text", "stt", "tts", "image", "pdf", "multimodal"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -224,7 +224,7 @@ class KaapiCompletionConfig(SQLModel):
         ..., description="LLM provider (openai)"
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: Literal["text", "stt", "tts", "image", "pdf", "multimodal"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(

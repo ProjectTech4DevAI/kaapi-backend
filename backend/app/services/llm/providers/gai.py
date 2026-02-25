@@ -377,7 +377,7 @@ class GoogleAIProvider(BaseProvider):
 
         return llm_response, None
 
-    def _execute_vision(
+    def _execute_image(
         self,
         completion_config: NativeCompletionConfig,
         resolved_content: ImageContent
