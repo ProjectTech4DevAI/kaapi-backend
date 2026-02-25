@@ -7,13 +7,13 @@ evaluation polling loops.
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
-from app.core.batch import GeminiBatchProvider
-from app.core.batch import BatchJobState
+from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
 from app.services.stt_evaluations.gemini import GeminiClient
@@ -122,6 +122,144 @@ def make_failure_result(
         "action": "failed",
         "error": error,
     }
+
+
+def make_poll_result(
+    run: EvaluationRun,
+    eval_type: str,
+    previous_status: str,
+    current_status: str,
+    action: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Build a status result dict for a polled run.
+
+    Args:
+        run: The evaluation run
+        eval_type: Short type label ("stt" or "tts")
+        previous_status: Status before polling
+        current_status: Status after polling
+        action: Action taken (e.g. "completed", "failed", "no_change")
+        error: Optional error message
+
+    Returns:
+        dict with run_id, run_name, type, statuses, action, and optional error
+    """
+    result: dict[str, Any] = {
+        "run_id": run.id,
+        "run_name": run.run_name,
+        "type": eval_type,
+        "previous_status": previous_status,
+        "current_status": current_status,
+        "action": action,
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+@dataclass
+class BatchPollResult:
+    """Aggregated result of polling all batch jobs for a single run."""
+
+    all_terminal: bool
+    any_succeeded: bool
+    any_failed: bool
+    any_dispatched: bool
+    errors: list[str]
+
+
+async def poll_batch_jobs(
+    session: Session,
+    batch_jobs: list[BatchJob],
+    batch_provider: GeminiBatchProvider,
+    provider_config_key: str,
+    log_prefix: str,
+    on_succeeded: Callable[[BatchJob, str], Awaitable[bool]],
+    on_already_succeeded: Callable[[BatchJob, str], Awaitable[bool]] | None = None,
+) -> BatchPollResult:
+    """Poll a list of batch jobs and invoke callbacks on terminal states.
+
+    Iterates over batch jobs, polls non-terminal ones, and calls the
+    appropriate callback when a batch reaches or is already in SUCCEEDED state.
+
+    Args:
+        session: Database session
+        batch_jobs: Batch jobs to poll
+        batch_provider: Initialized GeminiBatchProvider
+        provider_config_key: Config key for provider name (e.g. "stt_provider")
+        log_prefix: Prefix for log messages
+        on_succeeded: Called when a batch newly reaches SUCCEEDED.
+            Returns True if async work was dispatched.
+        on_already_succeeded: Called when a batch was already SUCCEEDED
+            (e.g. for retry logic). Returns True if work was dispatched.
+            Pass None to skip.
+
+    Returns:
+        BatchPollResult with aggregated state
+    """
+    all_terminal = True
+    any_succeeded = False
+    any_failed = False
+    any_dispatched = False
+    errors: list[str] = []
+
+    for batch_job in batch_jobs:
+        provider_name = batch_job.config.get(provider_config_key, "unknown")
+
+        # Handle batch jobs already in terminal state
+        if batch_job.provider_status in TERMINAL_STATES:
+            if batch_job.provider_status == BatchJobState.SUCCEEDED.value:
+                if on_already_succeeded:
+                    if await on_already_succeeded(batch_job, provider_name):
+                        any_dispatched = True
+                any_succeeded = True
+            else:
+                any_failed = True
+                errors.append(
+                    f"{provider_name}: "
+                    f"{batch_job.error_message or batch_job.provider_status}"
+                )
+            continue
+
+        # Poll batch job status
+        poll_batch_status(
+            session=session,
+            provider=batch_provider,
+            batch_job=batch_job,
+        )
+
+        session.refresh(batch_job)
+        provider_status = batch_job.provider_status
+
+        logger.info(
+            f"{log_prefix} Batch status | "
+            f"batch_job_id={batch_job.id} | provider={provider_name} | "
+            f"state={provider_status}"
+        )
+
+        if provider_status not in TERMINAL_STATES:
+            all_terminal = False
+            continue
+
+        # Batch reached terminal state
+        if provider_status == BatchJobState.SUCCEEDED.value:
+            if await on_succeeded(batch_job, provider_name):
+                any_dispatched = True
+            any_succeeded = True
+        else:
+            any_failed = True
+            errors.append(
+                f"{provider_name}: {batch_job.error_message or provider_status}"
+            )
+
+    return BatchPollResult(
+        all_terminal=all_terminal,
+        any_succeeded=any_succeeded,
+        any_failed=any_failed,
+        any_dispatched=any_dispatched,
+        errors=errors,
+    )
 
 
 async def poll_all_pending_evaluations_by_type(

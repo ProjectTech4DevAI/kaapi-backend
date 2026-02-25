@@ -14,15 +14,12 @@ from typing import Any
 from sqlmodel import Session
 
 from app.celery.utils import start_low_priority_job
-from app.core.batch import (
-    BatchJobState,
-    GeminiBatchProvider,
-    poll_batch_status,
-)
+from app.core.batch import GeminiBatchProvider
 from app.crud.evaluations.cron_utils import (
-    TERMINAL_STATES,
     get_batch_jobs_for_run,
+    make_poll_result,
     poll_all_pending_evaluations_by_type,
+    poll_batch_jobs,
 )
 from app.crud.tts_evaluations.result import (
     count_results_by_status,
@@ -119,8 +116,10 @@ async def poll_tts_run(
     Returns:
         dict: Status result with run details and action taken
     """
-    log_prefix = f"[org={org_id}][project={run.project_id}][eval={run.id}]"
-    logger.info(f"[poll_tts_run] {log_prefix} Polling run")
+    log_prefix = (
+        f"[poll_tts_run] [org={org_id}][project={run.project_id}][eval={run.id}]"
+    )
+    logger.info(f"{log_prefix} Polling run")
 
     previous_status = run.status
 
@@ -129,118 +128,67 @@ async def poll_tts_run(
     )
 
     if not batch_jobs:
-        logger.warning(f"[poll_tts_run] {log_prefix} No batch jobs found")
+        logger.warning(f"{log_prefix} No batch jobs found")
         update_tts_run(
             session=session,
             run_id=run.id,
             status="failed",
             error_message="No batch jobs found",
         )
-        return {
-            "run_id": run.id,
-            "run_name": run.run_name,
-            "type": "tts",
-            "previous_status": previous_status,
-            "current_status": "failed",
-            "action": "failed",
-            "error": "No batch jobs found",
-        }
-
-    all_terminal = True
-    any_succeeded = False
-    any_failed = False
-    dispatched = False
-    errors: list[str] = []
-
-    for batch_job in batch_jobs:
-        provider_name = batch_job.config.get("tts_provider", "unknown")
-
-        # Handle batch jobs already in terminal state
-        if batch_job.provider_status in TERMINAL_STATES:
-            if batch_job.provider_status == BatchJobState.SUCCEEDED.value:
-                # Check if there are still unprocessed results for this batch.
-                # This handles retries when a previous processing attempt failed.
-                pending_results = get_pending_results_for_run(
-                    session=session, run_id=run.id, provider=provider_name
-                )
-                if pending_results:
-                    logger.info(
-                        f"[poll_tts_run] {log_prefix} Dispatching reprocessing for "
-                        f"{len(pending_results)} pending results | "
-                        f"batch_job_id={batch_job.id}"
-                    )
-                    _dispatch_tts_result_processing(
-                        run=run,
-                        batch_job=batch_job,
-                        org_id=org_id,
-                        provider_name=provider_name,
-                    )
-                    dispatched = True
-                any_succeeded = True
-            else:
-                any_failed = True
-                errors.append(
-                    f"{provider_name}: {batch_job.error_message or batch_job.provider_status}"
-                )
-            continue
-
-        # Poll batch job status
-        poll_batch_status(
-            session=session,
-            provider=batch_provider,
-            batch_job=batch_job,
+        return make_poll_result(
+            run=run,
+            eval_type="tts",
+            previous_status=previous_status,
+            current_status="failed",
+            action="failed",
+            error="No batch jobs found",
         )
 
-        session.refresh(batch_job)
-        provider_status = batch_job.provider_status
+    async def _on_batch_succeeded(batch_job: BatchJob, provider_name: str) -> bool:
+        _dispatch_tts_result_processing(run, batch_job, org_id, provider_name)
+        return True
 
-        logger.info(
-            f"[poll_tts_run] {log_prefix} Batch status | "
-            f"batch_job_id={batch_job.id} | provider={provider_name} | "
-            f"state={provider_status}"
+    async def _on_already_succeeded(batch_job: BatchJob, provider_name: str) -> bool:
+        pending = get_pending_results_for_run(session, run.id, provider_name)
+        if pending:
+            logger.info(
+                f"{log_prefix} Dispatching reprocessing for "
+                f"{len(pending)} pending results | "
+                f"batch_job_id={batch_job.id}"
+            )
+            _dispatch_tts_result_processing(run, batch_job, org_id, provider_name)
+            return True
+        return False
+
+    result = await poll_batch_jobs(
+        session=session,
+        batch_jobs=batch_jobs,
+        batch_provider=batch_provider,
+        provider_config_key="tts_provider",
+        log_prefix=log_prefix,
+        on_succeeded=_on_batch_succeeded,
+        on_already_succeeded=_on_already_succeeded,
+    )
+
+    if not result.all_terminal:
+        return make_poll_result(
+            run=run,
+            eval_type="tts",
+            previous_status=previous_status,
+            current_status=run.status,
+            action="no_change",
         )
-
-        if provider_status not in TERMINAL_STATES:
-            all_terminal = False
-            continue
-
-        # Batch reached terminal state - dispatch processing to Celery
-        if provider_status == BatchJobState.SUCCEEDED.value:
-            _dispatch_tts_result_processing(
-                run=run,
-                batch_job=batch_job,
-                org_id=org_id,
-                provider_name=provider_name,
-            )
-            any_succeeded = True
-            dispatched = True
-        else:
-            any_failed = True
-            errors.append(
-                f"{provider_name}: {batch_job.error_message or provider_status}"
-            )
-
-    if not all_terminal:
-        return {
-            "run_id": run.id,
-            "run_name": run.run_name,
-            "type": "tts",
-            "previous_status": previous_status,
-            "current_status": run.status,
-            "action": "no_change",
-        }
 
     # If we dispatched processing to Celery, keep the run as "processing".
     # The Celery task will finalize the run status when done.
-    if dispatched:
-        return {
-            "run_id": run.id,
-            "run_name": run.run_name,
-            "type": "tts",
-            "previous_status": previous_status,
-            "current_status": "processing",
-            "action": "dispatched",
-        }
+    if result.any_dispatched:
+        return make_poll_result(
+            run=run,
+            eval_type="tts",
+            previous_status=previous_status,
+            current_status="processing",
+            action="dispatched",
+        )
 
     # All batch jobs are done and no dispatching needed - finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
@@ -249,8 +197,8 @@ async def poll_tts_run(
 
     final_status = "completed" if pending == 0 else "processing"
     error_message = None
-    if any_failed:
-        error_message = "; ".join(errors)
+    if result.any_failed:
+        error_message = "; ".join(result.errors)
     elif failed_count > 0:
         error_message = f"{failed_count} synthesis(es) failed"
 
@@ -261,14 +209,13 @@ async def poll_tts_run(
         error_message=error_message,
     )
 
-    action = "completed" if not any_failed else "failed"
+    action = "completed" if not result.any_failed else "failed"
 
-    return {
-        "run_id": run.id,
-        "run_name": run.run_name,
-        "type": "tts",
-        "previous_status": previous_status,
-        "current_status": final_status,
-        "action": action,
-        **({"error": error_message} if error_message else {}),
-    }
+    return make_poll_result(
+        run=run,
+        eval_type="tts",
+        previous_status=previous_status,
+        current_status=final_status,
+        action=action,
+        error=error_message,
+    )

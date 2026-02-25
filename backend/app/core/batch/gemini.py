@@ -27,11 +27,6 @@ def extract_text_from_response_dict(response: dict[str, Any]) -> str:
     Returns:
         str: Extracted text
     """
-    # Try direct text field first
-    if "text" in response:
-        return response["text"]
-
-    # Extract from candidates structure
     text = ""
     for candidate in response.get("candidates", []):
         content = candidate.get("content", {})
