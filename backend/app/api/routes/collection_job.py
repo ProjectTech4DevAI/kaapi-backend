@@ -19,7 +19,7 @@ from app.models import (
 )
 from app.models.collection import CollectionPublic
 from app.utils import APIResponse, load_description
-from app.services.collections.helpers import extract_error_message
+from app.services.collections.helpers import extract_error_message, to_collection_public
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def collection_job_info(
         ):
             collection_crud = CollectionCrud(session, current_user.project_.id)
             collection = collection_crud.read_one(collection_job.collection_id)
-            job_out.collection = CollectionPublic.model_validate(collection)
+            job_out.collection = to_collection_public(collection)
 
         elif collection_job.action_type == CollectionActionType.DELETE:
             job_out.collection = CollectionIDPublic(id=collection_job.collection_id)
