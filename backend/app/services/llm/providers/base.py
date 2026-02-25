@@ -5,13 +5,50 @@ It provides a provider-agnostic interface for executing LLM calls.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List, TypeAlias
+from typing import Any, Literal
+
+from pydantic import model_validator
+from sqlmodel import SQLModel
 
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 from app.models.llm.request import TextContent, ImageContent, PDFContent
 
-ContentItem: TypeAlias = TextContent | ImageContent | PDFContent
-MultiModalInput: TypeAlias = List[ContentItem]
+
+class MultiModalInput(SQLModel):
+    """Resolved multimodal input containing a list of content parts."""
+
+    parts: list[TextContent | ImageContent | PDFContent]
+
+    @model_validator(mode="after")
+    def validate_parts(self):
+        if not self.parts:
+            raise ValueError("MultiModalInput requires at least one content part")
+        return self
+
+
+COMPLETION_TYPE_ALLOWED_INPUT: dict[str, set[type]] = {
+    "text": {str},
+    "stt": {str},
+    "tts": {str},
+    "image": {list},
+    "pdf": {list},
+    "multimodal": {MultiModalInput},
+}
+
+
+def validate_completion_input(completion_type: str, resolved_input: Any) -> str | None:
+    """Returns error message if mismatch, else None."""
+    allowed = COMPLETION_TYPE_ALLOWED_INPUT.get(completion_type)
+    if allowed is None:
+        return f"Unknown completion type: '{completion_type}'"
+    if type(resolved_input) not in allowed:
+        expected = " or ".join(t.__name__ for t in allowed)
+        return (
+            f"completion type '{completion_type}' expects {expected} input, "
+            f"got {type(resolved_input).__name__}"
+        )
+    return None
+
 
 class BaseProvider(ABC):
     """Abstract base class for LLM providers.

@@ -66,7 +66,7 @@ class OpenAIProvider(BaseProvider):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str,
+        resolved_input: str | list[ImageContent] | list[PDFContent] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         response: Response | None = None
@@ -77,6 +77,10 @@ class OpenAIProvider(BaseProvider):
                 **completion_config.params,
             }
             if isinstance(resolved_input, MultiModalInput):
+                params["input"] = [
+                    {"role": "user", "content": self.format_parts(resolved_input.parts)}
+                ]
+            elif isinstance(resolved_input, list):
                 params["input"] = [
                     {"role": "user", "content": self.format_parts(resolved_input)}
                 ]

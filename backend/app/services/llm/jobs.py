@@ -29,6 +29,7 @@ from app.services.llm.guardrails import (
     run_guardrails_validation,
 )
 from app.services.llm.providers.registry import get_llm_provider
+from app.services.llm.providers.base import validate_completion_input
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.utils import APIResponse, send_callback, resolve_input, cleanup_temp_file
 
@@ -104,7 +105,9 @@ def handle_job_error(
 
 
 @contextmanager
-def resolved_input_context(query_input: TextInput | AudioInput):
+def resolved_input_context(
+    query_input: TextInput | AudioInput | ImageInput | PDFInput | list,
+):
     """Context manager for resolving and cleaning up input resources.
 
     Ensures temporary files (e.g., downloaded audio) are cleaned up
@@ -394,6 +397,18 @@ def execute_job(
         # Resolve input and execute LLM (context manager handles cleanup)
         try:
             with resolved_input_context(request.query.input) as resolved_input:
+                mismatch = validate_completion_input(
+                    completion_config.type, resolved_input
+                )
+                if mismatch:
+                    callback_response = APIResponse.failure_response(
+                        error=mismatch,
+                        metadata=request.request_metadata,
+                    )
+                    return handle_job_error(
+                        job_uuid, callback_url_str, callback_response
+                    )
+
                 response, error = decorated_execute(
                     completion_config=completion_config,
                     query=request.query,

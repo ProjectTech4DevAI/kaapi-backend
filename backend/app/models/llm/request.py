@@ -68,9 +68,47 @@ class ImageLLMParams(SQLModel):
         ge=0.0,
         le=2.0,
     )
+    reasoning: Literal["low", "medium", "high"] | None = None
 
 
-KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ImageLLMParams]
+class PDFLLMParams(SQLModel):
+    model: str
+    instructions: str
+    response_format: Literal["text"] | None = Field(
+        None,
+        description="Currently supports text type",
+    )
+    temperature: float | None = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+    )
+    reasoning: Literal["low", "medium", "high"] | None = None
+
+
+class MultimodalLLMParams(SQLModel):
+    model: str
+    instructions: str
+    response_format: Literal["text"] | None = Field(
+        None,
+        description="Currently supports text type",
+    )
+    temperature: float | None = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+    )
+    reasoning: Literal["low", "medium", "high"] | None = None
+
+
+KaapiLLMParams = Union[
+    TextLLMParams,
+    STTLLMParams,
+    TTSLLMParams,
+    ImageLLMParams,
+    PDFLLMParams,
+    MultimodalLLMParams,
+]
 
 
 # Input type models for discriminated union
@@ -240,6 +278,8 @@ class KaapiCompletionConfig(SQLModel):
             "stt": STTLLMParams,
             "tts": TTSLLMParams,
             "image": ImageLLMParams,
+            "pdf": PDFLLMParams,
+            "multimodal": MultimodalLLMParams,
         }
         model_class = param_models[self.type]
         validated = model_class.model_validate(self.params)

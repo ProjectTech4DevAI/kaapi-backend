@@ -380,24 +380,15 @@ class GoogleAIProvider(BaseProvider):
     def _execute_image(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_content: ImageContent
-        | list[
-            ImageContent
-        ],  # using content here because we need mime type and format info for processing
+        resolved_input: list[ImageContent],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         model = completion_config.params.get("model")
         if not model:
             return None, "Missing 'model' in native params"
 
-        contents = []
-        if isinstance(resolved_content, list):
-            gemini_parts = self.format_parts(resolved_content)
-            contents = [{"role": "user", "parts": gemini_parts}]
-        else:
-            contents = [
-                {"role": "user", "parts": self.format_parts([resolved_content])}
-            ]
+        gemini_parts = self.format_parts(resolved_input)
+        contents = [{"role": "user", "parts": gemini_parts}]
 
         instructions = completion_config.params.get("instructions", "")
         temperature = completion_config.params.get("temperature", None)
@@ -460,24 +451,15 @@ class GoogleAIProvider(BaseProvider):
     def _execute_pdf(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_content: PDFContent
-        | list[
-            PDFContent
-        ],  # using content here because we need mime type and format info for processing
+        resolved_input: list[PDFContent],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         model = completion_config.params.get("model")
         if not model:
             return None, "Missing 'model' in native params"
 
-        contents = []
-        if isinstance(resolved_content, list):
-            gemini_parts = self.format_parts(resolved_content)
-            contents = [{"role": "user", "parts": gemini_parts}]
-        else:
-            contents = [
-                {"role": "user", "parts": self.format_parts([resolved_content])}
-            ]
+        gemini_parts = self.format_parts(resolved_input)
+        contents = [{"role": "user", "parts": gemini_parts}]
 
         instructions = completion_config.params.get("instructions", "")
         temperature = completion_config.params.get("temperature", None)
@@ -540,17 +522,15 @@ class GoogleAIProvider(BaseProvider):
     def _execute_text(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_input: str | list[TextContent | ImageContent | PDFContent],
+        resolved_input: str | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         model = completion_config.params.get("model")
         if not model:
             return None, "Missing 'model' in native params"
 
-        contents = []
-
-        if isinstance(resolved_input, list):
-            gemini_parts = self.format_parts(resolved_input)
+        if isinstance(resolved_input, MultiModalInput):
+            gemini_parts = self.format_parts(resolved_input.parts)
             contents = [{"role": "user", "parts": gemini_parts}]
         else:
             contents = [{"role": "user", "parts": [{"text": resolved_input}]}]
@@ -619,21 +599,11 @@ class GoogleAIProvider(BaseProvider):
         resolved_input: MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        """
-        Convert multimodal input's list of content parts into text response.
-        """
-
         model = completion_config.params.get("model")
         if not model:
             return None, "Missing 'model' in native params"
 
-        if not isinstance(resolved_input, MultiModalInput):
-            return (
-                None,
-                "Invalid input type for multimodal completion, expected list of content parts",
-            )
-
-        gemini_parts = self.format_parts(resolved_input)
+        gemini_parts = self.format_parts(resolved_input.parts)
         contents = [{"role": "user", "parts": gemini_parts}]
 
         instructions = completion_config.params.get("instructions", "")
@@ -698,7 +668,7 @@ class GoogleAIProvider(BaseProvider):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str | MultiModalInput,
+        resolved_input: str | list[ImageContent] | list[PDFContent] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         try:
@@ -726,14 +696,14 @@ class GoogleAIProvider(BaseProvider):
             elif completion_type == "image":
                 return self._execute_image(
                     completion_config=completion_config,
-                    resolved_content=resolved_input,
+                    resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
 
             elif completion_type == "pdf":
                 return self._execute_pdf(
                     completion_config=completion_config,
-                    resolved_content=resolved_input,
+                    resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
 
