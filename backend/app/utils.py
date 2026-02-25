@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 ContentPart = TextContent | AudioContent | ImageContent | PDFContent
 
+
 class APIResponse(BaseModel, Generic[T]):
     success: bool
     data: Optional[T] = None
@@ -447,19 +448,28 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
 
 
 def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
-    contents = image_input.content if isinstance(image_input.content, list) else [image_input.content]
+    contents = (
+        image_input.content
+        if isinstance(image_input.content, list)
+        else [image_input.content]
+    )
     for c in contents:
         if not c.mime_type:
             c.mime_type = "image/png"
-    return contents         
+    return contents
 
 
 def resolve_pdf_content(pdf_input: PDFInput) -> list[PDFContent]:
-    contents = pdf_input.content if isinstance(pdf_input.content, list) else [pdf_input.content]
+    contents = (
+        pdf_input.content
+        if isinstance(pdf_input.content, list)
+        else [pdf_input.content]
+    )
     for c in contents:
         if not c.mime_type:
             c.mime_type = "application/pdf"
     return contents
+
 
 def resolve_input(query_input) -> tuple[str, str | None]:
     """Resolve discriminated union input to content string.
@@ -481,13 +491,13 @@ def resolve_input(query_input) -> tuple[str, str | None]:
             # AudioInput content is base64-encoded audio
             mime_type = query_input.content.mime_type or "audio/wav"
             return resolve_audio_base64(query_input.content.value, mime_type)
-        
+
         elif isinstance(query_input, ImageInput):
             return resolve_image_content(query_input), None
-        
+
         elif isinstance(query_input, PDFInput):
             return resolve_pdf_content(query_input), None
-        
+
         elif isinstance(query_input, list):
             parts: list[ContentPart] = []
             for item in query_input:

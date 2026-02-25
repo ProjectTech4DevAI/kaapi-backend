@@ -5,10 +5,13 @@ It provides a provider-agnostic interface for executing LLM calls.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, List, TypeAlias
 
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 from app.models.llm.request import TextContent, ImageContent, PDFContent
+
+ContentItem: TypeAlias = TextContent | ImageContent | PDFContent
+MultiModalInput: TypeAlias = List[ContentItem]
 
 class BaseProvider(ABC):
     """Abstract base class for LLM providers.

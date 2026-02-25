@@ -55,6 +55,7 @@ class TTSLLMParams(SQLModel):
     language: str
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
+
 class ImageLLMParams(SQLModel):
     model: str
     instructions: str
@@ -67,6 +68,7 @@ class ImageLLMParams(SQLModel):
         ge=0.0,
         le=2.0,
     )
+
 
 KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ImageLLMParams]
 
@@ -86,23 +88,28 @@ class AudioContent(SQLModel):
         description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
     )
 
+
 class ImageContent(SQLModel):
-    format: Literal["base64", "public_url"] = "base64"
-    value: str = Field(..., description="Base64 encoded image or Public URL to the image")
+    format: Literal["base64", "url"] = "base64"
+    value: str = Field(
+        ..., description="Base64 encoded image or Public URL to the image"
+    )
     # keeping the mime_type
     mime_type: str | None = Field(
         None,
         description="MIME type of the image (e.g., image/png, image/jpeg)",
     )
 
+
 class PDFContent(SQLModel):
-    format: Literal["base64", "public_url"] = "base64"
+    format: Literal["base64", "url"] = "base64"
     value: str = Field(..., description="Base64 encoded PDF or Public URL to the PDF")
     # keeping the mime_type
     mime_type: str | None = Field(
         None,
         description="MIME type of the PDF (e.g., application/pdf)",
     )
+
 
 class TextInput(SQLModel):
     type: Literal["text"] = "text"
@@ -113,9 +120,11 @@ class AudioInput(SQLModel):
     type: Literal["audio"] = "audio"
     content: AudioContent
 
+
 class ImageInput(SQLModel):
     type: Literal["image"] = "image"
     content: ImageContent | list[ImageContent]
+
 
 class PDFInput(SQLModel):
     type: Literal["pdf"] = "pdf"
@@ -427,12 +436,12 @@ class LlmCall(SQLModel, table=True):
         },
     )
 
-    input_type: Literal["text", "audio", "image"] = Field(
+    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] = Field(
         ...,
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="Input type: text, audio, image",
+            comment="Input type: text, audio, image, pdf, multimodal",
         ),
     )
 

@@ -112,7 +112,7 @@ def resolved_input_context(query_input: TextInput | AudioInput):
     """
     resolved_input, error = resolve_input(query_input)
     print(f"Resolved input: {resolved_input}, error: {error}")
-    
+
     if error:
         raise ValueError(error)
 
