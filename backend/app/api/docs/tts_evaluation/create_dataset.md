@@ -1,4 +1,9 @@
 Create a new TTS evaluation dataset with text samples.
 
-Each sample requires:
-- **text**: Text string to be synthesized into speech
+Required fields:
+- **name**: Dataset name
+- **samples**: List of text samples, each with a **text** field
+
+Optional fields:
+- **description**: Dataset description
+- **language_id**: ID of a language from the global languages table
