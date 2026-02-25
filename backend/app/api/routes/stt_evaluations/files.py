@@ -23,7 +23,7 @@ router = APIRouter()
     description=load_description("stt_evaluation/upload_audio.md"),
 )
 def upload_audio(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     file: UploadFile = File(..., description="Audio file to upload"),
 ) -> APIResponse[AudioUploadResponse]:
@@ -34,7 +34,7 @@ def upload_audio(
     )
 
     result = upload_audio_file(
-        session=_session,
+        session=session,
         file=file,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,

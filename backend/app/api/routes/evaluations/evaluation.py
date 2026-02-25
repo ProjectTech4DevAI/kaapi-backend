@@ -73,7 +73,7 @@ def evaluate(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_evaluation_runs(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = 50,
     offset: int = 0,
@@ -87,7 +87,7 @@ def list_evaluation_runs(
 
     return APIResponse.success_response(
         data=list_evaluation_runs_crud(
-            session=_session,
+            session=session,
             organization_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
             limit=limit,
@@ -104,7 +104,7 @@ def list_evaluation_runs(
 )
 def get_evaluation_run_status(
     evaluation_id: int,
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     get_trace_info: bool = Query(
         False,
@@ -143,7 +143,7 @@ def get_evaluation_run_status(
         )
 
     eval_run, error = get_evaluation_with_scores(
-        session=_session,
+        session=session,
         evaluation_id=evaluation_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,

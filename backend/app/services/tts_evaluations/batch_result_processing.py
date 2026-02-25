@@ -85,10 +85,12 @@ def execute_tts_result_processing(
             if results:
                 first = results[0]
                 resp = first.get("response") or {}
+                resp_keys = (
+                    list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__
+                )
                 logger.info(
                     f"[execute_tts_result_processing] First result structure | "
-                    f"keys={list(first.keys())}, "
-                    f"response_keys={list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__}"
+                    f"keys={list(first.keys())}, response_keys={resp_keys}"
                 )
 
             # Pre-fetch all TTSResult records for this run+provider
@@ -266,9 +268,13 @@ def _extract_audio_from_response(response: dict[str, Any]) -> str | None:
             if inline_data.get("data"):
                 return inline_data["data"]
 
+    part_keys = [
+        list(p.keys())
+        for c in response.get("candidates", [])
+        for p in c.get("content", {}).get("parts", [])
+    ]
     logger.warning(
         f"[_extract_audio_from_response] No audio data found | "
-        f"response_keys={list(response.keys())}, "
-        f"parts={[list(p.keys()) for c in response.get('candidates', []) for p in c.get('content', {}).get('parts', [])]}"
+        f"response_keys={list(response.keys())}, parts={part_keys}"
     )
     return None

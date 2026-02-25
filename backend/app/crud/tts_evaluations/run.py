@@ -6,7 +6,7 @@ from typing import Any
 from sqlmodel import Session, func, select
 
 from app.core.util import now
-from app.models import EvaluationDataset, EvaluationRun
+from app.models import EvaluationRun
 from app.models.stt_evaluation import EvaluationType
 from app.models.tts_evaluation import TTSEvaluationRunPublic
 

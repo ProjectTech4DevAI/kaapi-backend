@@ -29,7 +29,7 @@ router = APIRouter()
     description=load_description("tts_evaluation/update_feedback.md"),
 )
 def update_result_feedback(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     result_id: int,
     feedback: TTSFeedbackUpdate = Body(...),
@@ -42,7 +42,7 @@ def update_result_feedback(
 
     # Verify result exists and belongs to this project
     existing = get_tts_result_by_id(
-        session=_session,
+        session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -53,7 +53,7 @@ def update_result_feedback(
 
     # Update feedback
     result = update_tts_human_feedback(
-        session=_session,
+        session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -72,13 +72,13 @@ def update_result_feedback(
     description=load_description("tts_evaluation/get_result.md"),
 )
 def get_result(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     result_id: int,
 ) -> APIResponse[TTSResultPublic]:
     """Get a TTS result by ID."""
     result = get_tts_result_by_id(
-        session=_session,
+        session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,

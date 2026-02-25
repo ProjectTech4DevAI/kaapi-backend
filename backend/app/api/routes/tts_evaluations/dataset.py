@@ -67,14 +67,14 @@ def create_dataset(
     description=load_description("tts_evaluation/list_datasets.md"),
 )
 def list_datasets(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(50, ge=1, le=100, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> APIResponse[list[TTSDatasetPublic]]:
     """List TTS evaluation datasets."""
     datasets, total = list_tts_datasets(
-        session=_session,
+        session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         limit=limit,
@@ -95,13 +95,13 @@ def list_datasets(
     description=load_description("tts_evaluation/get_dataset.md"),
 )
 def get_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int,
 ) -> APIResponse[TTSDatasetPublic]:
     """Get a TTS evaluation dataset."""
     dataset = get_tts_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,

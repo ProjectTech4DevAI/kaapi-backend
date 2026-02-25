@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import Column, Index, Text
@@ -6,6 +7,16 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now
+
+
+class BatchJobType(str, Enum):
+    """Type of batch job being executed."""
+
+    EVALUATION = "evaluation"
+    STT_EVALUATION = "stt_evaluation"
+    TTS_EVALUATION = "tts_evaluation"
+    EMBEDDING = "embedding"
+
 
 if TYPE_CHECKING:
     from .organization import Organization

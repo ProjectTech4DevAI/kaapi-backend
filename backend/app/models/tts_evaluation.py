@@ -13,13 +13,10 @@ from sqlmodel import SQLModel
 
 from app.core.util import now
 from app.models.job import JobStatus
-from app.models.stt_evaluation import EvaluationType
+from app.services.tts_evaluations.constants import SUPPORTED_TTS_MODELS
 
 if TYPE_CHECKING:
     from app.models import EvaluationDataset, EvaluationRun
-
-# Supported TTS models for evaluation
-SUPPORTED_TTS_MODELS = ["gemini-2.5-pro-preview-tts"]
 
 
 class TTSResult(SQLModel, table=True):

@@ -1,5 +1,8 @@
 """Shared constants for TTS evaluation services."""
 
+# Supported TTS models for evaluation
+SUPPORTED_TTS_MODELS = ["gemini-2.5-pro-preview-tts"]
+
 # Default TTS model
 DEFAULT_TTS_MODEL = "gemini-2.5-pro-preview-tts"
 

@@ -10,6 +10,7 @@ from app.core.batch import (
     create_tts_batch_requests,
     start_batch_job,
 )
+from app.models.batch_job import BatchJobType
 from app.crud.tts_evaluations.result import (
     get_pending_results_for_run,
     update_tts_result,
@@ -105,7 +106,7 @@ def start_tts_evaluation_batch(
                 session=session,
                 provider=batch_provider,
                 provider_name="google",
-                job_type="tts_evaluation",
+                job_type=BatchJobType.TTS_EVALUATION,
                 organization_id=org_id,
                 project_id=project_id,
                 jsonl_data=jsonl_data,

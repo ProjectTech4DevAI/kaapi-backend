@@ -13,6 +13,8 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.models.batch_job import BatchJobType
+
 from app.celery.utils import start_low_priority_job
 from app.core.batch import GeminiBatchProvider
 from app.crud.evaluations.cron_utils import (
@@ -124,7 +126,7 @@ async def poll_tts_run(
     previous_status = run.status
 
     batch_jobs = get_batch_jobs_for_run(
-        session=session, run=run, job_type="tts_evaluation"
+        session=session, run=run, job_type=BatchJobType.TTS_EVALUATION
     )
 
     if not batch_jobs:

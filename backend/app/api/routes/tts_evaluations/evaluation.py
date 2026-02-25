@@ -40,7 +40,7 @@ router = APIRouter()
     description=load_description("tts_evaluation/start_evaluation.md"),
 )
 def start_tts_evaluation(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     run_create: TTSEvaluationRunCreate = Body(...),
 ) -> APIResponse[TTSEvaluationRunPublic]:
@@ -53,7 +53,7 @@ def start_tts_evaluation(
 
     # Validate dataset exists
     dataset = get_tts_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=run_create.dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -71,7 +71,7 @@ def start_tts_evaluation(
 
     # Create run record
     run = create_tts_run(
-        session=_session,
+        session=session,
         run_name=run_create.run_name,
         dataset_id=run_create.dataset_id,
         dataset_name=dataset.name,
@@ -104,7 +104,7 @@ def start_tts_evaluation(
             f"run_id: {run.id}, error: {str(e)}"
         )
         update_tts_run(
-            session=_session,
+            session=session,
             run_id=run.id,
             status="failed",
             error_message=f"Failed to queue batch submission: {str(e)}",
@@ -133,7 +133,7 @@ def start_tts_evaluation(
     description=load_description("tts_evaluation/list_runs.md"),
 )
 def list_tts_evaluation_runs(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int | None = Query(None, description="Filter by dataset ID"),
     status: str | None = Query(None, description="Filter by status"),
@@ -142,7 +142,7 @@ def list_tts_evaluation_runs(
 ) -> APIResponse[list[TTSEvaluationRunPublic]]:
     """List TTS evaluation runs."""
     runs, total = list_tts_runs(
-        session=_session,
+        session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         dataset_id=dataset_id,
@@ -165,14 +165,14 @@ def list_tts_evaluation_runs(
     description=load_description("tts_evaluation/get_run.md"),
 )
 def get_tts_evaluation_run(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
 ) -> APIResponse[TTSEvaluationRunWithResults]:
     """Get a TTS evaluation run with results."""
     run = get_tts_run_by_id(
-        session=_session,
+        session=session,
         run_id=run_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -186,7 +186,7 @@ def get_tts_evaluation_run(
 
     if include_results:
         results, results_total = get_results_by_run_id(
-            session=_session,
+            session=session,
             run_id=run_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,

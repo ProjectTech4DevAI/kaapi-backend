@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.models.batch_job import BatchJobType
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
@@ -84,7 +85,7 @@ async def poll_stt_run(
 
     # Find all batch jobs for this run
     batch_jobs = get_batch_jobs_for_run(
-        session=session, run=run, job_type="stt_evaluation"
+        session=session, run=run, job_type=BatchJobType.STT_EVALUATION
     )
 
     if not batch_jobs:
