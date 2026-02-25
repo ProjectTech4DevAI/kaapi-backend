@@ -7,11 +7,10 @@ from typing import List
 
 from fastapi import HTTPException
 from sqlmodel import select
-from openai import OpenAIError
 
 from app.crud import DocumentCrud, CollectionCrud
 from app.api.deps import SessionDep
-from app.models import DocumentCollection, Collection
+from app.models import DocumentCollection, Collection, CollectionPublic
 
 
 logger = logging.getLogger(__name__)
@@ -119,3 +118,38 @@ def ensure_unique_name(
         )
 
     return requested_name
+
+
+def to_collection_public(collection: Collection) -> CollectionPublic:
+    """
+    Convert a Collection DB model to CollectionPublic response model.
+
+    Maps fields based on service type:
+    - If llm_service_name is a vector store (matches get_service_name pattern),
+      use knowledge_base_id/knowledge_base_provider
+    - Otherwise (assistant), use llm_service_id/llm_service_name
+    """
+    is_vector_store = collection.llm_service_name == get_service_name(
+        collection.provider
+    )
+
+    if is_vector_store:
+        return CollectionPublic(
+            id=collection.id,
+            knowledge_base_id=collection.llm_service_id,
+            knowledge_base_provider=collection.llm_service_name,
+            project_id=collection.project_id,
+            inserted_at=collection.inserted_at,
+            updated_at=collection.updated_at,
+            deleted_at=collection.deleted_at,
+        )
+    else:
+        return CollectionPublic(
+            id=collection.id,
+            llm_service_id=collection.llm_service_id,
+            llm_service_name=collection.llm_service_name,
+            project_id=collection.project_id,
+            inserted_at=collection.inserted_at,
+            updated_at=collection.updated_at,
+            deleted_at=collection.deleted_at,
+        )
