@@ -12,7 +12,7 @@ from app.crud.tts_evaluations import create_tts_run
 from app.models import EvaluationDataset
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
-from app.models.tts_evaluation import SUPPORTED_TTS_MODELS, TTSResult
+from app.models.tts_evaluation import TTSResult
 from app.tests.utils.auth import TestAuthContext
 
 

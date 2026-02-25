@@ -37,7 +37,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def evaluate(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int = Body(..., description="ID of the evaluation dataset"),
     experiment_name: str = Body(
@@ -48,7 +48,7 @@ def evaluate(
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
     eval_run = start_evaluation(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         experiment_name=experiment_name,
         config_id=config_id,

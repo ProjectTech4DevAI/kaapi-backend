@@ -147,7 +147,9 @@ class TTSResult(SQLModel, table=True):
 class TTSSampleCreate(BaseModel):
     """Request model for a single TTS sample."""
 
-    text: str = Field(..., description="Text to synthesize", min_length=1)
+    text: str = Field(
+        ..., description="Text to synthesize", min_length=1, max_length=5000
+    )
 
 
 class TTSDatasetCreate(BaseModel):
@@ -338,23 +340,9 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
         run_metadata: dict[str, Any] | None = None,
     ) -> TTSEvaluationRunWithResults:
         """Create from an EvaluationRun model instance with results."""
+        base = TTSEvaluationRunPublic.from_model(run, run_metadata=run_metadata)
         return cls(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
-            run_metadata=run_metadata,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
+            **base.model_dump(),
             results=results or [],
             results_total=results_total,
         )

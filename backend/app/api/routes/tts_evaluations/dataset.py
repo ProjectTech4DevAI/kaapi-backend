@@ -31,7 +31,7 @@ router = APIRouter()
     description=load_description("tts_evaluation/create_dataset.md"),
 )
 def create_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_create: TTSDatasetCreate = Body(...),
 ) -> APIResponse[TTSDatasetPublic]:
@@ -39,7 +39,7 @@ def create_dataset(
     # Validate language_id if provided
     if dataset_create.language_id is not None:
         language = get_language_by_id(
-            session=_session, language_id=dataset_create.language_id
+            session=session, language_id=dataset_create.language_id
         )
         if not language:
             raise HTTPException(
@@ -47,7 +47,7 @@ def create_dataset(
             )
 
     dataset = upload_tts_dataset(
-        session=_session,
+        session=session,
         name=dataset_create.name,
         samples=dataset_create.samples,
         organization_id=auth_context.organization_.id,
