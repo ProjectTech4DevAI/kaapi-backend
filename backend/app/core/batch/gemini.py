@@ -33,6 +33,8 @@ def extract_text_from_response_dict(response: dict[str, Any]) -> str:
         for part in content.get("parts", []):
             if "text" in part:
                 text += part["text"]
+    if not text and "text" in response:
+        text = response["text"]
     return text
 
 
