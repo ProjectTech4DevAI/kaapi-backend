@@ -26,12 +26,13 @@ from app.core import security
 from app.core.config import settings
 from app.crud.credentials import get_provider_credential
 from app.models.llm.request import TextInput, AudioInput, ImageInput, PDFInput
+from app.models.llm.request import TextContent, AudioContent, ImageContent, PDFContent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
+ContentPart = TextContent | AudioContent | ImageContent | PDFContent
 
 class APIResponse(BaseModel, Generic[T]):
     success: bool
@@ -444,61 +445,21 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
     except Exception as e:
         return "", f"Failed to write audio to temp file: {str(e)}"
 
-def resolve_image_input(image_input) -> list[dict]:
+
+def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
     contents = image_input.content if isinstance(image_input.content, list) else [image_input.content]
-    items = []
-    for content in contents:
-        if content.format == "base64":
-            mime = content.mime_type or "image/png"
-            val = content.value
-            image_url = f"data:{mime};base64,{val}"
-        else:
-            image_url = content.value
-        items.append({
-            "type": "input_image",
-            "image_url": image_url
-        })
+    for c in contents:
+        if not c.mime_type:
+            c.mime_type = "image/png"
+    return contents         
 
-    return items
-        
 
-def resolve_pdf_input(pdf_input) -> list[dict]:
+def resolve_pdf_content(pdf_input: PDFInput) -> list[PDFContent]:
     contents = pdf_input.content if isinstance(pdf_input.content, list) else [pdf_input.content]
-    items = []
-    for content in contents:
-        if content.format == "base64":
-            mime = content.mime_type or "application/pdf"
-            val = content.value
-            pdf_url = f"data:{mime};base64,{val}"
-        else:
-            pdf_url = content.value
-        
-        items.append({
-            "type": "input_file",
-            "file_url": pdf_url 
-        })
-    return items
-    
-
-def resolve_multimodal_list(inputs: list) -> tuple[list[dict], str | None]:
-    content_items = []
-
-    for item in inputs:
-        if isinstance(item, TextInput):
-            content_items.append({
-                "type": "input_text",
-                "text": item.content.value,
-            })
-        elif isinstance(item, ImageInput):
-            image_items = resolve_image_input(item)
-            content_items.extend(image_items)
-        elif isinstance(item, PDFInput):
-            pdf_items = resolve_pdf_input(item)
-            content_items.extend(pdf_items)
-        else:
-            return [], f"Unsupported input type in multimodal list: {type(item)}"
-    
-    return content_items, None
+    for c in contents:
+        if not c.mime_type:
+            c.mime_type = "application/pdf"
+    return contents
 
 def resolve_input(query_input) -> tuple[str, str | None]:
     """Resolve discriminated union input to content string.
@@ -522,15 +483,23 @@ def resolve_input(query_input) -> tuple[str, str | None]:
             return resolve_audio_base64(query_input.content.value, mime_type)
         
         elif isinstance(query_input, ImageInput):
-            content_items = resolve_image_input(query_input)
-            return content_items, None
+            return resolve_image_content(query_input), None
         
         elif isinstance(query_input, PDFInput):
-            content_items = resolve_pdf_input(query_input)
-            return content_items, None
-
+            return resolve_pdf_content(query_input), None
+        
         elif isinstance(query_input, list):
-            return resolve_multimodal_list(query_input)
+            parts: list[ContentPart] = []
+            for item in query_input:
+                if isinstance(item, TextInput):
+                    parts.append(item.content)  # TextContent instance
+                elif isinstance(item, ImageInput):
+                    parts.extend(resolve_image_content(item))
+                elif isinstance(item, PDFInput):
+                    parts.extend(resolve_pdf_content(item))
+                else:
+                    return [], f"Unsupported input type: {type(item)}"
+            return parts, None
 
         else:
             return "", f"Unknown input type: {type(query_input)}"

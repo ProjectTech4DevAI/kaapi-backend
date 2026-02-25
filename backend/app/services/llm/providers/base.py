@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
-
+from app.models.llm.request import TextContent, ImageContent, PDFContent
 
 class BaseProvider(ABC):
     """Abstract base class for LLM providers.
@@ -44,7 +44,7 @@ class BaseProvider(ABC):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str | list[dict],
+        resolved_input: str | list[TextContent | ImageContent | PDFContent],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute LLM API call.

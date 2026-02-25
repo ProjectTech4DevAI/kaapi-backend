@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from typing import TypeAlias, List
 
 import openai
 from openai import OpenAI
@@ -15,10 +16,12 @@ from app.models.llm import (
     TextContent,
 )
 from app.services.llm.providers.base import BaseProvider
-
+from app.models.llm.request import TextContent, ImageContent, PDFContent
 
 logger = logging.getLogger(__name__)
-
+ContentItem: TypeAlias = TextContent | ImageContent | PDFContent
+MultiModalInput: TypeAlias = List[ContentItem]
+UserInput: TypeAlias = str | MultiModalInput
 
 class OpenAIProvider(BaseProvider):
     def __init__(self, client: OpenAI):
@@ -36,6 +39,35 @@ class OpenAIProvider(BaseProvider):
             raise ValueError("OpenAI credentials not configured for this project.")
         return OpenAI(api_key=credentials["api_key"])
 
+    @staticmethod
+    def format_parts(parts: list[TextContent | ImageContent | PDFContent]) -> list[dict]:
+        items = []
+        for part in parts:
+            if isinstance(part, TextContent):
+                items.append({"type": "input_text", "text": part.value})
+            
+            elif isinstance(part, ImageContent):
+                if part.format == "base64":
+                    url = f"data:{part.mime_type};base64,{part.value}"
+                else:
+                    url = part.value
+                items.append({
+                    "type": "input_image",
+                    "image_url": url
+                })
+
+            elif isinstance(part, PDFContent):
+                if part.format == "base64":
+                    url = f"data:{part.mime_type};base64,{part.value}"
+                else:
+                    url = part.value
+                items.append({
+                    "type": "input_file",
+                    "file_url": url
+                })
+        
+        return items
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
@@ -51,10 +83,10 @@ class OpenAIProvider(BaseProvider):
             params = {
                 **completion_config.params,
             }
-            if isinstance(resolved_input, list):
+            if isinstance(resolved_input, MultiModalInput):
                 params["input"] = [{
                     "role": "user",
-                    "content": resolved_input # [{"type": "text", "value": "hello world"}, {"type": "image", "value": "base64encodedstring"}, {"type": "pdf", "value": "base64encodedstring"}]
+                    "content": self.format_parts(resolved_input)
                 }]
             else:
                 params["input"] = resolved_input

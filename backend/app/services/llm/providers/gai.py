@@ -1,6 +1,7 @@
 import logging
 import base64
 from typing import Any
+from typing import TypeAlias, List
 
 from google import genai
 from google.genai.types import (
@@ -20,13 +21,17 @@ from app.models.llm import (
     Usage,
     TextOutput,
     TextContent,
+    ImageContent,
+    PDFContent,
 )
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider
 from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
 
 logger = logging.getLogger(__name__)
-
+ContentItem: TypeAlias = TextContent | ImageContent | PDFContent
+MultiModalInput: TypeAlias = List[ContentItem]
+UserInput: TypeAlias = str | MultiModalInput
 
 class GoogleAIProvider(BaseProvider):
     def __init__(self, client: genai.Client):
@@ -43,6 +48,57 @@ class GoogleAIProvider(BaseProvider):
         if "api_key" not in credentials:
             raise ValueError("API Key for Google Gemini Not Set")
         return genai.Client(api_key=credentials["api_key"])
+
+    @staticmethod
+    def format_parts(
+        parts: list[TextContent | ImageContent | PDFContent],
+    ) -> list[dict]:
+        items = []
+        for part in parts:
+            if isinstance(part, TextContent):
+                items.append({"text": part.value})
+
+            elif isinstance(part, ImageContent):
+                if part.format == "base64":
+                    items.append(
+                        {
+                            "inline_data": {
+                                "data": part.value,
+                                "mime_type": part.mime_type,
+                            }
+                        }
+                    )
+                else:
+                    items.append(
+                        {
+                            "file_data": {
+                                "file_uri": part.value,
+                                "mime_type": part.mime_type,
+                                "display_name": None,
+                            }
+                        }
+                    )
+            elif isinstance(part, PDFContent):
+                if part.format == "base64":
+                    items.append(
+                        {
+                            "inline_data": {
+                                "data": part.value,
+                                "mime_type": part.mime_type,
+                            }
+                        }
+                    )
+                else:
+                    items.append(
+                        {
+                            "file_data": {
+                                "file_uri": part.value,
+                                "mime_type": part.mime_type,
+                                "display_name": None,
+                            }
+                        }
+                    )
+        return items
 
     def _execute_stt(
         self,
@@ -323,12 +379,313 @@ class GoogleAIProvider(BaseProvider):
         )
 
         return llm_response, None
+    
+    def _execute_vision(
+        self,
+        completion_config: NativeCompletionConfig,
+        resolved_content: ImageContent | list[ImageContent], # using content here because we need mime type and format info for processing
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        model = completion_config.params.get("model")
+        if not model:
+            return None, "Missing 'model' in native params"
+        
+        contents = []
+        if isinstance(resolved_content, list):
+            gemini_parts = self.format_parts(resolved_content)
+            contents = [{"role": "user", "parts": gemini_parts}]
+        else:
+            contents = [{"role": "user", "parts": self.format_parts([resolved_content])}]
+        
+        instructions = completion_config.params.get("instructions", "")
+        temperature = completion_config.params.get("temperature", None)
+        thinking_level = completion_config.params.get("reasoning", None)
 
+        generation_kwargs = {}
+        if instructions:
+            contents.append({"role": "system", "parts": [{"text": instructions}]})
+        
+        if temperature is not None:
+            generation_kwargs["temperature"] = temperature
+        
+        if thinking_level is not None:
+            generation_kwargs["thinking_config"] = ThinkingConfig(include_thoughts=False,thinking_level=thinking_level)
+        
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=GenerateContentConfig(**generation_kwargs)
+        )
+
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count or 0
+            output_tokens = response.usage_metadata.candidates_token_count or 0
+            total_tokens = response.usage_metadata.total_token_count or 0
+            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        else:
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+            )
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            reasoning_tokens = 0
+
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=response.response_id,
+                model=response.model_version or model,
+                provider=completion_config.provider,
+                output=TextOutput(content=TextContent(value=response.text)),
+            ),
+            usage=Usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                reasoning_tokens=reasoning_tokens,
+            )
+        )
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = response.model_dump(mode="json")
+           
+        logger.info(
+            f"[GoogleAIProvider._execute_text] Successfully generated text response: {response.response_id}"
+        )
+        return llm_response, None
+    
+    def _execute_pdf(
+        self,
+        completion_config: NativeCompletionConfig,
+        resolved_content: PDFContent | list[PDFContent], # using content here because we need mime type and format info for processing
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        model = completion_config.params.get("model")
+        if not model:
+            return None, "Missing 'model' in native params"
+        
+        contents = []
+        if isinstance(resolved_content, list):
+            gemini_parts = self.format_parts(resolved_content)
+            contents = [{"role": "user", "parts": gemini_parts}]
+        else:
+            contents = [{"role": "user", "parts": self.format_parts([resolved_content])}]
+        
+        instructions = completion_config.params.get("instructions", "")
+        temperature = completion_config.params.get("temperature", None)
+        thinking_level = completion_config.params.get("reasoning", None)
+
+        generation_kwargs = {}
+        if instructions:
+            contents.append({"role": "system", "parts": [{"text": instructions}]})
+        
+        if temperature is not None:
+            generation_kwargs["temperature"] = temperature
+        
+        if thinking_level is not None:
+            generation_kwargs["thinking_config"] = ThinkingConfig(include_thoughts=False,thinking_level=thinking_level)
+        
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=GenerateContentConfig(**generation_kwargs)
+        )
+
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count or 0
+            output_tokens = response.usage_metadata.candidates_token_count or 0
+            total_tokens = response.usage_metadata.total_token_count or 0
+            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        else:
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+            )
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            reasoning_tokens = 0
+
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=response.response_id,
+                model=response.model_version or model,
+                provider=completion_config.provider,
+                output=TextOutput(content=TextContent(value=response.text)),
+            ),
+            usage=Usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                reasoning_tokens=reasoning_tokens,
+            )
+        )
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = response.model_dump(mode="json")
+           
+        logger.info(
+            f"[GoogleAIProvider._execute_text] Successfully generated text response: {response.response_id}"
+        )
+        return llm_response, None
+
+    def _execute_text(
+        self, 
+        completion_config: NativeCompletionConfig,
+        resolved_input: str | list[TextContent | ImageContent | PDFContent],
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        model = completion_config.params.get("model")
+        if not model:
+            return None, "Missing 'model' in native params"
+
+        contents = []
+
+        if isinstance(resolved_input, list):
+            gemini_parts = self.format_parts(resolved_input)
+            contents = [{"role": "user", "parts": gemini_parts}]
+        else:
+            contents = [{"role": "user", "parts": [{"text": resolved_input}]}]
+
+        instructions = completion_config.params.get("instructions", "")
+        temperature = completion_config.params.get("temperature", None)
+        thinking_level = completion_config.params.get("reasoning", None)
+
+        generation_kwargs = {}
+        if instructions:
+            contents.append({"role": "system", "parts": [{"text": instructions}]})
+        
+        if temperature is not None:
+            generation_kwargs["temperature"] = temperature
+        
+        if thinking_level is not None:
+            generation_kwargs["thinking_config"] = ThinkingConfig(include_thoughts=False,thinking_level=thinking_level)
+        
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=GenerateContentConfig(**generation_kwargs)
+        )
+
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count or 0
+            output_tokens = response.usage_metadata.candidates_token_count or 0
+            total_tokens = response.usage_metadata.total_token_count or 0
+            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        else:
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+            )
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            reasoning_tokens = 0
+
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=response.response_id,
+                model=response.model_version or model,
+                provider=completion_config.provider,
+                output=TextOutput(content=TextContent(value=response.text)),
+            ),
+            usage=Usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                reasoning_tokens=reasoning_tokens,
+            )
+        )
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = response.model_dump(mode="json")
+           
+        logger.info(
+            f"[GoogleAIProvider._execute_text] Successfully generated text response: {response.response_id}"
+        )
+        return llm_response, None
+    
+    def _execute_multimodal(
+        self, 
+        completion_config: NativeCompletionConfig,
+        resolved_input: MultiModalInput,
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        """
+        Convert multimodal input's list of content parts into text response.
+        """
+        
+        model = completion_config.params.get("model")
+        if not model:
+            return None, "Missing 'model' in native params"
+
+        if not isinstance(resolved_input, MultiModalInput):
+            return None, "Invalid input type for multimodal completion, expected list of content parts"
+
+        gemini_parts = self.format_parts(resolved_input)
+        contents = [{"role": "user", "parts": gemini_parts}]
+
+        instructions = completion_config.params.get("instructions", "")
+        temperature = completion_config.params.get("temperature", None)
+        thinking_level = completion_config.params.get("reasoning", None)
+
+        generation_kwargs = {}
+        if instructions:
+            contents.append({"role": "system", "parts": [{"text": instructions}]})
+        
+        if temperature is not None:
+            generation_kwargs["temperature"] = temperature
+        
+        if thinking_level is not None:
+            generation_kwargs["thinking_config"] = ThinkingConfig(include_thoughts=False,thinking_level=thinking_level)
+        
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=GenerateContentConfig(**generation_kwargs)
+        )
+
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count or 0
+            output_tokens = response.usage_metadata.candidates_token_count or 0
+            total_tokens = response.usage_metadata.total_token_count or 0
+            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        else:
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+            )
+            input_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            reasoning_tokens = 0
+
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=response.response_id,
+                model=response.model_version or model,
+                provider=completion_config.provider,
+                output=TextOutput(content=TextContent(value=response.text)),
+            ),
+            usage=Usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                reasoning_tokens=reasoning_tokens,
+            )
+        )
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = response.model_dump(mode="json")
+           
+        logger.info(
+            f"[GoogleAIProvider._execute_text] Successfully generated text response: {response.response_id}"
+        )
+        return llm_response, None
+
+        
     def execute(
         self,
         completion_config: NativeCompletionConfig,
-        query: QueryParams,  # Not used by Google AI provider (no conversation support yet)
-        resolved_input: str,
+        query: QueryParams,
+        resolved_input: str | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         try:
@@ -345,11 +702,33 @@ class GoogleAIProvider(BaseProvider):
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
+
+            elif completion_type == "text":
+                return self._execute_text(
+                    completion_config=completion_config,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
+
+            elif completion_type == "vision":
+                return self._execute_vision(
+                    completion_config=completion_config,
+                    resolved_content=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
+
+            elif completion_type == "pdf":
+                return self._execute_pdf(
+                    completion_config=completion_config,
+                    resolved_content=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
             
-            else:
-                return (
-                    None,
-                    f"Unsupported completion type '{completion_type}' for Google AI provider",
+            elif completion_type == "multimodal":
+                return self._execute_text(
+                    completion_config=completion_config,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
                 )
 
         except TypeError as e:
