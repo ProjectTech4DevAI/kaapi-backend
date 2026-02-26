@@ -13,13 +13,14 @@ from sqlmodel import SQLModel
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 from app.models.llm.request import TextContent, AudioContent, ImageContent, PDFContent
 
+ContentPart = TextContent | ImageContent | PDFContent
 MULTIMODAL_ALLOWED_PARTS = (TextContent, ImageContent, PDFContent)
 
 
 class MultiModalInput(SQLModel):
     """Resolved multimodal input containing a list of content parts."""
 
-    parts: list[TextContent | ImageContent | PDFContent]
+    parts: list[ContentPart]
 
     @model_validator(mode="after")
     def validate_parts(self):
@@ -71,7 +72,7 @@ def validate_completion_input(completion_type: str, resolved_input: Any) -> str 
         hint = (
             " Please set completion type to 'multimodal' when sending mixed input types."
             if isinstance(resolved_input, MultiModalInput)
-            else f" Please ensure the input type matches the completion type."
+            else " Please ensure the input type matches the completion type."
         )
         return (
             f"Input type mismatch: completion type '{completion_type}' expects "
@@ -134,7 +135,7 @@ class BaseProvider(ABC):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str | list[TextContent | ImageContent | PDFContent],
+        resolved_input: str | list[ContentPart],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute LLM API call.

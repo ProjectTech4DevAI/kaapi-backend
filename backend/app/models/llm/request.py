@@ -59,9 +59,9 @@ class TTSLLMParams(SQLModel):
 class ImageLLMParams(SQLModel):
     model: str
     instructions: str | None = None
-    response_format: Literal["text"] | None = Field(
-        None,
-        description="Currently supports text type",
+    knowledge_base_ids: list[str] | None = Field(
+        default=None,
+        description="List of vector store IDs to use for knowledge retrieval",
     )
     temperature: float | None = Field(
         default=0.2,
@@ -69,14 +69,19 @@ class ImageLLMParams(SQLModel):
         le=2.0,
     )
     reasoning: Literal["low", "medium", "high"] | None = None
+    max_num_results: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of candidate results to return",
+    )
 
 
 class PDFLLMParams(SQLModel):
     model: str
     instructions: str | None = None
-    response_format: Literal["text"] | None = Field(
-        None,
-        description="Currently supports text type",
+    knowledge_base_ids: list[str] | None = Field(
+        default=None,
+        description="List of vector store IDs to use for knowledge retrieval",
     )
     temperature: float | None = Field(
         default=0.2,
@@ -84,14 +89,19 @@ class PDFLLMParams(SQLModel):
         le=2.0,
     )
     reasoning: Literal["low", "medium", "high"] | None = None
+    max_num_results: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of candidate results to return",
+    )
 
 
 class MultimodalLLMParams(SQLModel):
     model: str
     instructions: str | None = None
-    response_format: Literal["text"] | None = Field(
-        None,
-        description="Currently supports text type",
+    knowledge_base_ids: list[str] | None = Field(
+        default=None,
+        description="List of vector store IDs to use for knowledge retrieval",
     )
     temperature: float | None = Field(
         default=0.2,
@@ -99,6 +109,11 @@ class MultimodalLLMParams(SQLModel):
         le=2.0,
     )
     reasoning: Literal["low", "medium", "high"] | None = None
+    max_num_results: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of candidate results to return",
+    )
 
 
 KaapiLLMParams = Union[

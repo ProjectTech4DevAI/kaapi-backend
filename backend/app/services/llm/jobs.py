@@ -114,7 +114,6 @@ def resolved_input_context(
     even if errors occur during LLM execution.
     """
     resolved_input, error = resolve_input(query_input)
-    print(f"Resolved input: {resolved_input}, error: {error}")
 
     if error:
         raise ValueError(error)

@@ -16,7 +16,7 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
-from app.services.llm.providers.base import BaseProvider, MultiModalInput
+from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class OpenAIProvider(BaseProvider):
 
     @staticmethod
     def format_parts(
-        parts: list[TextContent | ImageContent | PDFContent],
+        parts: list[ContentPart],
     ) -> list[dict]:
         items = []
         for part in parts:

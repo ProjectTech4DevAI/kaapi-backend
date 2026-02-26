@@ -33,18 +33,15 @@ from app.models.llm.request import (
     AudioInput,
     ImageInput,
     PDFInput,
-    TextContent,
-    AudioContent,
     ImageContent,
     PDFContent,
 )
-from app.services.llm.providers.base import MultiModalInput
+from app.services.llm.providers.base import ContentPart, MultiModalInput
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-ContentPart = TextContent | AudioContent | ImageContent | PDFContent
 
 
 class APIResponse(BaseModel, Generic[T]):

@@ -24,7 +24,7 @@ from app.models.llm import (
     PDFContent,
 )
 from app.models.llm.response import AudioOutput, AudioContent
-from app.services.llm.providers.base import BaseProvider, MultiModalInput
+from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class GoogleAIProvider(BaseProvider):
 
     @staticmethod
     def format_parts(
-        parts: list[TextContent | ImageContent | PDFContent],
+        parts: list[ContentPart],
     ) -> list[dict]:
         items = []
         for part in parts:
@@ -419,7 +419,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_image] Response missing usage_metadata, using zeros"
             )
             input_tokens = 0
             output_tokens = 0
@@ -564,7 +564,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_text] Response missing usage_metadata, using zeros"
             )
             input_tokens = 0
             output_tokens = 0
@@ -635,7 +635,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_multimodal] Response missing usage_metadata, using zeros"
             )
             input_tokens = 0
             output_tokens = 0
