@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import HttpUrl, model_validator
+from pydantic import HttpUrl, model_validator, model_serializer
 from sqlalchemy import UniqueConstraint, Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -211,13 +211,77 @@ class CollectionIDPublic(SQLModel):
 
 class CollectionPublic(SQLModel):
     id: UUID
-    llm_service_id: str
-    llm_service_name: str
+    llm_service_id: str | None = Field(
+        default=None,
+        description="LLM service ID (e.g., Assistant ID) when model and instructions were provided",
+    )
+    llm_service_name: str | None = Field(
+        default=None,
+        description="LLM service name (e.g., model name) when model and instructions were provided",
+    )
+    knowledge_base_id: str | None = Field(
+        default=None,
+        description="Knowledge base ID (e.g., Vector Store ID) when only vector store was created",
+    )
+    knowledge_base_provider: str | None = Field(
+        default=None,
+        description="Knowledge base provider name when only vector store was created",
+    )
     project_id: int
 
     inserted_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_service_fields(self) -> "CollectionPublic":
+        """Ensure either LLM service fields or knowledge base fields are set, not both."""
+        has_llm = self.llm_service_id is not None or self.llm_service_name is not None
+        has_kb = (
+            self.knowledge_base_id is not None
+            or self.knowledge_base_provider is not None
+        )
+
+        if has_llm and has_kb:
+            raise ValueError(
+                "Cannot have both LLM service fields and knowledge base fields set"
+            )
+
+        if not has_llm and not has_kb:
+            raise ValueError(
+                "Either LLM service fields or knowledge base fields must be set"
+            )
+
+        # Ensure both fields in the pair are set or both are None
+        if has_llm and (
+            (self.llm_service_id is None) != (self.llm_service_name is None)
+        ):
+            raise ValueError("Both llm_service_id and llm_service_name must be set")
+
+        if has_kb and (
+            (self.knowledge_base_id is None) != (self.knowledge_base_provider is None)
+        ):
+            raise ValueError(
+                "Both knowledge_base_id and knowledge_base_provider must be set"
+            )
+
+        return self
+
+    @model_serializer(mode="wrap", when_used="json")
+    def _serialize_model(self, serializer: Any, info: Any) -> dict[str, Any]:
+        """Exclude unused service fields from JSON serialization."""
+        data = serializer(self)
+
+        # If this is a knowledge base, remove llm_service fields
+        if data.get("knowledge_base_id") is not None:
+            data.pop("llm_service_id", None)
+            data.pop("llm_service_name", None)
+        # If this is an assistant, remove knowledge_base fields
+        elif data.get("llm_service_id") is not None:
+            data.pop("knowledge_base_id", None)
+            data.pop("knowledge_base_provider", None)
+
+        return data
 
 
 class CollectionWithDocsPublic(CollectionPublic):
