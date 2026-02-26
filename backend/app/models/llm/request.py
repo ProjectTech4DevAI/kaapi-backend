@@ -56,73 +56,10 @@ class TTSLLMParams(SQLModel):
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-class ImageLLMParams(SQLModel):
-    model: str
-    instructions: str | None = None
-    knowledge_base_ids: list[str] | None = Field(
-        default=None,
-        description="List of vector store IDs to use for knowledge retrieval",
-    )
-    temperature: float | None = Field(
-        default=0.2,
-        ge=0.0,
-        le=2.0,
-    )
-    reasoning: Literal["low", "medium", "high"] | None = None
-    max_num_results: int | None = Field(
-        default=None,
-        ge=1,
-        description="Maximum number of candidate results to return",
-    )
-
-
-class PDFLLMParams(SQLModel):
-    model: str
-    instructions: str | None = None
-    knowledge_base_ids: list[str] | None = Field(
-        default=None,
-        description="List of vector store IDs to use for knowledge retrieval",
-    )
-    temperature: float | None = Field(
-        default=0.2,
-        ge=0.0,
-        le=2.0,
-    )
-    reasoning: Literal["low", "medium", "high"] | None = None
-    max_num_results: int | None = Field(
-        default=None,
-        ge=1,
-        description="Maximum number of candidate results to return",
-    )
-
-
-class MultimodalLLMParams(SQLModel):
-    model: str
-    instructions: str | None = None
-    knowledge_base_ids: list[str] | None = Field(
-        default=None,
-        description="List of vector store IDs to use for knowledge retrieval",
-    )
-    temperature: float | None = Field(
-        default=0.2,
-        ge=0.0,
-        le=2.0,
-    )
-    reasoning: Literal["low", "medium", "high"] | None = None
-    max_num_results: int | None = Field(
-        default=None,
-        ge=1,
-        description="Maximum number of candidate results to return",
-    )
-
-
 KaapiLLMParams = Union[
     TextLLMParams,
     STTLLMParams,
     TTSLLMParams,
-    ImageLLMParams,
-    PDFLLMParams,
-    MultimodalLLMParams,
 ]
 
 
@@ -277,7 +214,7 @@ class KaapiCompletionConfig(SQLModel):
         ..., description="LLM provider (openai)"
     )
 
-    type: Literal["text", "stt", "tts", "image", "pdf", "multimodal"] = Field(
+    type: Literal["text", "stt", "tts"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -292,9 +229,6 @@ class KaapiCompletionConfig(SQLModel):
             "text": TextLLMParams,
             "stt": STTLLMParams,
             "tts": TTSLLMParams,
-            "image": ImageLLMParams,
-            "pdf": PDFLLMParams,
-            "multimodal": MultimodalLLMParams,
         }
         model_class = param_models[self.type]
         validated = model_class.model_validate(self.params)
@@ -491,12 +425,12 @@ class LlmCall(SQLModel, table=True):
         },
     )
 
-    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] = Field(
+    input_type: Literal["text", "audio", "image"] = Field(
         ...,
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="Input type: text, audio, image, pdf, multimodal",
+            comment="Input type: text, audio, image",
         ),
     )
 

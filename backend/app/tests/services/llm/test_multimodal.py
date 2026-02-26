@@ -13,8 +13,6 @@ from app.models.llm.request import (
 from app.services.llm.providers.base import (
     ContentPart,
     MultiModalInput,
-    validate_completion_input,
-    _get_content_label,
 )
 from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.gai import GoogleAIProvider
@@ -23,82 +21,6 @@ from app.utils import (
     resolve_image_content,
     resolve_pdf_content,
 )
-
-
-class TestValidateCompletionInput:
-    def test_text_with_str_passes(self):
-        assert validate_completion_input("text", "hello") is None
-
-    def test_stt_with_str_passes(self):
-        assert validate_completion_input("stt", "/tmp/audio.wav") is None
-
-    def test_tts_with_str_passes(self):
-        assert validate_completion_input("tts", "say this") is None
-
-    def test_image_with_image_content_list_passes(self):
-        parts = [ImageContent(format="base64", value="abc", mime_type="image/png")]
-        assert validate_completion_input("image", parts) is None
-
-    def test_pdf_with_pdf_content_list_passes(self):
-        parts = [PDFContent(format="base64", value="abc", mime_type="application/pdf")]
-        assert validate_completion_input("pdf", parts) is None
-
-    def test_multimodal_with_multimodal_input_passes(self):
-        mm = MultiModalInput(
-            parts=[
-                TextContent(value="hello"),
-                ImageContent(format="base64", value="abc", mime_type="image/png"),
-            ]
-        )
-        assert validate_completion_input("multimodal", mm) is None
-
-    def test_text_input_with_pdf_completion_fails(self):
-        error = validate_completion_input("pdf", "some text")
-        assert error is not None
-        assert "input type mismatch" in error.lower()
-        assert "'pdf'" in error
-        assert "text" in error
-
-    def test_multimodal_input_with_image_completion_fails(self):
-        mm = MultiModalInput(
-            parts=[
-                TextContent(value="hello"),
-                ImageContent(format="base64", value="abc", mime_type="image/png"),
-            ]
-        )
-        error = validate_completion_input("image", mm)
-        assert error is not None
-        assert "multimodal" in error.lower()
-        assert "set completion type to 'multimodal'" in error
-
-    def test_text_input_with_image_completion_no_multimodal_hint(self):
-        error = validate_completion_input("image", "some text")
-        assert error is not None
-        assert "set completion type to 'multimodal'" not in error
-        assert "Please ensure the input type matches" in error
-
-    def test_pdf_content_in_image_completion_fails(self):
-        parts = [PDFContent(format="base64", value="abc", mime_type="application/pdf")]
-        error = validate_completion_input("image", parts)
-        assert error is not None
-        assert "'pdf'" in error
-
-    def test_image_content_in_pdf_completion_fails(self):
-        parts = [ImageContent(format="base64", value="abc", mime_type="image/png")]
-        error = validate_completion_input("pdf", parts)
-        assert error is not None
-        assert "'image'" in error
-
-    def test_unknown_completion_type(self):
-        error = validate_completion_input("unknown_type", "hello")
-        assert error is not None
-        assert "Unknown completion type" in error
-
-    def test_list_input_with_text_completion_fails(self):
-        parts = [ImageContent(format="base64", value="abc", mime_type="image/png")]
-        error = validate_completion_input("text", parts)
-        assert error is not None
-        assert "text" in error
 
 
 class TestMultiModalInput:
@@ -119,33 +41,6 @@ class TestMultiModalInput:
     def test_single_text_part(self):
         mm = MultiModalInput(parts=[TextContent(value="only text")])
         assert len(mm.parts) == 1
-
-
-class TestGetContentLabel:
-    def test_text_content(self):
-        assert _get_content_label(TextContent(value="hi")) == "text"
-
-    def test_image_content(self):
-        assert (
-            _get_content_label(
-                ImageContent(format="base64", value="abc", mime_type="image/png")
-            )
-            == "image"
-        )
-
-    def test_pdf_content(self):
-        assert (
-            _get_content_label(
-                PDFContent(format="base64", value="abc", mime_type="application/pdf")
-            )
-            == "pdf"
-        )
-
-    def test_audio_content(self):
-        assert (
-            _get_content_label(AudioContent(value="abc", mime_type="audio/wav"))
-            == "audio"
-        )
 
 
 class TestResolveInputMultimodal:
