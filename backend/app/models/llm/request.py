@@ -425,12 +425,13 @@ class LlmCall(SQLModel, table=True):
         },
     )
 
-    input_type: Literal["text", "audio", "image"] = Field(
+    # NOTE: image, pdf, multimodal are internal labels stored in the table not user facing.
+    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] = Field(
         ...,
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="Input type: text, audio, image",
+            comment="Input type: text, audio, image, pdf, multimodal",
         ),
     )
 
