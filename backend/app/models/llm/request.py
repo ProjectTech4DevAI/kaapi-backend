@@ -58,7 +58,7 @@ class TTSLLMParams(SQLModel):
 
 class ImageLLMParams(SQLModel):
     model: str
-    instructions: str
+    instructions: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
         description="Currently supports text type",
@@ -73,7 +73,7 @@ class ImageLLMParams(SQLModel):
 
 class PDFLLMParams(SQLModel):
     model: str
-    instructions: str
+    instructions: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
         description="Currently supports text type",
@@ -88,7 +88,7 @@ class PDFLLMParams(SQLModel):
 
 class MultimodalLLMParams(SQLModel):
     model: str
-    instructions: str
+    instructions: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
         description="Currently supports text type",

@@ -11,7 +11,9 @@ from pydantic import model_validator
 from sqlmodel import SQLModel
 
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
-from app.models.llm.request import TextContent, ImageContent, PDFContent
+from app.models.llm.request import TextContent, AudioContent, ImageContent, PDFContent
+
+MULTIMODAL_ALLOWED_PARTS = (TextContent, ImageContent, PDFContent)
 
 
 class MultiModalInput(SQLModel):
@@ -26,27 +28,75 @@ class MultiModalInput(SQLModel):
         return self
 
 
-COMPLETION_TYPE_ALLOWED_INPUT: dict[str, set[type]] = {
-    "text": {str},
-    "stt": {str},
-    "tts": {str},
-    "image": {list},
-    "pdf": {list},
-    "multimodal": {MultiModalInput},
+CONTENT_TYPE_LABEL: dict[type, str] = {
+    TextContent: "text",
+    AudioContent: "audio",
+    ImageContent: "image",
+    PDFContent: "pdf",
+}
+
+INPUT_TYPE_LABEL: dict[type, str] = {
+    str: "text",
+    list: "list",
+    MultiModalInput: "multimodal (mixed input types)",
+}
+
+COMPLETION_TYPE_RULES: dict[str, dict] = {
+    "text": {"type": str, "label": "text"},
+    "stt": {"type": str, "label": "audio"},
+    "tts": {"type": str, "label": "text"},
+    "image": {"type": list, "element_type": ImageContent, "label": "image"},
+    "pdf": {"type": list, "element_type": PDFContent, "label": "pdf"},
+    "multimodal": {"type": MultiModalInput, "label": "multimodal"},
 }
 
 
+def _get_content_label(content: Any) -> str:
+    return CONTENT_TYPE_LABEL.get(type(content), type(content).__name__)
+
+
 def validate_completion_input(completion_type: str, resolved_input: Any) -> str | None:
-    """Returns error message if mismatch, else None."""
-    allowed = COMPLETION_TYPE_ALLOWED_INPUT.get(completion_type)
-    if allowed is None:
+    """Returns error message if input type doesn't match completion type, else None."""
+    rule = COMPLETION_TYPE_RULES.get(completion_type)
+    if rule is None:
         return f"Unknown completion type: '{completion_type}'"
-    if type(resolved_input) not in allowed:
-        expected = " or ".join(t.__name__ for t in allowed)
-        return (
-            f"completion type '{completion_type}' expects {expected} input, "
-            f"got {type(resolved_input).__name__}"
+
+    expected_type = rule["type"]
+    label = rule["label"]
+
+    if not isinstance(resolved_input, expected_type):
+        actual_label = INPUT_TYPE_LABEL.get(
+            type(resolved_input), type(resolved_input).__name__
         )
+        hint = (
+            " Please set completion type to 'multimodal' when sending mixed input types."
+            if isinstance(resolved_input, MultiModalInput)
+            else f" Please ensure the input type matches the completion type."
+        )
+        return (
+            f"Input type mismatch: completion type '{completion_type}' expects "
+            f"'{label}' input, but received {actual_label}.{hint}"
+        )
+
+    if isinstance(resolved_input, list):
+        element_type = rule.get("element_type")
+        if element_type:
+            for item in resolved_input:
+                if not isinstance(item, element_type):
+                    return (
+                        f"Input type mismatch: completion type '{completion_type}' expects "
+                        f"'{label}' input, but received '{_get_content_label(item)}' content. "
+                        f"Please ensure the input type matches the completion type."
+                    )
+
+    if isinstance(resolved_input, MultiModalInput):
+        for part in resolved_input.parts:
+            if not isinstance(part, MULTIMODAL_ALLOWED_PARTS):
+                return (
+                    f"Unsupported content in multimodal input: '{_get_content_label(part)}'. "
+                    f"Multimodal supports text, image, and pdf only. Audio is not supported."
+                )
+
     return None
 
 

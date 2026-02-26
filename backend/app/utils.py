@@ -519,8 +519,16 @@ def resolve_input(
                     parts.extend(resolve_image_content(item))
                 elif isinstance(item, PDFInput):
                     parts.extend(resolve_pdf_content(item))
+                elif isinstance(item, AudioInput):
+                    return (
+                        "",
+                        "Audio input is not supported in multimodal. Please use completion type 'stt' for audio processing.",
+                    )
                 else:
-                    return "", f"Unsupported input type: {type(item)}"
+                    return (
+                        "",
+                        "Unsupported input type in multimodal list. Multimodal only supports text, image, and pdf inputs.",
+                    )
             return MultiModalInput(parts=parts), None
 
         else:
