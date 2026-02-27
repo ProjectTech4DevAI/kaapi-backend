@@ -51,6 +51,7 @@ def upload_audio(
     response_model=APIResponse[list[FilePublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List audio files",
+    description=load_description("stt_evaluation/list_audios.md"),
 )
 def list_audio(
     _session: SessionDep,
@@ -59,11 +60,8 @@ def list_audio(
         True, description="Include a signed URL to access the audio file"
     ),
 ) -> APIResponse[list[FilePublic]]:
-    """Get audio files by IDs if provided, or all audio files for the project if not.
+    """Get audio files per project if provided"""
 
-    If file_ids is provided in the request body, returns only those specific files.
-    If file_ids is not provided or is empty, returns all audio files for the project.
-    """
     logger.info(
         f"[list_audio] Listing audio files | "
         f"project_id: {auth_context.project_.id}, "
@@ -96,6 +94,7 @@ def list_audio(
     response_model=APIResponse[FilePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get audio file by ID",
+    description=load_description("stt_evaluation/get_audio.md"),
 )
 def get_audio(
     _session: SessionDep,
