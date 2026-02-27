@@ -2,10 +2,12 @@
 
 import logging
 
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.util import now
-from app.models.file import File, FileType
+from app.models.file import File
+
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,30 @@ def get_files_by_ids(
 
     statement = select(File).where(
         File.id.in_(file_ids),
+        File.organization_id == organization_id,
+        File.project_id == project_id,
+    )
+
+    return list(session.exec(statement).all())
+
+
+def list_files(
+    *,
+    session: Session,
+    organization_id: int,
+    project_id: int,
+) -> list[File]:
+    """Get all file records for an organization and project.
+
+    Args:
+        session: Database session
+        organization_id: Organization ID
+        project_id: Project ID
+
+    Returns:
+        list[File]: List of all file records found
+    """
+    statement = select(File).where(
         File.organization_id == organization_id,
         File.project_id == project_id,
     )

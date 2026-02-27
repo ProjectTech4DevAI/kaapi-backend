@@ -25,11 +25,11 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/runs")
 
 
 @router.post(
-    "/runs",
+    "",
     response_model=APIResponse[STTEvaluationRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Start STT evaluation",
@@ -132,7 +132,7 @@ def start_stt_evaluation(
 
 
 @router.get(
-    "/runs",
+    "",
     response_model=APIResponse[list[STTEvaluationRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List STT evaluation runs",
@@ -164,7 +164,7 @@ def list_stt_evaluation_runs(
 
 
 @router.get(
-    "/runs/{run_id}",
+    "/{run_id}",
     response_model=APIResponse[STTEvaluationRunWithResults],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT evaluation run",

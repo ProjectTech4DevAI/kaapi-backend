@@ -7,11 +7,10 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import SQLModel
 from sqlmodel import Field as SQLField
 
 from app.models.job import JobStatus
-from sqlmodel import SQLModel
-
 from app.core.util import now
 
 # Supported STT models for evaluation
@@ -360,13 +359,3 @@ class STTEvaluationRunWithResults(STTEvaluationRunPublic):
 
     results: list[STTResultWithSample]
     results_total: int = Field(0, description="Total number of results")
-
-
-class AudioUploadResponse(BaseModel):
-    """Response model for audio file upload."""
-
-    file_id: int = Field(..., description="ID of the created file record")
-    s3_url: str = Field(..., description="S3 URL of the uploaded audio file")
-    filename: str = Field(..., description="Original filename")
-    size_bytes: int = Field(..., description="File size in bytes")
-    content_type: str = Field(..., description="MIME type of the audio file")
