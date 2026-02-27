@@ -99,6 +99,10 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     warnings = []
 
     # Model is present in all param types
+    model = kaapi_params.get("model")
+    if not model:
+        return {}, ["Missing required 'model' parameter"]
+
     google_params["model"] = kaapi_params.get("model")
 
     # Instructions for STT prompts
@@ -111,6 +115,18 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     if temperature is not None:
         google_params["temperature"] = temperature
 
+    # TTS Config
+    voice = kaapi_params.get("voice")
+    if voice:
+        google_params["voice"] = voice
+
+    language = kaapi_params.get("language")
+    if language:
+        google_params["language"] = language
+
+    response_format = kaapi_params.get("response_format")
+    if response_format:
+        google_params["response_format"] = response_format
     # Warn about unsupported parameters
     if kaapi_params.get("knowledge_base_ids"):
         warnings.append(

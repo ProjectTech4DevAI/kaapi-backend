@@ -15,7 +15,9 @@ from sqlalchemy import Integer
 from sqlmodel import Session, select
 
 from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
-from app.crud.stt_evaluations.result import count_results_by_status, update_stt_result
+from app.core.batch.base import BATCH_KEY
+from app.core.util import now
+from app.crud.stt_evaluations.result import count_results_by_status
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
@@ -96,38 +98,11 @@ async def poll_all_pending_stt_evaluations(
         org_id = project_runs[0].organization_id
 
         try:
-            # Initialize Gemini client for this project
-            try:
-                gemini_client = GeminiClient.from_credentials(
-                    session=session,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-            except Exception as client_err:
-                logger.error(
-                    f"[poll_all_pending_stt_evaluations] Failed to get Gemini client | "
-                    f"org_id={org_id} | project_id={project_id} | error={client_err}"
-                )
-                # Mark all runs in this project as failed
-                for run in project_runs:
-                    update_stt_run(
-                        session=session,
-                        run_id=run.id,
-                        status="failed",
-                        error_message=f"Gemini client initialization failed: {str(client_err)}",
-                    )
-                    all_results.append(
-                        {
-                            "run_id": run.id,
-                            "run_name": run.run_name,
-                            "type": "stt",
-                            "action": "failed",
-                            "error": str(client_err),
-                        }
-                    )
-                    total_failed += 1
-                continue
-
+            gemini_client = GeminiClient.from_credentials(
+                session=session,
+                org_id=org_id,
+                project_id=project_id,
+            )
             batch_provider = GeminiBatchProvider(client=gemini_client.client)
 
             # Process each run in this project
@@ -151,7 +126,7 @@ async def poll_all_pending_stt_evaluations(
                 except Exception as e:
                     logger.error(
                         f"[poll_all_pending_stt_evaluations] Failed to poll STT run | "
-                        f"run_id={run.id} | {e}",
+                        f"run_id: {run.id}, error: {e}",
                         exc_info=True,
                     )
                     update_stt_run(
@@ -174,7 +149,7 @@ async def poll_all_pending_stt_evaluations(
         except Exception as e:
             logger.error(
                 f"[poll_all_pending_stt_evaluations] Failed to process project | "
-                f"project_id={project_id} | {e}",
+                f"project_id: {project_id}, error: {e}",
                 exc_info=True,
             )
             for run in project_runs:
@@ -193,7 +168,7 @@ async def poll_all_pending_stt_evaluations(
                         "error": f"Project processing failed: {str(e)}",
                     }
                 )
-                total_failed += 1
+            total_failed += len(project_runs)
 
     summary = {
         "total": len(pending_runs),
@@ -205,8 +180,8 @@ async def poll_all_pending_stt_evaluations(
 
     logger.info(
         f"[poll_all_pending_stt_evaluations] Polling summary | "
-        f"processed={total_processed} | failed={total_failed} | "
-        f"still_processing={total_still_processing}"
+        f"processed: {total_processed}, failed: {total_failed}, "
+        f"still_processing: {total_still_processing}"
     )
 
     return summary
@@ -254,8 +229,10 @@ async def poll_stt_run(
     Returns:
         dict: Status result with run details and action taken
     """
-    log_prefix = f"[org={org_id}][project={run.project_id}][eval={run.id}]"
-    logger.info(f"[poll_stt_run] {log_prefix} Polling run")
+    logger.info(
+        f"[poll_stt_run] Polling run | "
+        f"run_id: {run.id}, org_id: {org_id}, project_id: {run.project_id}"
+    )
 
     previous_status = run.status
 
@@ -263,7 +240,7 @@ async def poll_stt_run(
     batch_jobs = _get_batch_jobs_for_run(session=session, run=run)
 
     if not batch_jobs:
-        logger.warning(f"[poll_stt_run] {log_prefix} No batch jobs found")
+        logger.warning(f"[poll_stt_run] No batch jobs found | run_id: {run.id}")
         update_stt_run(
             session=session,
             run_id=run.id,
@@ -310,9 +287,9 @@ async def poll_stt_run(
         provider_status = batch_job.provider_status
 
         logger.info(
-            f"[poll_stt_run] {log_prefix} Batch status | "
-            f"batch_job_id={batch_job.id} | provider={provider_name} | "
-            f"state={provider_status}"
+            f"[poll_stt_run] Batch status | "
+            f"run_id: {run.id}, batch_job_id: {batch_job.id}, "
+            f"provider: {provider_name}, state: {provider_status}"
         )
 
         if provider_status not in TERMINAL_STATES:
@@ -346,10 +323,9 @@ async def poll_stt_run(
 
     # All batch jobs are done - finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
-    pending = status_counts.get(JobStatus.PENDING.value, 0)
     failed_count = status_counts.get(JobStatus.FAILED.value, 0)
 
-    final_status = "completed" if pending == 0 else "processing"
+    final_status = "completed"
     error_message = None
     if any_failed:
         error_message = "; ".join(errors)
@@ -382,7 +358,10 @@ async def process_completed_stt_batch(
     batch_job: Any,
     batch_provider: GeminiBatchProvider,
 ) -> None:
-    """Process completed Gemini batch - download results and update STT result records.
+    """Process completed Gemini batch - download results and create STT result records.
+
+    Result records are created here on batch completion rather than upfront,
+    using the stt_sample_id embedded as the key in each batch request.
 
     Args:
         session: Database session
@@ -395,64 +374,64 @@ async def process_completed_stt_batch(
         f"run_id={run.id}, batch_job_id={batch_job.id}"
     )
 
-    # Get the STT provider from batch job config
     stt_provider = batch_job.config.get("stt_provider", "gemini-2.5-pro")
 
-    processed_count = 0
-    failed_count = 0
+    success_count = 0
+    failure_count = 0
 
     try:
-        # Download results using GeminiBatchProvider
-        # Keys are embedded in the JSONL response file, no separate mapping needed
-        results = batch_provider.download_batch_results(batch_job.provider_batch_id)
-
-        logger.info(
-            f"[process_completed_stt_batch] Got batch results | "
-            f"batch_job_id={batch_job.id}, result_count={len(results)}"
+        batch_responses = batch_provider.download_batch_results(
+            batch_job.provider_batch_id
         )
 
-        # Match results to samples using key (sample_id) from batch request
-        for batch_result in results:
-            custom_id = batch_result["custom_id"]
-            # custom_id is the sample_id as string (set via key in batch request)
+        logger.info(
+            f"[process_completed_stt_batch] Downloaded batch responses | "
+            f"batch_job_id={batch_job.id}, response_count={len(batch_responses)}"
+        )
+
+        timestamp = now()
+        stt_result_rows: list[dict] = []
+
+        for response in batch_responses:
+            raw_sample_id = response[BATCH_KEY]
             try:
-                sample_id = int(custom_id)
+                stt_sample_id = int(raw_sample_id)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"[process_completed_stt_batch] Invalid custom_id | "
-                    f"batch_job_id={batch_job.id}, custom_id={custom_id}"
+                    f"[process_completed_stt_batch] Invalid {BATCH_KEY} | "
+                    f"batch_job_id={batch_job.id}, {BATCH_KEY}={raw_sample_id}"
                 )
-                failed_count += 1
+                failure_count += 1
                 continue
 
-            # Find result record for this sample and provider
-            stmt = select(STTResult).where(
-                STTResult.evaluation_run_id == run.id,
-                STTResult.stt_sample_id == sample_id,
-                STTResult.provider == stt_provider,
-            )
-            result_record = session.exec(stmt).one_or_none()
+            row = {
+                "stt_sample_id": stt_sample_id,
+                "evaluation_run_id": run.id,
+                "organization_id": run.organization_id,
+                "project_id": run.project_id,
+                "provider": stt_provider,
+                "inserted_at": timestamp,
+                "updated_at": timestamp,
+            }
 
-            if result_record:
-                if batch_result.get("response"):
-                    text = batch_result["response"].get("text", "")
-                    update_stt_result(
-                        session=session,
-                        result_id=result_record.id,
-                        transcription=text,
-                        status=JobStatus.SUCCESS.value,
-                    )
-                    processed_count += 1
-                else:
-                    update_stt_result(
-                        session=session,
-                        result_id=result_record.id,
-                        status=JobStatus.FAILED.value,
-                        error_message=batch_result.get("error", "Unknown error"),
-                    )
-                    failed_count += 1
+            if response.get("response"):
+                row["transcription"] = response["response"].get("text", "")
+                row["status"] = JobStatus.SUCCESS.value
+                success_count += 1
+            else:
+                row["status"] = JobStatus.FAILED.value
+                row["error_message"] = response.get("error", "Unknown error")
+                failure_count += 1
 
-        session.commit()
+            stt_result_rows.append(row)
+
+        # Bulk insert in batches of 200
+        insert_batch_size = 200
+        for i in range(0, len(stt_result_rows), insert_batch_size):
+            chunk = stt_result_rows[i : i + insert_batch_size]
+            session.bulk_insert_mappings(STTResult, chunk)
+        if stt_result_rows:
+            session.commit()
 
     except Exception as e:
         logger.error(
@@ -465,5 +444,5 @@ async def process_completed_stt_batch(
     logger.info(
         f"[process_completed_stt_batch] Batch results processed | "
         f"run_id={run.id}, provider={stt_provider}, "
-        f"processed={processed_count}, failed={failed_count}"
+        f"success={success_count}, failed={failure_count}"
     )

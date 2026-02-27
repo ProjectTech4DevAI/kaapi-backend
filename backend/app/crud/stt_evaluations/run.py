@@ -6,7 +6,7 @@ from typing import Any
 from sqlmodel import Session, select, func
 
 from app.core.util import now
-from app.models import EvaluationDataset, EvaluationRun
+from app.models import EvaluationRun
 from app.models.stt_evaluation import (
     EvaluationType,
     STTEvaluationRunPublic,
@@ -230,27 +230,3 @@ def update_stt_run(
     )
 
     return run
-
-
-def get_pending_stt_runs(
-    *,
-    session: Session,
-) -> list[EvaluationRun]:
-    """Get all pending STT evaluation runs that are ready for polling.
-
-    Only returns runs with status "processing" that have a batch_job_id set,
-    meaning the batch has been submitted and is ready to be polled.
-
-    Args:
-        session: Database session
-
-    Returns:
-        list[EvaluationRun]: Pending runs ready for polling
-    """
-    statement = select(EvaluationRun).where(
-        EvaluationRun.type == EvaluationType.STT.value,
-        EvaluationRun.status == "processing",
-        EvaluationRun.batch_job_id.is_not(None),
-    )
-
-    return list(session.exec(statement).all())

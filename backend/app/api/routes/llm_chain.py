@@ -9,7 +9,7 @@ from app.utils import APIResponse, validate_callback_url, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["LLM Chain"])
+router = APIRouter(tags=["LLM"])
 llm_callback_router = APIRouter()
 
 

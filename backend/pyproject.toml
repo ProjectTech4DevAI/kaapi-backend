@@ -37,12 +37,15 @@ dependencies = [
     "redis>=5.0.0,<6.0.0",
     "flower>=2.0.1",
     "google-genai>=1.59.0",
+    "pydub>=0.25.1",
 ]
 
 [tool.uv]
 override-dependencies = [
     "pillow>=12.1.1",
     "cryptography>=46.0.5",
+    "werkzeu>=3.1.6",
+    "pypdf>=3.9.0",
 ]
 dev-dependencies = [
     "pytest<8.0.0,>=7.4.3",

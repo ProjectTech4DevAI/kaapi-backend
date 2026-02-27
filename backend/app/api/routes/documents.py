@@ -111,7 +111,7 @@ async def upload_doc(
     target_format: str
     | None = Form(
         None,
-        description="Desired output format for the uploaded document (e.g., pdf, docx, txt).",
+        description="Desired output format for the uploaded document",
     ),
     transformer: str
     | None = Form(

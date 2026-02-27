@@ -52,9 +52,9 @@ def upload_stt_dataset(
         Tuple of (created dataset, created samples)
     """
     logger.info(
-        f"[upload_stt_dataset] Uploading STT dataset | name={name} | "
-        f"sample_count={len(samples)} | org_id={organization_id} | "
-        f"project_id={project_id}"
+        f"[upload_stt_dataset] Uploading STT dataset | "
+        f"name: {name}, sample_count: {len(samples)}, "
+        f"org_id: {organization_id}, project_id: {project_id}"
     )
 
     # Step 1: Convert samples to CSV and upload to object store
@@ -86,7 +86,7 @@ def upload_stt_dataset(
 
         logger.info(
             f"[upload_stt_dataset] Created dataset record | "
-            f"id={dataset.id} | name={name}"
+            f"id: {dataset.id}, name: {name}"
         )
 
         # Step 4: Create sample records
@@ -98,7 +98,7 @@ def upload_stt_dataset(
 
         logger.info(
             f"[upload_stt_dataset] Created sample records | "
-            f"dataset_id={dataset.id} | sample_count={len(created_samples)}"
+            f"dataset_id: {dataset.id}, sample_count: {len(created_samples)}"
         )
 
         session.commit()
@@ -147,7 +147,7 @@ def _upload_samples_to_object_store(
         if object_store_url:
             logger.info(
                 f"[_upload_samples_to_object_store] Upload successful | "
-                f"url={object_store_url}"
+                f"url: {object_store_url}"
             )
         else:
             logger.info(

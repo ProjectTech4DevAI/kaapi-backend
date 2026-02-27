@@ -1,6 +1,7 @@
 import logging
+from contextlib import contextmanager
+from typing import Any
 from uuid import UUID
-
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
@@ -21,6 +22,7 @@ from app.models.llm.request import (
     LLMCallConfig,
     QueryParams,
     TextInput,
+    AudioInput,
 )
 from app.models.llm.response import TextOutput
 from app.services.llm.chain.types import BlockResult
@@ -28,10 +30,9 @@ from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
 )
-from app.services.llm.input_resolver import cleanup_temp_file, resolve_input
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, send_callback, resolve_input, cleanup_temp_file
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,74 @@ def handle_job_error(
         )
 
     return callback_response.model_dump()
+
+
+@contextmanager
+def resolved_input_context(query_input: TextInput | AudioInput):
+    """Context manager for resolving and cleaning up input resources.
+
+    Ensures temporary files (e.g., downloaded audio) are cleaned up
+    even if errors occur during LLM execution.
+    """
+    resolved_input, error = resolve_input(query_input)
+    if error:
+        raise ValueError(error)
+
+    try:
+        yield resolved_input
+    finally:
+        # Clean up temp files for audio inputs
+        if resolved_input and isinstance(query_input, AudioInput):
+            cleanup_temp_file(resolved_input)
+
+
+def validate_text_with_guardrails(
+    text: str,
+    guardrails: list[dict[str, Any]],
+    job_id: UUID,
+    project_id: int,
+    organization_id: int,
+    guardrail_type: str,  # "input" or "output"
+) -> tuple[str | None, str | None]:
+    """Validate text against guardrails.
+
+    Returns:
+        (validated_text, error_message)
+        - If successful: (modified_text, None)
+        - If failed: (None, error_message)
+        - If bypassed: (original_text, None)
+    """
+    safe_result = run_guardrails_validation(
+        text,
+        guardrails,
+        job_id,
+        project_id,
+        organization_id,
+        suppress_pass_logs=True,
+    )
+
+    logger.info(
+        f"[validate_text_with_guardrails] {guardrail_type.capitalize()} guardrail validation | "
+        f"success={safe_result['success']}, job_id={job_id}"
+    )
+
+    if safe_result.get("bypassed"):
+        logger.info(
+            f"[validate_text_with_guardrails] Guardrails bypassed (service unavailable) | "
+            f"job_id={job_id}"
+        )
+        return text, None
+
+    if safe_result["success"]:
+        validated_text = safe_result["data"]["safe_text"]
+
+        # Special case for output guardrails: check if rephrase is needed
+        if guardrail_type == "output" and safe_result["data"].get("rephrase_needed"):
+            return None, "Output requires rephrasing"
+
+        return validated_text, None
+
+    return None, safe_result["error"]
 
 
 def resolve_config_blob(
@@ -414,16 +483,20 @@ def execute_llm_call(
             session_id=conversation_id,
         )(provider_instance.execute)
 
+        # Resolve input and execute LLM (context manager handles cleanup)
         try:
-            response, error = decorated_execute(
-                completion_config=completion_config,
-                query=query,
-                resolved_input=resolved_input,
-                include_provider_raw_response=include_provider_raw_response,
+            with resolved_input_context(query) as resolved_input:
+                response, error = decorated_execute(
+                    completion_config=completion_config,
+                    query=query,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
+        except ValueError as ve:
+            return BlockResult(
+                error=str(ve),
+                llm_call_id=llm_call_id
             )
-        finally:
-            if resolved_input and resolved_input != query.input:
-                cleanup_temp_file(resolved_input)
 
         if response:
             with Session(engine) as session:
@@ -491,7 +564,8 @@ def execute_job(
         dict: Serialized APIResponse[LLMCallResponse] on success, APIResponse[None] on failure
     """
     request = LLMCallRequest(**request_data)
-    job_id: UUID = UUID(job_id)
+    job_uuid = UUID(job_id)  # Renamed to avoid shadowing parameter
+    callback_url_str = str(request.callback_url) if request.callback_url else None
 
     logger.info(
         f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}"
@@ -501,7 +575,7 @@ def execute_job(
         with Session(engine) as session:
             job_crud = JobCrud(session=session)
             job_crud.update(
-                job_id=job_id, job_update=JobUpdate(status=JobStatus.PROCESSING)
+                job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
             )
 
             langfuse_credentials = get_provider_credential(
@@ -526,9 +600,9 @@ def execute_job(
             callback_response = APIResponse.success_response(
                 data=result.response, metadata=request.request_metadata
             )
-            if request.callback_url:
+            if callback_url_str:
                 send_callback(
-                    callback_url=request.callback_url,
+                    callback_url=callback_url_str,
                     data=callback_response.model_dump(),
                 )
 
@@ -546,7 +620,7 @@ def execute_job(
             error=result.error or "Unknown error occurred",
             metadata=request.request_metadata,
         )
-        return handle_job_error(job_id, request.callback_url, callback_response)
+        return handle_job_error(job_uuid, callback_url_str, callback_response)
 
     except Exception as e:
         callback_response = APIResponse.failure_response(
@@ -554,7 +628,7 @@ def execute_job(
             metadata=request.request_metadata,
         )
         logger.error(
-            f"[execute_job] Unknown error occurred: {str(e)} | job_id={job_id}, task_id={task_id}",
+            f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
             exc_info=True,
         )
         return handle_job_error(job_id, request.callback_url, callback_response)
