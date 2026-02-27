@@ -1,4 +1,5 @@
 """Tests for STT evaluation API routes."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 
