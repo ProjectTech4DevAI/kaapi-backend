@@ -360,13 +360,3 @@ class STTEvaluationRunWithResults(STTEvaluationRunPublic):
 
     results: list[STTResultWithSample]
     results_total: int = Field(0, description="Total number of results")
-
-
-class AudioUploadResponse(BaseModel):
-    """Response model for audio file upload."""
-
-    file_id: int = Field(..., description="ID of the created file record")
-    s3_url: str = Field(..., description="S3 URL of the uploaded audio file")
-    filename: str = Field(..., description="Original filename")
-    size_bytes: int = Field(..., description="File size in bytes")
-    content_type: str = Field(..., description="MIME type of the audio file")

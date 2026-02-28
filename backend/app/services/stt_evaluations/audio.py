@@ -10,8 +10,7 @@ from sqlmodel import Session
 from app.core.cloud.storage import get_cloud_storage
 from app.core.exception_handlers import HTTPException
 from app.crud.file import create_file
-from app.models.file import FileType
-from app.models.stt_evaluation import AudioUploadResponse
+from app.models.file import FileType, AudioUploadResponse
 from app.services.stt_evaluations.constants import (
     MAX_FILE_SIZE_BYTES,
     MIME_TO_EXTENSION,
