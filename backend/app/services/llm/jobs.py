@@ -514,6 +514,7 @@ def execute_llm_call(
                 response=response,
                 llm_call_id=llm_call_id,
                 usage=response.usage,
+                metadata=request_metadata,
             )
 
             result, output_error = apply_output_guardrails(
@@ -592,7 +593,7 @@ def execute_job(
 
         if result.success:
             callback_response = APIResponse.success_response(
-                data=result.response, metadata=request.request_metadata
+                data=result.response, metadata=result.metadata
             )
             if callback_url_str:
                 send_callback(

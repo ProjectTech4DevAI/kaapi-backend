@@ -367,7 +367,7 @@ class TestExecuteJob:
         result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
-        assert "Unexpected error during LLM execution" in result["error"]
+        assert "Unexpected error occurred" in result["error"]
 
     def test_exception_during_provider_retrieval(
         self, db, job_env, job_for_execution, request_data
@@ -1108,16 +1108,21 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert result["success"]
-        mock_fetch_configs.assert_called_once()
-        _, kwargs = mock_fetch_configs.call_args
-        input_validator_configs = kwargs["input_validator_configs"]
-        output_validator_configs = kwargs["output_validator_configs"]
-        assert [v.validator_config_id for v in input_validator_configs] == [
-            UUID(VALIDATOR_CONFIG_ID_1)
-        ]
-        assert [v.validator_config_id for v in output_validator_configs] == [
-            UUID(VALIDATOR_CONFIG_ID_2)
-        ]
+        assert mock_fetch_configs.call_count == 2
+
+        # First call: input guardrails
+        _, input_kwargs = mock_fetch_configs.call_args_list[0]
+        assert [
+            v.validator_config_id for v in input_kwargs["input_validator_configs"]
+        ] == [UUID(VALIDATOR_CONFIG_ID_1)]
+        assert input_kwargs["output_validator_configs"] is None
+
+        # Second call: output guardrails
+        _, output_kwargs = mock_fetch_configs.call_args_list[1]
+        assert output_kwargs["input_validator_configs"] is None
+        assert [
+            v.validator_config_id for v in output_kwargs["output_validator_configs"]
+        ] == [UUID(VALIDATOR_CONFIG_ID_2)]
 
     def test_execute_job_continues_when_no_validator_configs_resolved(
         self, db, job_env, job_for_execution

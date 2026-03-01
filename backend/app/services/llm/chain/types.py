@@ -12,6 +12,7 @@ class BlockResult:
     llm_call_id: UUID | None = None
     usage: Usage | None = None
     error: str | None = None
+    metadata: dict | None = None
 
     @property
     def success(self) -> bool:
