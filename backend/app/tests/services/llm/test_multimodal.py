@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock
 
 from app.models.llm.request import (
     TextInput,
@@ -9,6 +10,8 @@ from app.models.llm.request import (
     AudioContent,
     ImageContent,
     PDFContent,
+    NativeCompletionConfig,
+    QueryParams,
 )
 from app.services.llm.providers.base import (
     ContentPart,
@@ -343,3 +346,190 @@ class TestResolvePdfContent:
         )
         result = resolve_pdf_content(pdf)
         assert len(result) == 2
+
+
+class TestResolveInputEdgeCases:
+    def test_unknown_input_type(self):
+        result, error = resolve_input(12345)
+        assert error is not None
+        assert "Unknown input type" in error
+
+    def test_unsupported_type_in_multimodal_list(self):
+        result, error = resolve_input(["not_a_valid_input"])
+        assert error is not None
+        assert "Unsupported input type" in error
+
+    def test_text_input_resolves_string(self):
+        text = TextInput(content=TextContent(value="hello world"))
+        result, error = resolve_input(text)
+        assert error is None
+        assert result == "hello world"
+
+
+class TestOpenAIExecuteInputRouting:
+    def _make_provider(self):
+        mock_client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.id = "resp_123"
+        mock_resp.model = "gpt-4o-mini"
+        mock_resp.output_text = "result"
+        mock_resp.usage.input_tokens = 10
+        mock_resp.usage.output_tokens = 5
+        mock_resp.usage.total_tokens = 15
+        mock_resp.conversation = None
+        mock_client.responses.create.return_value = mock_resp
+        return OpenAIProvider(client=mock_client), mock_client
+
+    def _make_config(self):
+        return NativeCompletionConfig(
+            provider="openai-native", type="text", params={"model": "gpt-4o-mini"}
+        )
+
+    def _make_query(self):
+        return QueryParams(input="test")
+
+    def test_multimodal_input(self):
+        provider, mock_client = self._make_provider()
+        mm = MultiModalInput(
+            parts=[
+                TextContent(value="describe"),
+                ImageContent(format="base64", value="img", mime_type="image/png"),
+            ]
+        )
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input=mm,
+        )
+        assert error is None
+        call_kwargs = mock_client.responses.create.call_args[1]
+        assert call_kwargs["input"][0]["role"] == "user"
+        assert len(call_kwargs["input"][0]["content"]) == 2
+
+    def test_list_input(self):
+        provider, mock_client = self._make_provider()
+        parts = [ImageContent(format="base64", value="img", mime_type="image/png")]
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input=parts,
+        )
+        assert error is None
+        call_kwargs = mock_client.responses.create.call_args[1]
+        assert call_kwargs["input"][0]["role"] == "user"
+
+    def test_string_input(self):
+        provider, mock_client = self._make_provider()
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input="hello",
+        )
+        assert error is None
+        call_kwargs = mock_client.responses.create.call_args[1]
+        assert call_kwargs["input"] == "hello"
+
+
+class TestGoogleAIExecuteTextRouting:
+    def _make_provider(self):
+        mock_client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.response_id = "resp_gai_123"
+        mock_resp.model_version = "gemini-2.0-flash"
+        mock_resp.text = "response text"
+        mock_resp.usage_metadata.prompt_token_count = 10
+        mock_resp.usage_metadata.candidates_token_count = 5
+        mock_resp.usage_metadata.total_token_count = 15
+        mock_resp.usage_metadata.thoughts_token_count = 0
+        mock_client.models.generate_content.return_value = mock_resp
+        return GoogleAIProvider(client=mock_client), mock_client
+
+    def _make_config(self, **extra_params):
+        params = {"model": "gemini-2.0-flash"}
+        params.update(extra_params)
+        return NativeCompletionConfig(
+            provider="google-native", type="text", params=params
+        )
+
+    def _make_query(self):
+        return QueryParams(input="test")
+
+    def test_multimodal_input(self):
+        provider, mock_client = self._make_provider()
+        mm = MultiModalInput(
+            parts=[
+                TextContent(value="describe"),
+                ImageContent(format="base64", value="img", mime_type="image/png"),
+            ]
+        )
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input=mm,
+        )
+        assert error is None
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        assert call_kwargs["contents"][0]["role"] == "user"
+        assert len(call_kwargs["contents"][0]["parts"]) == 2
+
+    def test_list_input(self):
+        provider, mock_client = self._make_provider()
+        parts = [ImageContent(format="base64", value="img", mime_type="image/png")]
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input=parts,
+        )
+        assert error is None
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        assert call_kwargs["contents"][0]["role"] == "user"
+
+    def test_string_input(self):
+        provider, mock_client = self._make_provider()
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input="hello",
+        )
+        assert error is None
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        assert call_kwargs["contents"][0]["parts"] == [{"text": "hello"}]
+
+    def test_missing_model(self):
+        provider, _ = self._make_provider()
+        config = NativeCompletionConfig(
+            provider="google-native", type="text", params={}
+        )
+        response, error = provider.execute(
+            completion_config=config,
+            query=self._make_query(),
+            resolved_input="hello",
+        )
+        assert response is None
+        assert "Missing 'model'" in error
+
+    def test_instructions_appended(self):
+        provider, mock_client = self._make_provider()
+        response, error = provider.execute(
+            completion_config=self._make_config(instructions="be helpful"),
+            query=self._make_query(),
+            resolved_input="hello",
+        )
+        assert error is None
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        contents = call_kwargs["contents"]
+        assert len(contents) == 2
+        assert contents[1]["role"] == "system"
+
+    def test_no_usage_metadata(self):
+        provider, mock_client = self._make_provider()
+        mock_resp = mock_client.models.generate_content.return_value
+        mock_resp.usage_metadata = None
+        response, error = provider.execute(
+            completion_config=self._make_config(),
+            query=self._make_query(),
+            resolved_input="hello",
+        )
+        assert error is None
+        assert response.usage.input_tokens == 0
+        assert response.usage.output_tokens == 0
