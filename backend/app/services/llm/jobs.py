@@ -493,10 +493,7 @@ def execute_llm_call(
                     include_provider_raw_response=include_provider_raw_response,
                 )
         except ValueError as ve:
-            return BlockResult(
-                error=str(ve),
-                llm_call_id=llm_call_id
-            )
+            return BlockResult(error=str(ve), llm_call_id=llm_call_id)
 
         if response:
             with Session(engine) as session:
