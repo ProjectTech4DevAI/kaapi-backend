@@ -508,7 +508,7 @@ class TestGoogleAIExecuteTextRouting:
         assert response is None
         assert "Missing 'model'" in error
 
-    def test_instructions_appended(self):
+    def test_instructions_passed_to_config(self):
         provider, mock_client = self._make_provider()
         response, error = provider.execute(
             completion_config=self._make_config(instructions="be helpful"),
@@ -517,9 +517,8 @@ class TestGoogleAIExecuteTextRouting:
         )
         assert error is None
         call_kwargs = mock_client.models.generate_content.call_args[1]
-        contents = call_kwargs["contents"]
-        assert len(contents) == 2
-        assert contents[1]["role"] == "system"
+        config = call_kwargs["config"]
+        assert config.system_instruction == "be helpful"
 
     def test_no_usage_metadata(self):
         provider, mock_client = self._make_provider()
