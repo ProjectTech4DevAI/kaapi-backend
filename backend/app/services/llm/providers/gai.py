@@ -402,7 +402,7 @@ class GoogleAIProvider(BaseProvider):
 
         generation_kwargs = {}
         if instructions:
-            contents.append({"role": "system", "parts": [{"text": instructions}]})
+            generation_kwargs["system_instruction"] = instructions
 
         if temperature is not None:
             generation_kwargs["temperature"] = temperature
