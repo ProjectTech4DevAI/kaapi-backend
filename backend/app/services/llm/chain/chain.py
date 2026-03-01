@@ -70,6 +70,7 @@ class ChainContext:
                 block_index < len(self.intermediate_callback_flags)
                 and self.intermediate_callback_flags[block_index]
                 and self.callback_url
+                and block_index < self.total_blocks - 1
             ):
                 self._send_intermediate_callback(block_index, result)
 

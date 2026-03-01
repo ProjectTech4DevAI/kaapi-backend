@@ -474,10 +474,7 @@ def execute_llm_call(
         if query.conversation and query.conversation.id:
             conversation_id = query.conversation.id
 
-        resolved_input, resolve_error = resolve_input(query.input)
-        if resolve_error:
-            return BlockResult(error=resolve_error, llm_call_id=llm_call_id)
-
+        # Apply Langfuse observability decorator to provider execute method
         decorated_execute = observe_llm_execution(
             credentials=langfuse_credentials,
             session_id=conversation_id,
@@ -485,7 +482,7 @@ def execute_llm_call(
 
         # Resolve input and execute LLM (context manager handles cleanup)
         try:
-            with resolved_input_context(query) as resolved_input:
+            with resolved_input_context(query.input) as resolved_input:
                 response, error = decorated_execute(
                     completion_config=completion_config,
                     query=query,

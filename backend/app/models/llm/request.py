@@ -44,7 +44,7 @@ class TextLLMParams(SQLModel):
 
 class STTLLMParams(SQLModel):
     model: str
-    instructions: str
+    instructions: str | None = None
     input_language: str | None = None
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
