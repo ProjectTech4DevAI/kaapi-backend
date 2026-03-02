@@ -120,7 +120,7 @@ def get_dataset(
     dataset_id: int,
     include_samples: bool = Query(True, description="Include samples in response"),
     include_url: bool = Query(
-        True, description="Include signed URLs for audio file samples"
+        False, description="Include signed URLs for audio file samples"
     ),
     sample_limit: int = Query(100, ge=1, le=1000, description="Max samples to return"),
     sample_offset: int = Query(0, ge=0, description="Sample offset"),
