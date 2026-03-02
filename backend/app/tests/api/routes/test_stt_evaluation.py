@@ -372,6 +372,7 @@ class TestSTTDatasetList:
             headers=user_api_key_header,
         )
 
+        print("response=", response)
         assert response.status_code == 200
         response_data = response.json()
         assert response_data["success"] is True

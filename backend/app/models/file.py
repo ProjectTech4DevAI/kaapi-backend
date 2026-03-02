@@ -1,7 +1,5 @@
 """File model for storing uploaded files metadata."""
 
-"""File model for storing uploaded files metadata."""
-
 from datetime import datetime
 from enum import Enum
 

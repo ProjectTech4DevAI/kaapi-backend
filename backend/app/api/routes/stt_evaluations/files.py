@@ -47,7 +47,7 @@ def upload_audio(
 
 
 @router.get(
-    "/{file_id}",
+    "/files/{file_id}",
     response_model=APIResponse[FilePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get audio file by ID",

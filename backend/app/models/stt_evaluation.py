@@ -6,12 +6,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
+from sqlmodel import SQLModel
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
 
 from app.models.job import JobStatus
-from sqlmodel import SQLModel
-
 from app.core.util import now
 
 # Supported STT models for evaluation
