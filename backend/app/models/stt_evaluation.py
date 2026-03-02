@@ -229,6 +229,7 @@ class STTSamplePublic(BaseModel):
     id: int
     file_id: int
     object_store_url: str | None = None  # Populated from file record when needed
+    signed_url: str | None = None
     language_id: int | None
     ground_truth: str | None
     sample_metadata: dict[str, Any] | None

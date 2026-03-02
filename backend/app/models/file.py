@@ -97,7 +97,6 @@ class FilePublic(SQLModel):
 
     id: int
     object_store_url: str
-    signed_url: str | None = None
     filename: str
     size_bytes: int
     content_type: str
