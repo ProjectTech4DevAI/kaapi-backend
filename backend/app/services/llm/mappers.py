@@ -127,15 +127,16 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     response_format = kaapi_params.get("response_format")
     if response_format:
         google_params["response_format"] = response_format
+
+    reasoning = kaapi_params.get("reasoning")
+    if reasoning:
+        google_params["reasoning"] = reasoning
+
     # Warn about unsupported parameters
     if kaapi_params.get("knowledge_base_ids"):
+        # TODO: Will take up later, when we add google filesearch tool support
         warnings.append(
             "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
-        )
-
-    if kaapi_params.get("reasoning") is not None:
-        warnings.append(
-            "Parameter 'reasoning' is not applicable for Google AI and was ignored."
         )
 
     return google_params, warnings

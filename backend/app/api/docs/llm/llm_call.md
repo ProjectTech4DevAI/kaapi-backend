@@ -6,7 +6,14 @@ for processing, and results are delivered via the callback URL when complete.
 ### Key Parameters
 
 **`query`** (required) - Query parameters for this LLM call:
-- `input` (required, string, min 1 char): User question/prompt/query
+- `input` (required): User input — accepts one of:
+  - A plain **string** e.g. `"input": "Hello"` (automatically normalized to a text input internally)
+  - A **structured input object** with `type` and `content` fields e.g. `"input": {"type": "text", "content": {"format": "text", "value": "Hello"}}`
+  - A **list of structured input objects** for multimodal inputs e.g. `"input": [{"type": "text", ...}, {"type": "image", ...}]`
+  - Supported input types: `text`, `audio`, `image`, `pdf`
+  - For `image` and `pdf` types, `content` accepts a single object or a list e.g. `"content": [{"format": "base64", "value": "..."}, ...]`
+  - Content `format` varies by type: `"text"` for text, `"base64"` for encoded data, `"url"` for image/pdf URLs
+  - Default MIME types when not specified: `image/png` for images, `application/pdf` for PDFs
 - `conversation` (optional, object): Conversation configuration
   - `id` (optional, string): Existing conversation ID to continue
   - `auto_create` (optional, boolean, default false): Create new conversation if no ID provided
@@ -23,8 +30,9 @@ for processing, and results are delivered via the callback URL when complete.
 - **Mode 2: Ad-hoc Configuration**
   - `blob` (object): Complete configuration object
     - `completion` (required, object): Completion configuration
-      - `provider` (required, string): Provider type - either `"openai"` (Kaapi abstraction) or `"openai-native"` (pass-through)
-      - `params` (required, object): Parameters structure depends on provider type (see schema for detailed structure)
+      - `provider` (required, string): Provider type — `"openai"` or `"google"` (Kaapi abstraction), or `"openai-native"` or `"google-native"` (pass-through)
+      - `type` (required, string): Completion type — `"text"`, `"stt"`, `"tts"` for Kaapi providers; additionally `"image"`, `"pdf"`, `"multimodal"` for native providers
+      - `params` (required, object): Parameters structure depends on provider and type (see schema for detailed structure)
   - **Note**
     - When using ad-hoc configuration, do not include `id` and `version` fields
     - When using the Kaapi abstraction, parameters that are not supported by the selected provider or model are automatically suppressed. If any parameters are ignored, a list of warnings is included in the metadata.warnings. For example, the GPT-5 model does not support the temperature parameter, so Kaapi will neither throw an error nor pass this parameter to the model; instead, it will return a warning in the metadata.warnings response.

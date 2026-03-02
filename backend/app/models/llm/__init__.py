@@ -16,6 +16,10 @@ from app.models.llm.request import (
     ChainStatus,
     LLMChainRequest,
     LlmChain,
+    ImageContent,
+    PDFContent,
+    ImageInput,
+    PDFInput,
 )
 from app.models.llm.response import (
     LLMCallResponse,

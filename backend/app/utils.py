@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import functools as ft
 import ipaddress
@@ -8,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
 import socket
+
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
@@ -25,6 +28,15 @@ from sqlmodel import Session
 from app.core import security
 from app.core.config import settings
 from app.crud.credentials import get_provider_credential
+from app.models.llm.request import (
+    TextInput,
+    AudioInput,
+    ImageInput,
+    PDFInput,
+    ImageContent,
+    PDFContent,
+)
+from app.services.llm.providers.base import ContentPart, MultiModalInput
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -444,26 +456,77 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
         return "", f"Failed to write audio to temp file: {str(e)}"
 
 
-def resolve_input(query_input) -> tuple[str, str | None]:
-    """Resolve discriminated union input to content string.
+def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
+    contents = (
+        image_input.content
+        if isinstance(image_input.content, list)
+        else [image_input.content]
+    )
+    for c in contents:
+        if not c.mime_type:
+            c.mime_type = "image/png"
+    return contents
 
-    Args:
-        query_input: The input from QueryParams (TextInput or AudioInput)
+
+def resolve_pdf_content(pdf_input: PDFInput) -> list[PDFContent]:
+    contents = (
+        pdf_input.content
+        if isinstance(pdf_input.content, list)
+        else [pdf_input.content]
+    )
+    for c in contents:
+        if not c.mime_type:
+            c.mime_type = "application/pdf"
+    return contents
+
+
+def resolve_input(
+    query_input,
+) -> tuple[str | list[ImageContent] | list[PDFContent] | "MultiModalInput", str | None]:
+    """Resolve query input to provider-ready format.
 
     Returns:
-        (content_string, None) on success - for text returns content value, for audio returns temp file path
-        ("", error_message) on failure
+        - TextInput/AudioInput: (str, None)
+        - ImageInput: (list[ImageContent], None)
+        - PDFInput: (list[PDFContent], None)
+        - list[QueryInput]: (MultiModalInput, None)
+        - Error: ("", error_message)
     """
-    from app.models.llm.request import TextInput, AudioInput
 
     try:
         if isinstance(query_input, TextInput):
             return query_input.content.value, None
 
         elif isinstance(query_input, AudioInput):
-            # AudioInput content is base64-encoded audio
             mime_type = query_input.content.mime_type or "audio/wav"
             return resolve_audio_base64(query_input.content.value, mime_type)
+
+        elif isinstance(query_input, ImageInput):
+            return resolve_image_content(query_input), None
+
+        elif isinstance(query_input, PDFInput):
+            return resolve_pdf_content(query_input), None
+
+        elif isinstance(query_input, list):
+            parts: list[ContentPart] = []
+            for item in query_input:
+                if isinstance(item, TextInput):
+                    parts.append(item.content)
+                elif isinstance(item, ImageInput):
+                    parts.extend(resolve_image_content(item))
+                elif isinstance(item, PDFInput):
+                    parts.extend(resolve_pdf_content(item))
+                elif isinstance(item, AudioInput):
+                    return (
+                        "",
+                        "Audio input is not supported in multimodal. Please use completion type 'stt' for audio processing.",
+                    )
+                else:
+                    return (
+                        "",
+                        "Unsupported input type in multimodal list. Multimodal only supports text, image, and pdf inputs.",
+                    )
+            return MultiModalInput(parts=parts), None
 
         else:
             return "", f"Unknown input type: {type(query_input)}"
