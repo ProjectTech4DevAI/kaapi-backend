@@ -1,8 +1,7 @@
 """Tests for STT evaluation API routes."""
-
-from unittest.mock import patch
-
 import pytest
+from unittest.mock import MagicMock, patch
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -109,7 +108,7 @@ class TestFiles:
     @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
     def test_get_audio_file_with_signed_url(
         self,
-        mock_storage,
+        mock_storage: MagicMock,
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
@@ -158,7 +157,7 @@ class TestFiles:
     @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
     def test_get_audio_file_without_signed_url(
         self,
-        mock_storage,
+        mock_storage: MagicMock,
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
@@ -253,7 +252,7 @@ class TestFiles:
     @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
     def test_get_audio_file_default_includes_signed_url(
         self,
-        mock_storage,
+        mock_storage: MagicMock,
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
@@ -555,7 +554,6 @@ class TestSTTDatasetList:
             headers=user_api_key_header,
         )
 
-        print("response=", response)
         assert response.status_code == 200
         response_data = response.json()
         assert response_data["success"] is True
@@ -729,7 +727,7 @@ class TestSTTEvaluationRun:
     @patch("app.api.routes.stt_evaluations.evaluation.start_low_priority_job")
     def test_start_stt_evaluation_success(
         self,
-        mock_start_job,
+        mock_start_job: MagicMock,
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
