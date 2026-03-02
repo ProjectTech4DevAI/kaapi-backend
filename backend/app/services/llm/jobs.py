@@ -588,7 +588,7 @@ def execute_job(
         result = execute_llm_call(
             config=request.config,
             query=request.query,
-            job_id=job_id,
+            job_id=job_uuid,
             project_id=project_id,
             organization_id=organization_id,
             request_metadata=request.request_metadata,
@@ -608,7 +608,7 @@ def execute_job(
 
             with Session(engine) as session:
                 JobCrud(session=session).update(
-                    job_id=job_id, job_update=JobUpdate(status=JobStatus.SUCCESS)
+                    job_id=job_uuid, job_update=JobUpdate(status=JobStatus.SUCCESS)
                 )
                 logger.info(
                     f"[execute_job] Successfully completed LLM job | job_id={job_id}, "
@@ -631,7 +631,7 @@ def execute_job(
             f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
             exc_info=True,
         )
-        return handle_job_error(job_id, request.callback_url, callback_response)
+        return handle_job_error(job_uuid, callback_url_str, callback_response)
 
 
 def execute_chain_job(
