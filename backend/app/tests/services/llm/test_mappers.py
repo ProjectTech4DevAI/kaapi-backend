@@ -292,8 +292,7 @@ class TestMapKaapiToGoogleParams:
         assert "knowledge_base_ids" in warnings[0].lower()
         assert "not supported" in warnings[0]
 
-    def test_reasoning_warning(self):
-        """Test that reasoning parameter is not supported and generates warning."""
+    def test_reasoning_passed_through(self):
         kaapi_params = TextLLMParams(
             model="gemini-2.5-pro",
             reasoning="high",
@@ -304,13 +303,10 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "reasoning" not in result
-        assert len(warnings) == 1
-        assert "reasoning" in warnings[0].lower()
-        assert "not applicable" in warnings[0]
+        assert result["reasoning"] == "high"
+        assert len(warnings) == 0
 
-    def test_multiple_unsupported_params(self):
-        """Test that multiple unsupported parameters generate multiple warnings."""
+    def test_knowledge_base_ids_unsupported(self):
         kaapi_params = TextLLMParams(
             model="gemini-2.5-pro",
             reasoning="medium",
@@ -322,13 +318,10 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "reasoning" not in result
+        assert result["reasoning"] == "medium"
         assert "knowledge_base_ids" not in result
-        assert len(warnings) == 2
-        # Check both warnings are present
-        warning_text = " ".join(warnings).lower()
-        assert "reasoning" in warning_text
-        assert "knowledge_base_ids" in warning_text
+        assert len(warnings) == 1
+        assert "knowledge_base_ids" in warnings[0].lower()
 
 
 class TestTransformKaapiConfigToNative:
@@ -476,7 +469,6 @@ class TestTransformKaapiConfigToNative:
         assert warnings == []
 
     def test_transform_google_with_unsupported_params(self):
-        """Test that Google transformation warns about unsupported parameters."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
             type="text",
@@ -491,6 +483,6 @@ class TestTransformKaapiConfigToNative:
 
         assert result.provider == "google-native"
         assert result.params["model"] == "gemini-2.5-pro"
+        assert result.params["reasoning"] == "high"
         assert "knowledge_base_ids" not in result.params
-        assert "reasoning" not in result.params
-        assert len(warnings) == 2
+        assert len(warnings) == 1

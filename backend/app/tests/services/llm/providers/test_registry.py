@@ -40,9 +40,7 @@ class TestGetLLMProvider:
         """Test getting OpenAI provider successfully."""
         project = get_project(db)
 
-        with patch(
-            "app.services.llm.providers.registry.get_provider_credential"
-        ) as mock_get_creds:
+        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
             mock_get_creds.return_value = {"api_key": "test-api-key"}
 
             provider = get_llm_provider(
@@ -94,9 +92,7 @@ class TestGetLLMProvider:
         """Test handling of errors when credentials are not found."""
         project = get_project(db)
 
-        with patch(
-            "app.services.llm.providers.registry.get_provider_credential"
-        ) as mock_get_creds:
+        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
             mock_get_creds.return_value = None
 
             with pytest.raises(ValueError) as exc_info:

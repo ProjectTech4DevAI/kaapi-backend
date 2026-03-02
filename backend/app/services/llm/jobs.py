@@ -20,6 +20,8 @@ from app.models.llm.request import (
     KaapiCompletionConfig,
     TextInput,
     AudioInput,
+    ImageInput,
+    PDFInput,
 )
 from app.models.llm.response import TextOutput
 from app.services.llm.guardrails import (
@@ -102,13 +104,16 @@ def handle_job_error(
 
 
 @contextmanager
-def resolved_input_context(query_input: TextInput | AudioInput):
+def resolved_input_context(
+    query_input: TextInput | AudioInput | ImageInput | PDFInput | list,
+):
     """Context manager for resolving and cleaning up input resources.
 
     Ensures temporary files (e.g., downloaded audio) are cleaned up
     even if errors occur during LLM execution.
     """
     resolved_input, error = resolve_input(query_input)
+
     if error:
         raise ValueError(error)
 
