@@ -261,7 +261,7 @@ def transform_kaapi_config_to_native(
             warnings,
         )
 
-    if kaapi_config.provider == "sarvam":
+    if kaapi_config.provider == "sarvamai":
         mapped_params, warnings = map_kaapi_to_sarvam_params(kaapi_config.params)
         return (
             NativeCompletionConfig(
