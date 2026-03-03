@@ -6,17 +6,40 @@ for processing, and results are delivered via the callback URL when complete.
 ### Key Parameters
 
 **`query`** (required) - Query parameters for this LLM call:
-- `input` (required): User input — accepts one of:
-  - A plain **string** e.g. `"input": "Hello"` (automatically normalized to a text input internally)
-  - A **structured input object** with `type` and `content` fields e.g. `"input": {"type": "text", "content": {"format": "text", "value": "Hello"}}`
-  - A **list of structured input objects** for multimodal inputs e.g. `"input": [{"type": "text", ...}, {"type": "image", ...}]`
-  - Supported input types: `text`, `audio`, `image`, `pdf`
-  - For `image` and `pdf` types, `content` accepts a single object or a list e.g. `"content": [{"format": "base64", "value": "..."}, ...]`
-  - Content `format` varies by type: `"text"` for text, `"base64"` for encoded data, `"url"` for image/pdf URLs
-  - Default MIME types when not specified: `image/png` for images, `application/pdf` for PDFs
-- `conversation` (optional, object): Conversation configuration
-  - `id` (optional, string): Existing conversation ID to continue
-  - `auto_create` (optional, boolean, default false): Create new conversation if no ID provided
+
+- **`input`** (required) — User input in one of three forms:
+
+  1. **Plain string** — automatically treated as text input
+     ```json
+     "input": "Hello"
+     ```
+
+  2. **Structured input object** — with `type` and `content`
+     ```json
+     "input": {"type": "text", "content": {"format": "text", "value": "Hello"}}
+     ```
+
+  3. **List of structured inputs** — for multimodal use cases (support only `image`, `pdf` and `text`)
+     ```json
+     "input": [
+       {"type": "text", "content": {"format": "text", "value": "Describe this image"}},
+       {"type": "image", "content": {"format": "base64", "value": "..."}}
+     ]
+     ```
+
+  **Supported input types:** `text`, `audio`, `image`, `pdf`
+
+  **Content format by type:**
+  - `text` — format: `"text"`
+  - `audio` — format: `"base64"`, optional `mime_type` (e.g. `audio/wav`)
+  - `image` — format: `"base64"` or `"url"`, optional `mime_type` (default: `image/png`)
+  - `pdf` — format: `"base64"` or `"url"`, optional `mime_type` (default: `application/pdf`)
+
+  For `image` and `pdf`, `content` can be a single object or a list of objects.
+
+- **`conversation`** (optional) — Conversation configuration
+  - `id` (string): Existing conversation ID to continue
+  - `auto_create` (boolean, default false): Create a new conversation if no ID provided
   - **Note**: Cannot specify both `id` and `auto_create=true`
 
 **`config`** (required) - Configuration for the LLM call (just choose one mode):
@@ -31,8 +54,10 @@ for processing, and results are delivered via the callback URL when complete.
   - `blob` (object): Complete configuration object
     - `completion` (required, object): Completion configuration
       - `provider` (required, string): Provider type — `"openai"` or `"google"` (Kaapi abstraction), or `"openai-native"` or `"google-native"` (pass-through)
-      - `type` (required, string): Completion type — `"text"`, `"stt"`, `"tts"` for Kaapi providers; additionally `"image"`, `"pdf"`, `"multimodal"` for native providers
+      - `type` (required, string): Completion type — `"text"`, `"stt"`, `"tts"`
       - `params` (required, object): Parameters structure depends on provider and type (see schema for detailed structure)
+    - `input_guardrails` (optional, list)
+    - `output_guardrails` (optional, list)
   - **Note**
     - When using ad-hoc configuration, do not include `id` and `version` fields
     - When using the Kaapi abstraction, parameters that are not supported by the selected provider or model are automatically suppressed. If any parameters are ignored, a list of warnings is included in the metadata.warnings. For example, the GPT-5 model does not support the temperature parameter, so Kaapi will neither throw an error nor pass this parameter to the model; instead, it will return a warning in the metadata.warnings response.
