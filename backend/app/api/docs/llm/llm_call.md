@@ -19,7 +19,7 @@ for processing, and results are delivered via the callback URL when complete.
      "input": {"type": "text", "content": {"format": "text", "value": "Hello"}}
      ```
 
-  3. **List of structured inputs** — for multimodal use cases (support only `image`, `pdf` and `text`)
+  +  3. **List of structured inputs** — for multimodal use cases (supports `image`, `pdf`, and `text`;  `audio` is only supported as a single structured input)
      ```json
      "input": [
        {"type": "text", "content": {"format": "text", "value": "Describe this image"}},
