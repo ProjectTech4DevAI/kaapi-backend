@@ -142,12 +142,63 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     return google_params, warnings
 
 
+def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+    sarvam_params = {}
+    warnings = []
+    # Standard transcription in the original language with proper formatting and number normalization.
+    transcription_mode = "transcribe"
+
+    # model is present in all param types
+    model = kaapi_params.get("model")
+    if not model:
+        return {}, ["Missing required 'model' parameter"]
+    sarvam_params["model"] = kaapi_params.get("model")
+
+    input_language = kaapi_params.get("input_language")
+    output_language = kaapi_params.get("output_language")
+
+    if input_language == "auto":
+        sarvam_params["language_code"] = "unknown"
+    else:
+        sarvam_params["language_code"] = input_language
+
+    if output_language is None:
+        output_language = input_language
+
+    if output_language == "en-IN" and input_language != output_language:
+        transcription_mode = "translate"
+
+    sarvam_params["mode"] = transcription_mode
+
+    # Warn about unsupported parameters
+    instructions = kaapi_params.get("instructions")
+    if instructions:
+        warnings.append(
+            "Parameter 'instructions is not supported by Sarvam AI and was ignored"
+        )
+
+    temperature = kaapi_params.get("temperature")
+
+    if temperature:
+        warnings.append(
+            "Parameter 'temperature' is not supported by Sarvam AI and was ignored"
+        )
+
+    response_format = kaapi_params.get("response_format")
+    if response_format:
+        warnings.append(
+            "Parameter 'response_format' is not supported by Sarvam AI and was ignored"
+        )
+
+    return sarvam_params, warnings
+
+
 def transform_kaapi_config_to_native(
     kaapi_config: KaapiCompletionConfig,
 ) -> tuple[NativeCompletionConfig, list[str]]:
     """Transform Kaapi completion config to native provider config with mapped parameters.
 
-    Supports OpenAI and Google AI providers.
+    Supports OpenAI,Google AI and Sarvam AI providers.
 
     Args:
         kaapi_config: KaapiCompletionConfig with abstracted parameters
@@ -171,6 +222,15 @@ def transform_kaapi_config_to_native(
         return (
             NativeCompletionConfig(
                 provider="google-native", params=mapped_params, type=kaapi_config.type
+            ),
+            warnings,
+        )
+
+    if kaapi_config.provider == "sarvam":
+        mapped_params, warnings = map_kaapi_to_sarvam_params(kaapi_config.params)
+        return (
+            NativeCompletionConfig(
+                provider="sarvamai-native", params=mapped_params, type=kaapi_config.type
             ),
             warnings,
         )

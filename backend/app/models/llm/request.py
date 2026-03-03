@@ -35,7 +35,7 @@ class TextLLMParams(SQLModel):
 
 class STTLLMParams(SQLModel):
     model: str
-    instructions: str
+    instructions: str | None = None
     input_language: str | None = None
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
@@ -210,8 +210,8 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google"] = Field(
-        ..., description="LLM provider (openai)"
+    provider: Literal["openai", "google", "sarvam"] = Field(
+        ..., description="LLM provider (openai, google, sarvam)"
     )
 
     type: Literal["text", "stt", "tts"] = Field(
