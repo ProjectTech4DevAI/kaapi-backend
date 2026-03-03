@@ -12,9 +12,10 @@ from app.models.llm import (
     TextOutput,
     LLMResponse,
     Usage,
-    TextOutput,
     TextContent,
 )
+from app.models.llm.response import AudioOutput
+from app.models.llm.request import AudioContent
 from app.services.llm.providers.base import BaseProvider
 
 
@@ -45,6 +46,11 @@ class SarvamAIProvider(BaseProvider):
                 return query_input
             else:
                 raise ValueError(f"{provider} STT requires a valid file path as input")
+        elif completion_type == "tts":
+            if isinstance(query_input, str):
+                return query_input
+            else:
+                raise ValueError(f"{provider} TTS requires a text string as input")
         raise ValueError(
             f"Unsupported completion type '{completion_type}' for {provider}"
         )
@@ -130,10 +136,109 @@ class SarvamAIProvider(BaseProvider):
             logger.error(f"[_execute_stt] {error_message}", exc_info=True)
             return None, error_message
 
+    def _execute_tts(
+        self,
+        completion_config: NativeCompletionConfig,
+        resolved_input: str,
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        """Execute text-to-speech completion using SarvamAI.
+
+        Args:
+            completion_config: Configuration for the completion request (with already-mapped params)
+            resolved_input: Text string to convert to speech
+            include_provider_raw_response: Whether to include raw provider response
+
+        Returns:
+            Tuple of (response, error_message)
+        """
+        provider_name = completion_config.provider
+        params = completion_config.params
+
+        # Extract already-mapped parameters from the mapper
+        model = params.get("model")
+        if not model:
+            return None, "Missing 'model' in native params for SarvamAI TTS"
+
+        target_language_code = params.get("target_language_code")
+        if not target_language_code:
+            return (
+                None,
+                "Missing 'target_language_code' in native params for SarvamAI TTS",
+            )
+
+        speaker = params.get("speaker")
+        output_audio_codec = params.get("output_audio_codec")
+
+        # Parse and validate input
+        parsed_text = self._parse_input(
+            query_input=resolved_input,
+            completion_type="tts",
+            provider=provider_name,
+        )
+
+        try:
+            # Call SarvamAI TTS with all mapped parameters
+            sarvam_response = self.client.text_to_speech.convert(
+                text=parsed_text,
+                target_language_code=target_language_code,
+                model=model,
+                speaker=speaker,
+                output_audio_codec=output_audio_codec,
+            )
+
+            # SarvamAI returns a list of base64-encoded audio strings
+            # For single text input, take the first audio
+            if not sarvam_response.audios or len(sarvam_response.audios) == 0:
+                return None, "SarvamAI TTS returned no audio data"
+
+            audio_base64 = sarvam_response.audios[0]
+
+            # Estimate token usage (not directly provided by SarvamAI TTS)
+            input_tokens_estimate = len(parsed_text.split())
+            output_tokens_estimate = 0  # Audio output, no tokens
+            total_tokens_estimate = input_tokens_estimate
+
+            llm_response = LLMCallResponse(
+                response=LLMResponse(
+                    provider_response_id=sarvam_response.request_id or "unknown",
+                    conversation_id=None,
+                    provider=provider_name,
+                    model=model,
+                    output=AudioOutput(
+                        content=AudioContent(
+                            format="base64",
+                            value=audio_base64,
+                            mime_type=f"audio/{output_audio_codec or 'wav'}",
+                        )
+                    ),
+                ),
+                usage=Usage(
+                    input_tokens=input_tokens_estimate,
+                    output_tokens=output_tokens_estimate,
+                    total_tokens=total_tokens_estimate,
+                    reasoning_tokens=None,
+                ),
+            )
+
+            if include_provider_raw_response:
+                llm_response.provider_raw_response = sarvam_response.model_dump()
+
+            logger.info(
+                f"[_execute_tts] Successfully converted text to speech | "
+                f"request_id={sarvam_response.request_id}, model={model}, speaker={speaker}"
+            )
+            return llm_response, None
+
+        except Exception as e:
+            error_message = f"SarvamAI TTS conversion failed: {str(e)}"
+            logger.error(f"[_execute_tts] {error_message}", exc_info=True)
+            return None, error_message
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
-        query: QueryParams,  # noqa: ARG002 - Required by base class interface, unused for STT
+        query: QueryParams,  # noqa: ARG002 - Required by base class interface, unused for STT/TTS
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
@@ -142,6 +247,12 @@ class SarvamAIProvider(BaseProvider):
 
             if completion_type == "stt":
                 return self._execute_stt(
+                    completion_config=completion_config,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
+            elif completion_type == "tts":
+                return self._execute_tts(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,

@@ -143,52 +143,87 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
 
 def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+    """Map Kaapi-abstracted parameters to SarvamAI API parameters.
+
+    Handles both STTLLMParams and TTSLLMParams.
+
+    STTLLMParams: model, instructions, input_language, output_language, response_format, temperature
+    TTSLLMParams: model, voice, language, response_format
+
+    Args:
+        kaapi_params: Dictionary with standardized Kaapi parameters
+
+    Returns:
+        Tuple of:
+        - Dictionary of SarvamAI API parameters
+        - List of warnings for unsupported parameters
+    """
     sarvam_params = {}
     warnings = []
-    # Standard transcription in the original language with proper formatting and number normalization.
-    transcription_mode = "transcribe"
 
-    # model is present in all param types
+    # Model is required for all completion types
     model = kaapi_params.get("model")
     if not model:
         return {}, ["Missing required 'model' parameter"]
-    sarvam_params["model"] = kaapi_params.get("model")
+    sarvam_params["model"] = model
 
+    # Determine if STT or TTS based on presence of specific params
+    voice = kaapi_params.get("voice")
     input_language = kaapi_params.get("input_language")
-    output_language = kaapi_params.get("output_language")
 
-    if input_language == "auto":
-        sarvam_params["language_code"] = "unknown"
-    else:
-        sarvam_params["language_code"] = input_language
+    if voice is not None:
+        # TTS mode - map TTSLLMParams
+        sarvam_params["speaker"] = voice
 
-    if output_language is None:
-        output_language = input_language
+        language = kaapi_params.get("language")
+        if not language:
+            return {}, ["Missing required 'language' parameter for TTS"]
+        sarvam_params["target_language_code"] = language
 
-    if output_language == "en-IN" and input_language != output_language:
-        transcription_mode = "translate"
+        response_format = kaapi_params.get("response_format")
+        if response_format:
+            # Map audio format to SarvamAI codec
+            format_mapping = {"mp3": "mp3", "wav": "wav", "ogg": "ogg"}
+            sarvam_params["output_audio_codec"] = format_mapping.get(
+                response_format, "wav"
+            )
 
-    sarvam_params["mode"] = transcription_mode
+    elif input_language is not None or kaapi_params.get("output_language") is not None:
+        # STT mode - map STTLLMParams
+        output_language = kaapi_params.get("output_language")
+        transcription_mode = "transcribe"
 
-    # Warn about unsupported parameters
-    instructions = kaapi_params.get("instructions")
-    if instructions:
-        warnings.append(
-            "Parameter 'instructions is not supported by Sarvam AI and was ignored"
-        )
+        if input_language == "auto":
+            sarvam_params["language_code"] = "unknown"
+        elif input_language:
+            sarvam_params["language_code"] = input_language
 
-    temperature = kaapi_params.get("temperature")
+        if output_language is None:
+            output_language = input_language
 
-    if temperature:
-        warnings.append(
-            "Parameter 'temperature' is not supported by Sarvam AI and was ignored"
-        )
+        if output_language == "en-IN" and input_language != output_language:
+            transcription_mode = "translate"
 
-    response_format = kaapi_params.get("response_format")
-    if response_format:
-        warnings.append(
-            "Parameter 'response_format' is not supported by Sarvam AI and was ignored"
-        )
+        sarvam_params["mode"] = transcription_mode
+
+        # Warn about unsupported STT parameters
+        instructions = kaapi_params.get("instructions")
+        if instructions:
+            warnings.append(
+                "Parameter 'instructions' is not supported by SarvamAI STT and was ignored"
+            )
+
+        temperature = kaapi_params.get("temperature")
+        if temperature:
+            warnings.append(
+                "Parameter 'temperature' is not supported by SarvamAI STT and was ignored"
+            )
+
+        response_format = kaapi_params.get("response_format")
+        if response_format:
+            warnings.append(
+                "Parameter 'response_format' is not supported by SarvamAI STT and was ignored"
+            )
 
     return sarvam_params, warnings
 
