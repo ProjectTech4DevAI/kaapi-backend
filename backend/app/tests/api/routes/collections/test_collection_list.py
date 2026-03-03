@@ -102,8 +102,12 @@ def test_list_collections_includes_vector_store_collection_with_fields(
 
     row = matching[0]
     assert row["project_id"] == project.id
-    assert row["llm_service_name"] == get_service_name("openai")
-    assert row["llm_service_id"] == collection.llm_service_id
+    # Vector store collection should have knowledge_base fields, not llm_service fields
+    assert row["knowledge_base_provider"] == get_service_name("openai")
+    assert row["knowledge_base_id"] == collection.llm_service_id
+    # LLM service fields should not be present in the response
+    assert "llm_service_name" not in row
+    assert "llm_service_id" not in row
 
 
 def test_list_collections_does_not_error_with_no_collections(

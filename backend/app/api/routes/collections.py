@@ -28,7 +28,7 @@ from app.models.collection import (
     CollectionPublic,
 )
 from app.utils import APIResponse, load_description, validate_callback_url
-from app.services.collections.helpers import ensure_unique_name
+from app.services.collections.helpers import ensure_unique_name, to_collection_public
 from app.services.collections import (
     create_collection as create_service,
     delete_collection as delete_service,
@@ -71,7 +71,10 @@ def list_collections(
     collection_crud = CollectionCrud(session, current_user.project_.id)
     rows = collection_crud.read_all()
 
-    return APIResponse.success_response(rows)
+    # Convert each collection to CollectionPublic with correct field mapping
+    public_collections = [to_collection_public(collection) for collection in rows]
+
+    return APIResponse.success_response(public_collections)
 
 
 @router.post(
@@ -190,7 +193,7 @@ def collection_info(
         description="If true, include documents linked to this collection",
     ),
     include_url: bool = Query(
-        True, description="Include a signed URL to access the document"
+        False, description="Include a signed URL to access the document"
     ),
     limit: int
     | None = Query(
@@ -203,7 +206,9 @@ def collection_info(
     collection_crud = CollectionCrud(session, current_user.project_.id)
     collection = collection_crud.read_one(collection_id)
 
-    collection_with_docs = CollectionWithDocsPublic.model_validate(collection)
+    # Convert to CollectionPublic with correct field mapping, then to WithDocs
+    collection_public = to_collection_public(collection)
+    collection_with_docs = CollectionWithDocsPublic.model_validate(collection_public)
 
     if include_docs:
         document_collection_crud = DocumentCollectionCrud(session)

@@ -13,7 +13,7 @@ from google.genai import types
 
 from app.core.storage_utils import get_mime_from_url
 
-from .base import BatchProvider
+from .base import BATCH_KEY, BatchProvider
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ class GeminiBatchProvider(BatchProvider):
 
         Returns:
             List of result dictionaries, each containing:
-                - custom_id: Item key from input
+                - BATCH_KEY: Item key from input
                 - response: Dict with "text" key containing the generated text
                 - error: Error info (if item failed), None otherwise
         """
@@ -225,7 +225,7 @@ class GeminiBatchProvider(BatchProvider):
                             text = self._extract_text_from_response_dict(response_obj)
                             results.append(
                                 {
-                                    "custom_id": custom_id,
+                                    BATCH_KEY: custom_id,
                                     "response": {"text": text},
                                     "error": None,
                                 }
@@ -233,7 +233,7 @@ class GeminiBatchProvider(BatchProvider):
                         elif parsed.get("error"):
                             results.append(
                                 {
-                                    "custom_id": custom_id,
+                                    BATCH_KEY: custom_id,
                                     "response": None,
                                     "error": str(parsed["error"]),
                                 }

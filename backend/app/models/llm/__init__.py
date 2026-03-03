@@ -9,6 +9,10 @@ from app.models.llm.request import (
     LlmCall,
     AudioContent,
     TextContent,
+    ImageContent,
+    PDFContent,
+    ImageInput,
+    PDFInput,
 )
 from app.models.llm.response import (
     LLMCallResponse,

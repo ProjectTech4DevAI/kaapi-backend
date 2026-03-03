@@ -542,10 +542,10 @@ class TestSTTEvaluationRun:
             )
         return dataset
 
-    @patch("app.api.routes.stt_evaluations.evaluation.start_stt_evaluation_batch")
+    @patch("app.api.routes.stt_evaluations.evaluation.start_low_priority_job")
     def test_start_stt_evaluation_success(
         self,
-        mock_start_batch,
+        mock_start_job,
         client: TestClient,
         user_api_key_header: dict[str, str],
         db: Session,
@@ -554,12 +554,7 @@ class TestSTTEvaluationRun:
     ) -> None:
         """Test successfully starting an STT evaluation run."""
         dataset = test_dataset_with_samples
-        mock_start_batch.return_value = {
-            "success": True,
-            "run_id": 1,
-            "batch_jobs": {"gemini-2.5-pro": {"batch_job_id": 1}},
-            "sample_count": 3,
-        }
+        mock_start_job.return_value = "mock-celery-task-id"
 
         response = client.post(
             "/api/v1/evaluations/stt/runs",
@@ -582,12 +577,12 @@ class TestSTTEvaluationRun:
         assert data["type"] == "stt"
         assert data["models"] == ["gemini-2.5-pro"]
         assert data["total_items"] == 3  # 3 samples × 1 model
-        assert data["status"] in ("pending", "processing")
+        assert data["status"] == "pending"
         assert data["organization_id"] == user_api_key.organization_id
         assert data["project_id"] == user_api_key.project_id
         assert data["error_message"] is None
 
-        mock_start_batch.assert_called_once()
+        mock_start_job.assert_called_once()
 
     def test_start_stt_evaluation_invalid_dataset(
         self,

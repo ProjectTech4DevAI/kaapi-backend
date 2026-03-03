@@ -7,7 +7,25 @@ It provides a provider-agnostic interface for executing LLM calls.
 from abc import ABC, abstractmethod
 from typing import Any
 
+from pydantic import model_validator
+from sqlmodel import SQLModel
+
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
+from app.models.llm.request import TextContent, ImageContent, PDFContent
+
+ContentPart = TextContent | ImageContent | PDFContent
+
+
+class MultiModalInput(SQLModel):
+    """Resolved multimodal input containing a list of content parts."""
+
+    parts: list[ContentPart]
+
+    @model_validator(mode="after")
+    def validate_parts(self):
+        if not self.parts:
+            raise ValueError("MultiModalInput requires at least one content part")
+        return self
 
 
 class BaseProvider(ABC):
@@ -44,7 +62,7 @@ class BaseProvider(ABC):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str,
+        resolved_input: str | list[ContentPart],
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute LLM API call.

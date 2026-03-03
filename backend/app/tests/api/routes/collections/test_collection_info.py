@@ -167,8 +167,12 @@ def test_collection_info_vector_store_collection(
     payload = data["data"]
 
     assert payload["id"] == str(collection.id)
-    assert payload["llm_service_name"] == get_service_name("openai")
-    assert payload["llm_service_id"] == collection.llm_service_id
+    # Vector store collection should have knowledge_base fields, not llm_service fields
+    assert payload["knowledge_base_provider"] == get_service_name("openai")
+    assert payload["knowledge_base_id"] == collection.llm_service_id
+    # LLM service fields should not be present in the response
+    assert "llm_service_name" not in payload
+    assert "llm_service_id" not in payload
 
     docs = payload.get("documents", [])
     assert len(docs) >= 1
