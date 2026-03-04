@@ -249,6 +249,7 @@ dependencies = [
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlmodel" },
     { name = "tenacity" },
+    { name = "whisper-normalizer" },
 ]
 
 [package.dev-dependencies]
@@ -299,6 +300,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "sqlmodel", specifier = ">=0.0.21,<1.0.0" },
     { name = "tenacity", specifier = ">=8.2.3,<9.0.0" },
+    { name = "whisper-normalizer", specifier = ">=0.1.12" },
 ]
 
 [package.metadata.requires-dev]
@@ -1409,6 +1411,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/80/f6/bcd6b5c49351d5261ee3873f78d66fd7aa11d410f5c12e4cc1a4ee85c8f9/indic_nlp_library-0.92.tar.gz", hash = "sha256:5e83e54a1016873cbd7417e5376c12ca87411151760ad92809b2af8824982d73", size = 32250, upload-time = "2023-05-15T06:58:13.052Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/21/61240bcf965cedfec993497b38c42f054b149b9669e6d6cddeb1dee09d51/indic_nlp_library-0.92-py3-none-any.whl", hash = "sha256:6cbc38886184e94f71c9a59e7448a9cae086c7cb222ffd9aef6fd74ea0daf895", size = 40259, upload-time = "2023-05-15T06:58:10.28Z" },
+]
+
+[[package]]
+name = "indic-numtowords"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/46/683e92580d9c1752917d2f9ec2a44d2adc21cdfe4deeaa0fe87fc23dbea8/indic_numtowords-1.1.0.tar.gz", hash = "sha256:d1addc21444c332e05bfd8726af427960c096c2a16776d98bee4fbc36ade5d25", size = 44220, upload-time = "2025-08-18T12:24:13.075Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/16/b2b6491d95a15bda712163b4e27428f2cb1ac3a1b4fb59b140dbc76f6ce5/indic_numtowords-1.1.0-py3-none-any.whl", hash = "sha256:bf4b7b9e539323d9b00bc868caa2d9369170b8f3ac4d19619bf9c6cdc6f89572", size = 71635, upload-time = "2025-08-18T12:24:11.065Z" },
 ]
 
 [[package]]
@@ -4053,6 +4064,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/f1/ee81806690a87dab5f5653c1f146c92bc066d7f4cebc603ef88eb9e13957/werkzeug-3.1.6.tar.gz", hash = "sha256:210c6bede5a420a913956b4791a7f4d6843a43b6fcee4dfa08a65e93007d0d25", size = 864736, upload-time = "2026-02-19T15:17:18.884Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/ec/d58832f89ede95652fd01f4f24236af7d32b70cab2196dfcc2d2fd13c5c2/werkzeug-3.1.6-py3-none-any.whl", hash = "sha256:7ddf3357bb9564e407607f988f683d72038551200c704012bb9a4c523d42f131", size = 225166, upload-time = "2026-02-19T15:17:17.475Z" },
+]
+
+[[package]]
+name = "whisper-normalizer"
+version = "0.1.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "indic-numtowords" },
+    { name = "more-itertools" },
+    { name = "regex" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/81/d4a23d67e9356f1c2d6fe9aa7e99f42078b5e3845b181412a5582f168af4/whisper_normalizer-0.1.12.tar.gz", hash = "sha256:484dcedbfeba2ee94cf9412d57ab1e66b847e91f80c15ffc4c6ab82ad5484b8c", size = 39630, upload-time = "2025-06-06T19:03:50.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d7/2bf42cb3f19da0aec48052a6e3bc3a592afc182fe98c011a0e0ae5fbe1f5/whisper_normalizer-0.1.12-py3-none-any.whl", hash = "sha256:2cd7276d2599c05147a50cf86d240e6cd27623f5ccfe8b20ccea6a518274989a", size = 36748, upload-time = "2025-06-06T19:03:49.182Z" },
 ]
 
 [[package]]

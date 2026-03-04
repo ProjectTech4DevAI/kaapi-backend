@@ -1,7 +1,12 @@
-"""STT evaluation metrics calculation using jiwer and indic-nlp-library.
+"""STT evaluation metrics calculation using jiwer, indic-nlp-library, and whisper-normalizer.
 
-Provides WER, CER, lenient WER (with Indic normalization), and WIP
+Provides WER, CER, lenient WER (with script-aware normalization), and WIP
 for comparing STT transcriptions against ground truth.
+
+Normalization strategy:
+- indic-nlp-library: hi, bn, gu, pa, kn, ml, or, ta, te, mr (Marathi uses Hindi/Devanagari normalizer)
+- whisper-normalizer: as (BengaliNormalizer), en (EnglishTextNormalizer)
+- Unsupported languages (e.g., ur): whitespace-only normalization
 """
 
 import logging
@@ -11,25 +16,36 @@ from typing import Any
 import jiwer
 import numpy as np
 from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
+from whisper_normalizer.english import EnglishTextNormalizer
+from whisper_normalizer.indic import BengaliNormalizer
 
 logger = logging.getLogger(__name__)
 
 # Indic language codes supported by indic-nlp-library normalizer
-INDIC_LANGUAGE_CODES = {"hi", "bn", "gu", "pa", "kn", "ml", "or", "ta", "te"}
+INDIC_LANGUAGE_CODES = {"hi", "bn", "gu", "pa", "kn", "ml", "or", "ta", "te", "mr"}
 
-# Singleton factory instance
+# Marathi uses the same Devanagari script as Hindi
+INDIC_LANGUAGE_CODE_MAP: dict[str, str] = {"mr": "hi"}
+
+# Singleton factory instance for indic-nlp-library
 _normalizer_factory = IndicNormalizerFactory()
+
+# Whisper-normalizer instances for languages not covered by indic-nlp-library
+_whisper_normalizers: dict[str, Any] = {
+    "as": BengaliNormalizer(),  # Assamese uses Bengali script
+    "en": EnglishTextNormalizer(),
+}
 
 
 def normalize_text(text: str, language_code: str | None) -> str:
     """Normalize text for lenient comparison.
 
-    Applies Indic script normalization for supported languages,
-    then strips extra whitespace for all languages.
+    Uses indic-nlp-library for most Indic languages, whisper-normalizer
+    for Assamese and English, and whitespace-only for unsupported languages.
 
     Args:
         text: Input text to normalize
-        language_code: ISO 639-1 language code (e.g., "hi", "bn")
+        language_code: ISO 639-1 language code (e.g., "hi", "bn", "en")
 
     Returns:
         Normalized text string
@@ -39,14 +55,24 @@ def normalize_text(text: str, language_code: str | None) -> str:
 
     normalized = text
 
-    # Apply Indic normalization if language is supported
     if language_code and language_code in INDIC_LANGUAGE_CODES:
+        # Use indic-nlp-library (map mr → hi for Devanagari)
+        normalizer_code = INDIC_LANGUAGE_CODE_MAP.get(language_code, language_code)
         try:
-            normalizer = _normalizer_factory.get_normalizer(language_code)
+            normalizer = _normalizer_factory.get_normalizer(normalizer_code)
             normalized = normalizer.normalize(normalized)
         except Exception as e:
             logger.warning(
                 f"[normalize_text] Indic normalization failed | "
+                f"language_code: {language_code}, error: {e}"
+            )
+    elif language_code and language_code in _whisper_normalizers:
+        # Use whisper-normalizer for as, en
+        try:
+            normalized = _whisper_normalizers[language_code](normalized)
+        except Exception as e:
+            logger.warning(
+                f"[normalize_text] Whisper normalization failed | "
                 f"language_code: {language_code}, error: {e}"
             )
 
@@ -89,7 +115,7 @@ def calculate_stt_metrics(
     cer = jiwer.cer(ref, hyp)
     wip = jiwer.wip(ref, hyp)
 
-    # Lenient WER: after Indic normalization
+    # Lenient WER: after script-aware normalization
     norm_hyp = normalize_text(hypothesis, language_code)
     norm_ref = normalize_text(reference, language_code)
 
