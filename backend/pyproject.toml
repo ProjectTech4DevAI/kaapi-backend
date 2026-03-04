@@ -38,6 +38,8 @@ dependencies = [
     "flower>=2.0.1",
     "google-genai>=1.59.0",
     "pydub>=0.25.1",
+    "jiwer>=3.1.0",
+    "indic-nlp-library>=0.92",
 ]
 
 [tool.uv]
