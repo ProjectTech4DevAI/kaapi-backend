@@ -11,11 +11,10 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from asgi_correlation_id import correlation_id
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
-from app.celery.tasks.job_execution import execute_low_priority_task
+from app.celery.utils import start_low_priority_job
 from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
 from app.core.batch.base import BATCH_KEY
 from app.core.util import now
@@ -344,18 +343,16 @@ async def poll_stt_run(
     # Trigger automated metric computation (WER, CER, lenient WER, WIP)
     if any_succeeded:
         try:
-            trace_id = correlation_id.get() or ""
-            execute_low_priority_task.delay(
+            celery_task_id = start_low_priority_job(
                 function_path="app.services.stt_evaluations.metric_job.execute_metric_computation",
                 project_id=run.project_id,
                 job_id=str(run.id),
-                trace_id=trace_id,
                 organization_id=run.organization_id,
                 run_id=run.id,
             )
             logger.info(
                 f"[poll_stt_run] Metric computation task dispatched | "
-                f"run_id: {run.id}"
+                f"run_id: {run.id}, celery_task_id: {celery_task_id}"
             )
         except Exception as e:
             logger.error(

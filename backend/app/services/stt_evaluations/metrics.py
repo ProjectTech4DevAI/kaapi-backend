@@ -11,7 +11,7 @@ Normalization strategy:
 
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 import jiwer
 import numpy as np
@@ -20,6 +20,16 @@ from whisper_normalizer.english import EnglishTextNormalizer
 from whisper_normalizer.indic import BengaliNormalizer
 
 logger = logging.getLogger(__name__)
+
+# Metric name constants
+METRIC_WER = "wer"
+METRIC_CER = "cer"
+METRIC_LENIENT_WER = "lenient_wer"
+METRIC_WIP = "wip"
+METRIC_NAMES = [METRIC_WER, METRIC_CER, METRIC_LENIENT_WER, METRIC_WIP]
+
+# Data type constant for summary scores
+SCORE_DATA_TYPE_NUMERIC = "NUMERIC"
 
 # Indic language codes supported by indic-nlp-library normalizer
 INDIC_LANGUAGE_CODES = {"hi", "bn", "gu", "pa", "kn", "ml", "or", "ta", "te", "mr"}
@@ -31,7 +41,7 @@ INDIC_LANGUAGE_CODE_MAP: dict[str, str] = {"mr": "hi"}
 _normalizer_factory = IndicNormalizerFactory()
 
 # Whisper-normalizer instances for languages not covered by indic-nlp-library
-_whisper_normalizers: dict[str, Any] = {
+_whisper_normalizers: dict[str, Callable[[str], str]] = {
     "as": BengaliNormalizer(),  # Assamese uses Bengali script
     "en": EnglishTextNormalizer(),
 }
@@ -115,9 +125,9 @@ def calculate_stt_metrics(
     cer = jiwer.cer(ref, hyp)
     wip = jiwer.wip(ref, hyp)
 
-    # Lenient WER: after script-aware normalization
-    norm_hyp = normalize_text(hypothesis, language_code)
-    norm_ref = normalize_text(reference, language_code)
+    # Lenient WER: after script-aware normalization (pass pre-stripped text)
+    norm_hyp = normalize_text(hyp, language_code)
+    norm_ref = normalize_text(ref, language_code)
 
     if norm_ref:
         lenient_wer = jiwer.wer(norm_ref, norm_hyp)
@@ -125,10 +135,10 @@ def calculate_stt_metrics(
         lenient_wer = wer
 
     return {
-        "wer": round(wer, 2),
-        "cer": round(cer, 2),
-        "lenient_wer": round(lenient_wer, 2),
-        "wip": round(wip, 2),
+        METRIC_WER: round(wer, 2),
+        METRIC_CER: round(cer, 2),
+        METRIC_LENIENT_WER: round(lenient_wer, 2),
+        METRIC_WIP: round(wip, 2),
     }
 
 
@@ -148,10 +158,9 @@ def compute_run_aggregate_scores(
     if not result_scores:
         return {"summary_scores": []}
 
-    metric_names = ["wer", "cer", "lenient_wer", "wip"]
     summary_scores = []
 
-    for metric in metric_names:
+    for metric in METRIC_NAMES:
         values = [s[metric] for s in result_scores if metric in s]
         if not values:
             continue
@@ -163,7 +172,7 @@ def compute_run_aggregate_scores(
                 "avg": round(float(np.mean(arr)), 2),
                 "std": round(float(np.std(arr)), 2),
                 "total_pairs": len(values),
-                "data_type": "NUMERIC",
+                "data_type": SCORE_DATA_TYPE_NUMERIC,
             }
         )
 
