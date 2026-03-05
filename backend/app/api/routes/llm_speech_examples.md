@@ -14,7 +14,7 @@ curl -X POST https://api.kaapi.ai/llm/sts \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "audio": {
+    "query": {
       "type": "audio",
       "content": {
         "format": "base64",
@@ -41,7 +41,7 @@ curl -X POST https://api.kaapi.ai/llm/sts \
 ### Request with All Options
 ```json
 {
-  "audio": {
+  "query": {
     "type": "audio",
     "content": {
       "format": "base64",
@@ -280,7 +280,7 @@ If specified knowledge base doesn't exist:
 ### English → English
 ```json
 {
-  "audio": {...},
+  "query": {...},
   "knowledge_base_ids": ["kb_123"],
   "input_language": "english",
   "output_language": "english",
@@ -291,7 +291,7 @@ If specified knowledge base doesn't exist:
 ### Hindi → English (Translation)
 ```json
 {
-  "audio": {...},
+  "query": {...},
   "knowledge_base_ids": ["kb_123"],
   "input_language": "hindi",
   "output_language": "english",
@@ -302,7 +302,7 @@ If specified knowledge base doesn't exist:
 ### Hinglish (Code-Switching)
 ```json
 {
-  "audio": {...},
+  "query": {...},
   "knowledge_base_ids": ["kb_123"],
   "input_language": "hinglish",
   "output_language": "hinglish",
@@ -314,7 +314,7 @@ If specified knowledge base doesn't exist:
 ### Regional Indian Languages
 ```json
 {
-  "audio": {...},
+  "query": {...},
   "knowledge_base_ids": ["kb_123"],
   "input_language": "auto",  // Auto-detect
   "output_language": "odia",  // Odia, Bengali, Punjabi, etc.
@@ -386,7 +386,7 @@ def handle_whatsapp_voice_message(audio_url, user_id):
         "https://api.kaapi.ai/llm/sts",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json={
-            "audio": {
+            "query": {
                 "type": "audio",
                 "content": {
                     "format": "base64",

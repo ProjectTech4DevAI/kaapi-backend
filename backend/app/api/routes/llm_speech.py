@@ -116,7 +116,7 @@ def speech_to_speech(
 
     # Create chain request
     chain_request = LLMChainRequest(
-        query=QueryParams(input=request.audio),
+        query=QueryParams(input=request.query),
         blocks=blocks,
         callback_url=request.callback_url,
         request_metadata=metadata,

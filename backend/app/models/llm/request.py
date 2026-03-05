@@ -792,7 +792,7 @@ class SpeechToSpeechRequest(SQLModel):
     Output: Audio + Text (via callback)
     """
 
-    audio: AudioInput = Field(
+    query: AudioInput = Field(
         ..., description="Voice note input (WhatsApp compatible format)"
     )
     knowledge_base_ids: list[str] = Field(

@@ -94,7 +94,7 @@ def build_stt_block(model: STTModel, language_code: str) -> ChainBlock:
         params["language_code"] = (
             language_code if language_code != "unknown" else "unknown"
         )
-        params["mode"] = "transcription"
+        params["mode"] = "transcribe"
     elif provider == "google-native":
         # Google requires specific language code, fallback to en-IN if unknown
         params["language_code"] = (
@@ -146,7 +146,7 @@ def build_rag_block(model: LLMModel, knowledge_base_ids: list[str]) -> ChainBloc
     )
 
 
-def build_tts_block(model: TTSModel, language_code: str) -> ChainBlock:
+def build_tts_block(model: TTSModel, language_code: str = "en-IN") -> ChainBlock:
     """Build TTS (Text-to-Speech) block configuration.
 
     Args:
@@ -175,7 +175,7 @@ def build_tts_block(model: TTSModel, language_code: str) -> ChainBlock:
 
     # Add provider-specific parameters
     if provider == "sarvamai-native":
-        params["target_language_code"] = language_code
+        params["target_language_code"] = "en-IN"
         params["speaker"] = voice
         params["output_audio_codec"] = "mp3"  # WhatsApp compatible
     elif provider == "google-native":

@@ -62,7 +62,7 @@ Each callback includes:
 - `gpt-4o-mini` - OpenAI GPT-4o Mini (faster, lower cost)
 
 ### TTS (Text-to-Speech)
-- `bulbul-v3` - Sarvam Bulbul V3 (**default**, natural Indian voices, MP3 output)
+- `bulbul:v3` - Sarvam Bulbul V3 (**default**, natural Indian voices, MP3 output)
 - `gemini-2.5-pro-preview-tts` - Google Gemini 2.5 Pro (OGG OPUS output)
 
 ## Edge Cases & Error Handling
@@ -99,7 +99,7 @@ curl -X POST https://api.kaapi.ai/llm/sts \
   -H "Content-Type: application/json" \
   -d @- <<EOF
 {
-  "audio": {
+  "query": {
     "type": "audio",
     "content": {
       "format": "base64",
