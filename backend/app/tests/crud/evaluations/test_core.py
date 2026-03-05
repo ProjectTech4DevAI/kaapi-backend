@@ -30,7 +30,7 @@ def _create_config(db: Session, project_id: int) -> tuple:
     config_version = ConfigVersion(
         config_id=config.id,
         version=1,
-        blob={"completion": {"params": {"model": "gpt-4o"}}},
+        config_blob={"completion": {"params": {"model": "gpt-4o"}}},
         inserted_at=now(),
         updated_at=now(),
     )
