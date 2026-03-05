@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
 from app.api.deps import AuthContextDep, SessionDep
 from app.core.cloud import get_cloud_storage
 from app.api.permissions import Permission, require_permission
-from app.models.file import AudioUploadResponse, FilePublic, FileIDList, FileType
-from app.crud.file import get_file_by_id, get_files_by_ids, list_files
+from app.models.file import AudioUploadResponse, FilePublic
+from app.crud.file import get_file_by_id, list_files
 from app.services.stt_evaluations.audio import upload_audio_file
 from app.services.stt_evaluations.helpers import build_file_schema, build_file_schemas
 from app.utils import APIResponse, load_description

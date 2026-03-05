@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
+from sqlmodel import SQLModel
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import SQLModel
 from sqlmodel import Field as SQLField
@@ -229,6 +230,7 @@ class STTSamplePublic(BaseModel):
     id: int
     file_id: int
     object_store_url: str | None = None  # Populated from file record when needed
+    signed_url: str | None = None
     language_id: int | None
     ground_truth: str | None
     sample_metadata: dict[str, Any] | None

@@ -3,8 +3,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlmodel import SQLModel
-from sqlmodel import Field
+from sqlmodel import SQLModel, Field
 
 from app.core.util import now
 
@@ -81,6 +80,16 @@ class File(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the file was last updated"},
     )
+
+
+class AudioUploadResponse(SQLModel):
+    """Response model for audio file upload."""
+
+    file_id: int = Field(..., description="ID of the created file record")
+    s3_url: str = Field(..., description="S3 URL of the uploaded audio file")
+    filename: str = Field(..., description="Original filename")
+    size_bytes: int = Field(..., description="File size in bytes")
+    content_type: str = Field(..., description="MIME type of the audio file")
 
 
 class AudioUploadResponse(SQLModel):
