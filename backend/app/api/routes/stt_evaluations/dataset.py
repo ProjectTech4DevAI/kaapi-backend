@@ -119,7 +119,7 @@ def get_dataset(
     auth_context: AuthContextDep,
     dataset_id: int,
     include_samples: bool = Query(True, description="Include samples in response"),
-    include_url: bool = Query(
+    include_signed_url: bool = Query(
         False, description="Include signed URLs for audio file samples"
     ),
     sample_limit: int = Query(100, ge=1, le=1000, description="Max samples to return"),
@@ -160,34 +160,42 @@ def get_dataset(
         file_map = {f.id: f for f in file_records}
 
         storage = None
-        if include_url:
+        if include_signed_url:
             storage = get_cloud_storage(
                 session=_session, project_id=auth_context.project_.id
             )
 
-        samples = [
-            STTSamplePublic(
-                id=s.id,
-                file_id=s.file_id,
-                object_store_url=file_map.get(s.file_id).object_store_url
-                if s.file_id in file_map
-                else None,
-                signed_url=storage.get_signed_url(
-                    file_map.get(s.file_id).object_store_url
+        samples = []
+        for s in sample_records:
+            signed_url = None
+            if include_signed_url and storage and s.file_id in file_map:
+                try:
+                    signed_url = storage.get_signed_url(
+                        file_map.get(s.file_id).object_store_url
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[get_dataset] Failed to generate signed URL for file_id {s.file_id}: {e}"
+                    )
+
+            samples.append(
+                STTSamplePublic(
+                    id=s.id,
+                    file_id=s.file_id,
+                    object_store_url=file_map.get(s.file_id).object_store_url
+                    if s.file_id in file_map
+                    else None,
+                    signed_url=signed_url,
+                    language_id=s.language_id,
+                    ground_truth=s.ground_truth,
+                    sample_metadata=s.sample_metadata,
+                    dataset_id=s.dataset_id,
+                    organization_id=s.organization_id,
+                    project_id=s.project_id,
+                    inserted_at=s.inserted_at,
+                    updated_at=s.updated_at,
                 )
-                if include_url and storage and s.file_id in file_map
-                else None,
-                language_id=s.language_id,
-                ground_truth=s.ground_truth,
-                sample_metadata=s.sample_metadata,
-                dataset_id=s.dataset_id,
-                organization_id=s.organization_id,
-                project_id=s.project_id,
-                inserted_at=s.inserted_at,
-                updated_at=s.updated_at,
             )
-            for s in sample_records
-        ]
 
     return APIResponse.success_response(
         data=STTDatasetWithSamples(

@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.models import EvaluationDataset, File, FileType
-from app.models.stt_evaluation import STTSample, EvaluationType
+from app.models import EvaluationDataset, EvaluationRun, File, FileType
+from app.models.stt_evaluation import STTSample, STTResult, EvaluationType
 from app.crud.language import get_language_by_locale
 from app.tests.utils.auth import TestAuthContext
 from app.core.util import now
@@ -100,6 +100,63 @@ def create_test_stt_sample(
     db.commit()
     db.refresh(sample)
     return sample
+
+
+def create_test_stt_run(
+    db: Session,
+    dataset_id: int,
+    organization_id: int,
+    project_id: int,
+    run_name: str = "test_run",
+    dataset_name: str = "test_dataset",
+    status: str = "completed",
+) -> EvaluationRun:
+    """Create a test STT evaluation run."""
+    run = EvaluationRun(
+        run_name=run_name,
+        dataset_name=dataset_name,
+        dataset_id=dataset_id,
+        type=EvaluationType.STT.value,
+        providers=["gemini-2.5-pro"],
+        status=status,
+        total_items=1,
+        organization_id=organization_id,
+        project_id=project_id,
+        inserted_at=now(),
+        updated_at=now(),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def create_test_stt_result(
+    db: Session,
+    run_id: int,
+    sample_id: int,
+    organization_id: int,
+    project_id: int,
+    provider: str = "gemini-2.5-pro",
+    status: str = "SUCCESS",
+    transcription: str | None = "Test transcription",
+) -> STTResult:
+    """Create a test STT result."""
+    result = STTResult(
+        transcription=transcription,
+        provider=provider,
+        status=status,
+        stt_sample_id=sample_id,
+        evaluation_run_id=run_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        inserted_at=now(),
+        updated_at=now(),
+    )
+    db.add(result)
+    db.commit()
+    db.refresh(result)
+    return result
 
 
 class TestSTTDatasetCreate:
@@ -507,6 +564,140 @@ class TestSTTDatasetGet:
         assert data["samples"] == []
         assert data["dataset_metadata"]["sample_count"] == 1
 
+    @patch("app.api.routes.stt_evaluations.dataset.get_cloud_storage")
+    def test_get_stt_dataset_with_signed_url(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT dataset with signed URLs for audio files."""
+        # Mock cloud storage to return signed URLs
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.return_value = (
+            "https://signed-url.example.com/audio.mp3"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="signed_url_test_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/datasets/{dataset.id}",
+            params={"include_signed_url": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == dataset.id
+        assert len(data["samples"]) == 1
+        assert data["samples"][0]["id"] == sample.id
+        assert (
+            data["samples"][0]["signed_url"]
+            == "https://signed-url.example.com/audio.mp3"
+        )
+
+        # Verify cloud storage was called
+        mock_get_cloud_storage.assert_called_once()
+        mock_storage.get_signed_url.assert_called_once()
+
+    def test_get_stt_dataset_without_signed_url(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT dataset without signed URLs (default behavior)."""
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="no_signed_url_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/datasets/{dataset.id}",
+            params={"include_signed_url": False},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == dataset.id
+        assert len(data["samples"]) == 1
+        assert data["samples"][0]["id"] == sample.id
+        assert data["samples"][0]["signed_url"] is None
+
+    @patch("app.api.routes.stt_evaluations.dataset.get_cloud_storage")
+    def test_get_stt_dataset_signed_url_failure(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT dataset when signed URL generation fails."""
+        # Mock cloud storage to raise an exception
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.side_effect = Exception(
+            "Failed to generate signed URL"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="signed_url_fail_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/datasets/{dataset.id}",
+            params={"include_signed_url": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        # Should still return successfully but with None for signed_url
+        assert data["id"] == dataset.id
+        assert len(data["samples"]) == 1
+        assert data["samples"][0]["id"] == sample.id
+        assert data["samples"][0]["signed_url"] is None
+
 
 class TestSTTEvaluationRun:
     """Test STT evaluation run endpoints."""
@@ -672,6 +863,230 @@ class TestSTTEvaluationRun:
         )
 
         assert response.status_code == 404
+
+    @patch("app.api.routes.stt_evaluations.evaluation.get_cloud_storage")
+    def test_get_stt_run_with_signed_url(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT run with signed URLs for audio files in results."""
+        # Mock cloud storage to return signed URLs
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.return_value = (
+            "https://signed-url.example.com/audio.mp3"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        # Create dataset, sample, run, and result
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="signed_url_run_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            ground_truth="Test ground truth",
+        )
+        run = create_test_stt_run(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            run_name="signed_url_test_run",
+            dataset_name=dataset.name,
+        )
+        result = create_test_stt_result(
+            db=db,
+            run_id=run.id,
+            sample_id=sample.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            transcription="Test transcription",
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/runs/{run.id}",
+            params={"include_signed_url": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == run.id
+        assert data["run_name"] == "signed_url_test_run"
+        assert len(data["results"]) == 1
+        assert data["results"][0]["id"] == result.id
+        assert (
+            data["results"][0]["sample"]["signed_url"]
+            == "https://signed-url.example.com/audio.mp3"
+        )
+
+        # Verify cloud storage was called
+        mock_get_cloud_storage.assert_called_once()
+        mock_storage.get_signed_url.assert_called_once()
+
+    def test_get_stt_run_without_signed_url(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT run without signed URLs (default behavior)."""
+        # Create dataset, sample, run, and result
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="no_signed_url_run_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        run = create_test_stt_run(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            run_name="no_signed_url_run",
+            dataset_name=dataset.name,
+        )
+        result = create_test_stt_result(
+            db=db,
+            run_id=run.id,
+            sample_id=sample.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/runs/{run.id}",
+            params={"include_signed_url": False},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == run.id
+        assert len(data["results"]) == 1
+        assert data["results"][0]["id"] == result.id
+        assert data["results"][0]["sample"]["signed_url"] is None
+
+    @patch("app.api.routes.stt_evaluations.evaluation.get_cloud_storage")
+    def test_get_stt_run_signed_url_failure(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT run when signed URL generation fails."""
+        # Mock cloud storage to raise an exception
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.side_effect = Exception(
+            "Failed to generate signed URL"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        # Create dataset, sample, run, and result
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="signed_url_fail_run_dataset",
+        )
+        sample = create_test_stt_sample(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        run = create_test_stt_run(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            run_name="signed_url_fail_run",
+            dataset_name=dataset.name,
+        )
+        result = create_test_stt_result(
+            db=db,
+            run_id=run.id,
+            sample_id=sample.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/runs/{run.id}",
+            params={"include_signed_url": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        # Should still return successfully but with None for signed_url
+        assert data["id"] == run.id
+        assert len(data["results"]) == 1
+        assert data["results"][0]["id"] == result.id
+        assert data["results"][0]["sample"]["signed_url"] is None
+
+    def test_get_stt_run_without_results(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting an STT run without including results."""
+        # Create dataset and run (no results)
+        dataset = create_test_stt_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="no_results_run_dataset",
+        )
+        run = create_test_stt_run(
+            db=db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            run_name="no_results_run",
+            dataset_name=dataset.name,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/runs/{run.id}",
+            params={"include_results": False},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == run.id
+        assert data["run_name"] == "no_results_run"
+        assert data["results"] == []
+        assert data["results_total"] == 0
 
 
 class TestSTTResultFeedback:

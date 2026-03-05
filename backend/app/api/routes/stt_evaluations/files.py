@@ -5,10 +5,8 @@ import logging
 from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.api.deps import AuthContextDep, SessionDep
-from app.core.cloud import get_cloud_storage
 from app.api.permissions import Permission, require_permission
 from app.models.file import AudioUploadResponse
-from app.crud.file import get_file_by_id
 from app.services.stt_evaluations.audio import upload_audio_file
 from app.utils import APIResponse, load_description
 

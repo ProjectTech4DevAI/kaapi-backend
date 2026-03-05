@@ -176,7 +176,7 @@ def get_stt_evaluation_run(
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
-    include_url: bool = Query(
+    include_signed_url: bool = Query(
         False, description="Include signed URLs for audio file samples"
     ),
     result_limit: int = Query(100, ge=1, le=1000, description="Max results to return"),
@@ -200,7 +200,7 @@ def get_stt_evaluation_run(
 
     if include_results:
         storage = None
-        if include_url:
+        if include_signed_url:
             storage = get_cloud_storage(
                 session=_session, project_id=auth_context.project_.id
             )
