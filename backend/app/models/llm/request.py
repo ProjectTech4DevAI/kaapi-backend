@@ -25,7 +25,7 @@ class TextLLMParams(SQLModel):
         description="Reasoning configuration or instructions",
     )
     temperature: float | None = Field(
-        default=None,
+        default=0.1,
         ge=0.0,
         le=2.0,
     )
@@ -46,9 +46,10 @@ class STTLLMParams(SQLModel):
         description="Currently supports text type",
     )
     temperature: float | None = Field(
-        default=0.2,
+        default=None,
         ge=0.0,
         le=2.0,
+        description="Temperature parameter (not supported by all STT providers)",
     )
 
 
@@ -193,7 +194,7 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native", "google-native"] = Field(
+    provider: Literal["openai-native", "google-native", "sarvamai-native"] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -213,8 +214,8 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google"] = Field(
-        ..., description="LLM provider (openai)"
+    provider: Literal["openai", "google", "sarvamai"] = Field(
+        ..., description="LLM provider (openai, google, sarvamai)"
     )
 
     type: Literal["text", "stt", "tts"] = Field(

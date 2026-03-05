@@ -13,9 +13,10 @@ from app.crud.evaluations.dataset import (
     update_dataset_langfuse_id,
     upload_csv_to_object_store,
 )
-from app.models import Organization, Project
+from app.models import EvaluationDataset, Organization, Project
 from app.core.util import now
 from app.models import EvaluationRun
+from app.models.stt_evaluation import EvaluationType
 from app.crud.evaluations.dataset import delete_dataset
 
 
@@ -39,6 +40,7 @@ class TestCreateEvaluationDataset:
 
         assert dataset.id is not None
         assert dataset.name == "test_dataset"
+        assert dataset.type == EvaluationType.TEXT.value
         assert dataset.dataset_metadata["original_items_count"] == 10
         assert dataset.dataset_metadata["total_items_count"] == 50
         assert dataset.organization_id == org.id
@@ -71,6 +73,7 @@ class TestCreateEvaluationDataset:
 
         assert dataset.id is not None
         assert dataset.name == "complete_dataset"
+        assert dataset.type == EvaluationType.TEXT.value
         assert dataset.description == "A complete test dataset"
         assert dataset.dataset_metadata["duplication_factor"] == 5
         assert dataset.object_store_url == "s3://bucket/datasets/complete_dataset.csv"
@@ -118,6 +121,35 @@ class TestGetDatasetById:
         fetched = get_dataset_by_id(
             session=db,
             dataset_id=99999,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        assert fetched is None
+
+    def test_get_dataset_by_id_excludes_non_text_type(self, db: Session) -> None:
+        """Test that get_dataset_by_id excludes datasets with non-text type."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="stt_type_dataset",
+            dataset_metadata={"original_items_count": 10},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        # Manually update type to STT to simulate a non-text dataset
+        dataset.type = EvaluationType.STT.value
+        db.add(dataset)
+        db.commit()
+
+        fetched = get_dataset_by_id(
+            session=db,
+            dataset_id=dataset.id,
             organization_id=org.id,
             project_id=project.id,
         )
@@ -177,6 +209,35 @@ class TestGetDatasetByName:
         assert fetched is not None
         assert fetched.name == "unique_dataset"
 
+    def test_get_dataset_by_name_excludes_non_text_type(self, db: Session) -> None:
+        """Test that get_dataset_by_name excludes datasets with non-text type."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="stt_dataset_by_name",
+            dataset_metadata={"original_items_count": 10},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        # Manually update type to STT
+        dataset.type = EvaluationType.STT.value
+        db.add(dataset)
+        db.commit()
+
+        fetched = get_dataset_by_name(
+            session=db,
+            name="stt_dataset_by_name",
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+        assert fetched is None
+
     def test_get_dataset_by_name_not_found(self, db: Session) -> None:
         """Test fetching a non-existent dataset by name."""
         org = db.exec(select(Organization)).first()
@@ -209,6 +270,42 @@ class TestListDatasets:
         )
 
         assert len(datasets) == 0
+
+    def test_list_datasets_excludes_non_text_type(self, db: Session) -> None:
+        """Test that list_datasets only returns text type datasets."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+
+        # Create text datasets
+        for i in range(3):
+            create_evaluation_dataset(
+                session=db,
+                name=f"text_dataset_{i}",
+                dataset_metadata={"original_items_count": i},
+                organization_id=org.id,
+                project_id=project.id,
+            )
+
+        # Create a non-text dataset by updating type after creation
+        stt_dataset = create_evaluation_dataset(
+            session=db,
+            name="stt_dataset",
+            dataset_metadata={"original_items_count": 10},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        stt_dataset.type = EvaluationType.STT.value
+        db.add(stt_dataset)
+        db.commit()
+
+        datasets = list_datasets(
+            session=db, organization_id=org.id, project_id=project.id
+        )
+
+        assert len(datasets) == 3
+        assert all(d.type == EvaluationType.TEXT.value for d in datasets)
 
     def test_list_datasets_multiple(self, db: Session) -> None:
         """Test listing multiple datasets."""
