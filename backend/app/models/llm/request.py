@@ -22,7 +22,7 @@ class TextLLMParams(SQLModel):
         description="Reasoning configuration or instructions",
     )
     temperature: float | None = Field(
-        default=None,
+        default=0.1,
         ge=0.0,
         le=2.0,
     )
@@ -43,7 +43,7 @@ class STTLLMParams(SQLModel):
         description="Currently supports text type",
     )
     temperature: float | None = Field(
-        default=0.2,
+        default=None,
         ge=0.0,
         le=2.0,
     )
@@ -210,8 +210,8 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvam"] = Field(
-        ..., description="LLM provider (openai, google, sarvam)"
+    provider: Literal["openai", "google", "sarvamai"] = Field(
+        ..., description="LLM provider (openai, google, sarvamai)"
     )
 
     type: Literal["text", "stt", "tts"] = Field(
