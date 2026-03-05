@@ -1287,7 +1287,7 @@ class TestExecuteChainJob:
             patch("app.services.llm.chain.executor.send_callback"),
             patch("app.services.llm.chain.executor.update_llm_chain_status"),
             patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute_llm,
-            patch("app.services.llm.chain.chain.Session"),
+            patch("app.services.llm.chain.executor.update_llm_chain_block_completed"),
         ):
             mock_session.return_value.__enter__.return_value = MagicMock()
             mock_session.return_value.__exit__.return_value = None

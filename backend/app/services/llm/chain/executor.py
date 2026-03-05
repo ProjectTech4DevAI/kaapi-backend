@@ -4,13 +4,13 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.crud.jobs import JobCrud
-from app.crud.llm_chain import update_llm_chain_status
+from app.crud.llm_chain import update_llm_chain_block_completed, update_llm_chain_status
 from app.models import JobStatus, JobUpdate
 from app.models.llm.request import (
     ChainStatus,
     LLMChainRequest,
 )
-from app.models.llm.response import LLMChainResponse
+from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
 from app.utils import APIResponse, send_callback
@@ -37,7 +37,10 @@ class ChainExecutor:
         try:
             self._setup()
 
-            result = self._chain.execute(self._request.query)
+            result = self._chain.execute(
+                self._request.query,
+                on_block_completed=self._on_block_completed,
+            )
 
             return self._teardown(result)
 
@@ -96,7 +99,7 @@ class ChainExecutor:
             metadata=self._request.request_metadata,
         )
         logger.error(
-            f"[ChainExecutor] Chain execution failed | "
+            f"[_handle_error] Chain execution failed | "
             f"chain_id={self._context.chain_id}, job_id={self._context.job_id}, error={error}"
         )
 
@@ -120,6 +123,59 @@ class ChainExecutor:
                 job_update=JobUpdate(status=JobStatus.FAILED, error_message=error),
             )
         return callback_response.model_dump()
+
+    def _on_block_completed(self, block_index: int, result: BlockResult) -> None:
+        """Handle side effects after each block completes."""
+        if result.usage:
+            self._context.aggregated_usage.input_tokens += result.usage.input_tokens
+            self._context.aggregated_usage.output_tokens += result.usage.output_tokens
+            self._context.aggregated_usage.total_tokens += result.usage.total_tokens
+
+        if result.success and result.llm_call_id:
+            with Session(engine) as session:
+                update_llm_chain_block_completed(
+                    session,
+                    chain_id=self._context.chain_id,
+                    llm_call_id=result.llm_call_id,
+                )
+
+            if (
+                block_index < len(self._context.intermediate_callback_flags)
+                and self._context.intermediate_callback_flags[block_index]
+                and self._request.callback_url
+                and block_index < self._context.total_blocks - 1
+            ):
+                self._send_intermediate_callback(block_index, result)
+
+    def _send_intermediate_callback(
+        self, block_index: int, result: BlockResult
+    ) -> None:
+        """Send intermediate callback for a completed block."""
+        try:
+            intermediate = IntermediateChainResponse(
+                block_index=block_index + 1,
+                total_blocks=self._context.total_blocks,
+                response=result.response.response,
+                usage=result.usage,
+                provider_raw_response=result.response.provider_raw_response,
+            )
+            callback_data = APIResponse.success_response(
+                data=intermediate,
+                metadata=self._context.request_metadata,
+            )
+            send_callback(
+                callback_url=str(self._request.callback_url),
+                data=callback_data.model_dump(),
+            )
+            logger.info(
+                f"[_send_intermediate_callback] Sent intermediate callback | "
+                f"block={block_index + 1}/{self._context.total_blocks}, job_id={self._context.job_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[_send_intermediate_callback] Failed to send intermediate callback: {e} | "
+                f"block={block_index + 1}/{self._context.total_blocks}, job_id={self._context.job_id}"
+            )
 
     def _handle_unexpected_error(self, e: Exception) -> dict:
         logger.error(

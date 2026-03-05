@@ -2,6 +2,7 @@ import logging
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
+
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
@@ -16,15 +17,15 @@ from app.crud.llm import create_llm_call, serialize_input, update_llm_call_respo
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
 from app.models.llm.request import (
+    AudioInput,
     ChainStatus,
     ConfigBlob,
+    ImageInput,
     KaapiCompletionConfig,
     LLMCallConfig,
+    PDFInput,
     QueryParams,
     TextInput,
-    AudioInput,
-    ImageInput,
-    PDFInput,
 )
 from app.models.llm.response import TextOutput
 from app.services.llm.chain.types import BlockResult
@@ -34,7 +35,7 @@ from app.services.llm.guardrails import (
 )
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
-from app.utils import APIResponse, send_callback, resolve_input, cleanup_temp_file
+from app.utils import APIResponse, cleanup_temp_file, resolve_input, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -170,55 +171,6 @@ def resolved_input_context(
         # Clean up temp files for audio inputs
         if resolved_input and isinstance(query_input, AudioInput):
             cleanup_temp_file(resolved_input)
-
-
-def validate_text_with_guardrails(
-    text: str,
-    guardrails: list[dict[str, Any]],
-    job_id: UUID,
-    project_id: int,
-    organization_id: int,
-    guardrail_type: str,  # "input" or "output"
-) -> tuple[str | None, str | None]:
-    """Validate text against guardrails.
-
-    Returns:
-        (validated_text, error_message)
-        - If successful: (modified_text, None)
-        - If failed: (None, error_message)
-        - If bypassed: (original_text, None)
-    """
-    safe_result = run_guardrails_validation(
-        text,
-        guardrails,
-        job_id,
-        project_id,
-        organization_id,
-        suppress_pass_logs=True,
-    )
-
-    logger.info(
-        f"[validate_text_with_guardrails] {guardrail_type.capitalize()} guardrail validation | "
-        f"success={safe_result['success']}, job_id={job_id}"
-    )
-
-    if safe_result.get("bypassed"):
-        logger.info(
-            f"[validate_text_with_guardrails] Guardrails bypassed (service unavailable) | "
-            f"job_id={job_id}"
-        )
-        return text, None
-
-    if safe_result["success"]:
-        validated_text = safe_result["data"]["safe_text"]
-
-        # Special case for output guardrails: check if rephrase is needed
-        if guardrail_type == "output" and safe_result["data"].get("rephrase_needed"):
-            return None, "Output requires rephrasing"
-
-        return validated_text, None
-
-    return None, safe_result["error"]
 
 
 def resolve_config_blob(
@@ -438,14 +390,14 @@ def execute_llm_call(
             )
 
             try:
-                temp_request = LLMCallRequest(
+                llm_call_request = LLMCallRequest(
                     query=query,
                     config=config,
                     request_metadata=request_metadata,
                 )
                 llm_call = create_llm_call(
                     session,
-                    request=temp_request,
+                    request=llm_call_request,
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
@@ -653,6 +605,7 @@ def execute_chain_job(
 
     request = LLMChainRequest(**request_data)
     job_uuid = UUID(job_id)
+    callback_url_str = str(request.callback_url) if request.callback_url else None
     chain_uuid = None
 
     logger.info(
@@ -709,7 +662,7 @@ def execute_chain_job(
             for i, block in enumerate(request.blocks)
         ]
 
-        chain = LLMChain(blocks)
+        chain = LLMChain(blocks, context)
 
         executor = ChainExecutor(chain=chain, context=context, request=request)
         return executor.run()
@@ -740,4 +693,4 @@ def execute_chain_job(
             error="Unexpected error occurred",
             metadata=request.request_metadata,
         )
-        return handle_job_error(job_uuid, request.callback_url, callback_response)
+        return handle_job_error(job_uuid, callback_url_str, callback_response)

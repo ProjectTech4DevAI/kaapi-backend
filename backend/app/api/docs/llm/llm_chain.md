@@ -52,8 +52,6 @@ for processing, and results are delivered via the callback URL when complete.
 - Passed through unchanged in the response
 
 ### Note
-- Input guardrails from the first block's config are applied before chain execution starts
-- Output guardrails from the last block's config are applied after all blocks complete
 - If any block fails, the chain stops immediately — no subsequent blocks are executed
 - `warnings` list is automatically added in response metadata when using Kaapi configs if any parameters are suppressed or adjusted (e.g., temperature on reasoning models)
 

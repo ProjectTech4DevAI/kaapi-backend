@@ -1,19 +1,13 @@
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
-
 from uuid import UUID, uuid4
-from sqlmodel import Field, SQLModel
-from pydantic import Discriminator, model_validator, HttpUrl
-from datetime import datetime
-from app.core.util import now
 
 import sqlalchemy as sa
-from typing import Annotated, Any, List, Literal, Union
-from uuid import UUID, uuid4
-from pydantic import model_validator, HttpUrl
-from datetime import datetime
+from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel, Index, text
+from sqlmodel import Field, Index, SQLModel, text
+
 from app.core.util import now
 
 

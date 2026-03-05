@@ -118,153 +118,13 @@ class TestResultToQuery:
             result_to_query(result)
 
 
-class TestChainContext:
-    def test_aggregates_usage(self, context):
-        usage = Usage(input_tokens=10, output_tokens=20, total_tokens=30)
-        result = BlockResult(
-            response=MagicMock(), llm_call_id=uuid4(), usage=usage, error=None
-        )
-
-        with patch("app.services.llm.chain.chain.Session"):
-            context.on_block_completed(0, result)
-
-        assert context.aggregated_usage.input_tokens == 10
-        assert context.aggregated_usage.output_tokens == 20
-        assert context.aggregated_usage.total_tokens == 30
-
-    def test_aggregates_usage_across_blocks(self, context):
-        usage1 = Usage(input_tokens=10, output_tokens=20, total_tokens=30)
-        usage2 = Usage(input_tokens=5, output_tokens=15, total_tokens=20)
-
-        result1 = BlockResult(
-            response=MagicMock(), llm_call_id=uuid4(), usage=usage1, error=None
-        )
-        result2 = BlockResult(
-            response=MagicMock(), llm_call_id=uuid4(), usage=usage2, error=None
-        )
-
-        with patch("app.services.llm.chain.chain.Session"):
-            context.on_block_completed(0, result1)
-            context.on_block_completed(1, result2)
-
-        assert context.aggregated_usage.input_tokens == 15
-        assert context.aggregated_usage.total_tokens == 50
-
-    def test_updates_db_on_success(self, context):
-        llm_call_id = uuid4()
-        result = BlockResult(
-            response=MagicMock(), llm_call_id=llm_call_id, usage=MagicMock(), error=None
-        )
-
-        with patch("app.services.llm.chain.chain.Session") as mock_session, patch(
-            "app.services.llm.chain.chain.update_llm_chain_block_completed"
-        ) as mock_update:
-            mock_session.return_value.__enter__.return_value = MagicMock()
-            context.on_block_completed(0, result)
-
-            mock_update.assert_called_once_with(
-                mock_session.return_value.__enter__.return_value,
-                chain_id=context.chain_id,
-                llm_call_id=llm_call_id,
-            )
-
-    def test_sends_intermediate_callback(self, context, text_response):
-        result = BlockResult(
-            response=text_response,
-            llm_call_id=uuid4(),
-            usage=text_response.usage,
-            error=None,
-        )
-
-        with (
-            patch("app.services.llm.chain.chain.Session") as mock_session,
-            patch("app.services.llm.chain.chain.update_llm_chain_block_completed"),
-            patch("app.services.llm.chain.chain.send_callback") as mock_callback,
-        ):
-            mock_session.return_value.__enter__.return_value = MagicMock()
-            context.on_block_completed(0, result)
-
-            mock_callback.assert_called_once()
-            call_kwargs = mock_callback.call_args[1]
-            assert call_kwargs["callback_url"] == "https://example.com/callback"
-
-    def test_skips_intermediate_callback_for_last_block(self, context, text_response):
-        result = BlockResult(
-            response=text_response,
-            llm_call_id=uuid4(),
-            usage=text_response.usage,
-            error=None,
-        )
-
-        with (
-            patch("app.services.llm.chain.chain.Session") as mock_session,
-            patch("app.services.llm.chain.chain.update_llm_chain_block_completed"),
-            patch("app.services.llm.chain.chain.send_callback") as mock_callback,
-        ):
-            mock_session.return_value.__enter__.return_value = MagicMock()
-            # Block index 2 = last block (total_blocks=3)
-            context.on_block_completed(2, result)
-
-            mock_callback.assert_not_called()
-
-    def test_skips_intermediate_callback_when_flag_false(self, context, text_response):
-        context.intermediate_callback_flags = [False, True, False]
-        result = BlockResult(
-            response=text_response,
-            llm_call_id=uuid4(),
-            usage=text_response.usage,
-            error=None,
-        )
-
-        with (
-            patch("app.services.llm.chain.chain.Session") as mock_session,
-            patch("app.services.llm.chain.chain.update_llm_chain_block_completed"),
-            patch("app.services.llm.chain.chain.send_callback") as mock_callback,
-        ):
-            mock_session.return_value.__enter__.return_value = MagicMock()
-            context.on_block_completed(0, result)
-
-            mock_callback.assert_not_called()
-
-    def test_skips_db_update_on_error(self, context):
-        result = BlockResult(error="Block failed", usage=MagicMock())
-
-        with patch(
-            "app.services.llm.chain.chain.update_llm_chain_block_completed"
-        ) as mock_update:
-            context.on_block_completed(0, result)
-            mock_update.assert_not_called()
-
-    def test_intermediate_callback_exception_is_swallowed(self, context, text_response):
-        result = BlockResult(
-            response=text_response,
-            llm_call_id=uuid4(),
-            usage=text_response.usage,
-            error=None,
-        )
-
-        with (
-            patch("app.services.llm.chain.chain.Session") as mock_session,
-            patch("app.services.llm.chain.chain.update_llm_chain_block_completed"),
-            patch(
-                "app.services.llm.chain.chain.send_callback",
-                side_effect=Exception("Connection error"),
-            ),
-        ):
-            mock_session.return_value.__enter__.return_value = MagicMock()
-            # Should not raise
-            context.on_block_completed(0, result)
-
-
 class TestChainBlock:
     def test_execute_single_block(self, context, text_response):
         query = QueryParams(input="test input")
         config = make_config()
         block = ChainBlock(config=config, index=0, context=context)
 
-        with patch(
-            "app.services.llm.chain.chain.execute_llm_call"
-        ) as mock_execute, patch.object(context, "on_block_completed"):
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
             mock_execute.return_value = BlockResult(
                 response=text_response, usage=text_response.usage
             )
@@ -274,37 +134,15 @@ class TestChainBlock:
             assert result.success
             mock_execute.assert_called_once()
 
-    def test_execute_chains_to_next_block(self, context, text_response):
+    def test_execute_returns_failure(self, context):
         query = QueryParams(input="test input")
         config = make_config()
-        block1 = ChainBlock(config=config, index=0, context=context)
-        block2 = ChainBlock(config=config, index=1, context=context)
-        block1.link(block2)
+        block = ChainBlock(config=config, index=0, context=context)
 
-        with patch(
-            "app.services.llm.chain.chain.execute_llm_call"
-        ) as mock_execute, patch.object(context, "on_block_completed"):
-            mock_execute.return_value = BlockResult(
-                response=text_response, usage=text_response.usage
-            )
-
-            result = block1.execute(query)
-
-            assert mock_execute.call_count == 2
-
-    def test_execute_stops_on_failure(self, context):
-        query = QueryParams(input="test input")
-        config = make_config()
-        block1 = ChainBlock(config=config, index=0, context=context)
-        block2 = ChainBlock(config=config, index=1, context=context)
-        block1.link(block2)
-
-        with patch(
-            "app.services.llm.chain.chain.execute_llm_call"
-        ) as mock_execute, patch.object(context, "on_block_completed"):
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
             mock_execute.return_value = BlockResult(error="Provider error")
 
-            result = block1.execute(query)
+            result = block.execute(query)
 
             assert not result.success
             assert result.error == "Provider error"
@@ -312,8 +150,8 @@ class TestChainBlock:
 
 
 class TestLLMChain:
-    def test_execute_empty_chain(self):
-        chain = LLMChain([])
+    def test_execute_empty_chain(self, context):
+        chain = LLMChain([], context)
         query = QueryParams(input="test")
 
         result = chain.execute(query)
@@ -324,11 +162,9 @@ class TestLLMChain:
     def test_execute_single_block_chain(self, context, text_response):
         config = make_config()
         block = ChainBlock(config=config, index=0, context=context)
-        chain = LLMChain([block])
+        chain = LLMChain([block], context)
 
-        with patch(
-            "app.services.llm.chain.chain.execute_llm_call"
-        ) as mock_execute, patch.object(context, "on_block_completed"):
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
             mock_execute.return_value = BlockResult(
                 response=text_response, usage=text_response.usage
             )
@@ -341,11 +177,9 @@ class TestLLMChain:
     def test_execute_multi_block_chain(self, context, text_response):
         config = make_config()
         blocks = [ChainBlock(config=config, index=i, context=context) for i in range(3)]
-        chain = LLMChain(blocks)
+        chain = LLMChain(blocks, context)
 
-        with patch(
-            "app.services.llm.chain.chain.execute_llm_call"
-        ) as mock_execute, patch.object(context, "on_block_completed"):
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
             mock_execute.return_value = BlockResult(
                 response=text_response, usage=text_response.usage
             )
@@ -354,3 +188,32 @@ class TestLLMChain:
 
             assert result.success
             assert mock_execute.call_count == 3
+
+    def test_execute_stops_on_failure(self, context, text_response):
+        config = make_config()
+        blocks = [ChainBlock(config=config, index=i, context=context) for i in range(3)]
+        chain = LLMChain(blocks, context)
+
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
+            mock_execute.return_value = BlockResult(error="Provider error")
+
+            result = chain.execute(QueryParams(input="hello"))
+
+            assert not result.success
+            assert result.error == "Provider error"
+            mock_execute.assert_called_once()
+
+    def test_execute_calls_on_block_completed(self, context, text_response):
+        config = make_config()
+        blocks = [ChainBlock(config=config, index=i, context=context) for i in range(2)]
+        chain = LLMChain(blocks, context)
+        callback = MagicMock()
+
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
+            mock_execute.return_value = BlockResult(
+                response=text_response, usage=text_response.usage
+            )
+
+            chain.execute(QueryParams(input="hello"), on_block_completed=callback)
+
+            assert callback.call_count == 2
