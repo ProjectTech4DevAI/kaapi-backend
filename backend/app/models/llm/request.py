@@ -1,5 +1,5 @@
 import sqlalchemy as sa
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, List, Literal, Union
 from uuid import UUID, uuid4
 from pydantic import model_validator, HttpUrl
 from datetime import datetime
@@ -56,7 +56,11 @@ class TTSLLMParams(SQLModel):
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams]
+KaapiLLMParams = Union[
+    TextLLMParams,
+    STTLLMParams,
+    TTSLLMParams,
+]
 
 
 # Input type models for discriminated union
@@ -75,6 +79,28 @@ class AudioContent(SQLModel):
     )
 
 
+class ImageContent(SQLModel):
+    format: Literal["base64", "url"] = "base64"
+    value: str = Field(
+        ..., description="Base64 encoded image or Public URL to the image"
+    )
+    # keeping the mime_type
+    mime_type: str | None = Field(
+        None,
+        description="MIME type of the image (e.g., image/png, image/jpeg)",
+    )
+
+
+class PDFContent(SQLModel):
+    format: Literal["base64", "url"] = "base64"
+    value: str = Field(..., description="Base64 encoded PDF or Public URL to the PDF")
+    # keeping the mime_type
+    mime_type: str | None = Field(
+        None,
+        description="MIME type of the PDF (e.g., application/pdf)",
+    )
+
+
 class TextInput(SQLModel):
     type: Literal["text"] = "text"
     content: TextContent
@@ -85,9 +111,19 @@ class AudioInput(SQLModel):
     content: AudioContent
 
 
+class ImageInput(SQLModel):
+    type: Literal["image"] = "image"
+    content: ImageContent | list[ImageContent]
+
+
+class PDFInput(SQLModel):
+    type: Literal["pdf"] = "pdf"
+    content: PDFContent | list[PDFContent]
+
+
 # Discriminated union for query input types
 QueryInput = Annotated[
-    Union[TextInput, AudioInput],
+    Union[TextInput, AudioInput, ImageInput, PDFInput],
     Field(discriminator="type"),
 ]
 
@@ -122,7 +158,7 @@ class ConversationConfig(SQLModel):
 class QueryParams(SQLModel):
     """Query-specific parameters for each LLM call."""
 
-    input: str | QueryInput = Field(
+    input: str | QueryInput | list[QueryInput] = Field(
         ...,
         description=(
             "User input - either a plain string (text) or a structured input object. "
@@ -389,12 +425,13 @@ class LlmCall(SQLModel, table=True):
         },
     )
 
-    input_type: Literal["text", "audio", "image"] = Field(
+    # NOTE: image, pdf, multimodal are internal labels stored in the table not user facing.
+    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] = Field(
         ...,
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="Input type: text, audio, image",
+            comment="Input type: text, audio, image, pdf, multimodal",
         ),
     )
 

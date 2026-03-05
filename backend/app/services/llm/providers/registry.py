@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 import logging
 from sqlmodel import Session
 
-from app.crud import get_provider_credential
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.gai import GoogleAIProvider
@@ -46,6 +45,8 @@ class LLMProvider:
 def get_llm_provider(
     session: Session, provider_type: str, project_id: int, organization_id: int
 ) -> BaseProvider:
+    from app.crud.credentials import get_provider_credential
+
     provider_class = LLMProvider.get_provider_class(provider_type)
 
     # e.g., "openai-native" → "openai", "claude-native" → "claude"
