@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud import get_cloud_storage
 from app.crud.file import get_files_by_ids
 from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
@@ -118,6 +119,9 @@ def get_dataset(
     auth_context: AuthContextDep,
     dataset_id: int,
     include_samples: bool = Query(True, description="Include samples in response"),
+    include_signed_url: bool = Query(
+        False, description="Include signed URLs for audio file samples"
+    ),
     sample_limit: int = Query(100, ge=1, le=1000, description="Max samples to return"),
     sample_offset: int = Query(0, ge=0, description="Sample offset"),
 ) -> APIResponse[STTDatasetWithSamples]:
@@ -155,24 +159,43 @@ def get_dataset(
         )
         file_map = {f.id: f for f in file_records}
 
-        samples = [
-            STTSamplePublic(
-                id=s.id,
-                file_id=s.file_id,
-                object_store_url=file_map.get(s.file_id).object_store_url
-                if s.file_id in file_map
-                else None,
-                language_id=s.language_id,
-                ground_truth=s.ground_truth,
-                sample_metadata=s.sample_metadata,
-                dataset_id=s.dataset_id,
-                organization_id=s.organization_id,
-                project_id=s.project_id,
-                inserted_at=s.inserted_at,
-                updated_at=s.updated_at,
+        storage = None
+        if include_signed_url:
+            storage = get_cloud_storage(
+                session=_session, project_id=auth_context.project_.id
             )
-            for s in sample_records
-        ]
+
+        samples = []
+        for s in sample_records:
+            signed_url = None
+            if include_signed_url and storage and s.file_id in file_map:
+                try:
+                    signed_url = storage.get_signed_url(
+                        file_map.get(s.file_id).object_store_url
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[get_dataset] Failed to generate signed URL for file_id {s.file_id}: {e}"
+                    )
+
+            samples.append(
+                STTSamplePublic(
+                    id=s.id,
+                    file_id=s.file_id,
+                    object_store_url=file_map.get(s.file_id).object_store_url
+                    if s.file_id in file_map
+                    else None,
+                    signed_url=signed_url,
+                    language_id=s.language_id,
+                    ground_truth=s.ground_truth,
+                    sample_metadata=s.sample_metadata,
+                    dataset_id=s.dataset_id,
+                    organization_id=s.organization_id,
+                    project_id=s.project_id,
+                    inserted_at=s.inserted_at,
+                    updated_at=s.updated_at,
+                )
+            )
 
     return APIResponse.success_response(
         data=STTDatasetWithSamples(
