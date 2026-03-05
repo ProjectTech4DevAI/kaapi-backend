@@ -22,6 +22,7 @@ from app.core.storage_utils import (
 )
 from app.core.util import now
 from app.models import EvaluationDataset, EvaluationRun
+from app.models.stt_evaluation import EvaluationType
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ def create_evaluation_dataset(
         dataset = EvaluationDataset(
             name=name,
             description=description,
+            type=EvaluationType.TEXT.value,
             dataset_metadata=dataset_metadata,
             object_store_url=object_store_url,
             langfuse_dataset_id=langfuse_dataset_id,
@@ -122,6 +124,7 @@ def get_dataset_by_id(
         .where(EvaluationDataset.id == dataset_id)
         .where(EvaluationDataset.organization_id == organization_id)
         .where(EvaluationDataset.project_id == project_id)
+        .where(EvaluationDataset.type == EvaluationType.TEXT.value)
     )
 
     dataset = session.exec(statement).first()
@@ -158,6 +161,7 @@ def get_dataset_by_name(
         .where(EvaluationDataset.name == name)
         .where(EvaluationDataset.organization_id == organization_id)
         .where(EvaluationDataset.project_id == project_id)
+        .where(EvaluationDataset.type == EvaluationType.TEXT.value)
     )
 
     dataset = session.exec(statement).first()
@@ -194,6 +198,7 @@ def list_datasets(
         select(EvaluationDataset)
         .where(EvaluationDataset.organization_id == organization_id)
         .where(EvaluationDataset.project_id == project_id)
+        .where(EvaluationDataset.type == EvaluationType.TEXT.value)
         .order_by(EvaluationDataset.inserted_at.desc())
         .limit(limit)
         .offset(offset)
