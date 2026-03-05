@@ -43,9 +43,10 @@ class STTLLMParams(SQLModel):
         description="Currently supports text type",
     )
     temperature: float | None = Field(
-        default=0.1,
+        default=None,
         ge=0.0,
         le=2.0,
+        description="Temperature parameter (not supported by all STT providers)",
     )
 
 
