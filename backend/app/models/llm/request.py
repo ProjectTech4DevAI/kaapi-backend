@@ -43,7 +43,7 @@ class STTLLMParams(SQLModel):
         description="Currently supports text type",
     )
     temperature: float | None = Field(
-        default=None,
+        default=0.1,
         ge=0.0,
         le=2.0,
     )
