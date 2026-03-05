@@ -11,6 +11,7 @@ from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun
 from app.models.llm.request import ConfigBlob, LLMCallConfig
+from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
 
 from app.core.db import engine
@@ -80,6 +81,7 @@ def create_evaluation_run(
         run_name=run_name,
         dataset_name=dataset_name,
         dataset_id=dataset_id,
+        type=EvaluationType.TEXT.value,
         config_id=config_id,
         config_version=config_version,
         status="pending",
@@ -129,6 +131,7 @@ def list_evaluation_runs(
         select(EvaluationRun)
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
+        .where(EvaluationRun.type == EvaluationType.TEXT.value)
         .order_by(EvaluationRun.inserted_at.desc())
         .limit(limit)
         .offset(offset)
@@ -167,6 +170,7 @@ def get_evaluation_run_by_id(
         .where(EvaluationRun.id == evaluation_id)
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
+        .where(EvaluationRun.type == EvaluationType.TEXT.value)
     )
 
     eval_run = session.exec(statement).first()
