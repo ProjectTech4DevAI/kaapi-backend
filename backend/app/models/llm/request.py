@@ -11,6 +11,28 @@ from sqlmodel import Field, Index, SQLModel, text
 from app.core.util import now
 
 
+# Speech-to-Speech Model Enums
+class STTModel(str, Enum):
+    """Supported STT models for speech-to-speech."""
+
+    GEMINI_PRO = "gemini-2.5-pro"
+    SARVAM = "saaras:v3"
+
+
+class TTSModel(str, Enum):
+    """Supported TTS models for speech-to-speech."""
+
+    GEMINI_PRO = "gemini-2.5-pro-preview-tts"
+    SARVAM = "bulbul:v3"
+
+
+class LLMModel(str, Enum):
+    """Supported LLM models for RAG in speech-to-speech."""
+
+    GPT4O = "gpt-4o"
+    GPT4O_MINI = "gpt-4o-mini"
+
+
 class TextLLMParams(SQLModel):
     model: str
     instructions: str | None = Field(
@@ -757,3 +779,70 @@ class LlmChain(SQLModel, table=True):
             "comment": "Timestamp when the chain record was last updated"
         },
     )
+
+
+class SpeechToSpeechRequest(SQLModel):
+    """
+    API request for speech-to-speech (STS) with RAG.
+
+    Convenience endpoint that orchestrates a 3-block chain:
+    STT → RAG → TTS
+
+    Input: Audio
+    Output: Audio + Text (via callback)
+    """
+
+    audio: AudioInput = Field(
+        ..., description="Voice note input (WhatsApp compatible format)"
+    )
+    knowledge_base_ids: list[str] = Field(
+        ..., min_length=1, description="Knowledge base IDs for RAG retrieval"
+    )
+
+    # Optional language config
+    input_language: str | None = Field(
+        "auto",
+        description=(
+            "Input language for STT (auto-detect by default). "
+            "Supported: auto, english, hindi, hinglish, bengali, kannada, malayalam, marathi, "
+            "odia, punjabi, tamil, telugu, gujarati, assamese, urdu, nepali, konkani, kashmiri, "
+            "sindhi, sanskrit, santali, manipuri, bodo, maithili, dogri"
+        ),
+    )
+    output_language: str | None = Field(
+        None,
+        description=(
+            "Output language for TTS (defaults to input_language if not specified). "
+            "Same language options as input_language."
+        ),
+    )
+
+    # Optional model overrides
+    stt_model: STTModel = Field(
+        STTModel.SARVAM, description="STT model (default: Sarvam Saaras V3)"
+    )
+    tts_model: TTSModel = Field(
+        TTSModel.SARVAM, description="TTS model (default: Sarvam Bulbul V3)"
+    )
+    llm_model: LLMModel = Field(
+        LLMModel.GPT4O, description="LLM model for RAG (default: GPT-4o)"
+    )
+
+    # Callback and metadata
+    callback_url: HttpUrl | None = Field(
+        None, description="Webhook URL for async response delivery"
+    )
+    request_metadata: dict[str, Any] | None = Field(
+        None, description="Client-provided metadata"
+    )
+
+    @model_validator(mode="after")
+    def validate_languages(self):
+        """Validate language fields."""
+        # Validation happens in the endpoint using LANGUAGE_CODES from utils
+        # This is just to ensure the fields are lowercase if provided
+        if self.input_language and self.input_language != "auto":
+            self.input_language = self.input_language.lower()
+        if self.output_language:
+            self.output_language = self.output_language.lower()
+        return self
