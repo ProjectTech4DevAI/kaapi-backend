@@ -214,7 +214,7 @@ def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
             )
 
         temperature = kaapi_params.get("temperature")
-        if temperature:
+        if temperature is not None:
             warnings.append(
                 "Parameter 'temperature' is not supported by SarvamAI STT and was ignored"
             )
