@@ -6,7 +6,7 @@ for processing, and results are delivered via the callback URL when complete.
 ### Key Parameters
 
 **`query`** (required) - Initial query input for the first block in the chain:
-- `input` (required, string, min 1 char): User question/prompt/query
+- `input` (required): User question/prompt/query — accepts a plain string, a structured input object (`text`, `audio`, `image`, `pdf`), or a list of structured inputs
 - `conversation` (optional, object): Conversation configuration
   - `id` (optional, string): Existing conversation ID to continue
   - `auto_create` (optional, boolean, default false): Create new conversation if no ID provided
@@ -26,8 +26,11 @@ for processing, and results are delivered via the callback URL when complete.
   - **Mode 2: Ad-hoc Configuration**
     - `blob` (object): Complete configuration object
       - `completion` (required, object): Completion configuration
-        - `provider` (required, string): Provider type - either `"openai"` (Kaapi abstraction) or `"openai-native"` (pass-through)
-        - `params` (required, object): Parameters structure depends on provider type (see schema for detailed structure)
+        - `provider` (required, string): Kaapi providers (`openai`, `google`, `sarvamai`) — params are validated and mapped internally. Native providers (`openai-native`, `google-native`, `sarvamai-native`) — params are passed through as-is
+        - `type` (required, string): Completion type — `"text"`, `"stt"`, or `"tts"`
+        - `params` (required, object): Parameters structure depends on provider and type (see schema for detailed structure)
+      - `input_guardrails` (optional, array): Guardrails applied to validate/sanitize input before the LLM call
+      - `output_guardrails` (optional, array): Guardrails applied to validate/sanitize output after the LLM call
       - `prompt_template` (optional, object): Template for text interpolation
         - `template` (required, string): Template string with `{{input}}` placeholder — replaced with the block's input before execution
     - **Note**
