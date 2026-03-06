@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
+from app.celery.utils import start_low_priority_job
 from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
 from app.core.batch.base import BATCH_KEY
 from app.core.util import now
@@ -338,6 +339,27 @@ async def poll_stt_run(
         status=final_status,
         error_message=error_message,
     )
+
+    # Trigger automated metric computation (WER, CER, lenient WER, WIP)
+    if any_succeeded:
+        try:
+            celery_task_id = start_low_priority_job(
+                function_path="app.services.stt_evaluations.metric_job.execute_metric_computation",
+                project_id=run.project_id,
+                job_id=str(run.id),
+                organization_id=run.organization_id,
+                run_id=run.id,
+            )
+            logger.info(
+                f"[poll_stt_run] Metric computation task dispatched | "
+                f"run_id: {run.id}, celery_task_id: {celery_task_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[poll_stt_run] Failed to dispatch metric computation task | "
+                f"run_id: {run.id}, error: {e}",
+                exc_info=True,
+            )
 
     action = "completed" if not any_failed else "failed"
 

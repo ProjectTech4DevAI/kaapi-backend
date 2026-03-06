@@ -84,7 +84,7 @@ class IntermediateChainResponse(SQLModel):
     Intermediate callback response from the intermediate blocks
     from the llm chain execution. (if configured)
 
-    Flattend structure matching LLMCallResponse keys for consistency
+    Flattened structure matching LLMCallResponse keys for consistency
     """
 
     type: Literal["intermediate"] = "intermediate"
