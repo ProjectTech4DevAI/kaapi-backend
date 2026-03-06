@@ -9,4 +9,4 @@ and cannot be manually set or skipped.
 ## Important
 - This endpoint accepts partial updates using dict[str, Any] for config_blob.
 - Only the fields that need to be updated should be provided.
-- Fields such as type and provider are inherited from the existing configuration and cannot be changed.
+- The `type` field is inherited from the existing configuration and cannot be changed. Provider and model can change between versions.

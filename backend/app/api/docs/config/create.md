@@ -32,6 +32,39 @@ Configurations allow you to store and manage reusable LLM parameters
 }
 ```
 
+**Example for the config blob: Google gemini STT -**
+```json
+"config_blob":{
+  "completion": {
+    "provider": "google",
+    "type": "stt",
+    "params": {
+      "model": "gemini-3-flash-preview",
+      "instructions": "You are a helpful assistant ...",
+      "input_language": "english",
+      "output_language": "hindi",
+      "temperature": 1
+    }
+  }
+}
+```
+
+**Example for the config blob: Google gemini TTS -**
+```json
+"config_blob":{
+  "completion": {
+    "provider": "google",
+    "type": "tts",
+    "params": {
+      "model": "gemini-2.5-pro-preview-tts",
+      "voice": "Kore",
+      "language": "hindi",
+      "response_format": "mp3"
+    }
+  }
+}
+```
+
 The configuration name must be unique within your project. Once created,
 you can create additional versions to track parameter changes while
 maintaining the configuration history. Type `"text"` is applicable for OpenAI models.
