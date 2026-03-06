@@ -23,11 +23,14 @@ from app.models.llm import (
     # KaapiLLMParams,
     KaapiCompletionConfig,
 )
-from app.models.llm.request import ConfigBlob, LLMCallConfig
+from app.models.llm.request import ConfigBlob, LLMCallConfig, LLMChainRequest
+from app.models.llm.request import ChainBlock as ChainBlockModel
 from app.services.llm.jobs import (
     start_job,
+    start_chain_job,
     handle_job_error,
     execute_job,
+    execute_chain_job,
     resolve_config_blob,
 )
 from app.tests.utils.utils import get_project
@@ -367,7 +370,7 @@ class TestExecuteJob:
         result = self._execute_job(job_for_execution, db, request_data)
 
         assert not result["success"]
-        assert "Unexpected error during LLM execution" in result["error"]
+        assert "Unexpected error occurred" in result["error"]
 
     def test_exception_during_provider_retrieval(
         self, db, job_env, job_for_execution, request_data
@@ -1108,16 +1111,21 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert result["success"]
-        mock_fetch_configs.assert_called_once()
-        _, kwargs = mock_fetch_configs.call_args
-        input_validator_configs = kwargs["input_validator_configs"]
-        output_validator_configs = kwargs["output_validator_configs"]
-        assert [v.validator_config_id for v in input_validator_configs] == [
-            UUID(VALIDATOR_CONFIG_ID_1)
-        ]
-        assert [v.validator_config_id for v in output_validator_configs] == [
-            UUID(VALIDATOR_CONFIG_ID_2)
-        ]
+        assert mock_fetch_configs.call_count == 2
+
+        # First call: input guardrails
+        _, input_kwargs = mock_fetch_configs.call_args_list[0]
+        assert [
+            v.validator_config_id for v in input_kwargs["input_validator_configs"]
+        ] == [UUID(VALIDATOR_CONFIG_ID_1)]
+        assert input_kwargs["output_validator_configs"] is None
+
+        # Second call: output guardrails
+        _, output_kwargs = mock_fetch_configs.call_args_list[1]
+        assert output_kwargs["input_validator_configs"] is None
+        assert [
+            v.validator_config_id for v in output_kwargs["output_validator_configs"]
+        ] == [UUID(VALIDATOR_CONFIG_ID_2)]
 
     def test_execute_job_continues_when_no_validator_configs_resolved(
         self, db, job_env, job_for_execution
@@ -1154,6 +1162,207 @@ class TestExecuteJob:
         assert result["success"] is True
         env["provider"].execute.assert_called_once()
         mock_guardrails.assert_not_called()
+
+
+class TestStartChainJob:
+    """Test cases for the start_chain_job function."""
+
+    @pytest.fixture
+    def chain_request(self):
+        return LLMChainRequest(
+            query=QueryParams(input="Test query"),
+            blocks=[
+                ChainBlockModel(
+                    config=LLMCallConfig(
+                        blob=ConfigBlob(
+                            completion=NativeCompletionConfig(
+                                provider="openai-native",
+                                type="text",
+                                params={"model": "gpt-4"},
+                            )
+                        )
+                    )
+                )
+            ],
+        )
+
+    def test_start_chain_job_success(self, db: Session, chain_request):
+        project = get_project(db)
+
+        with (
+            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
+        ):
+            mock_schedule.return_value = "fake-task-id"
+            mock_job = MagicMock()
+            mock_job.id = uuid4()
+            mock_job.job_type = JobType.LLM_CHAIN
+            mock_job.status = JobStatus.PENDING
+            mock_job_crud_class.return_value.create.return_value = mock_job
+
+            job_id = start_chain_job(
+                db, chain_request, project.id, project.organization_id
+            )
+
+            assert job_id == mock_job.id
+            mock_schedule.assert_called_once()
+            _, kwargs = mock_schedule.call_args
+            assert kwargs["function_path"] == "app.services.llm.jobs.execute_chain_job"
+
+    def test_start_chain_job_celery_failure(self, db: Session, chain_request):
+        project = get_project(db)
+
+        with (
+            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
+        ):
+            mock_schedule.side_effect = Exception("Celery connection failed")
+            mock_job = MagicMock()
+            mock_job.id = uuid4()
+            mock_job_crud_class.return_value.create.return_value = mock_job
+
+            with pytest.raises(HTTPException) as exc_info:
+                start_chain_job(db, chain_request, project.id, project.organization_id)
+
+            assert exc_info.value.status_code == 500
+            assert "Internal server error while executing LLM chain job" in str(
+                exc_info.value.detail
+            )
+
+
+class TestExecuteChainJob:
+    """Test suite for execute_chain_job."""
+
+    @pytest.fixture
+    def chain_request_data(self):
+        return {
+            "query": {"input": "Test query"},
+            "blocks": [
+                {
+                    "config": {
+                        "blob": {
+                            "completion": {
+                                "provider": "openai-native",
+                                "type": "text",
+                                "params": {"model": "gpt-4"},
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+
+    @pytest.fixture
+    def mock_llm_response(self):
+        return LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id="resp-123",
+                conversation_id=None,
+                model="gpt-4",
+                provider="openai",
+                output=TextOutput(content=TextContent(value="Test response")),
+            ),
+            usage=Usage(input_tokens=10, output_tokens=20, total_tokens=30),
+            provider_raw_response=None,
+        )
+
+    def _execute_chain_job(self, request_data):
+        return execute_chain_job(
+            request_data=request_data,
+            project_id=1,
+            organization_id=1,
+            job_id=str(uuid4()),
+            task_id="task-123",
+            task_instance=None,
+        )
+
+    def test_success_flow(self, chain_request_data, mock_llm_response):
+        from app.services.llm.chain.types import BlockResult
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch("app.services.llm.chain.executor.Session") as mock_executor_session,
+            patch("app.services.llm.chain.executor.send_callback"),
+            patch("app.services.llm.chain.executor.update_llm_chain_status"),
+            patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute_llm,
+            patch("app.services.llm.chain.executor.update_llm_chain_block_completed"),
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+            mock_executor_session.return_value.__enter__.return_value = MagicMock()
+            mock_executor_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = uuid4()
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+
+            mock_execute_llm.return_value = BlockResult(
+                response=mock_llm_response,
+                llm_call_id=uuid4(),
+                usage=mock_llm_response.usage,
+            )
+
+            result = self._execute_chain_job(chain_request_data)
+
+            assert result["success"] is True
+
+    def test_exception_during_chain_creation(self, chain_request_data):
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch(
+                "app.services.llm.jobs.create_llm_chain",
+                side_effect=Exception("DB error"),
+            ),
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Unexpected error occurred",
+            }
+
+            result = self._execute_chain_job(chain_request_data)
+
+            assert result["success"] is False
+
+    def test_chain_status_updated_to_failed_on_error(self, chain_request_data):
+        chain_id = uuid4()
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch(
+                "app.services.llm.jobs.update_llm_chain_status"
+            ) as mock_update_status,
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+            patch(
+                "app.services.llm.chain.chain.LLMChain",
+                side_effect=Exception("Chain init error"),
+            ),
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = chain_id
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Unexpected error occurred",
+            }
+
+            result = self._execute_chain_job(chain_request_data)
+
+            mock_update_status.assert_called_once()
+            _, kwargs = mock_update_status.call_args
+            assert kwargs["chain_id"] == chain_id
+            assert kwargs["status"].value == "failed"
 
 
 class TestResolveConfigBlob:

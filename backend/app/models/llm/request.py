@@ -1,10 +1,13 @@
-import sqlalchemy as sa
-from typing import Annotated, Any, List, Literal, Union
-from uuid import UUID, uuid4
-from pydantic import model_validator, HttpUrl
 from datetime import datetime
+from enum import Enum
+from typing import Annotated, Any, Literal, Union
+from uuid import UUID, uuid4
+
+import sqlalchemy as sa
+from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel, Index, text
+from sqlmodel import Field, Index, SQLModel, text
+
 from app.core.util import now
 
 
@@ -248,10 +251,20 @@ class Validator(SQLModel):
     validator_config_id: UUID
 
 
+class PromptTemplate(SQLModel):
+    template: str = Field(..., description="Template string with {{input}} placeholder")
+
+
 class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    # used for llm-chain to provide prompt interpolation
+    prompt_template: PromptTemplate | None = Field(
+        default=None,
+        description="Prompt template with {{input}} placeholder to wrap around the user input",
+    )
 
     input_guardrails: list[Validator] | None = Field(
         default=None,
@@ -418,6 +431,16 @@ class LlmCall(SQLModel, table=True):
         },
     )
 
+    chain_id: UUID | None = Field(
+        default=None,
+        foreign_key="llm_chain.id",
+        nullable=True,
+        ondelete="SET NULL",
+        sa_column_kwargs={
+            "comment": "Reference to the parent chain (NULL for standalone llm_call requests)"
+        },
+    )
+
     # Request fields
     input: str = Field(
         ...,
@@ -535,4 +558,202 @@ class LlmCall(SQLModel, table=True):
         default=None,
         nullable=True,
         sa_column_kwargs={"comment": "Timestamp when the record was soft-deleted"},
+    )
+
+
+class ChainBlock(SQLModel):
+    """A single block in an LLM chain execution."""
+
+    config: LLMCallConfig = Field(
+        ..., description="LLM call configuration (stored id+version OR ad-hoc blob)"
+    )
+
+    include_provider_raw_response: bool = Field(
+        default=False,
+        description="Whether to include the raw LLM provider response in the output for this block",
+    )
+
+    intermediate_callback: bool = Field(
+        default=False,
+        description="Whether to send intermediate callback after this block completes",
+    )
+
+
+class LLMChainRequest(SQLModel):
+    """
+    API request for an LLM chain execution.
+
+    Orchestrates multiple LLM calls sequentially where each block's output
+    becomes the next block's input.
+    """
+
+    query: QueryParams = Field(
+        ..., description="Initial query input for the first block in the chain"
+    )
+
+    blocks: list[ChainBlock] = Field(
+        ..., min_length=1, description="Ordered list of blocks to execute sequentially"
+    )
+
+    callback_url: HttpUrl | None = Field(
+        default=None, description="Webhook URL for async response delivery"
+    )
+
+    request_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Client-provided metadata passed through unchanged in the response. "
+            "Use this to correlate responses with requests or track request state. "
+            "The exact dictionary provided here will be returned in the response metadata field."
+        ),
+    )
+
+
+class ChainStatus(str, Enum):
+    """Status of an LLM chain execution."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    FAILED = "failed"
+    COMPLETED = "completed"
+
+
+class LlmChain(SQLModel, table=True):
+    """
+    Database model for tracking LLM chain execution
+
+    it manages and orchestrates sequential llm_call executions.
+    """
+
+    __tablename__ = "llm_chain"
+    __table_args__ = (
+        Index(
+            "idx_llm_chain_job_id",
+            "job_id",
+        ),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        primary_key=True,
+        sa_column_kwargs={"comment": "Unique identifier for the LLM chain record"},
+    )
+
+    job_id: UUID = Field(
+        foreign_key="job.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the parent job (status tracked in job table)"
+        },
+    )
+
+    project_id: int = Field(
+        foreign_key="project.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the project this LLM call belongs to"
+        },
+    )
+
+    organization_id: int = Field(
+        foreign_key="organization.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={
+            "comment": "Reference to the organization this LLM call belongs to"
+        },
+    )
+
+    status: ChainStatus = Field(
+        default=ChainStatus.PENDING,
+        sa_column_kwargs={
+            "comment": "Chain execution status (pending, running, failed, completed)"
+        },
+    )
+
+    error: str | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Error message if the chain execution failed"},
+    )
+
+    block_sequences: list[str] | None = Field(
+        default_factory=list,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Ordered list of llm_call UUIDs as blocks complete",
+        ),
+    )
+
+    total_blocks: int = Field(
+        ..., sa_column_kwargs={"comment": "Total number of blocks to execute"}
+    )
+
+    number_of_blocks_processed: int = Field(
+        default=0,
+        sa_column_kwargs={
+            "comment": "Number of blocks processed so far (used for tracking progress)"
+        },
+    )
+
+    # Request fields
+    input: str = Field(
+        ...,
+        sa_column_kwargs={
+            "comment": "First block user's input - text string, binary data, or file path for multimodal"
+        },
+    )
+
+    output: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Last block's final output (set on chain completion)",
+        ),
+    )
+
+    configs: list[dict[str, Any]] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Ordered list of block configs as submitted in the request",
+        ),
+    )
+
+    total_usage: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            JSONB,
+            nullable=True,
+            comment="Aggregated token usage: {input_tokens, output_tokens, total_tokens}",
+        ),
+    )
+
+    metadata_: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            "metadata",
+            JSONB,
+            nullable=True,
+            comment="Future-proof extensibility catch-all",
+        ),
+    )
+
+    inserted_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the chain record was created"},
+    )
+
+    updated_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={
+            "comment": "Timestamp when the chain record was last updated"
+        },
     )
