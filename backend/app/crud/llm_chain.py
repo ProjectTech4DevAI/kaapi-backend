@@ -85,18 +85,13 @@ def update_llm_chain_status(
     db_chain.status = status
     db_chain.updated_at = now()
 
-    if status == ChainStatus.RUNNING:
-        db_chain.started_at = now()
-
     if status == ChainStatus.FAILED:
         db_chain.error = error
         db_chain.total_usage = total_usage
-        db_chain.completed_at = now()
 
     if status == ChainStatus.COMPLETED:
         db_chain.output = output
         db_chain.total_usage = total_usage
-        db_chain.completed_at = now()
 
     session.add(db_chain)
     session.commit()

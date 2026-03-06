@@ -744,19 +744,7 @@ class LlmChain(SQLModel, table=True):
         ),
     )
 
-    started_at: datetime | None = Field(
-        default=None,
-        nullable=True,
-        sa_column_kwargs={"comment": "Timestamp when chain execution started"},
-    )
-
-    completed_at: datetime | None = Field(
-        default=None,
-        nullable=True,
-        sa_column_kwargs={"comment": "Timestamp when chain execution completed"},
-    )
-
-    created_at: datetime = Field(
+    inserted_at: datetime = Field(
         default_factory=now,
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the chain record was created"},

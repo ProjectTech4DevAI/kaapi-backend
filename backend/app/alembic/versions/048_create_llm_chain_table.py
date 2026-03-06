@@ -107,19 +107,7 @@ def upgrade() -> None:
             comment="Future-proof extensibility catch-all",
         ),
         sa.Column(
-            "started_at",
-            sa.DateTime(),
-            nullable=True,
-            comment="Timestamp when chain execution started",
-        ),
-        sa.Column(
-            "completed_at",
-            sa.DateTime(),
-            nullable=True,
-            comment="Timestamp when chain execution completed",
-        ),
-        sa.Column(
-            "created_at",
+            "inserted_at",
             sa.DateTime(),
             nullable=False,
             comment="Timestamp when the chain record was created",

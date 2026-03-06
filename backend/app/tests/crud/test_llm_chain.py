@@ -67,7 +67,6 @@ class TestUpdateLlmChainStatus:
         )
 
         assert updated.status == ChainStatus.RUNNING
-        assert updated.started_at is not None
 
     def test_update_to_completed(self, db: Session, chain):
         output = {"type": "text", "content": {"value": "result"}}
@@ -84,7 +83,6 @@ class TestUpdateLlmChainStatus:
         assert updated.status == ChainStatus.COMPLETED
         assert updated.output == output
         assert updated.total_usage == usage
-        assert updated.completed_at is not None
 
     def test_update_to_failed(self, db: Session, chain):
         usage = {"input_tokens": 5, "output_tokens": 0, "total_tokens": 5}
@@ -100,7 +98,6 @@ class TestUpdateLlmChainStatus:
         assert updated.status == ChainStatus.FAILED
         assert updated.error == "Provider timeout"
         assert updated.total_usage == usage
-        assert updated.completed_at is not None
 
     def test_raises_for_missing_chain(self, db: Session):
         with pytest.raises(ValueError, match="LLM chain not found"):
