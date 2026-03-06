@@ -61,3 +61,42 @@ class LLMCallResponse(SQLModel):
         default=None,
         description="Unmodified raw response from the LLM provider.",
     )
+
+
+class LLMChainResponse(SQLModel):
+    """Response schema for an LLM chain execution."""
+
+    response: LLMResponse = Field(
+        ..., description="LLM response from the final step of the chain execution."
+    )
+    usage: Usage = Field(
+        ...,
+        description="Aggregate token usage and cost for the entire chain execution.",
+    )
+    provider_raw_response: dict[str, object] | None = Field(
+        default=None,
+        description="Raw provider response from the last block (if requested)",
+    )
+
+
+class IntermediateChainResponse(SQLModel):
+    """
+    Intermediate callback response from the intermediate blocks
+    from the llm chain execution. (if configured)
+
+    Flattend structure matching LLMCallResponse keys for consistency
+    """
+
+    type: Literal["intermediate"] = "intermediate"
+    block_index: int = Field(..., description="Current block position")
+    total_blocks: int = Field(..., description="Total number of blocks in the chain")
+    response: LLMResponse = Field(
+        ..., description="LLM Response from the current block"
+    )
+    usage: Usage = Field(
+        ..., description="Token usage and cost information from the current block"
+    )
+    provider_raw_response: dict[str, object] | None = Field(
+        default=None,
+        description="Unmodified raw response from the LLM provider from the current block",
+    )
