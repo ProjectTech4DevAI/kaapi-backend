@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.core.db import engine
@@ -127,7 +128,7 @@ def execute_metric_computation(
 
             # Bulk update all result scores
             if score_updates:
-                session.bulk_update_mappings(STTResult, score_updates)
+                session.execute(update(STTResult), score_updates)
                 session.commit()
 
             # Compute and store run-level aggregate scores

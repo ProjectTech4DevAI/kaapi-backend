@@ -47,6 +47,11 @@ _whisper_normalizers: dict[str, Callable[[str], str]] = {
 }
 
 
+def collapse_whitespace(text: str) -> str:
+    """Collapse consecutive whitespace into a single space and strip edges."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def normalize_text(text: str, language_code: str | None) -> str:
     """Normalize text for lenient comparison.
 
@@ -87,7 +92,7 @@ def normalize_text(text: str, language_code: str | None) -> str:
             )
 
     # Strip extra whitespace for all languages
-    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = collapse_whitespace(normalized)
 
     return normalized
 
@@ -108,8 +113,8 @@ def calculate_stt_metrics(
         Dict with keys: wer, cer, lenient_wer, wip
     """
     # Strip whitespace for raw metrics
-    hyp = re.sub(r"\s+", " ", hypothesis).strip()
-    ref = re.sub(r"\s+", " ", reference).strip()
+    hyp = collapse_whitespace(hypothesis)
+    ref = collapse_whitespace(reference)
 
     # Handle empty reference edge case
     if not ref:
@@ -161,16 +166,16 @@ def compute_run_aggregate_scores(
     summary_scores = []
 
     for metric in METRIC_NAMES:
-        values = [s[metric] for s in result_scores if metric in s]
+        values = [score[metric] for score in result_scores if metric in score]
         if not values:
             continue
 
-        arr = np.array(values)
+        metric_values = np.array(values)
         summary_scores.append(
             {
                 "name": metric,
-                "avg": round(float(np.mean(arr)), 2),
-                "std": round(float(np.std(arr)), 2),
+                "avg": round(float(np.mean(metric_values)), 2),
+                "std": round(float(np.std(metric_values)), 2),
                 "total_pairs": len(values),
                 "data_type": SCORE_DATA_TYPE_NUMERIC,
             }
