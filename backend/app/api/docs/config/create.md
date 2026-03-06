@@ -8,8 +8,8 @@ Configurations allow you to store and manage reusable LLM parameters
 * Enforces unique configuration names per project
 * Stores provider-specific parameters as flexible JSON (config_blob)
 * Supports optional commit messages for tracking changes
-* Kaapi providers (openai, google) — params are validated and mapped internally
-* Native providers (openai-native, google-native) — params are passed through as-is
+* Kaapi providers (`openai`, `google`, `sarvamai`) — params are validated and mapped internally
+* Native providers (`openai-native`, `google-native`, `sarvamai-native`) — params are passed through as-is
 * Supports three completion types: `"text"`, `"stt"` and `"tts"`
 * Supports both `input_guardrails` and `output_guardrails`
 
@@ -67,5 +67,9 @@ Configurations allow you to store and manage reusable LLM parameters
 
 The configuration name must be unique within your project. Once created,
 you can create additional versions to track parameter changes while
-maintaining the configuration history. Type `"text"` is applicable for OpenAI models.
-Type `"text"`, `"stt"` and `"tts"` are applicable for Google Gemini models.
+maintaining the configuration history.
+
+**Provider–type support:**
+* `openai` / `openai-native` — `"text"`
+* `google` / `google-native` — `"text"`, `"stt"`, `"tts"`
+* `sarvamai` / `sarvamai-native` — `"stt"`, `"tts"`
