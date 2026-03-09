@@ -1,4 +1,4 @@
-"""STT evaluation run API routes."""
+"""TTS evaluation run API routes."""
 
 import logging
 
@@ -8,19 +8,22 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_low_priority_job
-from app.core.cloud import get_cloud_storage
-from app.crud.stt_evaluations import (
-    create_stt_run,
+from app.crud.tts_evaluations import (
+    create_tts_run,
     get_results_by_run_id,
-    get_stt_dataset_by_id,
-    get_stt_run_by_id,
-    list_stt_runs,
-    update_stt_run,
+    get_tts_dataset_by_id,
+    get_tts_run_by_id,
+    list_tts_runs,
+    update_tts_run,
 )
-from app.models.stt_evaluation import (
-    STTEvaluationRunCreate,
-    STTEvaluationRunPublic,
-    STTEvaluationRunWithResults,
+from app.models.tts_evaluation import (
+    TTSEvaluationRunCreate,
+    TTSEvaluationRunPublic,
+    TTSEvaluationRunWithResults,
+)
+from app.services.tts_evaluations.constants import (
+    DEFAULT_STYLE_PROMPT,
+    DEFAULT_VOICE_NAME,
 )
 from app.utils import APIResponse, load_description
 
@@ -31,25 +34,25 @@ router = APIRouter()
 
 @router.post(
     "/runs",
-    response_model=APIResponse[STTEvaluationRunPublic],
+    response_model=APIResponse[TTSEvaluationRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
-    summary="Start STT evaluation",
-    description=load_description("stt_evaluation/start_evaluation.md"),
+    summary="Start TTS evaluation",
+    description=load_description("tts_evaluation/start_evaluation.md"),
 )
-def start_stt_evaluation(
+def start_tts_evaluation(
     session: SessionDep,
     auth_context: AuthContextDep,
-    run_create: STTEvaluationRunCreate = Body(...),
-) -> APIResponse[STTEvaluationRunPublic]:
-    """Start an STT evaluation run."""
+    run_create: TTSEvaluationRunCreate = Body(...),
+) -> APIResponse[TTSEvaluationRunPublic]:
+    """Start a TTS evaluation run."""
     logger.info(
-        f"[start_stt_evaluation] Starting STT evaluation | "
+        f"[start_tts_evaluation] Starting TTS evaluation | "
         f"run_name: {run_create.run_name}, dataset_id: {run_create.dataset_id}, "
         f"models: {run_create.models}"
     )
 
     # Validate dataset exists
-    dataset = get_stt_dataset_by_id(
+    dataset = get_tts_dataset_by_id(
         session=session,
         dataset_id=run_create.dataset_id,
         org_id=auth_context.organization_.id,
@@ -64,11 +67,10 @@ def start_stt_evaluation(
     if sample_count == 0:
         raise HTTPException(status_code=400, detail="Dataset has no samples")
 
-    # Use language_id from the dataset
     language_id = dataset.language_id
 
     # Create run record
-    run = create_stt_run(
+    run = create_tts_run(
         session=session,
         run_name=run_create.run_name,
         dataset_id=run_create.dataset_id,
@@ -80,27 +82,28 @@ def start_stt_evaluation(
         total_items=sample_count * len(run_create.models),
     )
 
-    # Offload batch submission (signed URLs, JSONL, Gemini upload) to Celery worker
+    # Offload batch submission (result creation, JSONL, Gemini upload) to Celery worker
     trace_id = correlation_id.get() or "N/A"
     try:
         celery_task_id = start_low_priority_job(
-            function_path="app.services.stt_evaluations.batch_job.execute_batch_submission",
+            function_path="app.services.tts_evaluations.batch_job.execute_batch_submission",
             project_id=auth_context.project_.id,
             job_id=str(run.id),
             trace_id=trace_id,
             organization_id=auth_context.organization_.id,
             dataset_id=run_create.dataset_id,
+            models=run_create.models,
         )
         logger.info(
-            f"[start_stt_evaluation] Batch submission queued | "
+            f"[start_tts_evaluation] Batch submission queued | "
             f"run_id: {run.id}, celery_task_id: {celery_task_id}"
         )
     except Exception as e:
         logger.error(
-            f"[start_stt_evaluation] Failed to queue batch submission | "
+            f"[start_tts_evaluation] Failed to queue batch submission | "
             f"run_id: {run.id}, error: {str(e)}"
         )
-        update_stt_run(
+        update_tts_run(
             session=session,
             run_id=run.id,
             status="failed",
@@ -112,43 +115,33 @@ def start_stt_evaluation(
         )
 
     return APIResponse.success_response(
-        data=STTEvaluationRunPublic(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
+        data=TTSEvaluationRunPublic.from_model(
+            run,
+            run_metadata={
+                "voice_name": DEFAULT_VOICE_NAME,
+                "style_prompt": DEFAULT_STYLE_PROMPT,
+            },
         )
     )
 
 
 @router.get(
     "/runs",
-    response_model=APIResponse[list[STTEvaluationRunPublic]],
+    response_model=APIResponse[list[TTSEvaluationRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
-    summary="List STT evaluation runs",
-    description=load_description("stt_evaluation/list_runs.md"),
+    summary="List TTS evaluation runs",
+    description=load_description("tts_evaluation/list_runs.md"),
 )
-def list_stt_evaluation_runs(
+def list_tts_evaluation_runs(
     session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int | None = Query(None, description="Filter by dataset ID"),
     status: str | None = Query(None, description="Filter by status"),
     limit: int = Query(50, ge=1, le=100, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-) -> APIResponse[list[STTEvaluationRunPublic]]:
-    """List STT evaluation runs."""
-    runs, total = list_stt_runs(
+) -> APIResponse[list[TTSEvaluationRunPublic]]:
+    """List TTS evaluation runs."""
+    runs, total = list_tts_runs(
         session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -166,26 +159,19 @@ def list_stt_evaluation_runs(
 
 @router.get(
     "/runs/{run_id}",
-    response_model=APIResponse[STTEvaluationRunWithResults],
+    response_model=APIResponse[TTSEvaluationRunWithResults],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
-    summary="Get STT evaluation run",
-    description=load_description("stt_evaluation/get_run.md"),
+    summary="Get TTS evaluation run",
+    description=load_description("tts_evaluation/get_run.md"),
 )
-def get_stt_evaluation_run(
+def get_tts_evaluation_run(
     session: SessionDep,
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
-    include_signed_url: bool = Query(
-        False, description="Include signed URLs for audio file samples"
-    ),
-    result_limit: int = Query(100, ge=1, le=1000, description="Max results to return"),
-    result_offset: int = Query(0, ge=0, description="Result offset"),
-    provider: str | None = Query(None, description="Filter results by provider"),
-    status: str | None = Query(None, description="Filter results by status"),
-) -> APIResponse[STTEvaluationRunWithResults]:
-    """Get an STT evaluation run with results."""
-    run = get_stt_run_by_id(
+) -> APIResponse[TTSEvaluationRunWithResults]:
+    """Get a TTS evaluation run with results."""
+    run = get_tts_run_by_id(
         session=session,
         run_id=run_id,
         org_id=auth_context.organization_.id,
@@ -199,41 +185,16 @@ def get_stt_evaluation_run(
     results_total = 0
 
     if include_results:
-        storage = None
-        if include_signed_url:
-            storage = get_cloud_storage(
-                session=session, project_id=auth_context.project_.id
-            )
-
         results, results_total = get_results_by_run_id(
             session=session,
             run_id=run_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
-            provider=provider,
-            status=status,
-            limit=result_limit,
-            offset=result_offset,
-            storage=storage,
         )
 
     return APIResponse.success_response(
-        data=STTEvaluationRunWithResults(
-            id=run.id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            type=run.type,
-            language_id=run.language_id,
-            models=run.providers,
-            dataset_id=run.dataset_id,
-            status=run.status,
-            total_items=run.total_items,
-            score=run.score,
-            error_message=run.error_message,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
+        data=TTSEvaluationRunWithResults.from_model(
+            run,
             results=results,
             results_total=results_total,
         ),

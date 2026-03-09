@@ -38,7 +38,7 @@ router = APIRouter(tags=["Responses"])
 )
 async def responses(
     request: ResponsesAPIRequest,
-    _session: SessionDep,
+    session: SessionDep,
     _current_user: AuthContextDep,
 ):
     """Asynchronous endpoint that processes requests using Celery."""
@@ -48,7 +48,7 @@ async def responses(
     )
 
     start_job(
-        db=_session,
+        db=session,
         request=request,
         project_id=project_id,
         organization_id=organization_id,
@@ -73,7 +73,7 @@ async def responses(
 )
 async def responses_sync(
     request: ResponsesSyncAPIRequest,
-    _session: SessionDep,
+    session: SessionDep,
     _current_user: AuthContextDep,
 ):
     """Synchronous endpoint for benchmarking OpenAI responses API with Langfuse tracing."""
@@ -83,7 +83,7 @@ async def responses_sync(
     )
 
     try:
-        client = get_openai_client(_session, organization_id, project_id)
+        client = get_openai_client(session, organization_id, project_id)
     except HTTPException as e:
         request_dict = request.model_dump()
         additional_data = get_additional_data(request_dict)
@@ -98,7 +98,7 @@ async def responses_sync(
         )
 
     langfuse_credentials = get_provider_credential(
-        session=_session,
+        session=session,
         org_id=organization_id,
         provider="langfuse",
         project_id=project_id,

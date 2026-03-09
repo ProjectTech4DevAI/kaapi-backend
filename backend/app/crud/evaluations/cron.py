@@ -13,7 +13,6 @@ from typing import Any
 from sqlmodel import Session
 
 from app.crud.evaluations.processing import poll_all_pending_evaluations
-from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
 
     Delegates to poll_all_pending_evaluations which fetches all processing
     evaluation runs in a single query, groups by project, and processes them.
-    Also polls STT evaluations similarly.
+    Also polls STT and TTS evaluations similarly.
 
     Args:
         session: Database session
@@ -38,16 +37,35 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
         # Poll text evaluations (single query, grouped by project)
         text_summary = await poll_all_pending_evaluations(session=session)
 
+        # Lazy imports to avoid circular dependency with cron_utils
+        from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
+        from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
+
         # Poll STT evaluations (single query, grouped by project)
         stt_summary = await poll_all_pending_stt_evaluations(session=session)
 
+        # Poll TTS evaluations (single query, grouped by project)
+        tts_summary = await poll_all_pending_tts_evaluations(session=session)
+
         # Merge summaries
-        total_processed = text_summary["processed"] + stt_summary["processed"]
-        total_failed = text_summary["failed"] + stt_summary["failed"]
-        total_still_processing = (
-            text_summary["still_processing"] + stt_summary["still_processing"]
+        total_processed = (
+            text_summary["processed"]
+            + stt_summary["processed"]
+            + tts_summary["processed"]
         )
-        all_details = text_summary.get("details", []) + stt_summary.get("details", [])
+        total_failed = (
+            text_summary["failed"] + stt_summary["failed"] + tts_summary["failed"]
+        )
+        total_still_processing = (
+            text_summary["still_processing"]
+            + stt_summary["still_processing"]
+            + tts_summary["still_processing"]
+        )
+        all_details = (
+            text_summary.get("details", [])
+            + stt_summary.get("details", [])
+            + tts_summary.get("details", [])
+        )
 
         logger.info(
             f"[process_all_pending_evaluations] Completed: "

@@ -39,7 +39,7 @@ def llm_callback_notification(body: APIResponse[LLMCallResponse]):
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def llm_call(
-    _current_user: AuthContextDep, _session: SessionDep, request: LLMCallRequest
+    _current_user: AuthContextDep, session: SessionDep, request: LLMCallRequest
 ):
     """
     Endpoint to initiate an LLM call as a background job.
@@ -51,7 +51,7 @@ def llm_call(
         validate_callback_url(str(request.callback_url))
 
     start_job(
-        db=_session,
+        db=session,
         request=request,
         project_id=project_id,
         organization_id=organization_id,
