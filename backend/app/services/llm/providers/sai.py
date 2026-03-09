@@ -111,7 +111,10 @@ class SarvamAIProvider(BaseProvider):
                     provider=provider_name,
                     model=model,
                     output=TextOutput(
-                        content=TextContent(value=sarvam_response.transcript)
+                        content=TextContent(
+                            value=sarvam_response.transcript,
+                            language_code=sarvam_response.language_code,
+                        )
                     ),
                 ),
                 usage=Usage(
@@ -184,6 +187,7 @@ class SarvamAIProvider(BaseProvider):
                 target_language_code=target_language_code,
                 model=model,
                 speaker=speaker,
+                speech_sample_rate=16000,
                 output_audio_codec=output_audio_codec,
             )
 

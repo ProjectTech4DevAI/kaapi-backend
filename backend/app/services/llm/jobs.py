@@ -23,6 +23,7 @@ from app.models.llm.request import (
     ImageInput,
     KaapiCompletionConfig,
     LLMCallConfig,
+    NativeCompletionConfig,
     PDFInput,
     QueryParams,
     TextInput,
@@ -335,10 +336,14 @@ def execute_llm_call(
     langfuse_credentials: dict | None,
     include_provider_raw_response: bool = False,
     chain_id: UUID | None = None,
+    detected_language: str | None = None,
 ) -> BlockResult:
     """Execute a single LLM call. Shared by /llm/call and /llm/chain.
 
     Returns BlockResult with response + usage on success, or error on failure.
+
+    Args:
+        detected_language: Language code detected by STT (used to replace {{detected}} marker in TTS)
     """
 
     config_blob: ConfigBlob | None = None
@@ -381,6 +386,27 @@ def execute_llm_call(
                 if request_metadata is None:
                     request_metadata = {}
                 request_metadata.setdefault("warnings", []).extend(warnings)
+
+            # Replace {{detected}} marker in TTS configs with actual detected language
+            if (
+                isinstance(completion_config, NativeCompletionConfig)
+                and completion_config.type == "tts"
+            ):
+                params = completion_config.params
+                # Replace {{detected}} marker in any language-related params
+                for key in ["target_language_code", "language_code"]:
+                    if key in params and params[key] == "{{detected}}":
+                        if detected_language:
+                            params[key] = detected_language
+                            logger.info(
+                                f"[execute_llm_call] Using detected language for TTS: {detected_language} | job_id={job_id}"
+                            )
+                        else:
+                            # Fallback to English if no language was detected
+                            params[key] = "en-IN"
+                            logger.warning(
+                                f"[execute_llm_call] No language detected, falling back to en-IN for TTS | job_id={job_id}"
+                            )
 
             resolved_config_blob = ConfigBlob(
                 completion=completion_config,

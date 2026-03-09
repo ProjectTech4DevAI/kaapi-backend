@@ -7,11 +7,12 @@ from app.api.routes import (
     config,
     doc_transformation_job,
     documents,
+    llm_sts,
     login,
     languages,
     llm,
     llm_chain,
-    llm_speech,
+    llm_sts,
     organization,
     openai_conversation,
     project,
@@ -44,7 +45,7 @@ api_router.include_router(evaluations.router)
 api_router.include_router(languages.router)
 api_router.include_router(llm.router)
 api_router.include_router(llm_chain.router)
-api_router.include_router(llm_speech.router)
+api_router.include_router(llm_sts.router)
 api_router.include_router(login.router)
 api_router.include_router(onboarding.router)
 api_router.include_router(openai_conversation.router)

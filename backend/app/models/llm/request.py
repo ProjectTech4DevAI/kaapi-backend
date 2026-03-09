@@ -93,6 +93,9 @@ KaapiLLMParams = Union[
 class TextContent(SQLModel):
     format: Literal["text"] = "text"
     value: str = Field(..., description="Text content")
+    language_code: str | None = Field(
+        None, description="Optional detected language code in STT 'auto' mode"
+    )
 
 
 class AudioContent(SQLModel):
@@ -799,21 +802,21 @@ class SpeechToSpeechRequest(SQLModel):
         ..., min_length=1, description="Knowledge base IDs for RAG retrieval"
     )
 
-    # Optional language config
+    # Optional language config (BCP-47 codes)
     input_language: str | None = Field(
         "auto",
         description=(
-            "Input language for STT (auto-detect by default). "
-            "Supported: auto, english, hindi, hinglish, bengali, kannada, malayalam, marathi, "
-            "odia, punjabi, tamil, telugu, gujarati, assamese, urdu, nepali, konkani, kashmiri, "
-            "sindhi, sanskrit, santali, manipuri, bodo, maithili, dogri"
+            "BCP-47 language code for STT input (auto-detect by default). "
+            "Supported codes: 'auto', 'en-IN', 'hi-IN', 'bn-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'od-IN', "
+            "'pa-IN', 'ta-IN', 'te-IN', 'gu-IN', 'as-IN', 'ur-IN', 'ne-IN', 'kok-IN', 'ks-IN', "
+            "'sd-IN', 'sa-IN', 'sat-IN', 'mni-IN', 'brx-IN', 'mai-IN', 'doi-IN'"
         ),
     )
     output_language: str | None = Field(
         None,
         description=(
-            "Output language for TTS (defaults to input_language if not specified). "
-            "Same language options as input_language."
+            "BCP-47 language code for TTS output (defaults to input_language if not specified). "
+            "Supported codes: same as input_language (except 'auto')."
         ),
     )
 
@@ -838,11 +841,18 @@ class SpeechToSpeechRequest(SQLModel):
 
     @model_validator(mode="after")
     def validate_languages(self):
-        """Validate language fields."""
-        # Validation happens in the endpoint using LANGUAGE_CODES from utils
-        # This is just to ensure the fields are lowercase if provided
+        """Normalize BCP-47 language codes to standard format (e.g., 'hi-in' -> 'hi-IN')."""
+        # Normalize input_language
         if self.input_language and self.input_language != "auto":
-            self.input_language = self.input_language.lower()
+            # Normalize BCP-47: lowercase language, uppercase region (e.g., "hi-IN")
+            parts = self.input_language.split("-")
+            if len(parts) == 2:
+                self.input_language = f"{parts[0].lower()}-{parts[1].upper()}"
+
+        # Normalize output_language
         if self.output_language:
-            self.output_language = self.output_language.lower()
+            parts = self.output_language.split("-")
+            if len(parts) == 2:
+                self.output_language = f"{parts[0].lower()}-{parts[1].upper()}"
+
         return self

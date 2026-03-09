@@ -15,51 +15,38 @@ from app.models.llm.request import (
 )
 
 
-# Supported languages for speech-to-speech (BCP-47 language codes)
-LANGUAGE_CODES = {
+# Supported BCP-47 language codes for speech-to-speech
+# These are the valid values that can be used directly in API requests
+SUPPORTED_LANGUAGE_CODES = {
     # Auto-detect
-    "auto": "unknown",  # Sarvam auto-detection
-    # Primary Indian languages
-    "english": "en-IN",
-    "hindi": "hi-IN",
-    "hinglish": "hi-IN",  # Code-switching, treat as Hindi
-    "bengali": "bn-IN",
-    "kannada": "kn-IN",
-    "malayalam": "ml-IN",
-    "marathi": "mr-IN",
-    "odia": "od-IN",
-    "punjabi": "pa-IN",
-    "tamil": "ta-IN",
-    "telugu": "te-IN",
-    "gujarati": "gu-IN",
+    "auto",  # Auto-detection (maps to "unknown" for Sarvam)
+    "unknown",  # Explicit unknown for Sarvam
+    # Primary Indian languages (BCP-47 codes)
+    "en-IN",  # English
+    "hi-IN",  # Hindi (also used for Hinglish/code-switching)
+    "bn-IN",  # Bengali
+    "kn-IN",  # Kannada
+    "ml-IN",  # Malayalam
+    "mr-IN",  # Marathi
+    "od-IN",  # Odia
+    "pa-IN",  # Punjabi
+    "ta-IN",  # Tamil
+    "te-IN",  # Telugu
+    "gu-IN",  # Gujarati
     # Additional languages (saaras:v3)
-    "assamese": "as-IN",
-    "urdu": "ur-IN",
-    "nepali": "ne-IN",
-    "konkani": "kok-IN",
-    "kashmiri": "ks-IN",
-    "sindhi": "sd-IN",
-    "sanskrit": "sa-IN",
-    "santali": "sat-IN",
-    "manipuri": "mni-IN",
-    "bodo": "brx-IN",
-    "maithili": "mai-IN",
-    "dogri": "doi-IN",
+    "as-IN",  # Assamese
+    "ur-IN",  # Urdu
+    "ne-IN",  # Nepali
+    "kok-IN",  # Konkani
+    "ks-IN",  # Kashmiri
+    "sd-IN",  # Sindhi
+    "sa-IN",  # Sanskrit
+    "sat-IN",  # Santali
+    "mni-IN",  # Manipuri
+    "brx-IN",  # Bodo
+    "mai-IN",  # Maithili
+    "doi-IN",  # Dogri
 }
-
-
-def get_language_code(language: str | None, default: str = "auto") -> str:
-    """Convert language name to BCP-47 language code.
-
-    Args:
-        language: Language name (e.g., "hindi", "english", "auto")
-        default: Default language if not specified (default: "auto")
-
-    Returns:
-        BCP-47 language code (e.g., "hi-IN", "en-IN", "unknown" for auto-detect)
-    """
-    lang = (language or default).lower()
-    return LANGUAGE_CODES.get(lang, LANGUAGE_CODES["auto"])
 
 
 def build_stt_block(model: STTModel, language_code: str) -> ChainBlock:
@@ -67,7 +54,7 @@ def build_stt_block(model: STTModel, language_code: str) -> ChainBlock:
 
     Args:
         model: STT model enum
-        language_code: ISO language code (e.g., "hi-IN")
+        language_code: BCP-47 language code (e.g., "hi-IN", "en-IN") or "auto" for auto-detection
 
     Returns:
         ChainBlock configured for STT
@@ -90,15 +77,15 @@ def build_stt_block(model: STTModel, language_code: str) -> ChainBlock:
 
     # Add provider-specific parameters
     if provider == "sarvamai-native":
-        # Use "unknown" for automatic language detection, or specific BCP-47 code
+        # Map "auto" to "unknown" for Sarvam auto-detection
         params["language_code"] = (
-            language_code if language_code != "unknown" else "unknown"
+            "unknown" if language_code == "auto" else language_code
         )
         params["mode"] = "transcribe"
     elif provider == "google-native":
-        # Google requires specific language code, fallback to en-IN if unknown
+        # Google requires specific language code, fallback to en-IN if auto/unknown
         params["language_code"] = (
-            language_code if language_code != "unknown" else "en-IN"
+            "en-IN" if language_code in ("auto", "unknown") else language_code
         )
 
     return ChainBlock(
@@ -151,7 +138,7 @@ def build_tts_block(model: TTSModel, language_code: str = "en-IN") -> ChainBlock
 
     Args:
         model: TTS model enum
-        language_code: ISO language code (e.g., "hi-IN")
+        language_code: ISO language code (e.g., "hi-IN"), or "{{detected}}" to use language detected by STT
 
     Returns:
         ChainBlock configured for TTS
@@ -175,9 +162,10 @@ def build_tts_block(model: TTSModel, language_code: str = "en-IN") -> ChainBlock
 
     # Add provider-specific parameters
     if provider == "sarvamai-native":
-        params["target_language_code"] = "en-IN"
+        # Use language_code (can be "{{detected}}" marker or actual code)
+        params["target_language_code"] = language_code
         params["speaker"] = voice
-        params["output_audio_codec"] = "mp3"  # WhatsApp compatible
+        params["output_audio_codec"] = "opus"  # WhatsApp compatible
     elif provider == "google-native":
         params["language_code"] = language_code
         params["audio_encoding"] = "OGG_OPUS"  # WhatsApp compatible
