@@ -5,3 +5,8 @@ configuration parameters in the request body. The system will automatically
 create a new version under the same configuration with an incremented version number.
 Version numbers are automatically incremented sequentially (1, 2, 3, etc.)
 and cannot be manually set or skipped.
+
+## Important
+- This endpoint accepts partial updates using dict[str, Any] for config_blob.
+- Only the fields that need to be updated should be provided.
+- The `type` field is inherited from the existing configuration and cannot be changed. Provider and model can change between versions.

@@ -7,6 +7,7 @@ from sqlmodel import Session, select, func
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.file import File
+from app.core.cloud.storage import CloudStorage
 from app.models.stt_evaluation import (
     STTResult,
     STTSample,
@@ -54,6 +55,7 @@ def get_results_by_run_id(
     status: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    storage: CloudStorage | None = None,
 ) -> tuple[list[STTResultWithSample], int]:
     """Get results for an evaluation run with sample data.
 
@@ -66,6 +68,7 @@ def get_results_by_run_id(
         status: Optional filter by status
         limit: Maximum results to return
         offset: Number of results to skip
+        storage: Optional cloud storage instance for generating signed URLs
 
     Returns:
         tuple[list[STTResultWithSample], int]: Results with samples and total count
@@ -100,10 +103,20 @@ def get_results_by_run_id(
     # Convert to response models
     results = []
     for result, sample, file in rows:
+        signed_url = None
+        if storage:
+            try:
+                signed_url = storage.get_signed_url(file.object_store_url)
+            except Exception as e:
+                logger.warning(
+                    f"[get_results_by_run_id] Failed to generate signed URL: {e}"
+                )
+
         sample_public = STTSamplePublic(
             id=sample.id,
             file_id=sample.file_id,
             object_store_url=file.object_store_url,
+            signed_url=signed_url,
             language_id=sample.language_id,
             ground_truth=sample.ground_truth,
             sample_metadata=sample.sample_metadata,

@@ -12,12 +12,13 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.models.batch_job import BatchJobType
+from app.celery.utils import start_low_priority_job
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
     extract_text_from_response_dict,
 )
+from app.models.batch_job import BatchJobType
 from app.core.util import now
 from app.crud.evaluations.cron_utils import (
     get_batch_jobs_for_run,
@@ -144,6 +145,27 @@ async def poll_stt_run(
         status=final_status,
         error_message=error_message,
     )
+
+    # Trigger automated metric computation (WER, CER, lenient WER, WIP)
+    if result.any_succeeded:
+        try:
+            celery_task_id = start_low_priority_job(
+                function_path="app.services.stt_evaluations.metric_job.execute_metric_computation",
+                project_id=run.project_id,
+                job_id=str(run.id),
+                organization_id=run.organization_id,
+                run_id=run.id,
+            )
+            logger.info(
+                f"[poll_stt_run] Metric computation task dispatched | "
+                f"run_id: {run.id}, celery_task_id: {celery_task_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[poll_stt_run] Failed to dispatch metric computation task | "
+                f"run_id: {run.id}, error: {e}",
+                exc_info=True,
+            )
 
     action = "completed" if not result.any_failed else "failed"
 

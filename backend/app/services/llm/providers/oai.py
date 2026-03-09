@@ -13,9 +13,10 @@ from app.models.llm import (
     Usage,
     TextOutput,
     TextContent,
+    ImageContent,
+    PDFContent,
 )
-from app.services.llm.providers.base import BaseProvider
-
+from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,36 @@ class OpenAIProvider(BaseProvider):
             raise ValueError("OpenAI credentials not configured for this project.")
         return OpenAI(api_key=credentials["api_key"])
 
+    @staticmethod
+    def format_parts(
+        parts: list[ContentPart],
+    ) -> list[dict]:
+        items = []
+        for part in parts:
+            if isinstance(part, TextContent):
+                items.append({"type": "input_text", "text": part.value})
+
+            elif isinstance(part, ImageContent):
+                if part.format == "base64":
+                    url = f"data:{part.mime_type};base64,{part.value}"
+                else:
+                    url = part.value
+                items.append({"type": "input_image", "image_url": url})
+
+            elif isinstance(part, PDFContent):
+                if part.format == "base64":
+                    url = f"data:{part.mime_type};base64,{part.value}"
+                else:
+                    url = part.value
+                items.append({"type": "input_file", "file_url": url})
+
+        return items
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str,
+        resolved_input: str | list[ImageContent] | list[PDFContent] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         response: Response | None = None
@@ -50,7 +76,16 @@ class OpenAIProvider(BaseProvider):
             params = {
                 **completion_config.params,
             }
-            params["input"] = resolved_input
+            if isinstance(resolved_input, MultiModalInput):
+                params["input"] = [
+                    {"role": "user", "content": self.format_parts(resolved_input.parts)}
+                ]
+            elif isinstance(resolved_input, list):
+                params["input"] = [
+                    {"role": "user", "content": self.format_parts(resolved_input)}
+                ]
+            else:
+                params["input"] = resolved_input
 
             conversation_cfg = query.conversation
 

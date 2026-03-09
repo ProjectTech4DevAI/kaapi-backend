@@ -9,6 +9,17 @@ from app.models.llm.request import (
     LlmCall,
     AudioContent,
     TextContent,
+    TextInput,
+    AudioInput,
+    PromptTemplate,
+    ChainBlock,
+    ChainStatus,
+    LLMChainRequest,
+    LlmChain,
+    ImageContent,
+    PDFContent,
+    ImageInput,
+    PDFInput,
 )
 from app.models.llm.response import (
     LLMCallResponse,
@@ -17,4 +28,6 @@ from app.models.llm.response import (
     Usage,
     TextOutput,
     AudioOutput,
+    LLMChainResponse,
+    IntermediateChainResponse,
 )

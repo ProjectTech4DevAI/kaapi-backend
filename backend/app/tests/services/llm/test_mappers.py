@@ -16,6 +16,7 @@ from app.models.llm.request import (
 from app.services.llm.mappers import (
     map_kaapi_to_openai_params,
     map_kaapi_to_google_params,
+    map_kaapi_to_sarvam_params,
     transform_kaapi_config_to_native,
 )
 
@@ -31,7 +32,8 @@ class TestMapKaapiToOpenAIParams:
             kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result == {"model": "gpt-4o"}
+        # TextLLMParams has default temperature=0.1
+        assert result == {"model": "gpt-4o", "temperature": 0.1}
         assert warnings == []
 
     def test_instructions_mapping(self):
@@ -91,7 +93,10 @@ class TestMapKaapiToOpenAIParams:
 
         assert result["model"] == "o1"
         assert result["reasoning"] == {"effort": "high"}
-        assert warnings == []
+        # Temperature is suppressed for reasoning models (even default value)
+        assert "temperature" not in result
+        assert len(warnings) == 1
+        assert "temperature" in warnings[0].lower()
 
     def test_knowledge_base_ids_mapping(self):
         """Test knowledge_base_ids mapping to OpenAI tools format."""
@@ -211,7 +216,8 @@ class TestMapKaapiToOpenAIParams:
             kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result == {"model": "gpt-4"}
+        # TextLLMParams has default temperature=0.1
+        assert result == {"model": "gpt-4", "temperature": 0.1}
         assert warnings == []
 
     def test_only_knowledge_base_ids(self):
@@ -242,7 +248,8 @@ class TestMapKaapiToGoogleParams:
             kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result == {"model": "gemini-2.5-pro"}
+        # TextLLMParams has default temperature=0.1
+        assert result == {"model": "gemini-2.5-pro", "temperature": 0.1}
         assert warnings == []
 
     def test_instructions_mapping(self):
@@ -292,8 +299,7 @@ class TestMapKaapiToGoogleParams:
         assert "knowledge_base_ids" in warnings[0].lower()
         assert "not supported" in warnings[0]
 
-    def test_reasoning_warning(self):
-        """Test that reasoning parameter is not supported and generates warning."""
+    def test_reasoning_passed_through(self):
         kaapi_params = TextLLMParams(
             model="gemini-2.5-pro",
             reasoning="high",
@@ -304,13 +310,10 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "reasoning" not in result
-        assert len(warnings) == 1
-        assert "reasoning" in warnings[0].lower()
-        assert "not applicable" in warnings[0]
+        assert result["reasoning"] == "high"
+        assert len(warnings) == 0
 
-    def test_multiple_unsupported_params(self):
-        """Test that multiple unsupported parameters generate multiple warnings."""
+    def test_knowledge_base_ids_unsupported(self):
         kaapi_params = TextLLMParams(
             model="gemini-2.5-pro",
             reasoning="medium",
@@ -322,13 +325,253 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "reasoning" not in result
+        assert result["reasoning"] == "medium"
         assert "knowledge_base_ids" not in result
-        assert len(warnings) == 2
-        # Check both warnings are present
-        warning_text = " ".join(warnings).lower()
-        assert "reasoning" in warning_text
-        assert "knowledge_base_ids" in warning_text
+        assert len(warnings) == 1
+        assert "knowledge_base_ids" in warnings[0].lower()
+
+
+class TestMapKaapiToSarvamParams:
+    """Test cases for map_kaapi_to_sarvam_params function."""
+
+    def test_stt_basic_mapping(self):
+        """Test basic STT parameter mapping."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert result["language_code"] == "hi-IN"
+        assert result["mode"] == "transcribe"
+        assert warnings == []
+
+    def test_stt_auto_language_detection(self):
+        """Test STT with auto language detection."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="auto",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert result["language_code"] == "unknown"
+        assert result["mode"] == "transcribe"
+        assert warnings == []
+
+    def test_stt_translate_mode(self):
+        """Test STT with translation to English."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            output_language="en-IN",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert result["language_code"] == "hi-IN"
+        assert result["mode"] == "translate"
+        assert warnings == []
+
+    def test_stt_same_input_output_language(self):
+        """Test STT when input and output languages are the same."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            output_language="hi-IN",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["mode"] == "transcribe"
+        assert warnings == []
+
+    def test_stt_unsupported_instructions_warning(self):
+        """Test that instructions parameter generates warning for STT."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            instructions="Please transcribe accurately",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert "instructions" not in result
+        assert len(warnings) == 1
+        assert "instructions" in warnings[0].lower()
+        assert "not supported" in warnings[0]
+
+    def test_stt_unsupported_temperature_warning(self):
+        """Test that temperature parameter generates warning for STT."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            temperature=0.5,
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert "temperature" not in result
+        assert len(warnings) == 1
+        assert "temperature" in warnings[0].lower()
+        assert "not supported" in warnings[0]
+
+    def test_stt_unsupported_response_format_warning(self):
+        """Test that response_format parameter generates warning for STT."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            response_format="text",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert "response_format" not in result
+        assert len(warnings) == 1
+        assert "response_format" in warnings[0].lower()
+
+    def test_stt_multiple_unsupported_params(self):
+        """Test STT with multiple unsupported parameters."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+            instructions="Transcribe",
+            temperature=0.5,
+            response_format="text",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "saarika:v1"
+        assert "instructions" not in result
+        assert "temperature" not in result
+        assert "response_format" not in result
+        assert len(warnings) == 3
+
+    def test_tts_basic_mapping(self):
+        """Test basic TTS parameter mapping."""
+        kaapi_params = TTSLLMParams(
+            model="bulbul:v1",
+            voice="meera",
+            language="hi-IN",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "bulbul:v1"
+        assert result["speaker"] == "meera"
+        assert result["target_language_code"] == "hi-IN"
+        assert warnings == []
+
+    def test_tts_with_audio_format(self):
+        """Test TTS with custom audio format."""
+        kaapi_params = TTSLLMParams(
+            model="bulbul:v1",
+            voice="meera",
+            language="hi-IN",
+            response_format="mp3",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "bulbul:v1"
+        assert result["speaker"] == "meera"
+        assert result["target_language_code"] == "hi-IN"
+        assert result["output_audio_codec"] == "mp3"
+        assert warnings == []
+
+    def test_tts_default_wav_format(self):
+        """Test TTS with default WAV format."""
+        kaapi_params = TTSLLMParams(
+            model="bulbul:v1",
+            voice="arvind",
+            language="en-IN",
+            response_format="wav",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["output_audio_codec"] == "wav"
+        assert warnings == []
+
+    def test_tts_ogg_format(self):
+        """Test TTS with OGG format."""
+        kaapi_params = TTSLLMParams(
+            model="bulbul:v1",
+            voice="meera",
+            language="hi-IN",
+            response_format="ogg",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["output_audio_codec"] == "ogg"
+        assert warnings == []
+
+    def test_tts_missing_language(self):
+        """Test that missing language returns error for TTS."""
+        kaapi_params = {"model": "bulbul:v1", "voice": "meera"}
+
+        result, warnings = map_kaapi_to_sarvam_params(kaapi_params)
+
+        assert result == {}
+        assert len(warnings) == 1
+        assert "language" in warnings[0].lower()
+
+    def test_missing_model(self):
+        """Test that missing model returns error."""
+        kaapi_params = {"voice": "meera", "language": "hi-IN"}
+
+        result, warnings = map_kaapi_to_sarvam_params(kaapi_params)
+
+        assert result == {}
+        assert len(warnings) == 1
+        assert "model" in warnings[0].lower()
+
+    def test_stt_output_language_defaults_to_input(self):
+        """Test that output_language defaults to input_language when not provided."""
+        kaapi_params = STTLLMParams(
+            model="saarika:v1",
+            input_language="hi-IN",
+        )
+
+        result, warnings = map_kaapi_to_sarvam_params(
+            kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["mode"] == "transcribe"
+        assert warnings == []
 
 
 class TestTransformKaapiConfigToNative:
@@ -393,7 +636,10 @@ class TestTransformKaapiConfigToNative:
         assert result.provider == "openai-native"
         assert result.params["model"] == "o1"
         assert result.params["reasoning"] == {"effort": "medium"}
-        assert warnings == []
+        # Temperature is suppressed for reasoning models (even default value)
+        assert "temperature" not in result.params
+        assert len(warnings) == 1
+        assert "temperature" in warnings[0].lower()
 
     def test_transform_with_both_temperature_and_reasoning(self):
         """Test that transformation handles temperature + reasoning intelligently for reasoning models."""
@@ -476,7 +722,6 @@ class TestTransformKaapiConfigToNative:
         assert warnings == []
 
     def test_transform_google_with_unsupported_params(self):
-        """Test that Google transformation warns about unsupported parameters."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
             type="text",
@@ -491,6 +736,74 @@ class TestTransformKaapiConfigToNative:
 
         assert result.provider == "google-native"
         assert result.params["model"] == "gemini-2.5-pro"
+        assert result.params["reasoning"] == "high"
         assert "knowledge_base_ids" not in result.params
-        assert "reasoning" not in result.params
+        assert len(warnings) == 1
+
+    def test_transform_sarvamai_stt_config(self):
+        """Test transformation of Kaapi SarvamAI STT config to native format."""
+        kaapi_config = KaapiCompletionConfig(
+            provider="sarvamai",
+            type="stt",
+            params={
+                "model": "saarika:v1",
+                "input_language": "hi-IN",
+            },
+        )
+
+        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+
+        assert isinstance(result, NativeCompletionConfig)
+        assert result.provider == "sarvamai-native"
+        assert result.type == "stt"
+        assert result.params["model"] == "saarika:v1"
+        assert result.params["language_code"] == "hi-IN"
+        assert result.params["mode"] == "transcribe"
+        assert warnings == []
+
+    def test_transform_sarvamai_tts_config(self):
+        """Test transformation of Kaapi SarvamAI TTS config to native format."""
+        kaapi_config = KaapiCompletionConfig(
+            provider="sarvamai",
+            type="tts",
+            params={
+                "model": "bulbul:v1",
+                "voice": "meera",
+                "language": "hi-IN",
+                "response_format": "mp3",
+            },
+        )
+
+        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+
+        assert isinstance(result, NativeCompletionConfig)
+        assert result.provider == "sarvamai-native"
+        assert result.type == "tts"
+        assert result.params["model"] == "bulbul:v1"
+        assert result.params["speaker"] == "meera"
+        assert result.params["target_language_code"] == "hi-IN"
+        assert result.params["output_audio_codec"] == "mp3"
+        assert warnings == []
+
+    def test_transform_sarvamai_stt_with_unsupported_params(self):
+        """Test SarvamAI STT transformation with unsupported parameters."""
+        kaapi_config = KaapiCompletionConfig(
+            provider="sarvamai",
+            type="stt",
+            params={
+                "model": "saarika:v1",
+                "input_language": "hi-IN",
+                "instructions": "Transcribe carefully",
+                "temperature": 0.5,
+            },
+        )
+
+        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+
+        assert result.provider == "sarvamai-native"
+        assert result.params["model"] == "saarika:v1"
+        assert "instructions" not in result.params
+        assert "temperature" not in result.params
         assert len(warnings) == 2
+        assert any("instructions" in w.lower() for w in warnings)
+        assert any("temperature" in w.lower() for w in warnings)

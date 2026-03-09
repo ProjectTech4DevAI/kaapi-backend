@@ -11,6 +11,8 @@ from app.models.llm.request import (
     TextInput,
     AudioInput,
     QueryInput,
+    ImageInput,
+    PDFInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,7 @@ def create_llm_call(
     *,
     request: LLMCallRequest,
     job_id: UUID,
+    chain_id: UUID | None = None,
     project_id: int,
     organization_id: int,
     resolved_config: ConfigBlob,
@@ -73,8 +76,10 @@ def create_llm_call(
         else getattr(completion_config.params, "type", "text")
     )
 
-    input_type: Literal["text", "audio", "image"]
+    input_type: Literal["text", "audio", "image", "pdf", "multimodal"]
     output_type: Literal["text", "audio", "image"] | None
+
+    query_input = request.query.input
 
     if completion_type == "stt":
         input_type = "audio"
@@ -82,6 +87,15 @@ def create_llm_call(
     elif completion_type == "tts":
         input_type = "text"
         output_type = "audio"
+    elif isinstance(query_input, ImageInput):
+        input_type = "image"
+        output_type = "text"
+    elif isinstance(query_input, PDFInput):
+        input_type = "pdf"
+        output_type = "text"
+    elif isinstance(query_input, list):
+        input_type = "multimodal"
+        output_type = "text"
     else:
         input_type = "text"
         output_type = "text"
@@ -115,6 +129,7 @@ def create_llm_call(
         job_id=job_id,
         project_id=project_id,
         organization_id=organization_id,
+        chain_id=chain_id,
         input=serialize_input(request.query.input),
         input_type=input_type,
         output_type=output_type,

@@ -4,43 +4,19 @@ Evaluations allow you to systematically test LLM configurations against
 predefined datasets with automatic progress tracking and result collection.
 
 **Key Features:**
-* Fetches dataset items from Langfuse and creates batch processing job via OpenAI Batch API
+* Fetches dataset items from Langfuse and creates a batch processing job via the OpenAI Batch API
 * Asynchronous processing with automatic progress tracking (checks every 60s)
-* Supports configuration from direct parameters or existing assistants
+* Uses a stored config (created via `/configs`) to define the provider parameters
 * Stores results for comparison and analysis
-* Use `GET /evaluations/{evaluation_id}` to monitor progress and retrieve results of evaluation.
+* Use `GET /evaluations/{evaluation_id}` to monitor progress and retrieve results
 
-**Example: Using Direct Configuration**
+## Example
 
 ```json
 {
   "dataset_id": 123,
   "experiment_name": "gpt4_file_search_test",
-  "config": {
-    "model": "gpt-4o",
-    "instructions": "You are a helpful FAQ assistant for farmers.",
-    "tools": [
-      {
-        "type": "file_search",
-        "vector_store_ids": ["vs_abc123"],
-        "max_num_results": 5
-      }
-    ],
-    "temperature": 0.7,
-    "include": ["file_search_call.results"]
-  }
+  "config_id": "f54f0d67-4817-4103-9fdf-b74b3d46733e",
+  "config_version": 1
 }
 ```
-
-**Example: Using Existing Assistant**
-
-```json
-{
-  "dataset_id": 123,
-  "experiment_name": "production_assistant_eval",
-  "config": {},
-  "assistant_id": "asst_xyz789"
-}
-```
-
-**Note:** When using `assistant_id`, configuration is fetched from the assistant in the database. You can pass `config` as an empty object `{}`.

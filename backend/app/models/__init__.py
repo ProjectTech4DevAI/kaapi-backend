@@ -86,7 +86,7 @@ from .evaluation import (
     EvaluationRunPublic,
 )
 
-from .file import File, FilePublic, FileType
+from .file import File, FilePublic, FileType, AudioUploadResponse
 
 from .fine_tuning import (
     FineTuningJobBase,
@@ -112,6 +112,9 @@ from .llm import (
     LLMCallRequest,
     LLMCallResponse,
     LlmCall,
+    LLMChainRequest,
+    LLMChainResponse,
+    LlmChain,
 )
 
 from .message import Message
