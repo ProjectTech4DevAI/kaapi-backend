@@ -268,6 +268,12 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
         elevenlabs_params["language_code"] = language
 
         response_format = kaapi_params.get("response_format")
+        if response_format:
+            # Map audio format to SarvamAI codec
+            format_mapping = {"mp3": "mp3", "wav": "wav", "ogg": "ogg"}
+            elevenlabs_params["output_format"] = format_mapping.get(
+                response_format, "wav"
+            )
 
 
 def transform_kaapi_config_to_native(
