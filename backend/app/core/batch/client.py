@@ -1,4 +1,4 @@
-"""Gemini client wrapper for STT evaluation."""
+"""Gemini client wrapper for credential management."""
 
 import logging
 from typing import Any

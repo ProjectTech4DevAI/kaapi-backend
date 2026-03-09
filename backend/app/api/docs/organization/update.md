@@ -1,3 +1,3 @@
 Update organization details.
 
-Updates name and description for an existing organization.
+Updates name and is_active for an existing organization.

@@ -37,7 +37,7 @@ router = APIRouter()
     description=load_description("stt_evaluation/start_evaluation.md"),
 )
 def start_stt_evaluation(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     run_create: STTEvaluationRunCreate = Body(...),
 ) -> APIResponse[STTEvaluationRunPublic]:
@@ -50,7 +50,7 @@ def start_stt_evaluation(
 
     # Validate dataset exists
     dataset = get_stt_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=run_create.dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -69,7 +69,7 @@ def start_stt_evaluation(
 
     # Create run record
     run = create_stt_run(
-        session=_session,
+        session=session,
         run_name=run_create.run_name,
         dataset_id=run_create.dataset_id,
         dataset_name=dataset.name,
@@ -101,7 +101,7 @@ def start_stt_evaluation(
             f"run_id: {run.id}, error: {str(e)}"
         )
         update_stt_run(
-            session=_session,
+            session=session,
             run_id=run.id,
             status="failed",
             error_message=f"Failed to queue batch submission: {str(e)}",
@@ -140,7 +140,7 @@ def start_stt_evaluation(
     description=load_description("stt_evaluation/list_runs.md"),
 )
 def list_stt_evaluation_runs(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int | None = Query(None, description="Filter by dataset ID"),
     status: str | None = Query(None, description="Filter by status"),
@@ -149,7 +149,7 @@ def list_stt_evaluation_runs(
 ) -> APIResponse[list[STTEvaluationRunPublic]]:
     """List STT evaluation runs."""
     runs, total = list_stt_runs(
-        session=_session,
+        session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         dataset_id=dataset_id,
@@ -172,7 +172,7 @@ def list_stt_evaluation_runs(
     description=load_description("stt_evaluation/get_run.md"),
 )
 def get_stt_evaluation_run(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
@@ -186,7 +186,7 @@ def get_stt_evaluation_run(
 ) -> APIResponse[STTEvaluationRunWithResults]:
     """Get an STT evaluation run with results."""
     run = get_stt_run_by_id(
-        session=_session,
+        session=session,
         run_id=run_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -202,11 +202,11 @@ def get_stt_evaluation_run(
         storage = None
         if include_signed_url:
             storage = get_cloud_storage(
-                session=_session, project_id=auth_context.project_.id
+                session=session, project_id=auth_context.project_.id
             )
 
         results, results_total = get_results_by_run_id(
-            session=_session,
+            session=session,
             run_id=run_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
