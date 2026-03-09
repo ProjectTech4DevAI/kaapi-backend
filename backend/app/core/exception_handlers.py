@@ -19,6 +19,10 @@ def _is_branch_identifier(part: str) -> bool:
 
 
 def _filter_union_branch_errors(errors: list[dict]) -> list[dict]:
+    """When a field is a Union type, pydantic returns errors for every possible branch.
+
+    This picks the branch where the validation error happend.
+    """
     try:
         branch_errors: dict[str, dict[str, list[dict]]] = defaultdict(
             lambda: defaultdict(list)
@@ -46,19 +50,31 @@ def _filter_union_branch_errors(errors: list[dict]) -> list[dict]:
                 for errs in branches.values():
                     filtered.extend(errs)
             else:
-                best_branch = min(
-                    branches.items(),
-                    key=lambda item: (
-                        sum(1 for e in item[1] if e.get("type") == "literal_error"),
-                    ),
+                # NOTE: Keep all branches tied for fewest literal errors
+                best_count = min(
+                    sum(1 for e in errs if e.get("type") == "literal_error")
+                    for errs in branches.values()
                 )
-                filtered.extend(best_branch[1])
+                for errs in branches.values():
+                    if (
+                        sum(1 for e in errs if e.get("type") == "literal_error")
+                        <= best_count
+                    ):
+                        filtered.extend(errs)
 
         for err in filtered:
             loc = err.get("loc", ())
             err["loc"] = tuple(p for p in loc if not _is_branch_identifier(p))
 
-        return filtered or errors
+        seen_errors: set[tuple] = set()
+        unique_errors: list[dict] = []
+        for error in filtered:
+            error_key = (tuple(error.get("loc", ())), error.get("msg", ""))
+            if error_key not in seen_errors:
+                seen_errors.add(error_key)
+                unique_errors.append(error)
+
+        return unique_errors or errors
     except Exception:
         return errors
 
