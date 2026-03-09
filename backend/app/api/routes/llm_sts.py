@@ -46,12 +46,9 @@ def speech_to_speech(
     3. TTS (Text-to-Speech) - Converts response back to audio
 
     Input: Voice note (WhatsApp compatible)
-    Output: Voice note + text (via callback)
+    Output 1: Voice note
+    Output 2: text (via intermediate callback)
 
-    Edge cases:
-    - Empty STT output: Chain fails with clear error
-    - Audio > 16MB: TTS provider will fail (caught and reported)
-    - Invalid audio format: STT provider will fail (caught and reported)
     """
     project_id = _current_user.project_.id
     organization_id = _current_user.organization_.id
