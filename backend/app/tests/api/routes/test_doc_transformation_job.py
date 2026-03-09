@@ -55,7 +55,9 @@ class TestGetTransformationJob:
         )
         assert resp.status_code == 422
         body = resp.json()
-        assert "error" in body and "valid UUID" in body["error"]
+        assert body["errors"] and any(
+            "valid UUID" in e["message"] for e in body["errors"]
+        )
 
     def test_get_job_different_project_404(
         self,
@@ -207,9 +209,12 @@ class TestGetMultipleTransformationJobs:
         body = response.json()
         assert body["success"] is False
         assert body["data"] is None
-        assert "error" in body
-        assert "valid UUID" in body["error"] or "expected length" in body["error"]
-        assert "job_ids" in body["error"]
+        assert body["errors"]
+        assert any(
+            "valid UUID" in e["message"] or "expected length" in e["message"]
+            for e in body["errors"]
+        )
+        assert any("job_ids" in e["field"] for e in body["errors"])
 
     def test_get_jobs_with_whitespace_only(
         self, client: TestClient, user_api_key: TestAuthContext
@@ -224,8 +229,8 @@ class TestGetMultipleTransformationJobs:
         body = response.json()
         assert body["success"] is False
         assert body["data"] is None
-        assert "error" in body
-        assert "valid UUID" in body["error"]
+        assert body["errors"]
+        assert any("valid UUID" in e["message"] for e in body["errors"])
 
     def test_get_jobs_invalid_uuid_format_422(
         self, client: TestClient, user_api_key: TestAuthContext
@@ -242,9 +247,12 @@ class TestGetMultipleTransformationJobs:
         body = response.json()
         assert body["success"] is False
         assert body["data"] is None
-        assert "error" in body
-        assert "valid UUID" in body["error"] or "expected length" in body["error"]
-        assert "job_ids" in body["error"]
+        assert body["errors"]
+        assert any(
+            "valid UUID" in e["message"] or "expected length" in e["message"]
+            for e in body["errors"]
+        )
+        assert any("job_ids" in e["field"] for e in body["errors"])
 
     def test_get_jobs_mixed_valid_invalid_uuid_422(
         self, client: TestClient, db: Session, user_api_key: TestAuthContext
@@ -266,12 +274,13 @@ class TestGetMultipleTransformationJobs:
         body = response.json()
         assert body["success"] is False
         assert body["data"] is None
-        assert "error" in body
-        assert "job_ids" in body["error"]
-        assert (
-            "valid UUID" in body["error"]
-            or "invalid character" in body["error"]
-            or "invalid length" in body["error"]
+        assert body["errors"]
+        assert any("job_ids" in e["field"] for e in body["errors"])
+        assert any(
+            "valid UUID" in e["message"]
+            or "invalid character" in e["message"]
+            or "invalid length" in e["message"]
+            for e in body["errors"]
         )
 
     def test_get_jobs_missing_parameter_422(
@@ -287,9 +296,9 @@ class TestGetMultipleTransformationJobs:
         body = response.json()
         assert body["success"] is False
         assert body["data"] is None
-        assert "error" in body
-        assert "Field required" in body["error"]
-        assert "job_ids" in body["error"]
+        assert body["errors"]
+        assert any("Field required" in e["message"] for e in body["errors"])
+        assert any("job_ids" in e["field"] for e in body["errors"])
 
     def test_get_jobs_different_project_not_found(
         self,

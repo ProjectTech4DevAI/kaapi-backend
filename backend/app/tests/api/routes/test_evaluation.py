@@ -347,9 +347,11 @@ class TestDatasetUploadDuplication:
 
         assert response.status_code == 422
         response_data = response.json()
-        # Check that the error mentions validation and minimum value
-        assert "error" in response_data
-        assert "greater than or equal to 1" in response_data["error"]
+        assert response_data["errors"]
+        assert any(
+            "greater than or equal to 1" in e["message"]
+            for e in response_data["errors"]
+        )
 
     def test_upload_with_duplication_factor_above_maximum(
         self,
@@ -372,9 +374,10 @@ class TestDatasetUploadDuplication:
 
         assert response.status_code == 422
         response_data = response.json()
-        # Check that the error mentions validation and maximum value
-        assert "error" in response_data
-        assert "less than or equal to 5" in response_data["error"]
+        assert response_data["errors"]
+        assert any(
+            "less than or equal to 5" in e["message"] for e in response_data["errors"]
+        )
 
     def test_upload_with_duplication_factor_boundary_minimum(
         self,
