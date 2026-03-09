@@ -162,7 +162,7 @@ def get_dataset(
         storage = None
         if include_signed_url:
             storage = get_cloud_storage(
-                session=_session, project_id=auth_context.project_.id
+                session=session, project_id=auth_context.project_.id
             )
 
         samples = []

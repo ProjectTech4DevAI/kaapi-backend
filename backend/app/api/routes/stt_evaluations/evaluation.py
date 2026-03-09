@@ -202,7 +202,7 @@ def get_stt_evaluation_run(
         storage = None
         if include_signed_url:
             storage = get_cloud_storage(
-                session=_session, project_id=auth_context.project_.id
+                session=session, project_id=auth_context.project_.id
             )
 
         results, results_total = get_results_by_run_id(

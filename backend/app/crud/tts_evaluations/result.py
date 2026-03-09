@@ -237,7 +237,7 @@ def update_tts_human_feedback(
 
     logger.info(
         f"[update_tts_human_feedback] Human feedback updated | "
-        f"result_id: {result_id}, is_correct: {is_correct}"
+        f"result_id: {result_id}, is_correct: {kwargs.get('is_correct')}"
     )
 
     return result
