@@ -111,6 +111,9 @@ from .llm import (
     LLMCallRequest,
     LLMCallResponse,
     LlmCall,
+    LLMChainRequest,
+    LLMChainResponse,
+    LlmChain,
 )
 
 from .message import Message
