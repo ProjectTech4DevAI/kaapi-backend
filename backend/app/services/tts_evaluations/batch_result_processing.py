@@ -21,7 +21,7 @@ from app.crud.tts_evaluations.run import update_tts_run
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.services.stt_evaluations.gemini import GeminiClient
-from app.services.tts_evaluations.audio import calculate_duration, pcm_to_wav
+from app.core.audio_utils import calculate_duration, pcm_to_wav
 
 logger = logging.getLogger(__name__)
 

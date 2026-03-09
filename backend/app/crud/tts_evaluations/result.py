@@ -1,7 +1,6 @@
 """CRUD operations for TTS evaluation results."""
 
 import logging
-from enum import Enum
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -10,15 +9,6 @@ from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult, TTSResultPublic
-
-
-class _Unset(Enum):
-    """Sentinel to distinguish 'not provided' from None."""
-
-    UNSET = "UNSET"
-
-
-UNSET = _Unset.UNSET
 
 logger = logging.getLogger(__name__)
 
@@ -203,21 +193,19 @@ def update_tts_human_feedback(
     result_id: int,
     org_id: int,
     project_id: int,
-    is_correct: bool | None | _Unset = UNSET,
-    comment: str | None | _Unset = UNSET,
+    **kwargs: Any,
 ) -> TTSResult | None:
     """Update human feedback on a TTS result.
 
-    Uses a sentinel to distinguish "not provided" from "explicitly None".
-    Passing is_correct=None clears the value; omitting it leaves it unchanged.
+    Only fields passed in kwargs are updated. Passing is_correct=None clears
+    the value; omitting it leaves it unchanged.
 
     Args:
         session: Database session
         result_id: Result ID
         org_id: Organization ID
         project_id: Project ID
-        is_correct: Human verification of quality (UNSET = don't change)
-        comment: Feedback comment (UNSET = don't change)
+        **kwargs: Fields to update (is_correct, comment)
 
     Returns:
         TTSResult | None: Updated result
@@ -235,11 +223,11 @@ def update_tts_human_feedback(
     if not result:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    if is_correct is not UNSET:
-        result.is_correct = is_correct
+    if "is_correct" in kwargs:
+        result.is_correct = kwargs["is_correct"]
 
-    if comment is not UNSET:
-        result.comment = comment
+    if "comment" in kwargs:
+        result.comment = kwargs["comment"]
 
     result.updated_at = now()
 
