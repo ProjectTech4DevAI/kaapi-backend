@@ -228,6 +228,48 @@ def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     return sarvam_params, warnings
 
 
+def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+    """
+    Map Kaapi-abstracted parameters to ElevenLab API params
+    Handles both STTLLMParams and TTSLLMParams.
+
+    STTLLMParams: model, instructions, input_language, output_language, response_format, temperature
+    TTSLLMParams: model, voice, language, response_format
+
+    Args:
+        kaapi_params: Dictionary with standardized Kaapi parameters
+
+    Returns:
+        Tuple of:
+        - Dictionary of SarvamAI API parameters
+        - List of warnings for unsupported parameters
+
+    """
+    elevenlabs_params = {}
+    warnings = []
+
+    model_id = kaapi_params.get("model")
+    if not model_id:
+        return {}, ["Missing required 'model' parameter"]
+    elevenlabs_params["model_id"] = model_id
+
+    # determine if STT or TTS bases on specific params
+    voice = kaapi_params.get("voice")
+    input_language = kaapi_params.get("input_language")
+
+    if voice is not None:
+        # TTS Mode
+        # TODO fetch voice_id from the voice
+        elevenlabs_params["voice_id"] = "JBFqnCBsd6RMkjVDRZzb"
+        language = kaapi_params.get("language")
+        if not language:
+            return {}, ["Missing required 'language' parameter for TTS"]
+        # TODO convert from BCP-47 to ISO 639-1
+        elevenlabs_params["language_code"] = language
+
+        response_format = kaapi_params.get("response_format")
+
+
 def transform_kaapi_config_to_native(
     kaapi_config: KaapiCompletionConfig,
 ) -> tuple[NativeCompletionConfig, list[str]]:

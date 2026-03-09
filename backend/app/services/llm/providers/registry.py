@@ -5,7 +5,7 @@ from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.oai import OpenAIProvider
 from app.services.llm.providers.gai import GoogleAIProvider
 from app.services.llm.providers.sai import SarvamAIProvider
-from app.services.llm.providers.eai import ElevenLabsAIProvider 
+from app.services.llm.providers.eai import ElevenlabsAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 class LLMProvider:
     OPENAI_NATIVE = "openai-native"
     OPENAI = "openai"
+    SARVAMAI = "sarvamai"
+    ELEVENLABS = "elevenlabs"
     # Future constants for native providers:
     # CLAUDE_NATIVE = "claude-native"
     GOOGLE_NATIVE = "google-native"
@@ -22,11 +24,12 @@ class LLMProvider:
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI_NATIVE: OpenAIProvider,
         OPENAI: OpenAIProvider,
+        ELEVENLABS: ElevenlabsAIProvider,
         # Future native providers:
         # CLAUDE_NATIVE: ClaudeProvider,
         GOOGLE_NATIVE: GoogleAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
-        ELEVENLABS_NATIVE: ElevenLabsAIProvider,
+        ELEVENLABS_NATIVE: ElevenlabsAIProvider,
     }
 
     @classmethod
