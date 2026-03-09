@@ -39,6 +39,9 @@ dependencies = [
     "google-genai>=1.59.0",
     "sarvamai>=0.1.25",
     "pydub>=0.25.1",
+    "jiwer>=3.1.0",
+    "indic-nlp-library>=0.92",
+    "whisper-normalizer>=0.1.12",
 ]
 
 [tool.uv]
