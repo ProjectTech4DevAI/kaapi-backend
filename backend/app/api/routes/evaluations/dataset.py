@@ -154,7 +154,7 @@ def get_dataset(
     signed_url = None
     if include_signed_url and dataset.object_store_url:
         storage = get_cloud_storage(
-            session=_session, project_id=auth_context.project_.id
+            session=session, project_id=auth_context.project_.id
         )
         signed_url = storage.get_signed_url(dataset.object_store_url)
 
