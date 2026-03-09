@@ -1,6 +1,7 @@
 """Batch processing infrastructure for LLM providers."""
 
 from .base import BATCH_KEY, BatchProvider
+from .client import GeminiClient, GeminiClientError
 from .gemini import (
     BatchJobState,
     GeminiBatchProvider,
@@ -21,6 +22,8 @@ __all__ = [
     "BATCH_KEY",
     "BatchProvider",
     "BatchJobState",
+    "GeminiClient",
+    "GeminiClientError",
     "GeminiBatchProvider",
     "OpenAIBatchProvider",
     "create_stt_batch_requests",

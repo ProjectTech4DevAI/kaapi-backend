@@ -13,10 +13,14 @@ from typing import Any
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 
-from app.core.batch import BatchJobState, GeminiBatchProvider, poll_batch_status
+from app.core.batch import (
+    BatchJobState,
+    GeminiBatchProvider,
+    GeminiClient,
+    poll_batch_status,
+)
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
-from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 

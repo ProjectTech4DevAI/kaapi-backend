@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.core.batch import (
     GeminiBatchProvider,
+    GeminiClient,
     create_tts_batch_requests,
     start_batch_job,
 )
@@ -19,7 +20,6 @@ from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
-from app.services.stt_evaluations.gemini import GeminiClient
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_TTS_MODEL,

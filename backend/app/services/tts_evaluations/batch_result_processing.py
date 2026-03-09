@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.core.batch import BATCH_KEY, GeminiBatchProvider
+from app.core.batch import BATCH_KEY, GeminiBatchProvider, GeminiClient
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.core.storage_utils import upload_to_object_store
@@ -20,7 +20,6 @@ from app.crud.tts_evaluations.result import count_results_by_status
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
-from app.services.stt_evaluations.gemini import GeminiClient
 from app.core.audio_utils import calculate_duration, pcm_to_wav
 
 logger = logging.getLogger(__name__)
