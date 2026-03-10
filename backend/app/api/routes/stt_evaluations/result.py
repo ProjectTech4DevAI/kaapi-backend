@@ -6,10 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud.stt_evaluations import (
-    get_stt_result_by_id,
-    update_human_feedback,
-)
+from app.crud.stt_evaluations import get_stt_result_by_id, update_human_feedback
 from app.models.stt_evaluation import (
     STTFeedbackUpdate,
     STTResultPublic,

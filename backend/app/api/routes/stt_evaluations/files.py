@@ -81,9 +81,7 @@ def list_audio(
     )
 
     result = build_file_schemas(
-        files=files,
-        include_signed_url=include_signed_url,
-        storage=storage,
+        files=files, include_signed_url=include_signed_url, storage=storage
     )
 
     return APIResponse.success_response(data=result)
@@ -128,9 +126,7 @@ def get_audio(
         )
 
     result = build_file_schema(
-        file=file,
-        include_signed_url=include_signed_url,
-        storage=storage,
+        file=file, include_signed_url=include_signed_url, storage=storage
     )
 
     return APIResponse.success_response(data=result)
