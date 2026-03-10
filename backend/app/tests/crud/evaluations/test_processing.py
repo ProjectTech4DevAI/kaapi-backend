@@ -13,6 +13,7 @@ from app.crud.evaluations.processing import (
     poll_all_pending_evaluations,
 )
 from app.models import BatchJob, Organization, Project, EvaluationDataset, EvaluationRun
+from app.models.batch_job import BatchJobType
 from app.tests.utils.test_data import create_test_evaluation_dataset, create_test_config
 from app.crud.evaluations.core import create_evaluation_run
 from app.core.util import now
@@ -300,7 +301,7 @@ class TestProcessCompletedEvaluation:
             provider="openai",
             provider_batch_id="batch_abc123",
             provider_status="completed",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -499,7 +500,7 @@ class TestProcessCompletedEmbeddingBatch:
             provider="openai",
             provider_batch_id="batch_embed_123",
             provider_status="completed",
-            job_type="embedding",
+            job_type=BatchJobType.EMBEDDING,
             total_items=4,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -657,7 +658,7 @@ class TestCheckAndProcessEvaluation:
             provider="openai",
             provider_batch_id="batch_abc",
             provider_status="completed",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -724,7 +725,7 @@ class TestCheckAndProcessEvaluation:
             provider="openai",
             provider_batch_id="batch_fail",
             provider_status="failed",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             error_message="Provider error",
@@ -828,7 +829,7 @@ class TestPollAllPendingEvaluations:
             provider="openai",
             provider_batch_id="batch_test",
             provider_status="in_progress",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,

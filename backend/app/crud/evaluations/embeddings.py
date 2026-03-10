@@ -19,6 +19,7 @@ from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.core.batch.base import BATCH_KEY
 from app.core.util import now
 from app.models import EvaluationRun
+from app.models.batch_job import BatchJobType
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +396,7 @@ def start_embedding_batch(
             session=session,
             provider=provider,
             provider_name="openai",
-            job_type="embedding",
+            job_type=BatchJobType.EMBEDDING,
             organization_id=eval_run.organization_id,
             project_id=eval_run.project_id,
             jsonl_data=jsonl_data,

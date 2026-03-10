@@ -233,9 +233,15 @@ class TestGeminiBatchProvider:
         )
         assert len(results) == 2
         assert results[0]["custom_id"] == "req-1"
-        assert results[0]["response"]["text"] == "Hello"
+        assert (
+            results[0]["response"]["candidates"][0]["content"]["parts"][0]["text"]
+            == "Hello"
+        )
         assert results[1]["custom_id"] == "req-2"
-        assert results[1]["response"]["text"] == "World"
+        assert (
+            results[1]["response"]["candidates"][0]["content"]["parts"][0]["text"]
+            == "World"
+        )
 
     def test_download_batch_results_with_direct_text_response(
         self, provider, mock_genai_client
@@ -255,7 +261,9 @@ class TestGeminiBatchProvider:
         results = provider.download_batch_results(batch_id)
 
         assert len(results) == 1
-        assert results[0]["response"]["text"] == "Direct text"
+        assert (
+            results[0]["response"]["text"] == "Direct text"
+        )  # raw response passthrough
 
     def test_download_batch_results_with_errors(self, provider, mock_genai_client):
         """Test downloading batch results that contain errors."""

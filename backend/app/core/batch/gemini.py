@@ -18,6 +18,26 @@ from .base import BATCH_KEY, BatchProvider
 logger = logging.getLogger(__name__)
 
 
+def extract_text_from_response_dict(response: dict[str, Any]) -> str:
+    """Extract text content from a Gemini response dictionary.
+
+    Args:
+        response: Gemini response as a dictionary
+
+    Returns:
+        str: Extracted text
+    """
+    text = ""
+    for candidate in response.get("candidates", []):
+        content = candidate.get("content", {})
+        for part in content.get("parts", []):
+            if "text" in part:
+                text += part["text"]
+    if not text and "text" in response:
+        text = response["text"]
+    return text
+
+
 class BatchJobState(str, Enum):
     """Gemini batch job states."""
 
@@ -207,11 +227,19 @@ class GeminiBatchProvider(BatchProvider):
             results: list[dict[str, Any]] = []
 
             # Handle file-based results (keys are included in each response line)
-            if (
+            has_dest_file = (
                 batch_job.dest
                 and hasattr(batch_job.dest, "file_name")
                 and batch_job.dest.file_name
-            ):
+            )
+            if not has_dest_file:
+                logger.warning(
+                    f"[download_batch_results] No dest file found | "
+                    f"batch_id={output_file_id} | "
+                    f"dest={batch_job.dest} | "
+                    f"dest_attrs={dir(batch_job.dest) if batch_job.dest else 'None'}"
+                )
+            if has_dest_file:
                 file_content = self.download_file(batch_job.dest.file_name)
                 lines = file_content.strip().split("\n")
                 for i, line in enumerate(lines):
@@ -219,14 +247,14 @@ class GeminiBatchProvider(BatchProvider):
                         parsed = json.loads(line)
                         custom_id = parsed.get("key", str(i))
 
-                        # Extract text from response
+                        # Return the raw response so callers can extract
+                        # text (STT) or audio (TTS) as needed.
                         response_obj = parsed.get("response")
                         if response_obj:
-                            text = self._extract_text_from_response_dict(response_obj)
                             results.append(
                                 {
                                     BATCH_KEY: custom_id,
-                                    "response": {"text": text},
+                                    "response": response_obj,
                                     "error": None,
                                 }
                             )
@@ -261,26 +289,8 @@ class GeminiBatchProvider(BatchProvider):
 
     @staticmethod
     def _extract_text_from_response_dict(response: dict[str, Any]) -> str:
-        """Extract text content from a Gemini response dictionary.
-
-        Args:
-            response: Gemini response as a dictionary
-
-        Returns:
-            str: Extracted text
-        """
-        # Try direct text field first
-        if "text" in response:
-            return response["text"]
-
-        # Extract from candidates structure
-        text = ""
-        for candidate in response.get("candidates", []):
-            content = candidate.get("content", {})
-            for part in content.get("parts", []):
-                if "text" in part:
-                    text += part["text"]
-        return text
+        """Extract text content from a Gemini response dictionary."""
+        return extract_text_from_response_dict(response)
 
     def upload_file(self, content: str, purpose: str = "batch") -> str:
         """Upload a JSONL file to Gemini Files API.
@@ -439,5 +449,74 @@ def create_stt_batch_requests(
         requests.append(request)
 
     logger.info(f"[create_stt_batch_requests] Created {len(requests)} batch requests")
+
+    return requests
+
+
+def create_tts_batch_requests(
+    texts: list[str],
+    voice_name: str,
+    style_prompt: str | None = None,
+    keys: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Create batch API requests for Gemini TTS.
+
+    Generates request payloads in Gemini's JSONL batch format for
+    text-to-speech synthesis with audio output.
+
+    Args:
+        texts: List of text strings to synthesize
+        voice_name: Prebuilt voice name (e.g., "Kore")
+        style_prompt: Optional style/tone instructions prepended to text
+        keys: Optional list of custom IDs for tracking results. If not provided,
+              uses 0-indexed integers as strings.
+
+    Returns:
+        List of batch request dicts in Gemini JSONL format
+
+    Example:
+        >>> texts = ["Hello, how can I help you?"]
+        >>> requests = create_tts_batch_requests(
+        ...     texts, voice_name="Kore",
+        ...     style_prompt="Read in a calm tone",
+        ...     keys=["result-1"]
+        ... )
+    """
+    if keys is not None and len(keys) != len(texts):
+        raise ValueError(
+            f"Length of keys ({len(keys)}) must match texts ({len(texts)})"
+        )
+
+    requests = []
+    for i, text in enumerate(texts):
+        key = keys[i] if keys is not None else str(i)
+
+        # Prepend style prompt if provided
+        content_text = f"{style_prompt}: {text}" if style_prompt else text
+
+        request = {
+            "key": key,
+            "request": {
+                "contents": [
+                    {
+                        "parts": [{"text": content_text}],
+                        "role": "user",
+                    }
+                ],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": voice_name,
+                            }
+                        }
+                    },
+                },
+            },
+        }
+        requests.append(request)
+
+    logger.info(f"[create_tts_batch_requests] Created {len(requests)} batch requests")
 
     return requests

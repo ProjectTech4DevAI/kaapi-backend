@@ -293,12 +293,12 @@ def poll_run_and_prepare_response(request: dict, client: OpenAI, db: SessionDep)
 async def threads(
     request: dict,
     background_tasks: BackgroundTasks,
-    _session: SessionDep,
+    session: SessionDep,
     _current_user: AuthContextDep,
 ):
     """Asynchronous endpoint that processes requests in background."""
     credentials = get_provider_credential(
-        session=_session,
+        session=session,
         org_id=_current_user.organization_.id,
         provider="openai",
         project_id=request.get("project_id"),
@@ -313,7 +313,7 @@ async def threads(
         )
 
     langfuse_credentials = get_provider_credential(
-        session=_session,
+        session=session,
         org_id=_current_user.organization_.id,
         provider="langfuse",
         project_id=request.get("project_id"),
@@ -365,12 +365,12 @@ async def threads(
 )
 async def threads_sync(
     request: dict,
-    _session: SessionDep,
+    session: SessionDep,
     _current_user: AuthContextDep,
 ):
     """Synchronous endpoint that processes requests immediately."""
     credentials = get_provider_credential(
-        session=_session,
+        session=session,
         org_id=_current_user.organization_.id,
         provider="openai",
         project_id=request.get("project_id"),
@@ -388,7 +388,7 @@ async def threads_sync(
 
     # Get Langfuse credentials
     langfuse_credentials = get_provider_credential(
-        session=_session,
+        session=session,
         org_id=_current_user.organization_.id,
         provider="langfuse",
         project_id=request.get("project_id"),

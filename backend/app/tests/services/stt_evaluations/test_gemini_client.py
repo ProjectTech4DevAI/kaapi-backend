@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.stt_evaluations.gemini.client import (
+from app.core.batch.client import (
     GeminiClient,
     GeminiClientError,
 )
@@ -13,7 +13,7 @@ from app.services.stt_evaluations.gemini.client import (
 class TestGeminiClientInit:
     """Test cases for GeminiClient initialization."""
 
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
+    @patch("app.core.batch.client.genai.Client")
     def test_initialization_with_api_key(self, mock_genai_client):
         """Test client initialization with API key."""
         mock_client_instance = MagicMock()
@@ -24,7 +24,7 @@ class TestGeminiClientInit:
         mock_genai_client.assert_called_once_with(api_key="test-api-key")
         assert client._api_key == "test-api-key"
 
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
+    @patch("app.core.batch.client.genai.Client")
     def test_client_property(self, mock_genai_client):
         """Test client property returns underlying client."""
         mock_client_instance = MagicMock()
@@ -38,8 +38,8 @@ class TestGeminiClientInit:
 class TestGeminiClientFromCredentials:
     """Test cases for GeminiClient.from_credentials class method."""
 
-    @patch("app.services.stt_evaluations.gemini.client.genai.Client")
-    @patch("app.services.stt_evaluations.gemini.client.get_provider_credential")
+    @patch("app.core.batch.client.genai.Client")
+    @patch("app.core.batch.client.get_provider_credential")
     def test_successful_creation(self, mock_get_creds, mock_genai_client):
         """Test successful client creation from credentials."""
         mock_get_creds.return_value = {"api_key": "stored-api-key"}
@@ -62,7 +62,7 @@ class TestGeminiClientFromCredentials:
         )
         assert client._api_key == "stored-api-key"
 
-    @patch("app.services.stt_evaluations.gemini.client.get_provider_credential")
+    @patch("app.core.batch.client.get_provider_credential")
     def test_credentials_not_found(self, mock_get_creds):
         """Test error when credentials are not found."""
         from app.core.exception_handlers import HTTPException
@@ -80,7 +80,7 @@ class TestGeminiClientFromCredentials:
         assert exc_info.value.status_code == 404
         assert "credentials not configured" in str(exc_info.value.detail)
 
-    @patch("app.services.stt_evaluations.gemini.client.get_provider_credential")
+    @patch("app.core.batch.client.get_provider_credential")
     def test_missing_api_key(self, mock_get_creds):
         """Test error when credentials exist but api_key is missing."""
         mock_get_creds.return_value = {"other_field": "value"}  # No api_key
@@ -95,7 +95,7 @@ class TestGeminiClientFromCredentials:
 
         assert "missing api_key" in str(exc_info.value)
 
-    @patch("app.services.stt_evaluations.gemini.client.get_provider_credential")
+    @patch("app.core.batch.client.get_provider_credential")
     def test_empty_api_key(self, mock_get_creds):
         """Test error when api_key is empty."""
         mock_get_creds.return_value = {"api_key": ""}  # Empty api_key

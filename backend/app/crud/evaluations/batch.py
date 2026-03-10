@@ -18,6 +18,7 @@ from app.core.batch.base import BATCH_KEY
 
 from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.models import EvaluationRun
+from app.models.batch_job import BatchJobType
 from app.models.llm.request import KaapiLLMParams
 
 logger = logging.getLogger(__name__)
@@ -196,7 +197,7 @@ def start_evaluation_batch(
             session=session,
             provider=provider,
             provider_name="openai",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             organization_id=eval_run.organization_id,
             project_id=eval_run.project_id,
             jsonl_data=jsonl_data,
