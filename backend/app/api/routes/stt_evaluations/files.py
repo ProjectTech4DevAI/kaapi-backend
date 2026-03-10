@@ -106,7 +106,7 @@ def get_audio(
     logger.info(
         f"[get_audio] Getting audio file | "
         f"project_id: {auth_context.project_.id}, file_id: {file_id}, "
-        f"include__signed_url: {include_signed_url}"
+        f"include_signed_url: {include_signed_url}"
     )
 
     file = get_file_by_id(
