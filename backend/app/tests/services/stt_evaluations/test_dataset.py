@@ -13,6 +13,36 @@ from app.services.stt_evaluations.dataset import (
 )
 
 
+class TestSTTSampleCreateModel:
+    """Test cases for STTSampleCreate model with language_id field."""
+
+    def test_sample_create_without_language_id(self):
+        """Test creating STTSampleCreate without language_id defaults to None."""
+        sample = STTSampleCreate(file_id=1)
+        assert sample.language_id is None
+
+    def test_sample_create_with_language_id(self):
+        """Test creating STTSampleCreate with explicit language_id."""
+        sample = STTSampleCreate(file_id=1, language_id=42)
+        assert sample.language_id == 42
+
+    def test_sample_create_with_none_language_id(self):
+        """Test creating STTSampleCreate with explicit None language_id."""
+        sample = STTSampleCreate(file_id=1, language_id=None)
+        assert sample.language_id is None
+
+    def test_sample_create_with_all_fields(self):
+        """Test creating STTSampleCreate with all fields populated."""
+        sample = STTSampleCreate(
+            file_id=1,
+            ground_truth="Hello world",
+            language_id=5,
+        )
+        assert sample.file_id == 1
+        assert sample.ground_truth == "Hello world"
+        assert sample.language_id == 5
+
+
 class TestSamplesToCSV:
     """Test cases for _samples_to_csv function."""
 

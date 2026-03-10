@@ -280,8 +280,9 @@ class STTDatasetCreate(BaseModel):
 
     name: str = Field(..., description="Dataset name", min_length=1)
     description: str | None = Field(None, description="Dataset description")
-    language_id: int | None = Field(
-        None, description="ID of the language from global languages table"
+    language_id: int = Field(
+        1,
+        description="ID of the language from global languages table (default: English)",
     )
     samples: list[STTSampleCreate] = Field(
         ..., description="List of audio samples", min_length=1
