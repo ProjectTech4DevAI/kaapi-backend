@@ -18,11 +18,11 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/results")
+router = APIRouter()
 
 
 @router.patch(
-    "/{result_id}",
+    "/results/{result_id}",
     response_model=APIResponse[STTResultPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Update human feedback",
@@ -70,7 +70,7 @@ def update_result_feedback(
 
 
 @router.get(
-    "/{result_id}",
+    "/results/{result_id}",
     response_model=APIResponse[STTResultPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT result",

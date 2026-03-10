@@ -15,11 +15,11 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/files")
+router = APIRouter()
 
 
 @router.post(
-    "",
+    "/files",
     response_model=APIResponse[AudioUploadResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Upload audio file",
@@ -47,7 +47,7 @@ def upload_audio(
 
 
 @router.get(
-    "",
+    "/files",
     response_model=APIResponse[list[FilePublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List audio files",
@@ -56,7 +56,7 @@ def upload_audio(
 def list_audio(
     _session: SessionDep,
     auth_context: AuthContextDep,
-    include_url: bool = Query(
+    include_signed_url: bool = Query(
         True, description="Include a signed URL to access the audio file"
     ),
 ) -> APIResponse[list[FilePublic]]:
@@ -65,11 +65,11 @@ def list_audio(
     logger.info(
         f"[list_audio] Listing audio files | "
         f"project_id: {auth_context.project_.id}, "
-        f"include_url: {include_url}"
+        f"include_signed_url: {include_signed_url}"
     )
 
     storage = None
-    if include_url:
+    if include_signed_url:
         storage = get_cloud_storage(
             session=_session, project_id=auth_context.project_.id
         )
@@ -82,7 +82,7 @@ def list_audio(
 
     result = build_file_schemas(
         files=files,
-        include_url=include_url,
+        include_signed_url=include_signed_url,
         storage=storage,
     )
 
@@ -90,7 +90,7 @@ def list_audio(
 
 
 @router.get(
-    "/{file_id}",
+    "/files/{file_id}",
     response_model=APIResponse[FilePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get audio file by ID",
@@ -100,7 +100,7 @@ def get_audio(
     _session: SessionDep,
     auth_context: AuthContextDep,
     file_id: int,
-    include_url: bool = Query(
+    include_signed_url: bool = Query(
         True, description="Include a signed URL to access the audio file"
     ),
 ) -> APIResponse[FilePublic]:
@@ -108,7 +108,7 @@ def get_audio(
     logger.info(
         f"[get_audio] Getting audio file | "
         f"project_id: {auth_context.project_.id}, file_id: {file_id}, "
-        f"include_url: {include_url}"
+        f"include__signed_url: {include_signed_url}"
     )
 
     file = get_file_by_id(
@@ -122,14 +122,14 @@ def get_audio(
         raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
 
     storage = None
-    if include_url:
+    if include_signed_url:
         storage = get_cloud_storage(
             session=_session, project_id=auth_context.project_.id
         )
 
     result = build_file_schema(
         file=file,
-        include_url=include_url,
+        include_signed_url=include_signed_url,
         storage=storage,
     )
 

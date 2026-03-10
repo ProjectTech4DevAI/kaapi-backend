@@ -25,11 +25,11 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/datasets")
+router = APIRouter()
 
 
 @router.post(
-    "",
+    "/datasets",
     response_model=APIResponse[STTDatasetPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Create STT dataset",
@@ -80,7 +80,7 @@ def create_dataset(
 
 
 @router.get(
-    "",
+    "/datasets",
     response_model=APIResponse[list[STTDatasetPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="List STT datasets",
@@ -108,7 +108,7 @@ def list_datasets(
 
 
 @router.get(
-    "/{dataset_id}",
+    "/datasets/{dataset_id}",
     response_model=APIResponse[STTDatasetWithSamples],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Get STT dataset",
