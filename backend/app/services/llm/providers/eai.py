@@ -76,11 +76,12 @@ class ElevenlabsAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for Elevenlabs STT"
+        model_id = params.get("model_id")
+        if not model_id:
+            return None, "Missing 'model_id' in native params for Elevenlabs STT"
 
         language_code = params.get("language_code")
+        temperature = params.get("temperature")
 
         # Parse and validate input
         parsed_input_path = self._parse_input(
@@ -90,11 +91,18 @@ class ElevenlabsAIProvider(BaseProvider):
         )
 
         try:
+            # Build optional kwargs
+            stt_kwargs: dict[str, Any] = {}
+            if language_code:
+                stt_kwargs["language_code"] = language_code
+            if temperature is not None:
+                stt_kwargs["temperature"] = temperature
+
             with open(parsed_input_path, "rb") as audio_file:
                 # Call ElevenLabs transcribe with all mapped parameters
                 elevenlabs_response: SpeechToTextConvertResponse = (
                     self.client.speech_to_text.convert(
-                        file=audio_file, model_id=model, language_code=language_code
+                        file=audio_file, model_id=model_id, **stt_kwargs
                     )
                 )
 
@@ -109,7 +117,7 @@ class ElevenlabsAIProvider(BaseProvider):
                     or "unknown",
                     conversation_id=None,
                     provider=provider_name,
-                    model=model,
+                    model=model_id,
                     output=TextOutput(
                         content=TextContent(value=elevenlabs_response.text)
                     ),
@@ -127,7 +135,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_stt] Successfully transcribed audio | "
-                f"request_id={elevenlabs_response.transcription_id}, model={model}"
+                f"request_id={elevenlabs_response.transcription_id}, model={model_id}"
             )
             return llm_response, None
 
@@ -156,9 +164,9 @@ class ElevenlabsAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for Elevenlabs TTS"
+        model_id = params.get("model_id")
+        if not model_id:
+            return None, "Missing 'model_id' in native params for Elevenlabs TTS"
 
         voice_id = params.get("voice_id")
         if not voice_id:
@@ -187,7 +195,7 @@ class ElevenlabsAIProvider(BaseProvider):
             audio_iterator = self.client.text_to_speech.convert(
                 voice_id=voice_id,
                 text=parsed_text,
-                model_id=model,
+                model_id=model_id,
                 output_format=output_format,
                 **tts_kwargs,
             )
@@ -221,7 +229,7 @@ class ElevenlabsAIProvider(BaseProvider):
                     provider_response_id="unknown",
                     conversation_id=None,
                     provider=provider_name,
-                    model=model,
+                    model=model_id,
                     output=AudioOutput(
                         content=AudioContent(
                             format="base64",
@@ -246,7 +254,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_tts] Successfully converted text to speech | "
-                f"model={model}, voice_id={voice_id}, output_format={output_format}"
+                f"model={model_id}, voice_id={voice_id}, output_format={output_format}"
             )
             return llm_response, None
 

@@ -3,6 +3,55 @@
 import litellm
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 
+# BCP-47 language tag → ElevenLabs ISO 639-3 code (Indic + English)
+BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
+    "en-IN": "eng",
+    "hi-IN": "hin",
+    "bn-IN": "ben",
+    "ta-IN": "tam",
+    "te-IN": "tel",
+    "mr-IN": "mar",
+    "gu-IN": "guj",
+    "kn-IN": "kan",
+    "ml-IN": "mal",
+    "pa-IN": "pan",
+    "od-IN": "ori",
+    "as-IN": "asm",
+    "ur-IN": "urd",
+    "ne-IN": "nep",
+    "sd-IN": "snd",
+}
+
+ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
+    "Sarah": "EXAVITQu4vr4xnSDxMaL",
+    "George": "JBFqnCBsd6RMkjVDRZzb",
+    "Callum": "N2lVS1w4EtoT3dr4eOWO",
+    "Liam": "TX3LPaxmHKxFdv7VOQHJ",
+}
+
+
+def voice_to_id(voice: str) -> str | None:
+    """
+        Convert voice to its corresponding voice_id
+
+    Returns:
+        voice_id associated with a voice
+    """
+
+    return ELEVENLABS_VOICE_TO_ID.get(voice)
+
+
+def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
+    """Convert a BCP-47 language tag to an ElevenLabs ISO 639-3 language code.
+
+    Args:
+        bcp47_code: BCP-47 language tag (e.g. "en-IN", "hi-IN", "ta-IN")
+
+    Returns:
+        ISO 639-3 code (e.g. "eng", "hin", "tam") or None if unsupported
+    """
+    return BCP47_TO_ELEVENLABS_LANG.get(bcp47_code)
+
 
 def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
@@ -241,7 +290,7 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
 
     Returns:
         Tuple of:
-        - Dictionary of SarvamAI API parameters
+        - Dictionary of ELevenlabs API parameters
         - List of warnings for unsupported parameters
 
     """
@@ -259,21 +308,66 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
 
     if voice is not None:
         # TTS Mode
-        # TODO fetch voice_id from the voice
-        elevenlabs_params["voice_id"] = "JBFqnCBsd6RMkjVDRZzb"
+        voice_id = voice_to_id(voice)
+        if not voice_id:
+            return {}, [f"Unsupported voice '{voice}' for ElevenLabs TTS"]
+        elevenlabs_params["voice_id"] = voice_id
         language = kaapi_params.get("language")
         if not language:
             return {}, ["Missing required 'language' parameter for TTS"]
-        # TODO convert from BCP-47 to ISO 639-1
-        elevenlabs_params["language_code"] = language
+        elevenlabs_lang = bcp47_to_elevenlabs_lang(language)
+        if not elevenlabs_lang:
+            return {}, [f"Unsupported language '{language}' for ElevenLabs TTS"]
+        elevenlabs_params["language_code"] = elevenlabs_lang
 
         response_format = kaapi_params.get("response_format")
         if response_format:
-            # Map audio format to SarvamAI codec
-            format_mapping = {"mp3": "mp3", "wav": "wav", "ogg": "ogg"}
+            # Map audio format to Elevenlabs codec
+            # supports mp3, wav and opus
+            format_mapping = {
+                "mp3": "mp3_44100_128",
+                "wav": "wav_24000",
+                "opus": "opus_48000_128",
+            }
             elevenlabs_params["output_format"] = format_mapping.get(
-                response_format, "wav"
+                response_format, "mp3_44100_128"
             )
+    elif input_language is not None or kaapi_params.get("output_language") is not None:
+        # STT mode --> map STTLLMParams
+        output_language = kaapi_params.get("output_language")
+        if input_language == "auto":
+            elevenlabs_params["language_code"] = None
+        elif input_language:
+            elevenlabs_lang = bcp47_to_elevenlabs_lang(input_language)
+            if elevenlabs_lang:
+                elevenlabs_params["language_code"] = elevenlabs_lang
+            else:
+                warnings.append(
+                    f"Unsupported language '{input_language}' for ElevenLabs STT, defaulting to auto-detect"
+                )
+
+        if output_language and output_language != input_language:
+            warnings.append(
+                "Parameter 'output_language' is not supported by ElevenLabs STT. "
+                "ElevenLabs only supports transcription, not translation. "
+                "The audio will be transcribed in its original language."
+            )
+
+        temperature = kaapi_params.get("temperature")
+        if temperature is not None:
+            elevenlabs_params["temperature"] = temperature
+
+        response_format = kaapi_params.get("response_format")
+        if response_format:
+            warnings.append("Kaapi only supports 'txt' as the default response format.")
+
+        # Warn about unsupported STT parameters
+        instructions = kaapi_params.get("instructions")
+        if instructions:
+            warnings.append(
+                "Parameter 'instructions' is not supported by ElevenLabs STT and was ignored."
+            )
+    return elevenlabs_params, warnings
 
 
 def transform_kaapi_config_to_native(
@@ -291,6 +385,7 @@ def transform_kaapi_config_to_native(
         - NativeCompletionConfig with provider-native parameters ready for API
         - List of warnings for suppressed/ignored parameters
     """
+    # TODO change from magic string to enums
     if kaapi_config.provider == "openai":
         mapped_params, warnings = map_kaapi_to_openai_params(kaapi_config.params)
         return (
@@ -314,6 +409,18 @@ def transform_kaapi_config_to_native(
         return (
             NativeCompletionConfig(
                 provider="sarvamai-native", params=mapped_params, type=kaapi_config.type
+            ),
+            warnings,
+        )
+
+    if kaapi_config.provider == "elevenlabs":
+        mapped_params, warnings = map_kaapi_to_elevenlabs_params(kaapi_config.params)
+
+        return (
+            NativeCompletionConfig(
+                provider="elevenlabs-native",
+                params=mapped_params,
+                type=kaapi_config.type,
             ),
             warnings,
         )
