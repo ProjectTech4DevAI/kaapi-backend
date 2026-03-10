@@ -92,11 +92,22 @@ class AudioUploadResponse(SQLModel):
     content_type: str = Field(..., description="MIME type of the audio file")
 
 
+class AudioUploadResponse(SQLModel):
+    """Response model for audio file upload."""
+
+    file_id: int = Field(..., description="ID of the created file record")
+    s3_url: str = Field(..., description="S3 URL of the uploaded audio file")
+    filename: str = Field(..., description="Original filename")
+    size_bytes: int = Field(..., description="File size in bytes")
+    content_type: str = Field(..., description="MIME type of the audio file")
+
+
 class FilePublic(SQLModel):
     """Public model for file responses."""
 
     id: int
     object_store_url: str
+    signed_url: str | None = None
     filename: str
     size_bytes: int
     content_type: str

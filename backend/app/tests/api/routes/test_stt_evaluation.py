@@ -1,4 +1,3 @@
-"""Tests for STT evaluation API routes."""
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -1122,3 +1121,379 @@ class TestSTTResultFeedback:
         )
 
         assert response.status_code == 401
+
+
+class TestListAudioFiles:
+    """Test GET /stt-evaluations/files endpoint."""
+
+    def test_list_audio_files_empty(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test listing audio files when none exist."""
+        response = client.get(
+            "/api/v1/evaluations/stt/files",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        assert isinstance(response_data["data"], list)
+
+    def test_list_audio_files_with_data(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test listing audio files returns uploaded files."""
+        # Create test audio files
+        file1 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="test1.mp3",
+            object_store_url="s3://bucket/test1.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+        file2 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="test2.wav",
+            object_store_url="s3://bucket/test2.wav",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            "/api/v1/evaluations/stt/files",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+
+        # Should have at least our 2 files
+        assert len(data) >= 2
+        filenames = [f["filename"] for f in data]
+        assert "test1.mp3" in filenames
+        assert "test2.wav" in filenames
+
+    @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
+    def test_list_audio_files_with_signed_urls(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test listing audio files includes signed URLs when requested."""
+        # Mock cloud storage
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.return_value = "https://signed.example.com/file.mp3"
+        mock_get_cloud_storage.return_value = mock_storage
+
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="signed_url_test.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            "/api/v1/evaluations/stt/files?include_signed_url=true",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        # Find our test file
+        test_file = next(
+            (f for f in data if f["filename"] == "signed_url_test.mp3"), None
+        )
+        assert test_file is not None
+        assert test_file["signed_url"] == "https://signed.example.com/file.mp3"
+
+        # Verify cloud storage was called
+        mock_get_cloud_storage.assert_called_once()
+
+    def test_list_audio_files_without_signed_urls(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test listing audio files without signed URLs."""
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="no_signed_url.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            "/api/v1/evaluations/stt/files?include_signed_url=false",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        # All files should have None for signed_url
+        for f in data:
+            assert f["signed_url"] is None
+
+    def test_list_audio_files_project_isolation(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        superuser_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that audio files are isolated by project."""
+        # Create file in user's project
+        user_file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="user_project_file.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        # List files from superuser's project (different project)
+        response = client.get(
+            "/api/v1/evaluations/stt/files",
+            headers=superuser_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        # Should not see user's file
+        filenames = [f["filename"] for f in data]
+        assert "user_project_file.mp3" not in filenames
+
+    def test_list_audio_files_requires_authentication(
+        self,
+        client: TestClient,
+    ) -> None:
+        """Test listing audio files without authentication fails."""
+        response = client.get("/api/v1/evaluations/stt/files")
+        assert response.status_code == 401
+
+
+class TestGetAudioFile:
+    """Test GET /stt-evaluations/files/{file_id} endpoint."""
+
+    def test_get_audio_file_success(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test successfully getting an audio file by ID."""
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="get_test.mp3",
+            object_store_url="s3://bucket/get_test.mp3",
+            size_bytes=2048,
+            content_type="audio/mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/files/{file.id}",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+
+        assert data["id"] == file.id
+        assert data["filename"] == "get_test.mp3"
+        assert data["object_store_url"] == "s3://bucket/get_test.mp3"
+        assert data["size_bytes"] == 2048
+        assert data["content_type"] == "audio/mp3"
+        assert data["file_type"] == FileType.AUDIO.value
+        assert data["organization_id"] == user_api_key.organization_id
+        assert data["project_id"] == user_api_key.project_id
+
+    @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
+    def test_get_audio_file_with_signed_url(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting audio file includes signed URL when requested."""
+        # Mock cloud storage
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.return_value = (
+            "https://signed.example.com/audio.mp3"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="signed_url_get.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/files/{file.id}?include_signed_url=true",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == file.id
+        assert data["signed_url"] == "https://signed.example.com/audio.mp3"
+
+        # Verify cloud storage was called
+        mock_get_cloud_storage.assert_called_once()
+        mock_storage.get_signed_url.assert_called_once()
+
+    def test_get_audio_file_without_signed_url(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting audio file without signed URL."""
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="no_signed_url_get.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/files/{file.id}?include_signed_url=false",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == file.id
+        assert data["signed_url"] is None
+
+    def test_get_audio_file_not_found(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        """Test getting non-existent audio file returns 404."""
+        response = client.get(
+            "/api/v1/evaluations/stt/files/99999",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 404
+        response_data = response.json()
+        error_str = response_data.get("error", response_data.get("detail", ""))
+        assert "not found" in error_str.lower()
+
+    def test_get_audio_file_wrong_project(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        superuser_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that users cannot access audio files from other projects."""
+        # Create file in user's project
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="user_file.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        # Try to access from superuser's project
+        response = client.get(
+            f"/api/v1/evaluations/stt/files/{file.id}",
+            headers=superuser_api_key_header,
+        )
+
+        assert response.status_code == 404
+
+    def test_get_audio_file_requires_authentication(
+        self,
+        client: TestClient,
+    ) -> None:
+        """Test getting audio file without authentication fails."""
+        response = client.get("/api/v1/evaluations/stt/files/1")
+        assert response.status_code == 401
+
+    @patch("app.api.routes.stt_evaluations.files.get_cloud_storage")
+    def test_get_audio_file_signed_url_failure(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test getting audio file when signed URL generation fails."""
+        # Mock cloud storage to raise an exception
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.side_effect = Exception("S3 error")
+        mock_get_cloud_storage.return_value = mock_storage
+
+        # Create test file
+        file = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            filename="signed_url_fail.mp3",
+            file_type=FileType.AUDIO.value,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/stt/files/{file.id}?include_signed_url=true",
+            headers=user_api_key_header,
+        )
+
+        # Should still succeed but with None for signed_url
+        assert response.status_code == 200
+        response_data = response.json()
+        data = response_data["data"]
+
+        assert data["id"] == file.id
+        assert data["signed_url"] is None
