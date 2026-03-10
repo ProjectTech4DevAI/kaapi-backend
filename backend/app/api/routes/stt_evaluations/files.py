@@ -57,7 +57,7 @@ def list_audio(
     _session: SessionDep,
     auth_context: AuthContextDep,
     include_signed_url: bool = Query(
-        True, description="Include a signed URL to access the audio file"
+        False, description="Include a signed URL to access the audio file"
     ),
 ) -> APIResponse[list[FilePublic]]:
     """Get audio files per project if provided"""
@@ -99,7 +99,7 @@ def get_audio(
     auth_context: AuthContextDep,
     file_id: int,
     include_signed_url: bool = Query(
-        True, description="Include a signed URL to access the audio file"
+        False, description="Include a signed URL to access the audio file"
     ),
 ) -> APIResponse[FilePublic]:
     """Get a single audio file by ID with optional signed URL."""

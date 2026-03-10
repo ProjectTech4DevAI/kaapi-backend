@@ -30,7 +30,7 @@ def build_file_schema(
             schema.signed_url = storage.get_signed_url(file.object_store_url)
         except Exception as e:
             logger.warning(
-                f"[build_file_schema] Failed to generate signed URL for file {file.id}: {e}"
+                f"[build_file_schema] Failed to generate signed URL for file {file.id}"
             )
             schema.signed_url = None
     return schema
@@ -60,7 +60,7 @@ def build_file_schemas(
                 schema.signed_url = storage.get_signed_url(file.object_store_url)
             except Exception as e:
                 logger.warning(
-                    f"[build_file_schemas] Failed to generate signed URL for file {file.id}: {e}"
+                    f"[build_file_schemas] Failed to generate signed URL for file {file.id}"
                 )
                 schema.signed_url = None
         out.append(schema)

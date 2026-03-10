@@ -5,7 +5,7 @@ import logging
 from sqlmodel import Session, select
 
 from app.core.util import now
-from app.models.file import File
+from app.models.file import File, FileType
 
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,7 @@ def list_files(
     statement = select(File).where(
         File.organization_id == organization_id,
         File.project_id == project_id,
+        File.file_type == FileType.AUDIO.value,
     )
 
     return list(session.exec(statement).all())

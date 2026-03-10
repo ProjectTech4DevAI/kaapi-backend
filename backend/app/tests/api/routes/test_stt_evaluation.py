@@ -1151,7 +1151,7 @@ class TestListAudioFiles:
     ) -> None:
         """Test listing audio files returns uploaded files."""
         # Create test audio files
-        file1 = create_test_file(
+        _ = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
@@ -1159,7 +1159,7 @@ class TestListAudioFiles:
             object_store_url="s3://bucket/test1.mp3",
             file_type=FileType.AUDIO.value,
         )
-        file2 = create_test_file(
+        _ = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
