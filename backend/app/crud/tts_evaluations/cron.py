@@ -151,7 +151,9 @@ async def poll_tts_run(
         return True
 
     async def _on_already_succeeded(batch_job: BatchJob, provider_name: str) -> bool:
-        pending = get_pending_results_for_run(session, run.id, provider_name)
+        pending = get_pending_results_for_run(
+            session=session, run_id=run.id, provider=provider_name
+        )
         if pending:
             logger.info(
                 f"{log_prefix} Dispatching reprocessing for "

@@ -135,6 +135,31 @@ class CloudStorage(ABC):
         """Generate a signed URL with an optional expiry"""
         pass
 
+    def get_signed_url_or_none(
+        self, url: str | None, expires_in: int = 3600
+    ) -> str | None:
+        """Generate a signed URL, returning None if url is empty or on failure.
+
+        A safe wrapper around get_signed_url that never raises.
+
+        Args:
+            url: Object store URL (e.g., s3://bucket/key). Returns None if falsy.
+            expires_in: Expiry time in seconds (default: 1 hour)
+
+        Returns:
+            Signed URL string, or None on failure
+        """
+        if not url:
+            return None
+        try:
+            return self.get_signed_url(url, expires_in)
+        except Exception:
+            logger.warning(
+                f"[get_signed_url_or_none] Failed to generate signed URL | "
+                f"project_id: {self.project_id}"
+            )
+            return None
+
     @abstractmethod
     def delete(self, url: str) -> None:
         """Delete a file from storage"""

@@ -209,6 +209,7 @@ class TTSResultPublic(BaseModel):
     id: int
     sample_text: str
     object_store_url: str | None
+    signed_url: str | None = None
     duration_seconds: float | None = None
     size_bytes: int | None = None
     provider: str
@@ -224,12 +225,18 @@ class TTSResultPublic(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, result: TTSResult) -> TTSResultPublic:
+    def from_model(
+        cls,
+        result: TTSResult,
+        *,
+        signed_url: str | None = None,
+    ) -> TTSResultPublic:
         """Create from a TTSResult model instance."""
         return cls(
             id=result.id,
             sample_text=result.sample_text,
             object_store_url=result.object_store_url,
+            signed_url=signed_url,
             duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
             size_bytes=(result.metadata_ or {}).get("size_bytes"),
             provider=result.provider,

@@ -168,15 +168,10 @@ def get_dataset(
         samples = []
         for s in sample_records:
             signed_url = None
-            if include_signed_url and storage and s.file_id in file_map:
-                try:
-                    signed_url = storage.get_signed_url(
-                        file_map.get(s.file_id).object_store_url
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[get_dataset] Failed to generate signed URL for file_id {s.file_id}: {e}"
-                    )
+            if storage and s.file_id in file_map:
+                signed_url = storage.get_signed_url_or_none(
+                    file_map[s.file_id].object_store_url
+                )
 
             samples.append(
                 STTSamplePublic(

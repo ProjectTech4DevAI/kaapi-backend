@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlmodel import Session, func, select
 
+from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
@@ -104,6 +105,7 @@ def get_results_by_run_id(
     run_id: int,
     org_id: int,
     project_id: int,
+    storage: CloudStorage | None = None,
 ) -> tuple[list[TTSResultPublic], int]:
     """Get all results for an evaluation run.
 
@@ -112,6 +114,7 @@ def get_results_by_run_id(
         run_id: Run ID
         org_id: Organization ID
         project_id: Project ID
+        storage: Optional cloud storage instance for generating signed URLs
 
     Returns:
         tuple[list[TTSResultPublic], int]: Results and total count
@@ -127,7 +130,12 @@ def get_results_by_run_id(
     rows = session.exec(statement).all()
     total = len(rows)
 
-    results = [TTSResultPublic.from_model(result) for result in rows]
+    results = []
+    for result in rows:
+        signed_url = (
+            storage.get_signed_url_or_none(result.object_store_url) if storage else None
+        )
+        results.append(TTSResultPublic.from_model(result, signed_url=signed_url))
 
     return results, total
 
