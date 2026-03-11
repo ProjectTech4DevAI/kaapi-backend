@@ -126,7 +126,7 @@ class GoogleAIProvider(BaseProvider):
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
-        temperature = generation_params.get("temperature", 0.7)
+        temperature = generation_params.get("temperature", 0.1)
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -137,7 +137,7 @@ class GoogleAIProvider(BaseProvider):
             lang_instruction = f"Transcribe the audio from {input_language} in the native script of {input_language}"
 
         if output_language and output_language != input_language:
-            lang_instruction += f" and translate to {output_language} in the native script of {output_language}"
+            lang_instruction += f" and translate to {output_language} in the native script of {output_language} and only return transcribed script in {output_language}."
 
         forced_transcription_text = "Only return transcribed text and no other text."
         # Merge user instructions with language instructions
@@ -147,6 +147,10 @@ class GoogleAIProvider(BaseProvider):
             )
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
+
+        logger.info(
+            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
+        )
 
         # Upload file and generate content
         gemini_file = self.client.files.upload(file=resolved_input)
@@ -161,8 +165,10 @@ class GoogleAIProvider(BaseProvider):
             contents=contents,
             # switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
-                # thinking_config=ThinkingConfig(thinking_level="low"),
-                temperature=temperature
+                thinking_config=ThinkingConfig(
+                    include_thoughts=True, thinking_budget=1000
+                ),
+                temperature=temperature,
             ),
         )
 

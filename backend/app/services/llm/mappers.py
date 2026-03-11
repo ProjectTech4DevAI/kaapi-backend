@@ -111,9 +111,17 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
         google_params["instructions"] = instructions
 
     temperature = kaapi_params.get("temperature")
-
     if temperature is not None:
         google_params["temperature"] = temperature
+
+    # STT Config
+    input_language = kaapi_params.get("input_language")
+    if input_language:
+        google_params["input_language"] = input_language
+
+    output_language = kaapi_params.get("output_language")
+    if output_language:
+        google_params["output_language"] = output_language
 
     # TTS Config
     voice = kaapi_params.get("voice")

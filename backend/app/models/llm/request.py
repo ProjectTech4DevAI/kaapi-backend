@@ -10,6 +10,36 @@ from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 
+DEFAULT_STT_MODEL = "gemini-2.5-pro"
+DEFAULT_TTS_MODEL = "gemini-2.5-pro-preview-tts"
+DEFAULT_TTS_VOICE = "Kore"
+
+SUPPORTED_MODELS = {
+    ("google", "stt"): [DEFAULT_STT_MODEL],
+    ("google", "tts"): [DEFAULT_TTS_MODEL],
+    ("sarvamai", "stt"): ["saaras:v3"],
+    ("sarvamai", "tts"): ["bulbul:v3"],
+    ("elevenlabs", "stt"): ["scribe_v1", "scribe_v2"],
+    ("elevenlabs", "tts"): ["eleven_multilingual_v2"],
+    ("openai", "text"): [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-5.4",
+        "gpt-5.1",
+        "gpt-5-mini",
+        "gpt-5-nano",
+    ],
+}
+
+SUPPORTED_VOICES = {
+    ("google", "tts"): ["Kore", "Orus", "Leda", "Charon"],
+    ("sarvamai", "tts"): ["Simran", "Shubh", "Roopa"],
+    ("elevenlabs", "tts"): ["Sarah", "George", "Callum", "Liam"],
+}
+
 
 class TextLLMParams(SQLModel):
     model: str
@@ -37,9 +67,9 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
-    model: str
+    model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
-    input_language: str | None = None
+    input_language: str | None = "auto"
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
@@ -54,9 +84,9 @@ class STTLLMParams(SQLModel):
 
 
 class TTSLLMParams(SQLModel):
-    model: str
-    voice: str
-    language: str
+    model: str = DEFAULT_TTS_MODEL
+    voice: str = DEFAULT_TTS_VOICE
+    language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
@@ -194,7 +224,9 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native", "google-native", "sarvamai-native"] = Field(
+    provider: Literal[
+        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+    ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -214,8 +246,8 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai"] = Field(
-        ..., description="LLM provider (openai, google, sarvamai)"
+    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
+        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
     )
 
     type: Literal["text", "stt", "tts"] = Field(
@@ -235,7 +267,33 @@ class KaapiCompletionConfig(SQLModel):
             "tts": TTSLLMParams,
         }
         model_class = param_models[self.type]
+
+        provider = self.provider
+        if self.type in ("stt", "tts") and provider is None:
+            self.provider = "google"
+            provider = self.provider
+
         validated = model_class.model_validate(self.params)
+
+        if provider is not None:
+            key = (provider, self.type)
+
+            allowed_models = SUPPORTED_MODELS.get(key)
+            if allowed_models and validated.model not in allowed_models:
+                raise ValueError(
+                    f"Model '{validated.model}' is not supported for provider='{provider}' type='{self.type}'. "
+                    f"Allowed: {allowed_models}"
+                )
+
+            if self.type == "tts":
+                voice = self.params.get("voice")
+                allowed_voices = SUPPORTED_VOICES.get(key)
+                if allowed_voices and voice and voice not in allowed_voices:
+                    raise ValueError(
+                        f"Voice '{voice}' is not supported for provider='{provider}'. "
+                        f"Allowed: {allowed_voices}"
+                    )
+
         self.params = validated.model_dump(exclude_none=True)
         return self
 
