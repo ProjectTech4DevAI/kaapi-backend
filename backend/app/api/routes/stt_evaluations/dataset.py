@@ -41,7 +41,7 @@ def create_dataset(
     dataset_create: STTDatasetCreate = Body(...),
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
-    # Validate language_id if provided
+    # Validate language_id
     if dataset_create.language_id is not None:
         language = get_language_by_id(
             session=session, language_id=dataset_create.language_id
