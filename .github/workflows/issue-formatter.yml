@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Rewrite issue body
         id: body
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
@@ -66,7 +66,7 @@ jobs:
 
       - name: Rewrite issue title
         id: title
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
@@ -110,7 +110,7 @@ jobs:
             return data.choices[0].message.content.replace(/^["']|["']$/g, '');
 
       - name: Update issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const formattedBody = ${{ steps.body.outputs.result }};
