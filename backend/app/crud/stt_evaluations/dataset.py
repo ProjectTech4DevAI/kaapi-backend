@@ -173,7 +173,9 @@ def create_stt_samples(
         STTSample(
             file_id=sample_data.file_id,
             ground_truth=sample_data.ground_truth,
-            language_id=dataset.language_id,
+            language_id=sample_data.language_id
+            if sample_data.language_id is not None
+            else dataset.language_id,
             sample_metadata={
                 "original_filename": file_map[sample_data.file_id].filename,
                 "file_extension": file_map[sample_data.file_id]

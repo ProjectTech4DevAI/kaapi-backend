@@ -13,9 +13,14 @@
 ---
 
 ## 👤 User Handling
-- If `email` does **not exist**, a new user is created and linked to the project.
-- If the user already exists, they are simply attached to the project.
+**Fields:**
+- `email` (required): User's email address
+- `password` (optional): Password for the primary user (must be at least 8 characters)
+- `username` (optional): Full name of the primary user
 
+**Behavior:**
+- If `email` does not exist, a new user is created and linked to the project.
+- If the user already exists, they are simply attached to the project.
 ---
 
 ## 🔑 Credentials (Optional)

@@ -1,3 +1,3 @@
 Delete an API key by its ID.
 
-Permanently revokes the API key. Any requests using this key will fail immediately after deletion.
+Revokes the API key via soft delete. Any requests using this key will fail after deletion.

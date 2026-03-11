@@ -8,15 +8,16 @@ from sqlmodel import Session
 
 from app.core.batch import (
     GeminiBatchProvider,
+    GeminiClient,
     create_stt_batch_requests,
     start_batch_job,
 )
+from app.models.batch_job import BatchJobType
 from app.core.cloud.storage import get_cloud_storage
 from app.crud.file import get_files_by_ids
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
 from app.models.stt_evaluation import STTSample
-from app.services.stt_evaluations.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ def start_stt_evaluation_batch(
                 session=session,
                 provider=batch_provider,
                 provider_name="google",
-                job_type="stt_evaluation",
+                job_type=BatchJobType.STT_EVALUATION,
                 organization_id=org_id,
                 project_id=project_id,
                 jsonl_data=jsonl_data,

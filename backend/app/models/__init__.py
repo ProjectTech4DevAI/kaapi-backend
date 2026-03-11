@@ -73,6 +73,7 @@ from .batch_job import (
     BatchJob,
     BatchJobCreate,
     BatchJobPublic,
+    BatchJobType,
     BatchJobUpdate,
 )
 

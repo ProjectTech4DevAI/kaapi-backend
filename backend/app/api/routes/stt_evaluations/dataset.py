@@ -36,23 +36,22 @@ router = APIRouter()
     description=load_description("stt_evaluation/create_dataset.md"),
 )
 def create_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_create: STTDatasetCreate = Body(...),
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
-    # Validate language_id if provided
-    if dataset_create.language_id is not None:
-        language = get_language_by_id(
-            session=_session, language_id=dataset_create.language_id
+    # Validate language_id
+    language = get_language_by_id(
+        session=session, language_id=dataset_create.language_id
+    )
+    if not language:
+        raise HTTPException(
+            status_code=400, detail="Invalid language_id: language not found"
         )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
 
     dataset, samples = upload_stt_dataset(
-        session=_session,
+        session=session,
         name=dataset_create.name,
         samples=dataset_create.samples,
         organization_id=auth_context.organization_.id,
@@ -87,14 +86,14 @@ def create_dataset(
     description=load_description("stt_evaluation/list_datasets.md"),
 )
 def list_datasets(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(50, ge=1, le=100, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> APIResponse[list[STTDatasetPublic]]:
     """List STT evaluation datasets."""
     datasets, total = list_stt_datasets(
-        session=_session,
+        session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         limit=limit,
@@ -115,7 +114,7 @@ def list_datasets(
     description=load_description("stt_evaluation/get_dataset.md"),
 )
 def get_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int,
     include_samples: bool = Query(True, description="Include samples in response"),
@@ -127,7 +126,7 @@ def get_dataset(
 ) -> APIResponse[STTDatasetWithSamples]:
     """Get an STT evaluation dataset."""
     dataset = get_stt_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -141,7 +140,7 @@ def get_dataset(
 
     if include_samples:
         sample_records = get_samples_by_dataset_id(
-            session=_session,
+            session=session,
             dataset_id=dataset_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
@@ -152,7 +151,7 @@ def get_dataset(
         # Fetch file records to get object_store_url
         file_ids = [s.file_id for s in sample_records]
         file_records = get_files_by_ids(
-            session=_session,
+            session=session,
             file_ids=file_ids,
             organization_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
@@ -162,7 +161,7 @@ def get_dataset(
         storage = None
         if include_signed_url:
             storage = get_cloud_storage(
-                session=_session, project_id=auth_context.project_.id
+                session=session, project_id=auth_context.project_.id
             )
 
         samples = []
