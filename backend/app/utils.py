@@ -44,10 +44,16 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+class ValidationErrorDetail(BaseModel):
+    field: str
+    message: str
+
+
 class APIResponse(BaseModel, Generic[T]):
     success: bool
     data: Optional[T] = None
     error: Optional[str] = None
+    errors: Optional[list[ValidationErrorDetail]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
@@ -64,11 +70,27 @@ class APIResponse(BaseModel, Generic[T]):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> "APIResponse[None]":
         if isinstance(error, list):  # to handle cases when error is a list of errors
-            error_message = "\n".join([f"{err['loc']}: {err['msg']}" for err in error])
-        else:
-            error_message = error
+            structured_errors = []
+            for err in error:
+                loc = err.get("loc", ())
+                parts = [str(p) for p in loc if p != "body"]
+                field = ".".join(parts) if parts else "unknown"
+                structured_errors.append(
+                    ValidationErrorDetail(
+                        field=str(field), message=str(err.get("msg", ""))
+                    )
+                )
 
-        return cls(success=False, data=data, error=error_message, metadata=metadata)
+            return cls(
+                success=False,
+                data=data,
+                error="Validation failed",
+                errors=structured_errors,
+                metadata=metadata,
+            )
+
+        else:
+            return cls(success=False, data=data, error=error, metadata=metadata)
 
 
 @dataclass
