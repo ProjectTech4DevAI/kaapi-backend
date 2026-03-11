@@ -26,7 +26,7 @@ router = APIRouter()
     description=load_description("stt_evaluation/upload_audio.md"),
 )
 def upload_audio(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     file: UploadFile = File(..., description="Audio file to upload"),
 ) -> APIResponse[AudioUploadResponse]:
@@ -37,7 +37,7 @@ def upload_audio(
     )
 
     result = upload_audio_file(
-        session=_session,
+        session=session,
         file=file,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -54,7 +54,7 @@ def upload_audio(
     description=load_description("stt_evaluation/list_audios.md"),
 )
 def list_audio(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     include_signed_url: bool = Query(
         False, description="Include a signed URL to access the audio file"
@@ -71,11 +71,11 @@ def list_audio(
     storage = None
     if include_signed_url:
         storage = get_cloud_storage(
-            session=_session, project_id=auth_context.project_.id
+            session=session, project_id=auth_context.project_.id
         )
 
     files = list_files(
-        session=_session,
+        session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
@@ -95,7 +95,7 @@ def list_audio(
     description=load_description("stt_evaluation/get_audio.md"),
 )
 def get_audio(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     file_id: int,
     include_signed_url: bool = Query(
@@ -110,7 +110,7 @@ def get_audio(
     )
 
     file = get_file_by_id(
-        session=_session,
+        session=session,
         file_id=file_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -122,7 +122,7 @@ def get_audio(
     storage = None
     if include_signed_url:
         storage = get_cloud_storage(
-            session=_session, project_id=auth_context.project_.id
+            session=session, project_id=auth_context.project_.id
         )
 
     result = build_file_schema(
