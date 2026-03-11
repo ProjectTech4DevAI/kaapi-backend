@@ -42,13 +42,14 @@ def create_dataset(
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
     # Validate language_id
-    language = get_language_by_id(
-        session=session, language_id=dataset_create.language_id
-    )
-    if not language:
-        raise HTTPException(
-            status_code=400, detail="Invalid language_id: language not found"
+    if dataset_create.language_id is not None:
+        language = get_language_by_id(
+            session=session, language_id=dataset_create.language_id
         )
+        if not language:
+            raise HTTPException(
+                status_code=400, detail="Invalid language_id: language not found"
+            )
 
     dataset, samples = upload_stt_dataset(
         session=session,
