@@ -129,7 +129,7 @@ def get_dataset(
     session: SessionDep,
     auth_context: AuthContextDep,
     include_signed_url: bool = Query(
-        False, description="Include signed URLs for dataset"
+        False, description="Include signed URL for dataset"
     ),
 ) -> APIResponse[DatasetUploadResponse]:
     """Get a specific evaluation dataset."""
