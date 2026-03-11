@@ -145,14 +145,13 @@ class TestCreateSTTSamplesLanguageId:
         # Third sample: no language_id specified -> inherits dataset's en
         assert created[2].language_id == en_language.id
 
-    def test_dataset_defaults_to_english_language(self, db: Session) -> None:
-        """Test that dataset defaults to English (language_id=1) when not specified."""
+    def test_dataset_defaults_to_none_language(self, db: Session) -> None:
+        """Test that dataset defaults to None language_id when not specified."""
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
         ).first()
 
-        en_language = get_language_by_locale(session=db, locale="en")
         file = create_test_file(db, org.id, project.id, filename="audio6.mp3")
 
         dataset = create_stt_dataset(
@@ -163,7 +162,7 @@ class TestCreateSTTSamplesLanguageId:
             dataset_metadata={"sample_count": 1, "has_ground_truth_count": 0},
         )
 
-        assert dataset.language_id == en_language.id
+        assert dataset.language_id is None
 
         samples = [
             STTSampleCreate(file_id=file.id, ground_truth="Hello"),
@@ -172,4 +171,4 @@ class TestCreateSTTSamplesLanguageId:
         created = create_stt_samples(session=db, dataset=dataset, samples=samples)
 
         assert len(created) == 1
-        assert created[0].language_id == en_language.id
+        assert created[0].language_id is None

@@ -28,7 +28,7 @@ def create_stt_dataset(
     org_id: int,
     project_id: int,
     description: str | None = None,
-    language_id: int = 1,
+    language_id: int | None = None,
     object_store_url: str | None = None,
     dataset_metadata: dict[str, Any] | None = None,
 ) -> EvaluationDataset:
