@@ -21,7 +21,7 @@ def _is_branch_identifier(part: str) -> bool:
 def _filter_union_branch_errors(errors: list[dict]) -> list[dict]:
     """When a field is a Union type, pydantic returns errors for every possible branch.
 
-    This picks the branch where the validation error happend.
+    This function picks the branch where the validation error happend.
     """
     try:
         branch_errors: dict[str, dict[str, list[dict]]] = defaultdict(
