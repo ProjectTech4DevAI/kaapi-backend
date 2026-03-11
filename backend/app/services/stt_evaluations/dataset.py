@@ -46,7 +46,7 @@ def upload_stt_dataset(
         organization_id: Organization ID
         project_id: Project ID
         description: Optional dataset description
-        language_id: Optional reference to global.languages table
+        language_id: Optional language ID
 
     Returns:
         Tuple of (created dataset, created samples)
