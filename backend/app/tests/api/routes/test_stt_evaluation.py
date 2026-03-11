@@ -329,9 +329,7 @@ class TestSTTDatasetCreate:
 
         assert data["name"] == "minimal_stt_dataset"
         assert data["description"] is None
-        # Default language_id is 1 (English)
-        en_language = get_language_by_locale(session=db, locale="en")
-        assert data["language_id"] == en_language.id
+        assert data["language_id"] is None
         assert data["dataset_metadata"]["sample_count"] == 1
 
     def test_create_stt_dataset_empty_samples(
