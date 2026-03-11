@@ -221,6 +221,9 @@ class STTSampleCreate(BaseModel):
     ground_truth: str | None = Field(
         None, description="Reference transcription (optional)"
     )
+    language_id: int | None = Field(
+        None, description="Language ID for this sample (overrides dataset language)"
+    )
 
 
 class STTSamplePublic(BaseModel):

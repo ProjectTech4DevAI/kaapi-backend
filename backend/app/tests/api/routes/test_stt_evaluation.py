@@ -215,6 +215,84 @@ class TestSTTDatasetCreate:
         assert data["dataset_metadata"]["sample_count"] == 2
         assert data["dataset_metadata"]["has_ground_truth_count"] == 1
 
+    def test_create_stt_dataset_with_per_sample_language_id(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test creating an STT dataset with per-sample language_id overrides."""
+        en_language = get_language_by_locale(session=db, locale="en")
+        hi_language = get_language_by_locale(session=db, locale="hi")
+
+        file1 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/per_sample_lang_audio1.mp3",
+            filename="per_sample_lang_audio1.mp3",
+        )
+        file2 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/per_sample_lang_audio2.mp3",
+            filename="per_sample_lang_audio2.mp3",
+        )
+        file3 = create_test_file(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            object_store_url="s3://bucket/per_sample_lang_audio3.mp3",
+            filename="per_sample_lang_audio3.mp3",
+        )
+
+        response = client.post(
+            "/api/v1/evaluations/stt/datasets",
+            json={
+                "name": "per_sample_lang_dataset",
+                "language_id": en_language.id,
+                "samples": [
+                    {"file_id": file1.id, "ground_truth": "Hello"},
+                    {
+                        "file_id": file2.id,
+                        "ground_truth": "नमस्ते",
+                        "language_id": hi_language.id,
+                    },
+                    {"file_id": file3.id, "ground_truth": "World"},
+                ],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+        assert response_data["success"] is True
+        data = response_data["data"]
+
+        assert data["name"] == "per_sample_lang_dataset"
+        assert data["language_id"] == en_language.id
+        assert data["dataset_metadata"]["sample_count"] == 3
+
+        # Verify per-sample language_id by fetching dataset with samples
+        dataset_id = data["id"]
+        get_response = client.get(
+            f"/api/v1/evaluations/stt/datasets/{dataset_id}",
+            headers=user_api_key_header,
+        )
+        assert get_response.status_code == 200
+        get_data = get_response.json()["data"]
+        samples = get_data["samples"]
+
+        assert len(samples) == 3
+        # Sample without language_id -> inherits dataset's en
+        assert samples[0]["language_id"] == en_language.id
+        # Sample with explicit hi language_id
+        assert samples[1]["language_id"] == hi_language.id
+        # Sample without language_id -> inherits dataset's en
+        assert samples[2]["language_id"] == en_language.id
+
     def test_create_stt_dataset_minimal(
         self,
         client: TestClient,
