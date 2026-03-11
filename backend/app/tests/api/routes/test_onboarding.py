@@ -197,8 +197,10 @@ def test_onboard_project_invalid_provider(
 
     assert response.status_code == 422
     error_response = response.json()
-    assert "error" in error_response
-    assert "credential validation failed" in error_response["error"]
+    assert error_response["errors"]
+    assert any(
+        "credential validation failed" in e["message"] for e in error_response["errors"]
+    )
 
 
 def test_onboard_project_non_dict_values_in_credential(
@@ -227,9 +229,13 @@ def test_onboard_project_non_dict_values_in_credential(
 
     assert response.status_code == 422
     error_response = response.json()
-    assert "error" in error_response
-    assert "credential validation failed" in error_response["error"]
-    assert "must be an object/dict" in error_response["error"]
+    assert error_response["errors"]
+    assert any(
+        "credential validation failed" in e["message"] for e in error_response["errors"]
+    )
+    assert any(
+        "must be an object/dict" in e["message"] for e in error_response["errors"]
+    )
 
 
 def test_onboard_project_missing_required_fields_for_openai(
@@ -258,9 +264,11 @@ def test_onboard_project_missing_required_fields_for_openai(
 
     assert response.status_code == 422
     error_response = response.json()
-    assert "error" in error_response
-    assert "credential validation failed" in error_response["error"]
-    assert "openai" in error_response["error"]
+    assert error_response["errors"]
+    assert any(
+        "credential validation failed" in e["message"] for e in error_response["errors"]
+    )
+    assert any("openai" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_missing_required_fields_for_langfuse(
@@ -291,9 +299,11 @@ def test_onboard_project_missing_required_fields_for_langfuse(
 
     assert response.status_code == 422
     error_response = response.json()
-    assert "error" in error_response
-    assert "credential validation failed" in error_response["error"]
-    assert "langfuse" in error_response["error"]
+    assert error_response["errors"]
+    assert any(
+        "credential validation failed" in e["message"] for e in error_response["errors"]
+    )
+    assert any("langfuse" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_aggregates_multiple_credential_errors(
@@ -325,7 +335,9 @@ def test_onboard_project_aggregates_multiple_credential_errors(
 
     assert response.status_code == 422
     error_response = response.json()
-    assert "error" in error_response
-    assert "credential validation failed" in error_response["error"]
-    assert "[0]" in error_response["error"]
-    assert "[1]" in error_response["error"]
+    assert error_response["errors"]
+    assert any(
+        "credential validation failed" in e["message"] for e in error_response["errors"]
+    )
+    assert any("[0]" in e["message"] for e in error_response["errors"])
+    assert any("[1]" in e["message"] for e in error_response["errors"])
