@@ -169,7 +169,7 @@ def get_dataset(
         for s in sample_records:
             signed_url = None
             if storage and s.file_id in file_map:
-                signed_url = storage.get_signed_url_or_none(
+                signed_url = storage.get_signed_url(
                     file_map[s.file_id].object_store_url
                 )
 

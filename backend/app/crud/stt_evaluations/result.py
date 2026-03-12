@@ -103,9 +103,7 @@ def get_results_by_run_id(
     # Convert to response models
     results = []
     for result, sample, file in rows:
-        signed_url = (
-            storage.get_signed_url_or_none(file.object_store_url) if storage else None
-        )
+        signed_url = storage.get_signed_url(file.object_store_url) if storage else None
 
         sample_public = STTSamplePublic(
             id=sample.id,

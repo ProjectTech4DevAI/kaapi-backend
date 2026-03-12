@@ -133,7 +133,7 @@ def get_results_by_run_id(
     results = []
     for result in rows:
         signed_url = (
-            storage.get_signed_url_or_none(result.object_store_url) if storage else None
+            storage.get_signed_url(result.object_store_url) if storage else None
         )
         results.append(TTSResultPublic.from_model(result, signed_url=signed_url))
 

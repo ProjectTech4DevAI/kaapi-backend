@@ -113,7 +113,7 @@ def get_result(
         storage = get_cloud_storage(
             session=session, project_id=auth_context.project_.id
         )
-        signed_url = storage.get_signed_url_or_none(result.object_store_url)
+        signed_url = storage.get_signed_url(result.object_store_url)
 
     return APIResponse.success_response(
         data=TTSResultPublic.from_model(result, signed_url=signed_url)
