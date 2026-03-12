@@ -2,17 +2,17 @@
 
 import logging
 
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
+from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.file import File
-from app.core.cloud.storage import CloudStorage
 from app.models.stt_evaluation import (
     STTResult,
+    STTResultWithSample,
     STTSample,
     STTSamplePublic,
-    STTResultWithSample,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,14 +103,7 @@ def get_results_by_run_id(
     # Convert to response models
     results = []
     for result, sample, file in rows:
-        signed_url = None
-        if storage:
-            try:
-                signed_url = storage.get_signed_url(file.object_store_url)
-            except Exception as e:
-                logger.warning(
-                    f"[get_results_by_run_id] Failed to generate signed URL: {e}"
-                )
+        signed_url = storage.get_signed_url(file.object_store_url) if storage else None
 
         sample_public = STTSamplePublic(
             id=sample.id,
@@ -226,4 +219,4 @@ def count_results_by_status(
 
     rows = session.exec(statement).all()
 
-    return {status: count for status, count in rows}
+    return dict(rows)

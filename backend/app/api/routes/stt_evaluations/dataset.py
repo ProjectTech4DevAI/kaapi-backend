@@ -10,9 +10,9 @@ from app.core.cloud import get_cloud_storage
 from app.crud.file import get_files_by_ids
 from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
+    get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     list_stt_datasets,
-    get_samples_by_dataset_id,
 )
 from app.models.stt_evaluation import (
     STTDatasetCreate,
@@ -168,15 +168,10 @@ def get_dataset(
         samples = []
         for s in sample_records:
             signed_url = None
-            if include_signed_url and storage and s.file_id in file_map:
-                try:
-                    signed_url = storage.get_signed_url(
-                        file_map.get(s.file_id).object_store_url
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[get_dataset] Failed to generate signed URL for file_id {s.file_id}: {e}"
-                    )
+            if storage and s.file_id in file_map:
+                signed_url = storage.get_signed_url(
+                    file_map[s.file_id].object_store_url
+                )
 
             samples.append(
                 STTSamplePublic(
