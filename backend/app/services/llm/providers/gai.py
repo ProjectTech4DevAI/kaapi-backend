@@ -25,7 +25,7 @@ from app.models.llm import (
 )
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
+from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg, pcm_to_wav
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,7 @@ class GoogleAIProvider(BaseProvider):
             return None, "Missing 'voice' in native params"
 
         language = generation_params.get("language")
+        logger.info(f"The TTS Language is {language}")
         if not language:
             return None, "Missing 'language' in native params"
 
@@ -265,7 +266,7 @@ class GoogleAIProvider(BaseProvider):
         provider_specific = generation_params.get("provider_specific", {})
         gemini_params = provider_specific.get("gemini", {})
 
-        director_notes = gemini_params.get("director_notes")
+        director_notes = gemini_params.get("director_notes", " ")
         # Build Gemini TTS config
         config_kwargs = {
             "response_modalities": ["AUDIO"],
@@ -286,6 +287,7 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model, contents=resolved_input, config=config
         )
+        logger.info(f"-----Response TTS is {response}")
         if not response.response_id:
             return None, "Google AI response missing response_id"
         try:
@@ -298,9 +300,10 @@ class GoogleAIProvider(BaseProvider):
             return None, "Google AI response missing audio data"
 
         # Post-process audio format conversion if needed
-        # Gemini TTS natively outputs 24kHz 16-bit PCM (WAV format)
-        actual_format = "wav"  # Native Gemini TTS output format
-        encoded_content = base64.b64encode(raw_audio_bytes or b"").decode("ascii")
+        # Gemini TTS natively outputs 24kHz 16-bit raw PCM — wrap in WAV container
+        actual_format = "wav"
+        wav_bytes = pcm_to_wav(raw_audio_bytes)
+        encoded_content = base64.b64encode(wav_bytes).decode("ascii")
 
         if response_format and response_format != "wav":
             # Need to convert from WAV to requested format

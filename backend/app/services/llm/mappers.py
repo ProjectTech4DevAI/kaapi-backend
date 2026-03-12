@@ -3,6 +3,22 @@
 import litellm
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 
+BCP47_LOCALE_TO_GEMINI_LANG: dict[str, str] = {
+    "en-IN": "en",
+    "hi-IN": "hi",
+    "bn-IN": "ben",
+    "ta-IN": "ta",
+    "te-IN": "te",
+    "mr-IN": "mr",
+    "gu-IN": "gu",
+    "kn-IN": "kn",
+    "ml-IN": "ml",
+    "pa-IN": "pa",
+    "od-IN": "or",
+    # "as-IN": "as", //not supported by Gemini
+    "sd-IN": "sd",
+}
+
 
 def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
@@ -130,7 +146,14 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
     language = kaapi_params.get("language")
     if language:
-        google_params["language"] = language
+        google_supported_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
+        if google_supported_lang is not None:
+            google_params["language"] = language
+        else:
+            supported = ", ".join(BCP47_LOCALE_TO_GEMINI_LANG.keys())
+            return {}, [
+                f"Unsupported language '{language}' for Google TTS. Supported: {supported}"
+            ]
 
     response_format = kaapi_params.get("response_format")
     if response_format:
@@ -139,6 +162,11 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     reasoning = kaapi_params.get("reasoning")
     if reasoning:
         google_params["reasoning"] = reasoning
+
+    # Pass through provider_specific params (e.g., gemini.director_notes)
+    provider_specific = kaapi_params.get("provider_specific")
+    if provider_specific:
+        google_params["provider_specific"] = provider_specific
 
     # Warn about unsupported parameters
     if kaapi_params.get("knowledge_base_ids"):

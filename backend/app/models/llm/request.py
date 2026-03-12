@@ -86,7 +86,7 @@ class STTLLMParams(SQLModel):
 class TTSLLMParams(SQLModel):
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
-    language: str | None = None
+    language: str
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
