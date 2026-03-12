@@ -653,7 +653,7 @@ class TestSTTDatasetGet:
         """Test getting an STT dataset with signed URLs for audio files."""
         # Mock cloud storage to return signed URLs
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.return_value = (
+        mock_storage.get_signed_url_or_none.return_value = (
             "https://signed-url.example.com/audio.mp3"
         )
         mock_get_cloud_storage.return_value = mock_storage
@@ -691,7 +691,7 @@ class TestSTTDatasetGet:
 
         # Verify cloud storage was called
         mock_get_cloud_storage.assert_called_once()
-        mock_storage.get_signed_url.assert_called_once()
+        mock_storage.get_signed_url_or_none.assert_called_once()
 
     def test_get_stt_dataset_without_signed_url(
         self,
@@ -741,9 +741,7 @@ class TestSTTDatasetGet:
         """Test getting an STT dataset when signed URL generation fails."""
         # Mock cloud storage to raise an exception
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.side_effect = Exception(
-            "Failed to generate signed URL"
-        )
+        mock_storage.get_signed_url_or_none.return_value = None
         mock_get_cloud_storage.return_value = mock_storage
 
         dataset = create_test_stt_dataset(
@@ -953,7 +951,7 @@ class TestSTTEvaluationRun:
         """Test getting an STT run with signed URLs for audio files in results."""
         # Mock cloud storage to return signed URLs
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.return_value = (
+        mock_storage.get_signed_url_or_none.return_value = (
             "https://signed-url.example.com/audio.mp3"
         )
         mock_get_cloud_storage.return_value = mock_storage
@@ -1010,7 +1008,7 @@ class TestSTTEvaluationRun:
 
         # Verify cloud storage was called
         mock_get_cloud_storage.assert_called_once()
-        mock_storage.get_signed_url.assert_called_once()
+        mock_storage.get_signed_url_or_none.assert_called_once()
 
     def test_get_stt_run_without_signed_url(
         self,
@@ -1076,9 +1074,7 @@ class TestSTTEvaluationRun:
         """Test getting an STT run when signed URL generation fails."""
         # Mock cloud storage to raise an exception
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.side_effect = Exception(
-            "Failed to generate signed URL"
-        )
+        mock_storage.get_signed_url_or_none.return_value = None
         mock_get_cloud_storage.return_value = mock_storage
 
         # Create dataset, sample, run, and result
