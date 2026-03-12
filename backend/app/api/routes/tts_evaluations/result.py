@@ -109,7 +109,7 @@ def get_result(
         raise HTTPException(status_code=404, detail="Result not found")
 
     signed_url = None
-    if include_signed_url:
+    if include_signed_url and result.object_store_url is not None:
         storage = get_cloud_storage(
             session=session, project_id=auth_context.project_.id
         )
