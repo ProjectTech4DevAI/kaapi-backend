@@ -1,14 +1,14 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.models import EvaluationDataset, EvaluationRun, File, FileType
-from app.models.stt_evaluation import STTSample, STTResult, EvaluationType
-from app.crud.language import get_language_by_locale
-from app.tests.utils.auth import TestAuthContext
 from app.core.util import now
+from app.crud.language import get_language_by_locale
+from app.models import EvaluationDataset, EvaluationRun, File, FileType
+from app.models.stt_evaluation import EvaluationType, STTResult, STTSample
+from app.tests.utils.auth import TestAuthContext
 
 
 # Helper functions
@@ -1274,7 +1274,7 @@ class TestListAudioFiles:
         mock_get_cloud_storage.return_value = mock_storage
 
         # Create test file
-        file = create_test_file(
+        _file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
@@ -1310,7 +1310,7 @@ class TestListAudioFiles:
     ) -> None:
         """Test listing audio files without signed URLs."""
         # Create test file
-        file = create_test_file(
+        _file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
@@ -1341,7 +1341,7 @@ class TestListAudioFiles:
     ) -> None:
         """Test that audio files are isolated by project."""
         # Create file in user's project
-        user_file = create_test_file(
+        _user_file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,

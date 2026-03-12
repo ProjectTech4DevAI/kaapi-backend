@@ -2,17 +2,17 @@
 
 import logging
 
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
+from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.file import File
-from app.core.cloud.storage import CloudStorage
 from app.models.stt_evaluation import (
     STTResult,
+    STTResultWithSample,
     STTSample,
     STTSamplePublic,
-    STTResultWithSample,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,4 +219,4 @@ def count_results_by_status(
 
     rows = session.exec(statement).all()
 
-    return {status: count for status, count in rows}
+    return dict(rows)

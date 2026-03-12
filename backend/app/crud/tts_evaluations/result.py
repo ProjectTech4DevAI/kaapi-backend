@@ -302,4 +302,4 @@ def count_results_by_status(
 
     rows = session.exec(statement).all()
 
-    return {status: count for status, count in rows}
+    return dict(rows)

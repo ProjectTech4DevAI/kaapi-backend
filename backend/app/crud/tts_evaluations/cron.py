@@ -13,8 +13,6 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.models.batch_job import BatchJobType
-
 from app.celery.utils import start_low_priority_job
 from app.core.batch import GeminiBatchProvider
 from app.crud.evaluations.cron_utils import (
@@ -29,7 +27,7 @@ from app.crud.tts_evaluations.result import (
 )
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
-from app.models.batch_job import BatchJob
+from app.models.batch_job import BatchJob, BatchJobType
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 
