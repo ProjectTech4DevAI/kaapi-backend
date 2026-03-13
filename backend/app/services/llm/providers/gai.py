@@ -248,18 +248,19 @@ class GoogleAIProvider(BaseProvider):
         if not resolved_input.strip():
             return None, "Text input cannot be empty"
 
-        # Extract params with defaults (language is required)
+        # Extract params with defaults (language is optional — Gemini auto-detects from script)
         model = generation_params.get("model", DEFAULT_TTS_MODEL)
         logger.info(f"Model name is {model}")
         voice = generation_params.get("voice", DEFAULT_TTS_VOICE)
 
         language = generation_params.get("language")
-        if not language:
-            return None, "Missing 'language' in native params"
-
-        google_language = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
-        if not google_language:
-            return None, f"Unsupported language '{language}' for Google TTS"
+        logger.info(f"The language of choice is {language}")
+        google_language = None
+        if language is not None:
+            google_language = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
+            logger.info(f"The google language is {google_language}")
+            if not google_language:
+                return None, f"Unsupported language '{language}' for Google TTS"
 
         # Extract optional params
         response_format = generation_params.get("response_format", "wav")
@@ -268,7 +269,7 @@ class GoogleAIProvider(BaseProvider):
         provider_specific = generation_params.get("provider_specific", {})
         gemini_params = provider_specific.get("gemini", {})
 
-        director_notes = gemini_params.get("director_notes", " ")
+        director_notes = gemini_params.get("director_notes", "")
         # Build Gemini TTS config
         config_kwargs = {
             "response_modalities": ["AUDIO"],

@@ -16,7 +16,7 @@ DEFAULT_TTS_VOICE = "Kore"
 
 SUPPORTED_MODELS = {
     ("google", "stt"): [DEFAULT_STT_MODEL],
-    ("google", "tts"): [DEFAULT_TTS_MODEL],
+    ("google", "tts"): [DEFAULT_TTS_MODEL, "gemini-2.5-flash-preview-tts"],
     ("sarvamai", "stt"): ["saaras:v3"],
     ("sarvamai", "tts"): ["bulbul:v3"],
     ("elevenlabs", "stt"): ["scribe_v1", "scribe_v2"],
@@ -86,7 +86,7 @@ class STTLLMParams(SQLModel):
 class TTSLLMParams(SQLModel):
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
-    language: str
+    language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
