@@ -23,8 +23,14 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
+from app.models.llm.request import (
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+)
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
+from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
 from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg, pcm_to_wav
 
 logger = logging.getLogger(__name__)
@@ -119,10 +125,7 @@ class GoogleAIProvider(BaseProvider):
         if not isinstance(resolved_input, str):
             return None, f"{provider} STT requires file path as string"
 
-        model = generation_params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
-
+        model = generation_params.get("model", DEFAULT_STT_MODEL)
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
@@ -245,19 +248,18 @@ class GoogleAIProvider(BaseProvider):
         if not resolved_input.strip():
             return None, "Text input cannot be empty"
 
-        # Extract required params
-        model = generation_params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
-
-        voice = generation_params.get("voice")
-        if not voice:
-            return None, "Missing 'voice' in native params"
+        # Extract params with defaults (language is required)
+        model = generation_params.get("model", DEFAULT_TTS_MODEL)
+        logger.info(f"Model name is {model}")
+        voice = generation_params.get("voice", DEFAULT_TTS_VOICE)
 
         language = generation_params.get("language")
-        logger.info(f"The TTS Language is {language}")
         if not language:
             return None, "Missing 'language' in native params"
+
+        google_language = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
+        if not google_language:
+            return None, f"Unsupported language '{language}' for Google TTS"
 
         # Extract optional params
         response_format = generation_params.get("response_format", "wav")
@@ -274,7 +276,7 @@ class GoogleAIProvider(BaseProvider):
                 voice_config=VoiceConfig(
                     prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice)
                 ),
-                language_code=language,
+                language_code=google_language,
             ),
         }
 
