@@ -14,6 +14,7 @@ from fastapi import (
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud import get_cloud_storage
 from app.crud.evaluations import (
     get_dataset_by_id,
     list_datasets as list_evaluation_datasets,
@@ -34,7 +35,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/evaluations/datasets", tags=["Evaluation"])
 
 
-def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
+def _dataset_to_response(
+    dataset: EvaluationDataset, signed_url: str | None = None
+) -> DatasetUploadResponse:
     """Convert a dataset model to a DatasetUploadResponse."""
     return DatasetUploadResponse(
         dataset_id=dataset.id,
@@ -44,6 +47,7 @@ def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
         duplication_factor=dataset.dataset_metadata.get("duplication_factor", 1),
         langfuse_dataset_id=dataset.langfuse_dataset_id,
         object_store_url=dataset.object_store_url,
+        signed_url=signed_url,
     )
 
 
@@ -124,6 +128,9 @@ def get_dataset(
     dataset_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
+    include_signed_url: bool = Query(
+        False, description="Include signed URL for dataset"
+    ),
 ) -> APIResponse[DatasetUploadResponse]:
     """Get a specific evaluation dataset."""
     logger.info(
@@ -144,7 +151,16 @@ def get_dataset(
             status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
         )
 
-    return APIResponse.success_response(data=_dataset_to_response(dataset))
+    signed_url = None
+    if include_signed_url and dataset.object_store_url:
+        storage = get_cloud_storage(
+            session=session, project_id=auth_context.project_.id
+        )
+        signed_url = storage.get_signed_url(dataset.object_store_url)
+
+    return APIResponse.success_response(
+        data=_dataset_to_response(dataset, signed_url=signed_url)
+    )
 
 
 @router.delete(

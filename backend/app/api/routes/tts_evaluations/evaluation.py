@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_low_priority_job
+from app.core.cloud import get_cloud_storage
 from app.crud.tts_evaluations import (
     create_tts_run,
     get_results_by_run_id,
@@ -169,6 +170,9 @@ def get_tts_evaluation_run(
     auth_context: AuthContextDep,
     run_id: int,
     include_results: bool = Query(True, description="Include results in response"),
+    include_signed_url: bool = Query(
+        False, description="Include signed URLs for generated audio files"
+    ),
 ) -> APIResponse[TTSEvaluationRunWithResults]:
     """Get a TTS evaluation run with results."""
     run = get_tts_run_by_id(
@@ -185,11 +189,18 @@ def get_tts_evaluation_run(
     results_total = 0
 
     if include_results:
+        storage = None
+        if include_signed_url:
+            storage = get_cloud_storage(
+                session=session, project_id=auth_context.project_.id
+            )
+
         results, results_total = get_results_by_run_id(
             session=session,
             run_id=run_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
+            storage=storage,
         )
 
     return APIResponse.success_response(

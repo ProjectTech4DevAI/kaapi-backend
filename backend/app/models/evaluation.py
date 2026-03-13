@@ -43,6 +43,9 @@ class DatasetUploadResponse(BaseModel):
     object_store_url: str | None = Field(
         None, description="Object store URL if uploaded"
     )
+    signed_url: str | None = Field(
+        None, description="A signed URL for downloading the dataset"
+    )
 
 
 class EvaluationResult(BaseModel):
