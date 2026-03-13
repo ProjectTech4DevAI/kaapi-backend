@@ -124,7 +124,9 @@ def test_collection_creation_vector_only_request_validation_error(
     assert body["success"] is False
     assert body["data"] is None
     assert body["metadata"] is None
-    assert (
+    assert body["errors"]
+    assert any(
         "To create an Assistant, provide BOTH 'model' and 'instructions'"
-        in body["error"]
+        in e["message"]
+        for e in body["errors"]
     )
