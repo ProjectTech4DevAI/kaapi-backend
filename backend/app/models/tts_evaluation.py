@@ -179,6 +179,7 @@ class TTSDatasetPublic(BaseModel):
     type: str
     language_id: int | None
     object_store_url: str | None
+    signed_url: str | None = None
     dataset_metadata: dict[str, Any]
     organization_id: int
     project_id: int
@@ -186,7 +187,12 @@ class TTSDatasetPublic(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, dataset: EvaluationDataset) -> TTSDatasetPublic:
+    def from_model(
+        cls,
+        dataset: EvaluationDataset,
+        *,
+        signed_url: str | None = None,
+    ) -> TTSDatasetPublic:
         """Create from an EvaluationDataset model instance."""
         return cls(
             id=dataset.id,
@@ -195,6 +201,7 @@ class TTSDatasetPublic(BaseModel):
             type=dataset.type,
             language_id=dataset.language_id,
             object_store_url=dataset.object_store_url,
+            signed_url=signed_url,
             dataset_metadata=dataset.dataset_metadata,
             organization_id=dataset.organization_id,
             project_id=dataset.project_id,
