@@ -204,6 +204,89 @@ def create_stt_samples(
     return created_samples
 
 
+def get_stt_sample_by_id(
+    *,
+    session: Session,
+    sample_id: int,
+    org_id: int,
+    project_id: int,
+) -> STTSample | None:
+    """Get an STT sample by ID.
+
+    Args:
+        session: Database session
+        sample_id: Sample ID
+        org_id: Organization ID
+        project_id: Project ID
+
+    Returns:
+        STTSample | None: Sample if found
+    """
+    statement = select(STTSample).where(
+        STTSample.id == sample_id,
+        STTSample.organization_id == org_id,
+        STTSample.project_id == project_id,
+    )
+
+    return session.exec(statement).one_or_none()
+
+
+def update_stt_sample(
+    *,
+    session: Session,
+    sample_id: int,
+    org_id: int,
+    project_id: int,
+    language_id: int | None = None,
+    ground_truth: str | None = None,
+) -> STTSample:
+    """Update an STT sample's language and/or ground truth.
+
+    Args:
+        session: Database session
+        sample_id: Sample ID
+        org_id: Organization ID
+        project_id: Project ID
+        language_id: Optional new language ID
+        ground_truth: Optional new ground truth transcription
+
+    Returns:
+        STTSample: Updated sample
+
+    Raises:
+        HTTPException: If sample not found
+    """
+    sample = get_stt_sample_by_id(
+        session=session,
+        sample_id=sample_id,
+        org_id=org_id,
+        project_id=project_id,
+    )
+
+    if not sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    if language_id is not None:
+        sample.language_id = language_id
+
+    if ground_truth is not None:
+        sample.ground_truth = ground_truth
+
+    sample.updated_at = now()
+
+    session.add(sample)
+    session.commit()
+    session.refresh(sample)
+
+    logger.info(
+        f"[update_stt_sample] Sample updated | "
+        f"sample_id: {sample_id}, language_id: {language_id}, "
+        f"ground_truth_updated: {ground_truth is not None}"
+    )
+
+    return sample
+
+
 def get_stt_dataset_by_id(
     *,
     session: Session,

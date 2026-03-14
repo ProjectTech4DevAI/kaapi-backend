@@ -6,8 +6,10 @@ from .dataset import (
     create_stt_dataset,
     create_stt_samples,
     get_stt_dataset_by_id,
+    get_stt_sample_by_id,
     list_stt_datasets,
     get_samples_by_dataset_id,
+    update_stt_sample,
 )
 from .run import (
     create_stt_run,
@@ -30,8 +32,10 @@ __all__ = [
     "create_stt_dataset",
     "create_stt_samples",
     "get_stt_dataset_by_id",
+    "get_stt_sample_by_id",
     "list_stt_datasets",
     "get_samples_by_dataset_id",
+    "update_stt_sample",
     # Run
     "create_stt_run",
     "get_stt_run_by_id",
