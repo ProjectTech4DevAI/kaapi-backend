@@ -237,6 +237,9 @@ def update_tts_human_feedback(
     if "comment" in kwargs:
         result.comment = kwargs["comment"]
 
+    if "score" in kwargs:
+        result.score = kwargs["score"]
+
     result.updated_at = now()
 
     session.add(result)

@@ -267,6 +267,16 @@ class TTSFeedbackUpdate(BaseModel):
         None, description="Is the synthesized audio correct?"
     )
     comment: str | None = Field(None, description="Feedback comment")
+    score: dict[str, Any] | None = Field(
+        None,
+        description="Evaluation metrics",
+        json_schema_extra={
+            "example": {
+                "Speech Naturalness": "low | medium | high",
+                "Pronunciation Accuracy": "low | medium | high",
+            }
+        },
+    )
 
 
 class TTSEvaluationRunCreate(BaseModel):
