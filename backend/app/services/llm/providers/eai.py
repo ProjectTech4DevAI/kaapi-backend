@@ -254,7 +254,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_tts] Successfully converted text to speech | "
-                f"model={model_id}, voice_id={voice_id}, output_format={output_format}"
+                f"provider={provider_name}, model={model_id}, voice_id={voice_id}, output_format={output_format}"
             )
             return llm_response, None
 
