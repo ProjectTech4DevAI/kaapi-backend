@@ -35,6 +35,7 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     instructions = kaapi_params.get("instructions")
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
     max_num_results = kaapi_params.get("max_num_results")
+    response_format = kaapi_params.get("response_format")
 
     support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
 
@@ -63,6 +64,9 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
     if instructions:
         openai_params["instructions"] = instructions
+
+    if response_format:
+        openai_params["text"] = {"format": {"type": response_format}}
 
     if knowledge_base_ids:
         openai_params["tools"] = [

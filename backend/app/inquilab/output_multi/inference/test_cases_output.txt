@@ -1,0 +1,95 @@
+------- CASE 1: PROBLEM SOLUTION TEXT INPUT  ---------
+{
+  "Novelty": {
+    "score": 4,
+    "reason": "A laser-and-receiver intrusion alarm is a well-known security concept, with only limited originality in applying it to grid theft monitoring."
+  },
+  "Usefulness": {
+    "score": 6,
+    "reason": "The solution directly addresses unauthorized entry and can help alert guards quickly, but it does not fully address theft from multiple access points or electricity theft itself."
+  },
+  "Feasibility": {
+    "score": 7,
+    "reason": "Using mirrors, laser light, a receiver, and an alarm is realistic with accessible components and can be built at prototype level with moderate effort."
+  },
+  "Scalability": {
+    "score": 6,
+    "reason": "The idea can be replicated across similar sites, but scaling to large or complex grid areas would require careful alignment, multiple units, and maintenance."
+  },
+  "Sustainability": {
+    "score": 6,
+    "reason": "The system appears maintainable over time with low material use, but it depends on continuous power, proper alignment, and regular upkeep to remain reliable."
+  }
+}
+------- CASE 2: PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------
+{
+  "Novelty": {
+    "score": 5,
+    "reason": "Laser-beam intrusion alarms are a known security concept, but the student shows some independent adaptation by using mirrors to cover multiple directions."
+  },
+  "Usefulness": {
+    "score": 7,
+    "reason": "The solution is clearly connected to theft prevention and can practically help alert guards when someone enters a restricted area."
+  },
+  "Feasibility": {
+    "score": 7,
+    "reason": "The image shows a project-related working prototype with laser, wiring, and electronics, indicating the basic system is realistically buildable."
+  },
+  "Scalability": {
+    "score": 6,
+    "reason": "The idea can be replicated in other small secured spaces, but larger grid areas would need careful alignment, multiple units, and maintenance."
+  },
+  "Sustainability": {
+    "score": 6,
+    "reason": "The system uses relatively simple reusable components and can operate over time, but continuous power, alignment, and upkeep limit stronger sustainability."
+  }
+}
+
+----------------------------
+
+------- CASE 3: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT  ---------
+{
+  "Novelty": {
+    "score": 7,
+    "reason": "The idea adds a clear student-made improvement to a common web remover by combining a rotating cleaner with an umbrella-style dust collector."
+  },
+  "Usefulness": {
+    "score": 8,
+    "reason": "The solution directly addresses the stated problems of dust falling into the eyes, skin irritation, and hand pain during cobweb cleaning."
+  },
+  "Feasibility": {
+    "score": 7,
+    "reason": "A low-cost stick with a motor and collection shield appears realistically buildable with accessible materials, though no detailed prototype evidence is given."
+  },
+  "Scalability": {
+    "score": 7,
+    "reason": "This household cleaning tool could be replicated for many homes with only moderate design and manufacturing effort."
+  },
+  "Sustainability": {
+    "score": 6,
+    "reason": "The tool may support longer-term safe cleaning and repeated use, but maintenance, power source, and material durability are not explained."
+  }
+}
+------- CASE 4: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------
+{
+  "Novelty": {
+    "score": 7,
+    "reason": "The idea adds a practical new twist to a common web remover by combining a rotating stick with an umbrella-like collector to protect the user."
+  },
+  "Usefulness": {
+    "score": 8,
+    "reason": "The solution directly addresses the stated problems of dust falling into the eyes, skin irritation, and hand strain during cobweb cleaning."
+  },
+  "Feasibility": {
+    "score": 8,
+    "reason": "The image shows a related physical prototype and the design uses simple, low-cost parts, making small-scale implementation realistic."
+  },
+  "Scalability": {
+    "score": 7,
+    "reason": "This household cleaning tool can be replicated for many homes with minor modifications and affordable materials."
+  },
+  "Sustainability": {
+    "score": 6,
+    "reason": "The product appears reusable and low-cost, but long-term durability, power use, and maintenance are not described in detail."
+  }
+}
