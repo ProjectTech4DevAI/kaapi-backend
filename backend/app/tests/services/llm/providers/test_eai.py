@@ -136,21 +136,25 @@ class TestElevenlabsProviderSTT:
         call_kwargs = mock_client.speech_to_text.convert.call_args.kwargs
         assert call_kwargs["temperature"] == 0.5
 
-    def test_stt_missing_model_id(
+    def test_stt_uses_default_model_when_missing(
         self, provider, mock_client, query_params, temp_audio_file
     ):
-        """Test STT fails gracefully when model_id is missing."""
+        """Test STT uses default model (scribe_v2) when model_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="stt",
             params={"language_code": "eng"},
         )
+        mock_response = mock_elevenlabs_stt_response(text="Default model test")
+        mock_client.speech_to_text.convert.return_value = mock_response
 
         result, error = provider.execute(config, query_params, temp_audio_file)
 
-        assert result is None
-        assert error is not None
-        assert "model_id" in error.lower()
+        assert error is None
+        assert result is not None
+        # Verify the default model was used
+        call_kwargs = mock_client.speech_to_text.convert.call_args.kwargs
+        assert call_kwargs["model_id"] == "scribe_v2"
 
     def test_stt_invalid_file_path(
         self, provider, mock_client, stt_config, query_params
@@ -350,31 +354,43 @@ class TestElevenlabsProviderTTS:
         call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
         assert "language_code" not in call_kwargs
 
-    def test_tts_missing_model_id(self, provider, mock_client, query_params):
-        """Test TTS fails gracefully when model_id is missing."""
+    def test_tts_uses_default_model_when_missing(
+        self, provider, mock_client, query_params
+    ):
+        """Test TTS uses default model (eleven_turbo_v2) when model_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
             params={"voice_id": "JBFqnCBsd6RMkjVDRZzb"},
         )
+        mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
 
-        result, error = provider.execute(config, query_params, "Test")
+        result, error = provider.execute(config, query_params, "Test text")
 
-        assert result is None
-        assert "model_id" in error.lower()
+        assert error is None
+        assert result is not None
+        # Verify the default model was used
+        call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
+        assert call_kwargs["model_id"] == "eleven_turbo_v2"
 
-    def test_tts_missing_voice_id(self, provider, mock_client, query_params):
-        """Test TTS fails gracefully when voice_id is missing."""
+    def test_tts_uses_default_voice_when_missing(
+        self, provider, mock_client, query_params
+    ):
+        """Test TTS uses default voice (Sarah) when voice_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
             params={"model_id": "eleven_multilingual_v2"},
         )
+        mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
 
-        result, error = provider.execute(config, query_params, "Test")
+        result, error = provider.execute(config, query_params, "Test text")
 
-        assert result is None
-        assert "voice_id" in error.lower()
+        assert error is None
+        assert result is not None
+        # Verify the default voice (Sarah) was used
+        call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
+        assert call_kwargs["voice_id"] == "EXAVITQu4vr4xnSDxMaL"  # Sarah's ID
 
     def test_tts_empty_audio_response(
         self, provider, mock_client, tts_config, query_params
