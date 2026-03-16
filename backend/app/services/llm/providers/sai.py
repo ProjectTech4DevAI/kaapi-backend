@@ -220,7 +220,8 @@ class SarvamAIProvider(BaseProvider):
 
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=sarvam_response.request_id or "unknown",
+                    provider_response_id=sarvam_response.request_id
+                    or str(uuid.uuid4()),
                     conversation_id=None,
                     provider=provider_name,
                     model=model,
