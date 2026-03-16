@@ -1,25 +1,27 @@
 """Parameter mappers for converting Kaapi-abstracted parameters to provider-specific formats."""
 
 import litellm
+import logging
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 
+logger = logging.getLogger(__name__)
 # BCP-47 language tag → ElevenLabs ISO 639-3 code (Indic + English)
 BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
-    "en-IN": "eng",
-    "hi-IN": "hin",
-    "bn-IN": "ben",
-    "ta-IN": "tam",
-    "te-IN": "tel",
-    "mr-IN": "mar",
-    "gu-IN": "guj",
-    "kn-IN": "kan",
-    "ml-IN": "mal",
-    "pa-IN": "pan",
-    "od-IN": "ori",
-    "as-IN": "asm",
-    "ur-IN": "urd",
-    "ne-IN": "nep",
-    "sd-IN": "snd",
+    "en-IN": "en",
+    "hi-IN": "hi",
+    "bn-IN": "bn",  # Bengali
+    "ta-IN": "ta",
+    "te-IN": "te",
+    "mr-IN": "mr",
+    "gu-IN": "gu",
+    "kn-IN": "kn",
+    "ml-IN": "ml",
+    "pa-IN": "pa",
+    "od-IN": "or",  # Not supported by Elevenlabs
+    "as-IN": "as",
+    "ur-IN": "ur",
+    "ne-IN": "ne",
+    "sd-IN": "sd",
 }
 
 ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
@@ -125,7 +127,9 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     return openai_params, warnings
 
 
-def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_google_params(
+    kaapi_params: dict, completion_type: str
+) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
     This mapper transforms standardized Kaapi parameters into Google-specific
@@ -133,6 +137,7 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
     Args:
         kaapi_params: Dictionary with standardized Kaapi parameters
+        completion_type: Type of completion ("text", "stt", or "tts")
 
     Supported Mapping:
         - model → model
@@ -152,46 +157,66 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     if not model:
         return {}, ["Missing required 'model' parameter"]
 
-    google_params["model"] = kaapi_params.get("model")
+    google_params["model"] = model
 
-    # Instructions for STT prompts
-    instructions = kaapi_params.get("instructions")
-    if instructions:
-        google_params["instructions"] = instructions
+    if completion_type == "text":
+        # Text completion - instructions, temperature, reasoning, knowledge_base_ids
+        instructions = kaapi_params.get("instructions")
+        if instructions:
+            google_params["instructions"] = instructions
 
-    temperature = kaapi_params.get("temperature")
+        temperature = kaapi_params.get("temperature")
+        if temperature is not None:
+            google_params["temperature"] = temperature
 
-    if temperature is not None:
-        google_params["temperature"] = temperature
+        reasoning = kaapi_params.get("reasoning")
+        if reasoning:
+            google_params["reasoning"] = reasoning
 
-    # TTS Config
-    voice = kaapi_params.get("voice")
-    if voice:
-        google_params["voice"] = voice
+        # Warn about unsupported parameters
+        if kaapi_params.get("knowledge_base_ids"):
+            # TODO: Will take up later, when we add google filesearch tool support
+            warnings.append(
+                "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
+            )
 
-    language = kaapi_params.get("language")
-    if language:
-        google_params["language"] = language
+    elif completion_type == "tts":
+        # TTS mode - voice, language, response_format
+        voice = kaapi_params.get("voice")
+        if voice:
+            google_params["voice"] = voice
 
-    response_format = kaapi_params.get("response_format")
-    if response_format:
-        google_params["response_format"] = response_format
+        language = kaapi_params.get("language")
+        if language:
+            google_params["language"] = language
 
-    reasoning = kaapi_params.get("reasoning")
-    if reasoning:
-        google_params["reasoning"] = reasoning
+        response_format = kaapi_params.get("response_format")
+        if response_format:
+            google_params["response_format"] = response_format
 
-    # Warn about unsupported parameters
-    if kaapi_params.get("knowledge_base_ids"):
-        # TODO: Will take up later, when we add google filesearch tool support
-        warnings.append(
-            "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
-        )
+    elif completion_type == "stt":
+        # STT mode - instructions, temperature, response_format
+        instructions = kaapi_params.get("instructions")
+        if instructions:
+            google_params["instructions"] = instructions
+
+        temperature = kaapi_params.get("temperature")
+        if temperature is not None:
+            google_params["temperature"] = temperature
+
+        response_format = kaapi_params.get("response_format")
+        if response_format:
+            google_params["response_format"] = response_format
+
+    else:
+        return {}, [f"Unsupported completion type '{completion_type}' for Google AI"]
 
     return google_params, warnings
 
 
-def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_sarvam_params(
+    kaapi_params: dict, completion_type: str
+) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to SarvamAI API parameters.
 
     Handles both STTLLMParams and TTSLLMParams.
@@ -201,6 +226,7 @@ def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
     Args:
         kaapi_params: Dictionary with standardized Kaapi parameters
+        completion_type: Type of completion ("stt" or "tts")
 
     Returns:
         Tuple of:
@@ -216,44 +242,59 @@ def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
         return {}, ["Missing required 'model' parameter"]
     sarvam_params["model"] = model
 
-    # Determine if STT or TTS based on presence of specific params
-    voice = kaapi_params.get("voice")
-    input_language = kaapi_params.get("input_language")
-
-    if voice is not None:
+    if completion_type == "tts":
         # TTS mode - map TTSLLMParams
-        sarvam_params["speaker"] = voice
-
+        # Required: target_language_code (API requirement)
         language = kaapi_params.get("language")
         if not language:
             return {}, ["Missing required 'language' parameter for TTS"]
         sarvam_params["target_language_code"] = language
 
+        # Optional: speaker (has API default: Shubh for v3, Anushka for v2)
+        voice = kaapi_params.get("voice")
+        if voice:
+            sarvam_params["speaker"] = voice
+
+        # Optional: output_audio_codec
         response_format = kaapi_params.get("response_format")
         if response_format:
             # Map audio format to SarvamAI codec
-            format_mapping = {"mp3": "mp3", "wav": "wav", "ogg": "ogg"}
+            # Supported: mp3, linear16, mulaw, alaw, opus, flac, aac, wav
+            format_mapping = {
+                "mp3": "mp3",
+                "wav": "wav",
+                "ogg": "opus",  # Map ogg to opus (closest match)
+            }
             sarvam_params["output_audio_codec"] = format_mapping.get(
                 response_format, "wav"
             )
 
-    elif input_language is not None or kaapi_params.get("output_language") is not None:
+    elif completion_type == "stt":
         # STT mode - map STTLLMParams
+        input_language = kaapi_params.get("input_language")
         output_language = kaapi_params.get("output_language")
-        transcription_mode = "transcribe"
 
+        # Set language_code (optional, defaults to "unknown" for auto-detection)
         if input_language == "auto":
             sarvam_params["language_code"] = "unknown"
         elif input_language:
             sarvam_params["language_code"] = input_language
+        else:
+            # Default to "unknown" for auto-detection if not provided
+            sarvam_params["language_code"] = "unknown"
 
-        if output_language is None:
-            output_language = input_language
+        # Set mode only for saaras:v3 model (not for saarika:v2.5)
+        # mode parameter: transcribe, translate, verbatim, translit, or codemix
+        if model and "saaras" in model:
+            transcription_mode = "transcribe"
 
-        if output_language == "en-IN" and input_language != output_language:
-            transcription_mode = "translate"
+            if output_language is None:
+                output_language = input_language
 
-        sarvam_params["mode"] = transcription_mode
+            if output_language == "en-IN" and input_language != output_language:
+                transcription_mode = "translate"
+
+            sarvam_params["mode"] = transcription_mode
 
         # Warn about unsupported STT parameters
         instructions = kaapi_params.get("instructions")
@@ -274,10 +315,15 @@ def map_kaapi_to_sarvam_params(kaapi_params: dict) -> tuple[dict, list[str]]:
                 "Parameter 'response_format' is not supported by SarvamAI STT and was ignored"
             )
 
+    else:
+        return {}, [f"Unsupported completion type '{completion_type}' for SarvamAI"]
+
     return sarvam_params, warnings
 
 
-def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_elevenlabs_params(
+    kaapi_params: dict, completion_type: str
+) -> tuple[dict, list[str]]:
     """
     Map Kaapi-abstracted parameters to ElevenLab API params
     Handles both STTLLMParams and TTSLLMParams.
@@ -287,6 +333,7 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
 
     Args:
         kaapi_params: Dictionary with standardized Kaapi parameters
+        completion_type: Type of completion ("stt" or "tts")
 
     Returns:
         Tuple of:
@@ -302,39 +349,45 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
         return {}, ["Missing required 'model' parameter"]
     elevenlabs_params["model_id"] = model_id
 
-    # determine if STT or TTS bases on specific params
-    voice = kaapi_params.get("voice")
-    input_language = kaapi_params.get("input_language")
+    if completion_type == "tts":
+        # TTS Mode - map TTSLLMParams
+        voice = kaapi_params.get("voice")
+        if not voice:
+            return {}, ["Missing required 'voice' parameter for TTS"]
 
-    if voice is not None:
-        # TTS Mode
         voice_id = voice_to_id(voice)
         if not voice_id:
             return {}, [f"Unsupported voice '{voice}' for ElevenLabs TTS"]
         elevenlabs_params["voice_id"] = voice_id
+
         language = kaapi_params.get("language")
-        if not language:
-            return {}, ["Missing required 'language' parameter for TTS"]
-        elevenlabs_lang = bcp47_to_elevenlabs_lang(language)
-        if not elevenlabs_lang:
-            return {}, [f"Unsupported language '{language}' for ElevenLabs TTS"]
-        elevenlabs_params["language_code"] = elevenlabs_lang
+        if language:
+            elevenlabs_lang = bcp47_to_elevenlabs_lang(language)
+            if not elevenlabs_lang:
+                warnings.append(
+                    f"Unsupported language '{language}' for ElevenLabs TTS, using default"
+                )
+            else:
+                elevenlabs_params["language_code"] = elevenlabs_lang
 
         response_format = kaapi_params.get("response_format")
         if response_format:
             # Map audio format to Elevenlabs codec
-            # supports mp3, wav and opus
+            # supports mp3, wav and opus (ogg maps to opus)
             format_mapping = {
                 "mp3": "mp3_44100_128",
                 "wav": "wav_24000",
-                "opus": "opus_48000_128",
+                "ogg": "opus_48000_128",  # Map ogg to opus
             }
             elevenlabs_params["output_format"] = format_mapping.get(
                 response_format, "mp3_44100_128"
             )
-    elif input_language is not None or kaapi_params.get("output_language") is not None:
-        # STT mode --> map STTLLMParams
+
+    elif completion_type == "stt":
+        # STT mode - map STTLLMParams
+        input_language = kaapi_params.get("input_language")
         output_language = kaapi_params.get("output_language")
+
         if input_language == "auto":
             elevenlabs_params["language_code"] = None
         elif input_language:
@@ -367,6 +420,9 @@ def map_kaapi_to_elevenlabs_params(kaapi_params: dict) -> tuple[dict, list[str]]
             warnings.append(
                 "Parameter 'instructions' is not supported by ElevenLabs STT and was ignored."
             )
+    else:
+        return {}, [f"Unsupported completion type '{completion_type}' for ElevenLabs"]
+
     return elevenlabs_params, warnings
 
 
@@ -396,7 +452,9 @@ def transform_kaapi_config_to_native(
         )
 
     if kaapi_config.provider == "google":
-        mapped_params, warnings = map_kaapi_to_google_params(kaapi_config.params)
+        mapped_params, warnings = map_kaapi_to_google_params(
+            kaapi_config.params, kaapi_config.type
+        )
         return (
             NativeCompletionConfig(
                 provider="google-native", params=mapped_params, type=kaapi_config.type
@@ -405,7 +463,9 @@ def transform_kaapi_config_to_native(
         )
 
     if kaapi_config.provider == "sarvamai":
-        mapped_params, warnings = map_kaapi_to_sarvam_params(kaapi_config.params)
+        mapped_params, warnings = map_kaapi_to_sarvam_params(
+            kaapi_config.params, kaapi_config.type
+        )
         return (
             NativeCompletionConfig(
                 provider="sarvamai-native", params=mapped_params, type=kaapi_config.type
@@ -414,8 +474,9 @@ def transform_kaapi_config_to_native(
         )
 
     if kaapi_config.provider == "elevenlabs":
-        mapped_params, warnings = map_kaapi_to_elevenlabs_params(kaapi_config.params)
-
+        mapped_params, warnings = map_kaapi_to_elevenlabs_params(
+            kaapi_config.params, kaapi_config.type
+        )
         return (
             NativeCompletionConfig(
                 provider="elevenlabs-native",

@@ -7,7 +7,6 @@ import sqlalchemy as sa
 from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
-
 from app.core.util import now
 
 
@@ -55,8 +54,8 @@ class STTLLMParams(SQLModel):
 
 class TTSLLMParams(SQLModel):
     model: str
-    voice: str
-    language: str
+    voice: str | None = None
+    language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 

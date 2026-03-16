@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import uuid
 from typing import Any
 
 from elevenlabs import ElevenLabs, SpeechToTextConvertResponse
@@ -76,7 +77,7 @@ class ElevenlabsAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model_id = params.get("model_id")
+        model_id = params.get("model_id") or "scribe_v2"
         if not model_id:
             return None, "Missing 'model_id' in native params for Elevenlabs STT"
 
@@ -110,11 +111,10 @@ class ElevenlabsAIProvider(BaseProvider):
             input_tokens_estimate = 0
             output_tokens_estimate = len(elevenlabs_response.text.split())
             total_tokens_estimate = input_tokens_estimate + output_tokens_estimate
-
+            transcription_id = elevenlabs_response.transcription_id or str(uuid.uuid4())
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=elevenlabs_response.transcription_id
-                    or "unknown",
+                    provider_response_id=transcription_id,
                     conversation_id=None,
                     provider=provider_name,
                     model=model_id,
@@ -135,13 +135,16 @@ class ElevenlabsAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_stt] Successfully transcribed audio | "
-                f"request_id={elevenlabs_response.transcription_id}, model={model_id}"
+                f"request_id={elevenlabs_response.transcription_id}, model={model_id}, provider={provider_name}"
             )
             return llm_response, None
 
         except Exception as e:
             error_message = f"Elevenlabs STT transcription failed: {str(e)}"
-            logger.error(f"[_execute_stt] {error_message}", exc_info=True)
+            logger.error(
+                f"[_execute_stt] {error_message} | provider={provider_name}",
+                exc_info=True,
+            )
             return None, error_message
 
     def _execute_tts(
@@ -164,11 +167,12 @@ class ElevenlabsAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model_id = params.get("model_id")
+        # Use 'or' to handle both missing keys and falsy values
+        model_id = params.get("model_id") or "eleven_turbo_v2"
+        voice_id = params.get("voice_id") or "EXAVITQu4vr4xnSDxMaL"
+
         if not model_id:
             return None, "Missing 'model_id' in native params for Elevenlabs TTS"
-
-        voice_id = params.get("voice_id")
         if not voice_id:
             return None, "Missing 'voice_id' in native params for Elevenlabs TTS"
 
@@ -226,7 +230,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id="unknown",
+                    provider_response_id=str(uuid.uuid4()),
                     conversation_id=None,
                     provider=provider_name,
                     model=model_id,
@@ -260,7 +264,10 @@ class ElevenlabsAIProvider(BaseProvider):
 
         except Exception as e:
             error_message = f"Elevenlabs TTS conversion failed: {str(e)}"
-            logger.error(f"[_execute_tts] {error_message}", exc_info=True)
+            logger.error(
+                f"[_execute_tts] {error_message} | provider={provider_name}",
+                exc_info=True,
+            )
             return None, error_message
 
     def execute(
@@ -270,6 +277,7 @@ class ElevenlabsAIProvider(BaseProvider):
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
+        provider_name = completion_config.provider
         try:
             completion_type = completion_config.type
 
@@ -294,13 +302,14 @@ class ElevenlabsAIProvider(BaseProvider):
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
             logger.error(
-                f"[ElevenlabsAIProvider.execute] {error_message}", exc_info=True
+                f"[ElevenlabsAIProvider.execute] {error_message} | provider={provider_name}",
+                exc_info=True,
             )
             return None, error_message
         except Exception as e:
             error_message = "Unexpected error occurred during Elevenlabs execution"
             logger.error(
-                f"[ElevenlabsAIProvider.execute] {error_message}: {str(e)}",
+                f"[ElevenlabsAIProvider.execute] {error_message}: {str(e)} | provider={provider_name}",
                 exc_info=True,
             )
             return None, error_message
