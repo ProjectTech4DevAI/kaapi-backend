@@ -17,7 +17,7 @@ BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
     "kn-IN": "kn",
     "ml-IN": "ml",
     "pa-IN": "pa",
-    "od-IN": "or",  # Not supported by Elevenlabs
+    # "od-IN": "or",  # Not supported by Elevenlabs explicitly but works in auto detect mode
     "as-IN": "as",
     "ur-IN": "ur",
     "ne-IN": "ne",
@@ -195,7 +195,7 @@ def map_kaapi_to_google_params(
             google_params["response_format"] = response_format
 
     elif completion_type == "stt":
-        # STT mode - instructions, temperature, response_format
+        # STT mode - instructions, temperature, input_language, output_language, response_format
         instructions = kaapi_params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
@@ -203,6 +203,14 @@ def map_kaapi_to_google_params(
         temperature = kaapi_params.get("temperature")
         if temperature is not None:
             google_params["temperature"] = temperature
+
+        input_language = kaapi_params.get("input_language")
+        if input_language:
+            google_params["input_language"] = input_language
+
+        output_language = kaapi_params.get("output_language")
+        if output_language:
+            google_params["output_language"] = output_language
 
         response_format = kaapi_params.get("response_format")
         if response_format:

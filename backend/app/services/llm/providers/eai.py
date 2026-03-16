@@ -168,7 +168,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
         # Extract already-mapped parameters from the mapper
         # Use 'or' to handle both missing keys and falsy values
-        model_id = params.get("model_id") or "eleven_turbo_v2"
+        model_id = params.get("model_id") or "eleven_v3"
         voice_id = params.get("voice_id") or "EXAVITQu4vr4xnSDxMaL"
 
         if not model_id:
