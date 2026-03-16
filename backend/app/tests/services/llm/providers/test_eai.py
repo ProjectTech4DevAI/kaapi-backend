@@ -371,7 +371,7 @@ class TestElevenlabsProviderTTS:
         assert result is not None
         # Verify the default model was used
         call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
-        assert call_kwargs["model_id"] == "eleven_turbo_v2"
+        assert call_kwargs["model_id"] == "eleven_v3"
 
     def test_tts_uses_default_voice_when_missing(
         self, provider, mock_client, query_params
