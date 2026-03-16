@@ -181,7 +181,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros | provider={provider}"
             )
             input_tokens = 0
             output_tokens = 0
@@ -208,7 +208,8 @@ class GoogleAIProvider(BaseProvider):
             llm_response.provider_raw_response = response.model_dump()
 
         logger.info(
-            f"[GoogleAIProvider._execute_stt] Successfully generated STT response: {response.response_id}"
+            f"[GoogleAIProvider._execute_stt] Successfully generated STT response | "
+            f"request_id={response.response_id}, provider={provider}, model={model}"
         )
 
         return llm_response, None
@@ -299,7 +300,7 @@ class GoogleAIProvider(BaseProvider):
         if response_format and response_format != "wav":
             # Need to convert from WAV to requested format
             logger.info(
-                f"[GoogleAIProvider._execute_tts] Converting audio from WAV to {response_format}"
+                f"[GoogleAIProvider._execute_tts] Converting audio from WAV to {response_format} | provider={provider}"
             )
 
             if response_format == "mp3":
@@ -321,11 +322,11 @@ class GoogleAIProvider(BaseProvider):
                 actual_format = "ogg"
             else:
                 logger.warning(
-                    f"[GoogleAIProvider._execute_tts] Unsupported response_format '{response_format}', returning native WAV"
+                    f"[GoogleAIProvider._execute_tts] Unsupported response_format '{response_format}', returning native WAV | provider={provider}"
                 )
                 response_format = "wav"
             logger.info(
-                f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(raw_audio_bytes)} bytes)"
+                f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(raw_audio_bytes)} bytes) | provider={provider}"
             )
         response_mime_type = f"audio/{response_format}"
 
@@ -337,7 +338,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_tts] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_tts] Response missing usage_metadata, using zeros | provider={provider}"
             )
             input_tokens = 0
             output_tokens = 0
@@ -371,8 +372,8 @@ class GoogleAIProvider(BaseProvider):
             llm_response.provider_raw_response = response.model_dump()
 
         logger.info(
-            f"[GoogleAIProvider._execute_tts] Successfully generated TTS response: "
-            f"{response.response_id}, audio_size={len(raw_audio_bytes)} bytes"
+            f"[GoogleAIProvider._execute_tts] Successfully generated TTS response | "
+            f"request_id={response.response_id}, provider={provider}, model={model}, audio_size={len(raw_audio_bytes)} bytes"
         )
 
         return llm_response, None
@@ -425,7 +426,7 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
         else:
             logger.warning(
-                f"[GoogleAIProvider._execute_text] Response missing usage_metadata, using zeros"
+                f"[GoogleAIProvider._execute_text] Response missing usage_metadata, using zeros | provider={completion_config.provider}"
             )
             input_tokens = 0
             output_tokens = 0
@@ -450,7 +451,8 @@ class GoogleAIProvider(BaseProvider):
             llm_response.provider_raw_response = response.model_dump(mode="json")
 
         logger.info(
-            f"[GoogleAIProvider._execute_text] Successfully generated text response: {response.response_id}"
+            f"[GoogleAIProvider._execute_text] Successfully generated text response | "
+            f"request_id={response.response_id}, provider={completion_config.provider}, model={model}"
         )
         return llm_response, None
 
@@ -491,6 +493,7 @@ class GoogleAIProvider(BaseProvider):
         except Exception as e:
             error_message = "Unexpected error occurred"
             logger.error(
-                f"[GoogleAIProvider.execute] {error_message}: {str(e)}", exc_info=True
+                f"[GoogleAIProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                exc_info=True,
             )
             return None, error_message
