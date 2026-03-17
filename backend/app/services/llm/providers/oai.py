@@ -126,7 +126,8 @@ class OpenAIProvider(BaseProvider):
                 llm_response.provider_raw_response = response.model_dump()
 
             logger.info(
-                f"[OpenAIProvider.execute] Successfully generated response: {response.id}"
+                f"[OpenAIProvider.execute] Successfully generated response | "
+                f"request_id={response.id}, provider={completion_config.provider}, model={response.model}"
             )
             return llm_response, None
 
@@ -141,7 +142,7 @@ class OpenAIProvider(BaseProvider):
 
             error_message = handle_openai_error(e)
             logger.error(
-                f"[OpenAIProvider.execute] OpenAI API error: {error_message}",
+                f"[OpenAIProvider.execute] OpenAI API error: {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message
@@ -149,6 +150,7 @@ class OpenAIProvider(BaseProvider):
         except Exception as e:
             error_message = "Unexpected error occurred"
             logger.error(
-                f"[OpenAIProvider.execute] {error_message}: {str(e)}", exc_info=True
+                f"[OpenAIProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                exc_info=True,
             )
             return None, error_message

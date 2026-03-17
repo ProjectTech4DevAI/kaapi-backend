@@ -1,8 +1,12 @@
+import base64
 import logging
 import os
 import uuid
 from typing import Any
-from sarvamai import SarvamAI
+
+from elevenlabs import ElevenLabs, SpeechToTextConvertResponse
+
+
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -20,12 +24,12 @@ from app.services.llm.providers.base import BaseProvider
 logger = logging.getLogger(__name__)
 
 
-class SarvamAIProvider(BaseProvider):
-    def __init__(self, client: SarvamAI):
-        """Initialize SarvamAI provider with client.
+class ElevenlabsAIProvider(BaseProvider):
+    def __init__(self, client: ElevenLabs):
+        """Initialize Elevenlabs provider with client.
 
         Args:
-            client: SarvamAI client instance
+            client: ElevenLabs client instance
         """
         super().__init__(client)
         self.client = client
@@ -33,8 +37,8 @@ class SarvamAIProvider(BaseProvider):
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
         if "api_key" not in credentials:
-            raise ValueError("API Key for SarvamAI Not Set")
-        return SarvamAI(api_subscription_key=credentials["api_key"])
+            raise ValueError("API Key for Elevenlabs Not Set")
+        return ElevenLabs(api_key=credentials["api_key"])
 
     def _parse_input(
         self, query_input: Any, completion_type: str, provider: str
@@ -59,7 +63,7 @@ class SarvamAIProvider(BaseProvider):
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute speech-to-text completion using SarvamAI.
+        """Execute speech-to-text completion using Elevenlabs.
 
         Args:
             completion_config: Configuration for the completion request (with already-mapped params)
@@ -73,12 +77,12 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI STT"
+        model_id = params.get("model_id") or "scribe_v2"
+        if not model_id:
+            return None, "Missing 'model_id' in native params for Elevenlabs STT"
 
         language_code = params.get("language_code")
-        mode = params.get("mode")
+        temperature = params.get("temperature")
 
         # Parse and validate input
         parsed_input_path = self._parse_input(
@@ -88,38 +92,34 @@ class SarvamAIProvider(BaseProvider):
         )
 
         try:
-            # Build kwargs for API call, only including non-None parameters
-            stt_kwargs = {
-                "file": None,  # Will be set below
-                "model": model,
-            }
-
+            # Build optional kwargs
+            stt_kwargs: dict[str, Any] = {}
             if language_code:
                 stt_kwargs["language_code"] = language_code
-
-            # mode only applies to saaras:v3 model
-            if mode:
-                stt_kwargs["mode"] = mode
+            if temperature is not None:
+                stt_kwargs["temperature"] = temperature
 
             with open(parsed_input_path, "rb") as audio_file:
-                # Call SarvamAI transcribe with mapped parameters
-                stt_kwargs["file"] = audio_file
-                sarvam_response = self.client.speech_to_text.transcribe(**stt_kwargs)
+                # Call ElevenLabs transcribe with all mapped parameters
+                elevenlabs_response: SpeechToTextConvertResponse = (
+                    self.client.speech_to_text.convert(
+                        file=audio_file, model_id=model_id, **stt_kwargs
+                    )
+                )
 
-            # Estimate token usage (not directly provided by SarvamAI STT)
+            # Estimate token usage (not directly provided by Elevenlabs STT)
             input_tokens_estimate = 0
-            output_tokens_estimate = len(sarvam_response.transcript.split())
+            output_tokens_estimate = len(elevenlabs_response.text.split())
             total_tokens_estimate = input_tokens_estimate + output_tokens_estimate
-
+            transcription_id = elevenlabs_response.transcription_id or str(uuid.uuid4())
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=sarvam_response.request_id
-                    or str(uuid.uuid4()),
+                    provider_response_id=transcription_id,
                     conversation_id=None,
                     provider=provider_name,
-                    model=model,
+                    model=model_id,
                     output=TextOutput(
-                        content=TextContent(value=sarvam_response.transcript)
+                        content=TextContent(value=elevenlabs_response.text)
                     ),
                 ),
                 usage=Usage(
@@ -131,16 +131,16 @@ class SarvamAIProvider(BaseProvider):
             )
 
             if include_provider_raw_response:
-                llm_response.provider_raw_response = sarvam_response.model_dump()
+                llm_response.provider_raw_response = elevenlabs_response.model_dump()
 
             logger.info(
                 f"[_execute_stt] Successfully transcribed audio | "
-                f"request_id={sarvam_response.request_id}, provider={provider_name} model={model}, mode={mode}"
+                f"request_id={elevenlabs_response.transcription_id}, model={model_id}, provider={provider_name}"
             )
             return llm_response, None
 
         except Exception as e:
-            error_message = f"SarvamAI STT transcription failed: {str(e)}"
+            error_message = f"Elevenlabs STT transcription failed: {str(e)}"
             logger.error(
                 f"[_execute_stt] {error_message} | provider={provider_name}",
                 exc_info=True,
@@ -153,7 +153,7 @@ class SarvamAIProvider(BaseProvider):
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute text-to-speech completion using SarvamAI.
+        """Execute text-to-speech completion using Elevenlabs.
 
         Args:
             completion_config: Configuration for the completion request (with already-mapped params)
@@ -167,20 +167,18 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI TTS"
+        # Use 'or' to handle both missing keys and falsy values
+        model_id = params.get("model_id") or "eleven_v3"
+        voice_id = params.get("voice_id") or "EXAVITQu4vr4xnSDxMaL"
 
-        target_language_code = params.get("target_language_code")
-        if not target_language_code:
-            return (
-                None,
-                "Missing 'target_language_code' in native params for SarvamAI TTS",
-            )
+        if not model_id:
+            return None, "Missing 'model_id' in native params for Elevenlabs TTS"
+        if not voice_id:
+            return None, "Missing 'voice_id' in native params for Elevenlabs TTS"
 
-        # Optional parameters (have API defaults)
-        speaker = params.get("speaker")  # Defaults: Shubh (v3) / Anushka (v2)
-        output_audio_codec = params.get("output_audio_codec")  # Has API default
+        output_format = params.get("output_format", "mp3_44100_128")
+        language_code = params.get("language_code")
+        voice_settings = params.get("voice_settings")
 
         # Parse and validate input
         parsed_text = self._parse_input(
@@ -190,46 +188,57 @@ class SarvamAIProvider(BaseProvider):
         )
 
         try:
-            # Build kwargs for API call, only including non-None parameters
-            tts_kwargs = {
-                "text": parsed_text,
-                "target_language_code": target_language_code,
-                "model": model,
+            # Build optional kwargs
+            tts_kwargs: dict[str, Any] = {}
+            if language_code:
+                tts_kwargs["language_code"] = language_code
+            if voice_settings:
+                tts_kwargs["voice_settings"] = voice_settings
+
+            # Call Elevenlabs TTS API
+            audio_iterator = self.client.text_to_speech.convert(
+                voice_id=voice_id,
+                text=parsed_text,
+                model_id=model_id,
+                output_format=output_format,
+                **tts_kwargs,
+            )
+
+            # Elevenlabs returns an iterator of audio bytes; collect and base64-encode
+            audio_bytes = b"".join(audio_iterator)
+            if not audio_bytes:
+                return None, "Elevenlabs TTS returned no audio data"
+
+            audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+            # Derive mime type from output_format (e.g. "mp3_44100_128" -> "audio/mpeg")
+            codec = output_format.split("_")[0]
+            mime_type_map = {
+                "mp3": "audio/mpeg",
+                "pcm": "audio/pcm",
+                "wav": "audio/wav",
+                "opus": "audio/opus",
+                "ulaw": "audio/basic",
+                "alaw": "audio/alaw",
             }
+            mime_type = mime_type_map.get(codec, f"audio/{codec}")
 
-            if speaker:
-                tts_kwargs["speaker"] = speaker
-
-            if output_audio_codec:
-                tts_kwargs["output_audio_codec"] = output_audio_codec
-
-            # Call SarvamAI TTS with mapped parameters
-            sarvam_response = self.client.text_to_speech.convert(**tts_kwargs)
-
-            # SarvamAI returns a list of base64-encoded audio strings
-            # For single text input, take the first audio
-            if not sarvam_response.audios or len(sarvam_response.audios) == 0:
-                return None, "SarvamAI TTS returned no audio data"
-
-            audio_base64 = sarvam_response.audios[0]
-
-            # Estimate token usage (not directly provided by SarvamAI TTS)
+            # Estimate token usage (not directly provided by Elevenlabs TTS)
             input_tokens_estimate = len(parsed_text.split())
             output_tokens_estimate = 0  # Audio output, no tokens
             total_tokens_estimate = input_tokens_estimate
 
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=sarvam_response.request_id
-                    or str(uuid.uuid4()),
+                    provider_response_id=str(uuid.uuid4()),
                     conversation_id=None,
                     provider=provider_name,
-                    model=model,
+                    model=model_id,
                     output=AudioOutput(
                         content=AudioContent(
                             format="base64",
                             value=audio_base64,
-                            mime_type=f"audio/{output_audio_codec or 'wav'}",
+                            mime_type=mime_type,
                         )
                     ),
                 ),
@@ -242,16 +251,19 @@ class SarvamAIProvider(BaseProvider):
             )
 
             if include_provider_raw_response:
-                llm_response.provider_raw_response = sarvam_response.model_dump()
+                llm_response.provider_raw_response = {
+                    "audio_bytes_length": len(audio_bytes),
+                    "output_format": output_format,
+                }
 
             logger.info(
                 f"[_execute_tts] Successfully converted text to speech | "
-                f"request_id={sarvam_response.request_id}, provider={provider_name}, model={model}, speaker={speaker}"
+                f"provider={provider_name}, model={model_id}, voice_id={voice_id}, output_format={output_format}"
             )
             return llm_response, None
 
         except Exception as e:
-            error_message = f"SarvamAI TTS conversion failed: {str(e)}"
+            error_message = f"Elevenlabs TTS conversion failed: {str(e)}"
             logger.error(
                 f"[_execute_tts] {error_message} | provider={provider_name}",
                 exc_info=True,
@@ -284,20 +296,20 @@ class SarvamAIProvider(BaseProvider):
             else:
                 return (
                     None,
-                    f"Unsupported completion type '{completion_type}' for SarvamAIProvider",
+                    f"Unsupported completion type '{completion_type}' for ElevenlabsAIProvider",
                 )
 
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
             logger.error(
-                f"[SarvamAIProvider.execute] {error_message} | provider={provider_name}",
+                f"[ElevenlabsAIProvider.execute] {error_message} | provider={provider_name}",
                 exc_info=True,
             )
             return None, error_message
         except Exception as e:
-            error_message = "Unexpected error occurred during SarvamAI execution"
+            error_message = "Unexpected error occurred during Elevenlabs execution"
             logger.error(
-                f"[SarvamAIProvider.execute] {error_message}: {str(e)} | provider={provider_name}",
+                f"[ElevenlabsAIProvider.execute] {error_message}: {str(e)} | provider={provider_name}",
                 exc_info=True,
             )
             return None, error_message

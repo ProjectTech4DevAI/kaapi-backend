@@ -7,7 +7,6 @@ import sqlalchemy as sa
 from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
-
 from app.core.util import now
 
 
@@ -55,8 +54,8 @@ class STTLLMParams(SQLModel):
 
 class TTSLLMParams(SQLModel):
     model: str
-    voice: str
-    language: str
+    voice: str | None = None
+    language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
@@ -194,7 +193,9 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native", "google-native", "sarvamai-native"] = Field(
+    provider: Literal[
+        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+    ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -214,7 +215,7 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai"] = Field(
+    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] = Field(
         ..., description="LLM provider (openai, google, sarvamai)"
     )
 

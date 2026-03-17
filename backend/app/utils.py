@@ -417,7 +417,7 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
 
             response.raise_for_status()
 
-            logger.info("[send_callback] Callback sent successfully")
+            logger.info(f"[send_callback] Callback sent successfully to {callback_url}")
             return True
 
     except requests.RequestException as e:
