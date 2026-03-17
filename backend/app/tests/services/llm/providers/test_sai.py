@@ -152,10 +152,10 @@ class TestSarvamAIProviderSTT:
         call_args = mock_client.speech_to_text.transcribe.call_args
         assert call_args.kwargs["language_code"] == "unknown"
 
-    def test_stt_missing_model_param(
+    def test_stt_uses_default_model_when_missing(
         self, provider, mock_client, query_params, temp_audio_file
     ):
-        """Test STT with missing model parameter."""
+        """Test STT uses default model (saaras:v3) when model parameter is missing."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
             type="stt",
@@ -164,12 +164,16 @@ class TestSarvamAIProviderSTT:
                 "mode": "transcribe",
             },
         )
+        mock_response = mock_sarvam_stt_response(transcript="नमस्ते")
+        mock_client.speech_to_text.transcribe.return_value = mock_response
 
         result, error = provider.execute(config, query_params, temp_audio_file)
 
-        assert result is None
-        assert error is not None
-        assert "model" in error.lower()
+        assert error is None
+        assert result is not None
+        # Verify default model was used
+        call_kwargs = mock_client.speech_to_text.transcribe.call_args.kwargs
+        assert call_kwargs["model"] == "saaras:v3"
 
     def test_stt_invalid_file_path(
         self, provider, mock_client, stt_config, query_params
@@ -315,22 +319,32 @@ class TestSarvamAIProviderTTS:
         assert result is not None
         assert result.response.output.content.mime_type == "audio/ogg"
 
-    def test_tts_missing_model_param(self, provider, mock_client, query_params):
-        """Test TTS with missing model parameter."""
+    def test_tts_uses_default_model_when_missing(
+        self, provider, mock_client, query_params
+    ):
+        """Test TTS uses default model (bulbul:v3) when model parameter is missing."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
             type="tts",
             params={
                 "target_language_code": "hi-IN",
-                "speaker": "meera",
+                "speaker": "simran",
             },
+        )
+        mock_response = mock_sarvam_tts_response()
+        mock_client.text_to_speech.convert.return_value = (
+            mock_response  # Fixed: convert not speak
         )
 
         result, error = provider.execute(config, query_params, "Test text")
 
-        assert result is None
-        assert error is not None
-        assert "model" in error.lower()
+        assert error is None
+        assert result is not None
+        # Verify default model was used
+        call_kwargs = (
+            mock_client.text_to_speech.convert.call_args.kwargs
+        )  # Fixed: convert not speak
+        assert call_kwargs["model"] == "bulbul:v3"
 
     def test_tts_missing_target_language_code(
         self, provider, mock_client, query_params

@@ -74,9 +74,6 @@ class SarvamAIProvider(BaseProvider):
 
         # Extract already-mapped parameters from the mapper
         model = params.get("model") or "saaras:v3"
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI STT"
-
         language_code = params.get("language_code")
         mode = params.get("mode") or "transcribe"
 
@@ -168,9 +165,6 @@ class SarvamAIProvider(BaseProvider):
 
         # Extract already-mapped parameters from the mapper
         model = params.get("model") or "bulbul:v3"
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI TTS"
-
         target_language_code = params.get("target_language_code")
         if not target_language_code:
             return (

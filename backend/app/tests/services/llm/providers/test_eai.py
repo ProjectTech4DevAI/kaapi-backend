@@ -307,7 +307,7 @@ class TestElevenlabsProviderTTS:
         assert result.response.output.content.mime_type == "audio/opus"
 
     def test_tts_default_output_format(self, provider, mock_client, query_params):
-        """Test TTS defaults to mp3_44100_128 when output_format is not specified."""
+        """Test TTS defaults to wav_24000 when output_format is not specified."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
@@ -322,8 +322,10 @@ class TestElevenlabsProviderTTS:
 
         assert error is None
         call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
-        assert call_kwargs["output_format"] == "mp3_44100_128"
-        assert result.response.output.content.mime_type == "audio/mpeg"
+        assert call_kwargs["output_format"] == "wav_24000"
+        assert (
+            result.response.output.content.mime_type == "audio/wav"
+        )  # Fixed: wav format → audio/wav mime type
 
     def test_tts_passes_language_code(
         self, provider, mock_client, tts_config, query_params

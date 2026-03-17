@@ -75,7 +75,7 @@ def test_create_version_nonexistent_config(
         "config_blob": {
             "completion": {
                 "provider": "openai",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Test",
@@ -106,7 +106,7 @@ def test_create_version_different_project_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Should fail",
@@ -481,7 +481,7 @@ def test_create_version_cannot_change_type_from_text_to_stt(
         completion=KaapiCompletionConfig(
             provider="openai",
             type="text",
-            params={"model": "gpt-4", "temperature": 0.7},
+            params={"model": "gpt-4o", "temperature": 0.7},
         )
     )
     config = create_test_config(
@@ -604,7 +604,7 @@ def test_create_version_cannot_change_type_from_tts_to_text(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                 },
             }
@@ -634,7 +634,7 @@ def test_create_version_same_type_succeeds(
             provider="openai",
             type="text",
             params={
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             },
         )
@@ -687,7 +687,7 @@ def test_create_version_partial_update_params_only(
             provider="openai",
             type="text",
             params={
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             },
         )
@@ -745,7 +745,7 @@ def test_create_config_with_kaapi_provider_success(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                 },
             }

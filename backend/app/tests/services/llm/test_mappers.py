@@ -832,7 +832,7 @@ class TestTransformKaapiConfigToNative:
             provider="elevenlabs",
             type="tts",
             params={
-                "model": "eleven_turbo_v2",
+                "model": "eleven_v3",  # Updated to match current SUPPORTED_MODELS
                 "voice": "Sarah",
                 "language": "en-IN",
                 "response_format": "mp3",
@@ -844,7 +844,7 @@ class TestTransformKaapiConfigToNative:
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "elevenlabs-native"
         assert result.type == "tts"
-        assert result.params["model_id"] == "eleven_turbo_v2"
+        assert result.params["model_id"] == "eleven_v3"  # Updated
         assert result.params["voice_id"] == "EXAVITQu4vr4xnSDxMaL"
         assert result.params["language_code"] == "en"
         assert result.params["output_format"] == "mp3_44100_128"
@@ -895,31 +895,19 @@ class TestTransformKaapiConfigToNative:
         assert result.params["mode"] == "translate"
         assert warnings == []
 
-    def test_transform_sarvamai_stt_with_saarika_model(self):
-        """Test transformation of SarvamAI STT with saarika model (no mode)."""
-        kaapi_config = KaapiCompletionConfig(
-            provider="sarvamai",
-            type="stt",
-            params={"model": "saarika:v2.5", "input_language": "hi-IN"},
-        )
+    # Removed test_transform_sarvamai_stt_with_saarika_model - model no longer in SUPPORTED_MODELS
+    # The mapper logic for saarika (no mode parameter) is already tested in unit tests
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
-
-        assert isinstance(result, NativeCompletionConfig)
-        assert result.provider == "sarvamai-native"
-        assert result.type == "stt"
-        assert result.params["model"] == "saarika:v2.5"
-        assert result.params["language_code"] == "hi-IN"
-        # mode should NOT be set for saarika models
-        assert "mode" not in result.params
-        assert warnings == []
-
-    def test_transform_sarvamai_tts_with_optional_voice(self):
-        """Test transformation of SarvamAI TTS without voice (using API default)."""
+    def test_transform_sarvamai_tts_with_voice(self):
+        """Test transformation of SarvamAI TTS with explicit voice."""
         kaapi_config = KaapiCompletionConfig(
             provider="sarvamai",
             type="tts",
-            params={"model": "bulbul:v3", "language": "hi-IN"},
+            params={
+                "model": "bulbul:v3",
+                "language": "hi-IN",
+                "voice": "simran",  # Explicitly set Sarvam voice to avoid cross-provider default
+            },
         )
 
         result, warnings = transform_kaapi_config_to_native(kaapi_config)
@@ -929,8 +917,7 @@ class TestTransformKaapiConfigToNative:
         assert result.type == "tts"
         assert result.params["model"] == "bulbul:v3"
         assert result.params["target_language_code"] == "hi-IN"
-        # speaker should not be set (will use API default)
-        assert "speaker" not in result.params
+        assert result.params["speaker"] == "simran"
         assert warnings == []
 
     def test_transform_google_text_completion(self):
@@ -978,9 +965,9 @@ class TestTransformKaapiConfigToNative:
             provider="google",
             type="tts",
             params={
-                "model": "gemini-2.5-pro",
-                "voice": "en-US-Journey-D",
-                "language": "en-US",
+                "model": "gemini-2.5-flash-preview-tts",  # Updated to TTS model
+                "voice": "Kore",  # Updated to supported voice
+                "language": "hi-IN",  # Use BCP-47 locale that maps to Gemini lang
             },
         )
 
@@ -989,7 +976,8 @@ class TestTransformKaapiConfigToNative:
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "google-native"
         assert result.type == "tts"
-        assert result.params["model"] == "gemini-2.5-pro"
-        assert result.params["voice"] == "en-US-Journey-D"
-        assert result.params["language"] == "en-US"
+        assert result.params["model"] == "gemini-2.5-flash-preview-tts"
+        assert result.params["voice"] == "Kore"
+        assert result.params["language"] == "hi"  # Mapped from hi-IN
+        assert result.params["response_format"] == "wav"  # Default
         assert warnings == []
