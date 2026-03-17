@@ -1,95 +1,108 @@
+Problem: Project synopsis :- In many places, many goods are stolen from the grid like Copper plates, wires, aluminium and these goods are very expensive due to which there is a lot of loss. Dispute there has been a 24 hour security guard there, but theft happens because one security guard cannot Guard everywhere . Every item like Copper plates, wires etc are expensive and sometimes electricity is also stolen.
+Solution: We developed a system in which we will place mirrors in such a way that they can reflect the light and also place a laser light at one corner and also place a receiver in which there is an alarm which sounds when light is not received .
+
+    Because one security guard cannot Guard everywhere so, when we plays this system automatically when someone come inside from some other ways the alarm will sound and guard been alert .(https://youtu.be/gKJiCGNaAwg?si=xMmwyxQNDkwS7kD5)
+
 ------- CASE 1: PROBLEM SOLUTION TEXT INPUT  ---------
 {
   "Novelty": {
     "score": 4,
-    "reason": "A laser-and-receiver intrusion alarm is a well-known security concept, with only limited originality in applying it to grid theft monitoring."
+    "reason": "A laser-and-mirror intrusion alarm is a well-known security concept, with only limited student-level adaptation to grid theft prevention."
   },
   "Usefulness": {
     "score": 6,
-    "reason": "The solution directly addresses unauthorized entry and can help alert guards quickly, but it does not fully address theft from multiple access points or electricity theft itself."
+    "reason": "The solution directly addresses unauthorized entry and can help alert guards quickly, but it does not fully address theft of electricity or all possible theft methods."
   },
   "Feasibility": {
-    "score": 7,
-    "reason": "Using mirrors, laser light, a receiver, and an alarm is realistic with accessible components and can be built at prototype level with moderate effort."
+    "score": 6,
+    "reason": "Such a laser alarm setup is technically achievable at small scale, but the submission does not explain real-world outdoor reliability, power backup, or coverage in large grid areas."
   },
   "Scalability": {
-    "score": 6,
-    "reason": "The idea can be replicated across similar sites, but scaling to large or complex grid areas would require careful alignment, multiple units, and maintenance."
+    "score": 5,
+    "reason": "The system could be replicated at multiple sites, but scaling to large substations or varied layouts would need careful installation and maintenance."
   },
   "Sustainability": {
     "score": 6,
-    "reason": "The system appears maintainable over time with low material use, but it depends on continuous power, proper alignment, and regular upkeep to remain reliable."
+    "reason": "The system can operate over time with modest energy use, but long-term performance depends on alignment, maintenance, and protection from weather or tampering."
   }
 }
+
+Image URL: https://drive.usercontent.google.com/download?id=1Xa-_KlHb9tyFLNcFXRKQ4KylVf5kGa4c&export=download&authuser=0
 ------- CASE 2: PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------
 {
   "Novelty": {
     "score": 5,
-    "reason": "Laser-beam intrusion alarms are a known security concept, but the student shows some independent adaptation by using mirrors to cover multiple directions."
+    "reason": "A laser-beam intrusion alarm is a known security concept, but the student shows some independent adaptation by using mirrors to cover more entry paths."
   },
   "Usefulness": {
     "score": 7,
-    "reason": "The solution is clearly connected to theft prevention and can practically help alert guards when someone enters a restricted area."
+    "reason": "The solution directly addresses theft detection by alerting the guard when someone interrupts the light path, giving clear practical benefit."
   },
   "Feasibility": {
     "score": 7,
-    "reason": "The image shows a project-related working prototype with laser, wiring, and electronics, indicating the basic system is realistically buildable."
+    "reason": "The image shows a project-related working prototype and the use of laser, receiver, and alarm is realistically implementable with moderate effort."
   },
   "Scalability": {
     "score": 6,
-    "reason": "The idea can be replicated in other small secured spaces, but larger grid areas would need careful alignment, multiple units, and maintenance."
+    "reason": "The system could be replicated at multiple grid sites, but larger areas would need careful mirror alignment, maintenance, and setup."
   },
   "Sustainability": {
     "score": 6,
-    "reason": "The system uses relatively simple reusable components and can operate over time, but continuous power, alignment, and upkeep limit stronger sustainability."
+    "reason": "The system can operate for a long time with relatively low power use, but it depends on regular maintenance and stable alignment to remain reliable."
   }
 }
 
 ----------------------------
 
+Problem: సాధారణంగా మనం చూసినట్లయితే మన ఇండ్లలో సీలింగ్లలో ఏర్పడే బల్లి పాతరను వెబ్ రిమూవర్ స్టిక్ తో తొలగించినప్పుడు ఆ బల్లి పాతర మన కళ్ళల్లో పడుతుంది. అలాగే చర్మం మీద పడి దురద లేస్తుంది. అంతేకాకుండా ఎక్కువ సమయం పాటు మనము తీయడానికి ప్రయత్నించినప్పుడు చేతులు కూడా నొప్పులు పెడతాయి.
+Solution: women friendly web remover stick.
+    సాధారణంగా మనం చూసినట్లయితే మన ఇండ్లలో సీలింగ్లలో ఏర్పడే బల్లి పాతరను వెబ్ రిమూవర్ స్టిక్ తో తొలగించినప్పుడు ఆ బల్లి పాతర మన కళ్ళల్లో పడుతుంది. అలాగే చర్మం మీద పడి దురద లేస్తుంది. అంతేకాకుండా ఎక్కువ సమయం పాటు మనము తీయడానికి ప్రయత్నించినప్పుడు చేతులు కూడా నొప్పులు పెడతాయి. ఈ సమస్యకు పరిష్కారంగా మేము ఉమెన్ ఫ్రెండ్లీ వెబ్ రిమూవర్ స్టిక్ తయారు చేసాము. మోటార్ సహాయంతో వేబ్ రిమూవర్ తిరుగుతుంది ఇది తిరిగినప్పుడు పడే బల్లి పాతర అంతా మన మీద పడకుండా మధ్యలో ఒక అంబ్రెల్లా ఉంచడం జరిగింది. ఈ అంబ్రెల్లా బల్లి పాతరను కలెక్ట్ చేసుకుంటుంది అంటే మన మీద పడకుండా చూస్తుంది. దీని ఈజీగా తక్కువ ఖర్చుతో తయారు చేయవచ్చు సులభంగా వినియోగించవచ్చు.
 ------- CASE 3: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT  ---------
 {
   "Novelty": {
     "score": 7,
-    "reason": "The idea adds a clear student-made improvement to a common web remover by combining a rotating cleaner with an umbrella-style dust collector."
+    "reason": "The idea adds a clear student-made adaptation by combining a rotating web remover with an umbrella-like collector to prevent dust from falling on the user."
   },
   "Usefulness": {
     "score": 8,
-    "reason": "The solution directly addresses the stated problems of dust falling into the eyes, skin irritation, and hand pain during cobweb cleaning."
+    "reason": "The solution directly addresses the stated problems of dust falling into eyes, skin irritation, and hand pain through protection and easier cleaning."
   },
   "Feasibility": {
-    "score": 7,
-    "reason": "A low-cost stick with a motor and collection shield appears realistically buildable with accessible materials, though no detailed prototype evidence is given."
+    "score": 6,
+    "reason": "A low-cost motorized stick with a collection cover seems achievable, but the submission gives limited detail on build, power source, and handling."
   },
   "Scalability": {
     "score": 7,
-    "reason": "This household cleaning tool could be replicated for many homes with only moderate design and manufacturing effort."
+    "reason": "This household cleaning tool could be replicated for many homes with only moderate manufacturing changes."
   },
   "Sustainability": {
     "score": 6,
-    "reason": "The tool may support longer-term safe cleaning and repeated use, but maintenance, power source, and material durability are not explained."
+    "reason": "The product appears reusable and low-waste in intent, but no clear details are given about durable materials, energy use, or long-term maintenance."
   }
 }
+
+Image URL: https://drive.usercontent.google.com/download?id=1gVrcB4Jy3zjMBxRStS9NBMksvXdjcKnc&export=download&authuser=0
+
 ------- CASE 4: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------
 {
   "Novelty": {
     "score": 7,
-    "reason": "The idea adds a practical new twist to a common web remover by combining a rotating stick with an umbrella-like collector to protect the user."
+    "reason": "The idea adds a clear student-made adaptation to a common cleaning stick by combining a motorized remover with an umbrella-like catcher to prevent dust from falling on the user."
   },
   "Usefulness": {
     "score": 8,
-    "reason": "The solution directly addresses the stated problems of dust falling into the eyes, skin irritation, and hand strain during cobweb cleaning."
+    "reason": "The solution directly addresses the stated problems of dust falling into the eyes, skin irritation, and hand pain by collecting the web waste and reducing manual effort."
   },
   "Feasibility": {
     "score": 8,
-    "reason": "The image shows a related physical prototype and the design uses simple, low-cost parts, making small-scale implementation realistic."
+    "reason": "The image supports that a physical prototype exists, and the described materials like a stick, motor, and umbrella appear practical and low-cost to assemble."
   },
   "Scalability": {
     "score": 7,
-    "reason": "This household cleaning tool can be replicated for many homes with minor modifications and affordable materials."
+    "reason": "This household cleaning concept can be replicated for many homes with manageable design changes, though wider adoption would need better finishing and usability testing."
   },
   "Sustainability": {
     "score": 6,
-    "reason": "The product appears reusable and low-cost, but long-term durability, power use, and maintenance are not described in detail."
+    "reason": "The reusable cleaning tool can reduce repeated manual strain and is likely maintainable, but long-term durability, power use, and material life are not explained."
   }
 }

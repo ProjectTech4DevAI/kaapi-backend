@@ -34,7 +34,7 @@ class TextLLMParams(SQLModel):
         ge=1,
         description="Maximum number of candidate results to return",
     )
-    response_format: Literal["text", "json_object"] = Field(
+    response_format: Literal["text", "json_object", "json_schema"] = Field(
         default="text",
         description="Response format supported literals are text and json_object",
     )

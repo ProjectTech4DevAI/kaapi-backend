@@ -800,9 +800,11 @@ def run_inference_test_cases():
 
     response_case1 = inference(problem=problem, solution=solution)
     outputs.append(
+        f"Problem: {problem}\n"
+        f"Solution: {solution}\n\n"
         "------- CASE 1: PROBLEM SOLUTION TEXT INPUT  ---------\n"
         + str(response_case1)
-        + "\n"
+        + "\n\n"
     )
 
     # CASE 2: PROBLEM SOLUTION STATEMENT WITH IMAGE
@@ -816,6 +818,7 @@ def run_inference_test_cases():
 
     response_case2 = inference(problem=problem, solution=solution, image=image)
     outputs.append(
+        f"Image URL: {image}\n"
         "------- CASE 2: PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------\n"
         + str(response_case2)
         + "\n\n----------------------------\n\n"
@@ -830,9 +833,11 @@ def run_inference_test_cases():
 
     response_case3 = inference(problem=problem, solution=solution)
     outputs.append(
+        f"Problem: {problem}\n"
+        f"Solution: {solution}\n"
         "------- CASE 3: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT  ---------\n"
         + str(response_case3)
-        + "\n"
+        + "\n\n"
     )
 
     # CASE 4: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT
@@ -846,6 +851,7 @@ def run_inference_test_cases():
 
     response_case4 = inference(problem=problem, solution=solution, image=image)
     outputs.append(
+        f"Image URL: {image}\n\n"
         "------- CASE 4: MULTI-LINGUAL PROBLEM SOLUTION STATEMENT WITH IMAGE  ---------\n"
         + str(response_case4)
     )
@@ -857,6 +863,6 @@ def run_inference_test_cases():
 
 if __name__ == "__main__":
     # TODO: uncomment to run inference test cases
-    # run_inference_test_cases()
+    run_inference_test_cases()
 
-    run_inference_batch(Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")))
+    #run_inference_batch(Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")))
