@@ -8,36 +8,13 @@ from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
 from app.core.util import now
-
-DEFAULT_STT_MODEL = "gemini-2.5-pro"
-DEFAULT_TTS_MODEL = "gemini-2.5-pro-preview-tts"
-DEFAULT_TTS_VOICE = "Kore"
-
-SUPPORTED_MODELS = {
-    ("google", "stt"): [DEFAULT_STT_MODEL],
-    ("google", "tts"): [DEFAULT_TTS_MODEL, "gemini-2.5-flash-preview-tts"],
-    ("sarvamai", "stt"): ["saaras:v3"],
-    ("sarvamai", "tts"): ["bulbul:v3"],
-    ("elevenlabs", "stt"): ["scribe_v1", "scribe_v2"],
-    ("elevenlabs", "tts"): ["eleven_multilingual_v2"],
-    ("openai", "text"): [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-5.4",
-        "gpt-5.1",
-        "gpt-5-mini",
-        "gpt-5-nano",
-    ],
-}
-
-SUPPORTED_VOICES = {
-    ("google", "tts"): ["Kore", "Orus", "Leda", "Charon"],
-    ("sarvamai", "tts"): ["Simran", "Shubh", "Roopa"],
-    ("elevenlabs", "tts"): ["Sarah", "George", "Callum", "Liam"],
-}
+from app.models.llm.constants import (
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+    SUPPORTED_MODELS,
+    SUPPORTED_VOICES,
+)
 
 
 class TextLLMParams(SQLModel):
@@ -76,7 +53,7 @@ class STTLLMParams(SQLModel):
     )
     temperature: float | None = Field(
         default=None,
-        ge=0.0,
+        ge=0.01,  # sarvam minimum 0.01
         le=2.0,
         description="Temperature parameter (not supported by all STT providers)",
     )

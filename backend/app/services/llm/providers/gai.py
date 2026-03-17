@@ -23,7 +23,7 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
-from app.models.llm.request import (
+from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -125,11 +125,11 @@ class GoogleAIProvider(BaseProvider):
         if not isinstance(resolved_input, str):
             return None, f"{provider} STT requires file path as string"
 
-        model = generation_params.get("model", DEFAULT_STT_MODEL)
+        model = generation_params.get("model") or DEFAULT_STT_MODEL
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
-        temperature = generation_params.get("temperature", 0.1)
+        temperature = generation_params.get("temperature") or 0.0
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -250,18 +250,10 @@ class GoogleAIProvider(BaseProvider):
             return None, "Text input cannot be empty"
 
         # Extract params with defaults (language is optional — Gemini auto-detects from script)
-        model = generation_params.get("model", DEFAULT_TTS_MODEL)
-        logger.info(f"Model name is {model}")
-        voice = generation_params.get("voice", DEFAULT_TTS_VOICE)
+        model = generation_params.get("model") or DEFAULT_TTS_MODEL
+        voice = generation_params.get("voice") or DEFAULT_TTS_VOICE
 
         language = generation_params.get("language")
-        logger.info(f"The language of choice is {language}")
-        google_language = None
-        if language is not None:
-            google_language = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
-            logger.info(f"The google language is {google_language}")
-            if not google_language:
-                return None, f"Unsupported language '{language}' for Google TTS"
 
         # Extract optional params
         response_format = generation_params.get("response_format", "wav")
@@ -278,7 +270,7 @@ class GoogleAIProvider(BaseProvider):
                 voice_config=VoiceConfig(
                     prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice)
                 ),
-                language_code=google_language,
+                language_code=language,
             ),
         }
 
@@ -291,7 +283,6 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model, contents=resolved_input, config=config
         )
-        logger.info(f"-----Response TTS is {response}")
         if not response.response_id:
             return None, "Google AI response missing response_id"
         try:

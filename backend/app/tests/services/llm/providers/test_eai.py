@@ -224,7 +224,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "language_code": "hin",
                 "output_format": "mp3_44100_128",
@@ -251,7 +251,8 @@ class TestElevenlabsProviderTTS:
         assert result.response.output.content.value == expected_b64
         assert result.response.output.content.format == "base64"
         assert result.response.output.content.mime_type == "audio/mpeg"
-        assert result.response.model == "eleven_multilingual_v2"
+        assert result.response.model == "eleven_v3"
+
         assert result.response.provider == "elevenlabs-native"
 
     def test_tts_chunked_audio_response(
@@ -273,7 +274,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "output_format": "wav_24000",
             },
@@ -293,7 +294,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "output_format": "opus_48000_128",
             },
@@ -311,7 +312,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
             },
         )
@@ -343,7 +344,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
             },
         )
@@ -380,7 +381,7 @@ class TestElevenlabsProviderTTS:
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
-            params={"model_id": "eleven_multilingual_v2"},
+            params={"model_id": "eleven_v3"},
         )
         mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
 
