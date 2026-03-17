@@ -351,6 +351,7 @@ def execute_llm_call(
                     session=session, project_id=project_id, config_id=config.id
                 )
                 config_blob, error = resolve_config_blob(config_crud, config)
+                logger.info(f"----the resolved config blob is {config_blob}")
                 if error:
                     return BlockResult(error=error)
             else:
@@ -520,7 +521,7 @@ def execute_job(
     callback_url_str = str(request.callback_url) if request.callback_url else None
 
     logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}"
+        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, callback_url {callback_url_str}"
     )
 
     try:
@@ -547,6 +548,8 @@ def execute_job(
             langfuse_credentials=langfuse_credentials,
             include_provider_raw_response=request.include_provider_raw_response,
         )
+
+        logger.info(f"[execute_job] results: {result.error}")
 
         if result.success:
             callback_response = APIResponse.success_response(
