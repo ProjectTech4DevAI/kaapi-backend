@@ -392,7 +392,7 @@ async def process_completed_embedding_batch(
         eval_run.score = {
             "summary_scores": [
                 {
-                    "name": "cosine_similarity",
+                    "name": "Cosine Similarity",
                     "avg": round(float(similarity_stats["cosine_similarity_avg"]), 2),
                     "std": round(float(similarity_stats["cosine_similarity_std"]), 2),
                     "total_pairs": similarity_stats["total_pairs"],
