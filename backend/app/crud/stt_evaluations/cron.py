@@ -7,6 +7,7 @@ Follows the same pattern as text evaluations: single query to fetch all
 processing runs, grouped by project_id for credential management.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -129,15 +130,18 @@ async def poll_stt_run(
         )
 
     # All batch jobs are done - clean up Gemini audio files once
-    gemini_file_ids = []
+    gemini_file_names: list[str] = []
     for bj in batch_jobs:
-        gemini_file_ids = bj.config.get("gemini_audio_file_ids", [])
-        if gemini_file_ids:
+        names = bj.config.get("gemini_audio_files", [])
+        if names:
+            gemini_file_names = names
             break
 
-    if gemini_file_ids:
+    if gemini_file_names:
         try:
-            deleted, failed = batch_provider.delete_files(gemini_file_ids)
+            deleted, failed = await asyncio.to_thread(
+                batch_provider.delete_files, gemini_file_names
+            )
             logger.info(
                 f"[poll_stt_run] Gemini file cleanup | "
                 f"run_id={run.id}, deleted={deleted}, failed={failed}"

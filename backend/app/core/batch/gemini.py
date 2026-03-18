@@ -405,7 +405,7 @@ class GeminiBatchProvider(BatchProvider):
             raise
 
     def delete_files(self, file_names: list[str]) -> tuple[int, int]:
-        """Delete files from Gemini File API. Best-effort, never raises.
+        """Delete files from Gemini File API.
 
         Args:
             file_names: List of Gemini file names to delete (e.g., ["files/xxx", ...])

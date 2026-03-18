@@ -206,7 +206,7 @@ def start_stt_evaluation_batch(
                     "model": model,
                     "stt_provider": model,
                     "evaluation_run_id": run.id,
-                    "gemini_audio_file_ids": gemini_file_names,
+                    "gemini_audio_files": gemini_file_names,
                 },
             )
 
