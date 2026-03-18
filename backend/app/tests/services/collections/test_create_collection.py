@@ -58,7 +58,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     project = get_project(db)
     request = CreationRequest(
         documents=[UUID("f3e86a17-1e6f-41ec-b020-5b08eebef928")],
-        batch_size=1,
+        batch_size=10,
         callback_url=None,
         provider="openai",
     )
@@ -137,7 +137,7 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
     aws.client.put_object(Bucket=settings.AWS_S3_BUCKET, Key=str(s3_key), Body=b"test")
 
     sample_request = CreationRequest(
-        documents=[document.id], batch_size=1, callback_url=None, provider="openai"
+        documents=[document.id], batch_size=10, callback_url=None, provider="openai"
     )
 
     mock_get_llm_provider.return_value = get_mock_provider(
@@ -205,7 +205,7 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collectio
     )
 
     req = CreationRequest(
-        documents=[], batch_size=1, callback_url=None, provider="openai"
+        documents=[], batch_size=10, callback_url=None, provider="openai"
     )
 
     mock_provider = get_mock_provider(
@@ -269,7 +269,7 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
 
     sample_request = CreationRequest(
         documents=[document.id],
-        batch_size=1,
+        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
@@ -350,7 +350,7 @@ def test_execute_job_success_creates_collection_with_callback(
 
     sample_request = CreationRequest(
         documents=[document.id],
-        batch_size=1,
+        0,
         callback_url=callback_url,
         provider="openai",
     )
@@ -434,7 +434,7 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
 
     sample_request = CreationRequest(
         documents=[uuid.uuid4()],
-        batch_size=1,
+        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
