@@ -12,18 +12,20 @@ from app.core.batch.gemini import (
 )
 
 
+@pytest.fixture
+def mock_genai_client():
+    """Create a mock Gemini client."""
+    return MagicMock()
+
+
+@pytest.fixture
+def provider(mock_genai_client):
+    """Create a GeminiBatchProvider instance with mock client."""
+    return GeminiBatchProvider(client=mock_genai_client)
+
+
 class TestGeminiBatchProvider:
     """Test cases for GeminiBatchProvider."""
-
-    @pytest.fixture
-    def mock_genai_client(self):
-        """Create a mock Gemini client."""
-        return MagicMock()
-
-    @pytest.fixture
-    def provider(self, mock_genai_client):
-        """Create a GeminiBatchProvider instance with mock client."""
-        return GeminiBatchProvider(client=mock_genai_client)
 
     @pytest.fixture
     def provider_with_model(self, mock_genai_client):
@@ -415,14 +417,6 @@ class TestGeminiBatchProvider:
 class TestUploadAudioFile:
     """Test cases for GeminiBatchProvider.upload_audio_file."""
 
-    @pytest.fixture
-    def mock_genai_client(self):
-        return MagicMock()
-
-    @pytest.fixture
-    def provider(self, mock_genai_client):
-        return GeminiBatchProvider(client=mock_genai_client)
-
     def test_upload_audio_file_success(self, provider, mock_genai_client):
         """Test successful audio file upload to Gemini."""
         audio_bytes = b"\xff\xfb\x90\x00" * 100  # fake MP3 bytes
@@ -497,14 +491,6 @@ class TestUploadAudioFile:
 
 class TestDeleteFiles:
     """Test cases for GeminiBatchProvider.delete_files."""
-
-    @pytest.fixture
-    def mock_genai_client(self):
-        return MagicMock()
-
-    @pytest.fixture
-    def provider(self, mock_genai_client):
-        return GeminiBatchProvider(client=mock_genai_client)
 
     def test_delete_files_all_success(self, provider, mock_genai_client):
         """Test successful deletion of all files."""

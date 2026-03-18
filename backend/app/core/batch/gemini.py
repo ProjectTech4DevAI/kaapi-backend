@@ -291,6 +291,44 @@ class GeminiBatchProvider(BatchProvider):
         """Extract text content from a Gemini response dictionary."""
         return extract_text_from_response_dict(response)
 
+    def _upload_to_gemini(
+        self,
+        content: str | bytes,
+        suffix: str,
+        mime_type: str,
+        display_name: str,
+    ) -> types.File:
+        """Write content to a temp file, upload to Gemini, and clean up.
+
+        Args:
+            content: File content (text or binary)
+            suffix: Temp file suffix (e.g., ".jsonl", ".mp3")
+            mime_type: MIME type for the upload
+            display_name: Display name in Gemini
+
+        Returns:
+            Gemini File object
+        """
+        mode = "w" if isinstance(content, str) else "wb"
+        kwargs: dict[str, Any] = {"suffix": suffix, "delete": False, "mode": mode}
+        if mode == "w":
+            kwargs["encoding"] = "utf-8"
+
+        with tempfile.NamedTemporaryFile(**kwargs) as tmp_file:
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+
+        try:
+            return self._client.files.upload(
+                file=tmp_path,
+                config=types.UploadFileConfig(
+                    display_name=display_name,
+                    mime_type=mime_type,
+                ),
+            )
+        finally:
+            os.unlink(tmp_path)
+
     def upload_file(self, content: str, purpose: str = "batch") -> str:
         """Upload a JSONL file to Gemini Files API.
 
@@ -304,30 +342,19 @@ class GeminiBatchProvider(BatchProvider):
         logger.info(f"[upload_file] Uploading file to Gemini | bytes={len(content)}")
 
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".jsonl", delete=False, mode="w", encoding="utf-8"
-            ) as tmp_file:
-                tmp_file.write(content)
-                tmp_path = tmp_file.name
+            uploaded_file = self._upload_to_gemini(
+                content=content,
+                suffix=".jsonl",
+                mime_type="jsonl",
+                display_name=f"batch-input-{int(time.time())}",
+            )
 
-            try:
-                uploaded_file = self._client.files.upload(
-                    file=tmp_path,
-                    config=types.UploadFileConfig(
-                        display_name=f"batch-input-{int(time.time())}",
-                        mime_type="jsonl",
-                    ),
-                )
+            logger.info(
+                f"[upload_file] Uploaded file to Gemini | "
+                f"file_name={uploaded_file.name}"
+            )
 
-                logger.info(
-                    f"[upload_file] Uploaded file to Gemini | "
-                    f"file_name={uploaded_file.name}"
-                )
-
-                return uploaded_file.name
-
-            finally:
-                os.unlink(tmp_path)
+            return uploaded_file.name
 
         except Exception as e:
             logger.error(f"[upload_file] Failed to upload file to Gemini | {e}")
@@ -359,31 +386,19 @@ class GeminiBatchProvider(BatchProvider):
         )
 
         try:
-            extension = mimetypes.guess_extension(mime_type) or ".bin"
-            with tempfile.NamedTemporaryFile(
-                suffix=extension, delete=False, mode="wb"
-            ) as tmp_file:
-                tmp_file.write(content)
-                tmp_path = tmp_file.name
+            uploaded_file = self._upload_to_gemini(
+                content=content,
+                suffix=mimetypes.guess_extension(mime_type) or ".bin",
+                mime_type=mime_type,
+                display_name=display_name,
+            )
 
-            try:
-                uploaded_file = self._client.files.upload(
-                    file=tmp_path,
-                    config=types.UploadFileConfig(
-                        display_name=display_name,
-                        mime_type=mime_type,
-                    ),
-                )
+            logger.info(
+                f"[upload_audio_file] Uploaded audio to Gemini | "
+                f"file_name={uploaded_file.name} | file_uri={uploaded_file.uri}"
+            )
 
-                logger.info(
-                    f"[upload_audio_file] Uploaded audio to Gemini | "
-                    f"file_name={uploaded_file.name} | file_uri={uploaded_file.uri}"
-                )
-
-                return uploaded_file.name, uploaded_file.uri
-
-            finally:
-                os.unlink(tmp_path)
+            return uploaded_file.name, uploaded_file.uri
 
         except Exception as e:
             logger.error(f"[upload_audio_file] Failed to upload audio to Gemini | {e}")

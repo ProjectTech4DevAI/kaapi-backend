@@ -128,7 +128,28 @@ async def poll_stt_run(
             action="no_change",
         )
 
-    # All batch jobs are done - finalize the run
+    # All batch jobs are done - clean up Gemini audio files once
+    gemini_file_ids = []
+    for bj in batch_jobs:
+        gemini_file_ids = bj.config.get("gemini_audio_file_ids", [])
+        if gemini_file_ids:
+            break
+
+    if gemini_file_ids:
+        try:
+            deleted, failed = batch_provider.delete_files(gemini_file_ids)
+            logger.info(
+                f"[poll_stt_run] Gemini file cleanup | "
+                f"run_id={run.id}, deleted={deleted}, failed={failed}"
+            )
+        except Exception as e:
+            # Non-critical; Gemini files auto-expire after 48h
+            logger.warning(
+                f"[poll_stt_run] Gemini file cleanup failed | "
+                f"run_id={run.id}, error={str(e)}"
+            )
+
+    # Finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
     failed_count = status_counts.get(JobStatus.FAILED.value, 0)
 
@@ -261,22 +282,6 @@ async def process_completed_stt_batch(
             session.bulk_insert_mappings(STTResult, chunk)
         if stt_result_rows:
             session.commit()
-
-        # Clean up Gemini audio files after successful processing
-        gemini_file_ids = batch_job.config.get("gemini_audio_file_ids", [])
-        if gemini_file_ids:
-            try:
-                deleted, failed = batch_provider.delete_files(gemini_file_ids)
-                logger.info(
-                    f"[process_completed_stt_batch] Gemini file cleanup | "
-                    f"batch_job_id={batch_job.id}, deleted={deleted}, failed={failed}"
-                )
-            except Exception as e:
-                # Cleanup failure is non-critical; Gemini files auto-expire after 48h
-                logger.warning(
-                    f"[process_completed_stt_batch] Gemini file cleanup failed | "
-                    f"batch_job_id={batch_job.id}, error={str(e)}"
-                )
 
     except Exception as e:
         logger.error(

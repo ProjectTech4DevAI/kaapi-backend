@@ -2,7 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlmodel import Session
 
@@ -12,15 +12,24 @@ from app.core.batch import (
     create_stt_batch_requests,
     start_batch_job,
 )
-from app.models.batch_job import BatchJobType
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import get_mime_from_url
 from app.crud.file import get_files_by_ids
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
+from app.models.batch_job import BatchJobType
 from app.models.stt_evaluation import STTSample
 
 logger = logging.getLogger(__name__)
+
+
+class _UploadResult(NamedTuple):
+    sample: STTSample
+    file_uri: str | None
+    file_name: str | None
+    mime_type: str | None
+    error: str | None
+
 
 DEFAULT_TRANSCRIPTION_PROMPT = (
     "Generate a verbatim transcript of the speech in this audio file. "
@@ -94,24 +103,16 @@ def start_stt_evaluation_batch(
     gemini_file_names: list[str] = []
     failed_samples: list[tuple[STTSample, str]] = []
 
-    def _upload_to_gemini(
-        sample: STTSample,
-    ) -> tuple[STTSample, str | None, str | None, str | None, str | None]:
-        """Download from S3 and upload to Gemini File API. Thread-safe.
-
-        Returns:
-            Tuple of (sample, file_uri, file_name, mime_type, error):
-                - file_uri: Full Gemini URI for batch requests
-                - file_name: Short name for cleanup via delete API
-        """
+    def _upload_to_gemini(sample: STTSample) -> _UploadResult:
+        """Download from S3 and upload to Gemini File API. Thread-safe."""
         file_record = file_map.get(sample.file_id)
         if not file_record:
-            return (
-                sample,
-                None,
-                None,
-                None,
-                f"File record not found for file_id: {sample.file_id}",
+            return _UploadResult(
+                sample=sample,
+                file_uri=None,
+                file_name=None,
+                mime_type=None,
+                error=f"File record not found for file_id: {sample.file_id}",
             )
         try:
             # Detect MIME type from S3 URL path
@@ -129,27 +130,39 @@ def start_stt_evaluation_batch(
                 mime_type=mime_type,
                 display_name=f"stt-eval-{run.id}-sample-{sample.id}",
             )
-            return sample, file_uri, file_name, mime_type, None
+            return _UploadResult(
+                sample=sample,
+                file_uri=file_uri,
+                file_name=file_name,
+                mime_type=mime_type,
+                error=None,
+            )
         except Exception as e:
-            return sample, None, None, None, str(e)
+            return _UploadResult(
+                sample=sample,
+                file_uri=None,
+                file_name=None,
+                mime_type=None,
+                error=str(e),
+            )
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         upload_tasks = {
             executor.submit(_upload_to_gemini, sample): sample for sample in samples
         }
 
         for completed_task in as_completed(upload_tasks):
-            sample, file_uri, file_name, mime_type, error = completed_task.result()
-            if file_uri:
-                file_uris.append(file_uri)
-                mime_types.append(mime_type)
-                sample_keys.append(str(sample.id))
-                gemini_file_names.append(file_name)
+            result = completed_task.result()
+            if result.file_uri:
+                file_uris.append(result.file_uri)
+                mime_types.append(result.mime_type)
+                sample_keys.append(str(result.sample.id))
+                gemini_file_names.append(result.file_name)
             else:
-                failed_samples.append((sample, error))
+                failed_samples.append((result.sample, result.error))
                 logger.error(
                     f"[start_stt_evaluation_batch] Failed to upload to Gemini | "
-                    f"sample_id: {sample.id}, error: {error}"
+                    f"sample_id: {result.sample.id}, error: {result.error}"
                 )
 
     if failed_samples:
