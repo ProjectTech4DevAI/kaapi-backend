@@ -18,10 +18,11 @@ def _is_branch_identifier(part: str) -> bool:
     return bool(part and isinstance(part, str) and _BRANCH_PATTERN.search(part))
 
 
-def _filter_union_branch_errors(errors: list[dict]) -> list[dict]:
-    """When a field is a Union type, pydantic returns errors for every possible branch.
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    """Sanitize pydantic validation errors.
 
-    This function picks the branch where the validation error happend.
+    Filters union branch noise (keeps only the relevant branch),
+    strips internal fields, returning only loc, msg, and type.
     """
     try:
         branch_errors: dict[str, dict[str, list[dict]]] = defaultdict(
@@ -74,7 +75,11 @@ def _filter_union_branch_errors(errors: list[dict]) -> list[dict]:
                 seen_errors.add(error_key)
                 unique_errors.append(error)
 
-        return unique_errors or errors
+        sanitized = [
+            {k: v for k, v in err.items() if k in ("loc", "msg", "type")}
+            for err in (unique_errors or errors)
+        ]
+        return sanitized
     except Exception:
         return errors
 
@@ -84,7 +89,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_error_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        errors = _filter_union_branch_errors(exc.errors())
+        errors = _sanitize_validation_errors(exc.errors())
         return JSONResponse(
             status_code=HTTP_422_UNPROCESSABLE_ENTITY,
             content=APIResponse.failure_response(errors).model_dump(),
@@ -96,7 +101,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         detail = exc.detail
         if isinstance(detail, list):
-            detail = _filter_union_branch_errors(detail)
+            detail = _sanitize_validation_errors(detail)
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
