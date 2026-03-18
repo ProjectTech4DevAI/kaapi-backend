@@ -309,6 +309,8 @@ class GeminiBatchProvider(BatchProvider):
         Returns:
             Gemini File object
         """
+        # "w" for text (JSONL batch) or "wb" for binary (audio files for STT),
+        # since this method accepts content: str | bytes.
         mode = "w" if isinstance(content, str) else "wb"
         kwargs: dict[str, Any] = {"suffix": suffix, "delete": False, "mode": mode}
         if mode == "w":
