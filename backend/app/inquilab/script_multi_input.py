@@ -3,7 +3,7 @@ Scoring rubric and message builder for the School Innovation Marathon (SIM).
 Evaluates student innovations across 5 dimensions with Indian educational context.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Literal
 from app.services.llm.providers import LLMProvider
 from dotenv import load_dotenv
 import os
@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, field_validator
 from app.services.llm.mappers import transform_kaapi_config_to_native
-
+from logging import Logger
 load_dotenv()
 
+logger = Logger(__name__)
 
 METRICS = ["novelty", "usefulness", "feasibility", "scalability", "sustainability"]
 BASE_DIR = Path(__file__).parent
@@ -55,13 +56,52 @@ def get_evaluation_system_schema() -> Dict[str, Any]:
                         - FAIR: Consider resource constraints and educational context of Indian students
                         - EVIDENCE-BASED: Score based on specific evidence in submissions, not assumptions
                         - GROWTH-ORIENTED: Evaluate current state while recognizing potential for development
-                        You evaluate with the perspective of someone who has seen thousands of student innovations and can distinguish between genuine innovation, good effort, and superficial attempts.
+                        - You evaluate with the perspective of someone who has seen thousands of student innovations and can distinguish between genuine innovation, good effort, and superficial attempts.
+                        - SUBMISSIONS MAY INCLUDE MULTIPLE DATA TYPES:
+                            1. TEXT
+                            - Idea Title
+                            - Problem statement
+                            - Solution description
+                            2. IMAGES
+                            - Ideas details written on paper
+                            - Prototype photos
+                            - Diagrams of solution or story board sketch
+                            - Experimental setups
+                            - Hardware builds
+                            - Design sketches
+                            3. PDF DOCUMENTS
+                            - Technical reports
+                            - Ideas Written on paper
+                            - Research notes
+                            - Design documentation
+                            - Calculations
+                            - Implementation steps
+                        - EVALUATION RULES FOR MULTIMODAL INPUT:
+                            1. When Text & attachments (image/pdf) are present:
+                            - Consider Problem statement , Solution text as main source and attachments will be supporting evidence. 
+                            - Do not assume claims that are not visible or stated.
+                            - If text and attachments evidence contradict, trust the text description if it's conveying solution details properly, if not Trust attachments & understand the idea from it.
+                            2. When only attachments (image/pdf) are present: Use attachments as the main source for extracting problem statements , solutions and gathering evidence to validate the idea.
+                            3. When only text Input exists: Evaluate based only on text.
+                        - Attachment evaluation rules:
+                            1. Rule 1: Prototype Confirmation Rule : If a prototype only confirms the idea without adding new design or working clarity, it should increase confidence but not change scores.
+                            2. Rule 2: Prototype Impact on Scoring : Prototype evidence should only change scores if it introduces new functional insight or reduces uncertainty about how the solution works. If the prototype only confirms a known or already understood concept (like small sapling can grow in a coconut shell), it should increase evaluator confidence but not change the score.
+                            3. Rule 3: Prototype vs Effort : A prototype demonstrates student effort and experimentation, which should be acknowledged in evaluation, but effort alone should not lead to higher scores without additional functional evidence.
+                            4. Rule 4: Irrelevant Evidence Handling : If additional images or documents are not clearly related to the problem or solution, they must be ignored and should not influence scoring.
+                            5. Rule 5: Generic Solution without Explanation : If a student suggests a widely known solution without explaining how it works or how they will implement it, assign:Low novelty (1–2),Mid-range feasibility and scalability (6–7) (because the idea is realistic, but not demonstrated).
+                            6. Rule 6: Prototype Adds New Design Evidence → Scores Increase :When a prototype clearly shows the design—what the solution is, how it looks, and how it is used—and this information was not evident from the text, it provides new evidence. In such cases, scores for parameters like feasibility, usefulness, and novelty should increase.
+                            7. Rule 7: Prototype Only Confirms Existing Understanding → Scores Do Not Increase : If the prototype only confirms what was already understood from the text and does not add new clarity about the design or working of the solution, it should increase evaluator confidence but should not change the scores.
+                            8. Rule 8: Design Clarity vs Technical Depth (Score Ceiling) : Even when a prototype adds clear design understanding, if it does not explain deeper aspects such as why the design works better, performance, durability, or optimization, scores should not reach the highest range (9–10).
 
+
+                        
                         CRITICAL SCORING GUARDRAILS:
                         - Scores MUST be justified by explicit evidence in the submission.
                         - Do NOT assume resources, infrastructure, or execution capability unless stated.
                         - If the idea and problem donot relate to each other then score least to all parameters.
                         - Generic textbook or widely known ideas must be scored low on novelty unless clear original adaptation is shown.
+                        - If the model cannot clearly interpret the attachment, do not fabricate details.Score based on available text evidence only.
+
 
                         HUMAN EVALUATION PRINCIPLES:
                         - Recognize visible student effort and original thinking even if execution is incomplete
@@ -69,7 +109,7 @@ def get_evaluation_system_schema() -> Dict[str, Any]:
                         - Separate sustainability intention from operational sustainability
                         - Avoid over-penalizing grammar or presentation
                         - Do not inflate scores without evidence
-
+                        
                         When evidence is partial:
                         → score conservatively but acknowledge effort
                         → use mid-range scores when student reasoning is present but incomplete""",
@@ -89,8 +129,9 @@ def get_evaluation_system_schema() -> Dict[str, Any]:
             "method": """EVALUATION PROCESS:
 
 STEP 1: COMPREHENSION
-- Read the problem statement carefully - understand what issue the student is trying to solve
-- Read the solution description - understand their proposed approach
+Either from Text or attachments, try to 
+- Read the problem carefully - understand what issue the student is trying to solve
+- Read the solution - understand their proposed approach
 - Identify the student's level of detail, originality, and thinking depth
 
 STEP 2: CONTEXTUAL ASSESSMENT
@@ -98,6 +139,11 @@ STEP 2: CONTEXTUAL ASSESSMENT
 - Assess against the backdrop of Indian educational and social context
 - Look for evidence of personal observation vs. generic problem identification
 - Evaluate solution practicality within Indian resource constraints
+- Evidence types and what to understand from it: 
+    a. Evidence from Problem Statement (Text) - Understand problem students are trying to solve
+    b. Evidence from Solution Statement (Text) - Understand idea details from solution
+    c. Evidence from Attachments - Interpret the attachments to identify problem , Idea , Soultion design/model etc for supporting evidences if any.
+
 
 STEP 3: EVIDENCE-BASED SCORING
 - Score each parameter 1-10 based on specific evidence in the submission
@@ -239,80 +285,90 @@ def get_evaluation_examples() -> Dict[str, Any]:
         "name": "Example Dataset",
         "list": [
             {
-                "problem": "In case two trains accident in the railway station and another trains to go to another place .they got relay in India Odisha tripal train accident to solve this problem train accident prevention is is good Idea.",
-                "solution": "Matter. The train automatically detects if another train is coming from the using infrared waves and stop the engine when ever it detect some object in front automatic train collisions prevention system a ground breaking solution design to and hands railway safety by preventing solution between trains equipped with infrared sensors this innovative system to detects approaching trains and automatically halts the engine upon detecting any obstruction ahead by utilising sensors to EMIT signal and detect the reflection from object in front the system effectively identities incoming trains and triggers the Indian shutdown mechanisms through a relay with both trains equipped with these sensor collisions are awarded as each train stop upon detecting the othd in its path\n Benefit. Simplified operation requires minimal manual intervention providing a user friendly solution for railway safety\n Experience the next level of railway safety with the automatic train collisions prevention on system .",
-                "scores": {
-                    "Novelty": {
-                        "score": 5.0,
-                        "reason": "Infrared collision detection is a known concept, but the student frames it as a system integration idea, which justifies mid-level originality.",
-                    },
-                    "Usefulness": {
-                        "score": 6.0,
-                        "reason": "The solution clearly targets a real safety problem and describes a functional prevention mechanism, even if simplified.",
-                    },
-                    "Feasibility": {
-                        "score": 6.0,
-                        "reason": "Sensor-based detection is technically achievable, but railway-grade deployment complexity limits higher scoring.",
-                    },
-                    "Scalability": {
-                        "score": 7.0,
-                        "reason": "The concept could be applied across rail systems if standardized, supporting moderate scaling potential.",
-                    },
-                    "Sustainability": {
-                        "score": 6.0,
-                        "reason": "Sensor-based automation reduces accident risk long-term, but maintenance and integration demands prevent higher scoring.",
-                    },
-                },
-            },
-            {
-                "problem": "The who suffering from Asthma or breathing issues in crowded areas, they get immediate inhaler by wrist watch if they forgot to carry his/her personal inhaler.",
-                "solution": "Immediate wrist watch inhaler for the person who needs it's instantly in the crowded areas when he or she will forgot to carry personal inhaler.",
-                "scores": {
-                    "Novelty": {
-                        "score": 8.0,
-                        "reason": "A wearable inhaler concept shows strong creative framing beyond common assistive devices.",
-                    },
-                    "Usefulness": {
-                        "score": 7.0,
-                        "reason": "The idea directly addresses emergency breathing scenarios with clear user benefit.",
-                    },
-                    "Feasibility": {
-                        "score": 9.0,
-                        "reason": "Miniaturized wearable medical tech is realistic with current engineering capabilities.",
-                    },
-                    "Scalability": {
-                        "score": 8.0,
-                        "reason": "The product could serve a wide patient population with minimal redesign.",
-                    },
-                    "Sustainability": {
-                        "score": 9.0,
-                        "reason": "Wearable medical devices are maintainable and long-lasting with proper servicing.",
-                    },
-                },
-            },
-            {
-                "problem": "Manual painting of high-rise buildings is a hazardous, time-consuming, and costly process. Develop an Autonomous Robotic Painting System (ARPS) to improve safety, efficiency, and quality while reducing environmental impact and labor costs",
-                "solution": "# Autonomous Robotic Painting System (ARPS)\n Key Features:\n 1. Robotic Arm: A multi-jointed arm with a painting tool attachment.\n 2. Navigation System: Sensors, GPS, and software for precise movement and painting control.\n 3. Painting Tank: A pressurized tank that stores and supplies paint to the robotic arm.\n 4. Safety Features: Emergency shutdown, stabilizers, and protective barriers.\n Benefits:\n 1. Improved Safety: Reduced risk of accidents and injuries.\n 2. Increased Efficiency: Faster painting times and reduced labor costs.\n 3. Enhanced Quality: Consistent, high-quality paint application.\n 4. Reduced Environmental Impact: Minimized paint waste and reduced VOC emissions.",
+                "problem": "Nowadays thefts are very much in the society. They are robbering the homes, offices, banks etc. So controlling theft in the society.",
+                "solution": "Anti theft alram is a sensor based it detects the when theft is going to theft the materials in home iffice also in a banks.",
+                "image": "The image depicts a student-made prototype of a model house, likely demonstrating a project on smart home automation, energy efficiency, or electrical circuitry.",
                 "scores": {
                     "Novelty": {
                         "score": 2.0,
-                        "reason": "Robotic painting is a widely known industrial automation concept with little student innovation.",
+                        "reason": "Proposes a sensor-based alarm for detecting theft, which is already a widely used approach in home and building security, with no new mechanism or adaptation described.",
                     },
                     "Usefulness": {
                         "score": 3.0,
-                        "reason": "Benefits are described, but mostly generic efficiency claims without unique implementation.",
+                        "reason": "Targets a real problem (theft), but does not explain how the alarm detects intrusion, who gets alerted, or how it helps stop or respond to theft in practice.",
                     },
                     "Feasibility": {
-                        "score": 6.0,
-                        "reason": "Industrial robotic systems are achievable but complex, justifying mid feasibility.",
+                        "score": 4.0,
+                        "reason": "A basic alarm system using sensors and wiring is implementable, and the prototype shows a wired setup with a light, but absence of sensor type, detection logic, and alert system reduces confidence in execution.",
                     },
                     "Scalability": {
                         "score": 3.0,
-                        "reason": "High cost and infrastructure requirements limit broad adoption.",
+                        "reason": "Although intended for homes, offices, and banks, these environments require different levels of security; the solution does not specify how the same alarm system would adapt across these contexts.",
                     },
                     "Sustainability": {
+                        "score": 6.0,
+                        "reason": "Electronic alarm systems are generally low-maintenance once installed, but the solution does not provide details on power usage, durability, or long-term operation",
+                    },
+                },
+            },
+            {
+                "problem": "సరుగుడు బొప్పాయి వంటి తోటలు వేసుకునే వాళ్ళు నారుని చిన్నచిన్న నల్లటి ప్లాస్టిక్ సంచుల్లో తెచ్చుకుంటారు అలాగే ఇళ్లల్లో కొన్ని రకాల పూల చెట్లు కానివ్వండి పండ్ల చెట్లు కానివ్వండి వేసుకోవాలనుకున్నప్పుడు కూడా వారు ఆ చెట్లని నల్లటి ప్లాస్టిక్ సంచుల్లో ఇవ్వడం అనేది మనం చూస్తుంటాం ఈ సంచులు తర్వాత ఉపయోగపడం రీసైకిలింగ్ చేయలేం అలాగే ఇవి అలాగే గనక పడేస్తే ప్లాస్టిక్ కాలుష్యం కింద భూమిని కలుషితం చేస్తాయి కనుక ఈ ఎక్కువ చెట్లని తెచ్చుకునేటువంటి రైతులు ఎక్కువగా ఈ ప్లాస్టిక్ కవర్లను ఉపయోగించటం అనేది నేను గమనించినటువంటి పెద్ద సమస్య ఇది భూ కాలుష్యానికి సంబంధించిన సమస్య ఇల్లా ఇళ్లల్లోనూ ఇది సమస్యగానే ఉంది తోటల్లోనూ ఇది సమస్యగానే నాకు కనిపించింది కాబట్టి దీని పరిష్కరించాలని చిన్న ప్రయత్నాన్ని చేయడం జరిగింది",
+                "solution": "రైతులు పండ్ల చెట్లు, నిమ్మనారు ఇలాంటివన్నీ తెచ్చుకునేటప్పుడు చిన్న చిన్న ప్లాస్టిక్ కవర్లలో వాళ్ళు నారుని తెచ్చుకుంటూ ఉంటారు. అది రీసైక్లింగ్ కి పనికిరాదు కాబట్టి వాళ్ళు ఆ ప్లాస్టిక్ ని బయటే పారేస్తారు. ప్లాస్టిక్ కాబట్టి అది నీటిని భూమిలోకి చేరనివ్వదు, ఆ ప్లాస్టిక్ భూమిలో కరిగిపోకుండా కొన్ని లక్షల సంవత్సరాలు భూమిలోపల ఉండి భూకాలుష్యంగా రూపాంతరం చెందుతుంది. దీని వల్ల మా చుట్టూ ప్రక్కల గ్రామాల ప్రజలు కష్టాలు ఎదుర్కోవాల్సిన పరిస్థితి వస్తుంది. కాబట్టి దానికి పరిష్కారం కనుక్కుందాము అన్న ఆలోచన నాకు వచ్చింది. దీన్ని మా టీచర్ గారు కూడా బాగుంది అన్నారు. నా ఆలోచన ఏంటంటే, గుళ్ళల్లో గాని ఇళ్ళల్లో గాని కావాల్సినన్ని టెంకాయ చిప్పలు దొరుకుతుంటాయి. వాటిల్లోని కొబ్బరిని వినియోగించిన తర్వాత ఆ ఆ కొబ్బరిచిప్పల్లో నారు నాటి మనము వాటిల్ని పెంచుకోవచ్చు. ప్లాస్టిక్ కవర్లను వాడేకన్నా ఈ కొబ్బరిచిప్పల్లో నారు నాటుకొని దాన్ని మొత్తాన్ని మనం భూమిలో నాటుకోవచ్చు లేదా మొక్క భూమిలో నాటేసిన తర్వాత ఆ చిప్పల్ని తిరిగి కొత్త నారు వేయటానికి ఉపయోగించుకోవచ్చు. ఇలా చేయడం వల్ల భూకాలుష్యాన్ని తగ్గించవచ్చు అని నా ఉద్దేశం.",
+                "image": "This image captures three students presenting an eco-friendly innovation project, featuring saplings planted in biodegradable coconut shell containers, likely focused on sustainable agriculture or waste-to-wealth solutions for a school innovation competition.",
+                "scores": {
+                    "Novelty": {
+                        "score": 6.0,
+                        "reason": "Using coconut shells as biodegradable containers for saplings is a contextual adaptation, but similar natural alternatives to plastic covers are already known.",
+                    },
+                    "Usefulness": {
+                        "score": 7.0,
+                        "reason": "Directly reduces plastic use in sapling distribution by replacing covers with coconut shells, providing a practical alternative at the source.",
+                    },
+                    "Feasibility": {
+                        "score": 7.0,
+                        "reason": "Coconut shells are locally available and can hold soil and saplings; the prototype confirms basic usability but does not address durability or large-scale handling.",
+                    },
+                    "Scalability": {
+                        "score": 7.0,
+                        "reason": "Can be extended to farms and nurseries where coconut shells are available, though scaling depends on consistent shell supply and preparation",
+                    },
+                    "Sustainability": {
+                        "score": 9.0,
+                        "reason": "Replaces non-biodegradable plastic covers with natural coconut shells, reducing soil pollution and supporting environmentally friendly planting.",
+                    },
+                },
+            },
+            {
+                "problem": "धरती पर सभी मनुष्य को जानवरों को जीवित रहने के लिए पानी की आवश्यकता है पर आजकल हम लोग पानी को बहुत ज्यादा पानी का दुरुपयोग कर रहे हैं जिससे सभी जानवर और मनुष्य को पानी उपलब्ध नहीं हो पता है तथा उन्हें बहुत गंदे पानी का उपयोग भी करना पड़ता है।सभी मनुष्यों जानवरों को जीवित रहने के लिए पीने के पानी की आवश्यकता है जिस प्रकार से आजकल हमारा विकास हो रहा है औद्योगीकरण हो रहा है जनसंख्या बढ़ रही है। उद्योग में बहुत पानी का इस्तेमाल होता है। कई जगह पर लोगों को पीने के लिए शुद्ध पानी भी उपलब्ध नहीं है कई स्थानों पर पानी बहुत गहराई में है और कई जगह अपनी जमीन के अंदर बहुत कम है वहां लोगों को बहुत दूर से पानी लाना पड़ रहा है।",
+                "solution": """हम लोगों को पानी की इस समस्या से बचने के लिए बारिश के मौसम में बारिश का जो पानी जमीन पर गिरता है उसको हमारे घर में इकट्ठा करना चाहिए।
+                बारिश के मौसम में बरसात का पानी जो हमारे छत पर गिरता है हमारे छत पर पाइप फिट करेंगे और पाइप को आंगन में बने कुंड या टांके में लगा देगे। 
+                अब ध्यान देने वाली बात यह है कि हम उस पाईप में एक तो छत की तरफ वाले मुंह पर महीन छलनी का देगे उसे पाईप में ही लगा देगे ताकि छत का मोटा कचरा जैसे तिनके, कंकर पत्थर पाईप में ना आ सके।
+                अब एक महीन छलनी टांके में जाने वाले पाईप के मुंह पर और लगाएंगे ताकि थोड़ी महीन कचरा भी पाईप में छनकर रह जाए और टांके में शूद्ध पानी जा सके।
+                अब इस पानी का उपयोग हम खुद के पीने के पानी में, पशुओं को पिलाने में तथा खेत में भी कर सकते हैं।
+                टांके में मोटर लगा सकते हैं जो बिजली से चले ताकि टांके से आसानी से पानी निकाला जा सके और इस पानी का उपयोग कर सके हम।
+                मोटर को एक अलग पाईप से जोड़कर खेतो में पानी दे सकते हैंl
+                इस प्रसार हम पानी को व्यर्थ होने से बचा स्केट हैं। और बारिश के पानी का सदुपयोग कर सकते हैं।""",
+                "image": 'This drawing illustrates a rainwater harvesting system (labelled in Hindi as "वर्षा जल संग्रहण"), showing the process of collecting rainwater from a rooftop, filtering it, and storing or using it for purposes like garden irrigation.',
+                "scores": {
+                    "Novelty": {
                         "score": 3.0,
-                        "reason": "Environmental benefit claims are minimal and not operationally detailed.",
+                        "reason": "Follows a standard rainwater harvesting model with no meaningful adaptation or original mechanism.",
+                    },
+                    "Usefulness": {
+                        "score": 7.0,
+                        "reason": "Effectively addresses water scarcity with a practical and relevant solution.",
+                    },
+                    "Feasibility": {
+                        "score": 8.0,
+                        "reason": "Uses commonly available components and describes a clear, implementable system.",
+                    },
+                    "Scalability": {
+                        "score": 7.0,
+                        "reason": "Replicable across regions with manageable adjustments, though installation requires moderate effort.",
+                    },
+                    "Sustainability": {
+                        "score": 9.0,
+                        "reason": "Reduces water wastage and promotes long-term use of a renewable resource.",
                     },
                 },
             },
@@ -343,34 +399,13 @@ def get_evaluation_examples() -> Dict[str, Any]:
                 },
             },
             {
-                "problem": "Distance Calculator Project\n Problem Statement:\n Imagine you're planning a road trip. You want to know the distance between your starting point and your destination. You could use a map, but wouldn't it be much easier to have a simple tool that calculates the distance for you?\n Project Idea: Distance Calculator\n Description:\n This project involves creating a simple distance calculator that can determine the distance between two points on a 2D plane. This can be a great way to introduce students to basic programming concepts and mathematical formulas.\n Key Concepts:\n  * Distance Formula: The core of the project. This formula calculates the distance between t\n\n  * User Input: Students can learn to take input from the user, such as the coordinates of the two points.\n  * Mathematical Operations: The project involves basic mathematical operations like subtraction, squaring, and square root.\n  *",
-                "solution": "Distance Calculator Project\n Problem Statement:\n Imagine you're planning a road trip. You want to know the distance between your starting point and your destination. You could use a map, but wouldn't it be much easier to have a simple tool that calculates the distance for you?\n Project Idea: Distance Calculator\n Description:\n This project involves creating a simple distance calculator that can determine the distance between two points on a 2D plane. This can be a great way to introduce students to basic programming concepts and mathematical formulas.\n Key Concepts:\n  * Distance Formula: The core of the project. This formula calculates the distance between t\n\n  * User Input: Students can learn to take input from the user, such as the coordinates of the two points.\n  * Mathematical Operations: The project involves basic mathematical operations like subtraction, squaring, and square root.\n  *",
-                "scores": {
-                    "Novelty": {
-                        "score": 1.0,
-                        "reason": "A distance calculator is a textbook programming exercise with no innovation.",
-                    },
-                    "Usefulness": {
-                        "score": 2.0,
-                        "reason": "The tool solves a minor convenience problem with limited impact.",
-                    },
-                    "Feasibility": {
-                        "score": 2.0,
-                        "reason": "While easy to implement, the rubric penalizes trivial execution lacking real-world relevance.",
-                    },
-                    "Scalability": {
-                        "score": 2.0,
-                        "reason": "The concept offers little expansion beyond its initial use case.",
-                    },
-                    "Sustainability": {
-                        "score": 5.0,
-                        "reason": "Software tools can persist over time, but value is modest.",
-                    },
-                },
-            },
-            {
-                "problem": "Coal mining is a hazardous occupation that exposes workers to dangerous conditions, such as toxic gases, high temperatures, and poor visibility. Accidents caused by gas leaks, overheating, or other unsafe conditions can result in injuries or fatalities.",
-                "solution": "the Smart Helmet for Coal Miners is designed as a wearable device equipped with sensors to monitor environmental conditions in real-time. The system will measure gas concentrations, temperature, and provide immediate alerts to ensure the safety of miners.",
+                "problem": "सब्जियों व फलों के छिलकों का सड़ना उनका सही से निस्तारण न होना व उनके सड़ने से अनेक रोगों का होना",
+                "solution": """*सब्जियों के छिलके से हैंडमेड पेपर तैयार करना*
+                    *निर्माण विधि*- सब्जियों के छिलके विशेषकर आलू के छिलकों को मध्यम आंच पर रखकर उबाल लेंगे। छिलके इस प्रकार पानी में उबला जाए कि वह ना तो कच्चे रहे और ना ही ज्यादा गले। यदि छिलके ज्यादा गल जाएंगे तो पेपर नहीं बन पाएगा। अब छनने की सहायता से छिलकों से पानी अलग कर लिया जाएगा। इन छिलकों को समतल जगह जैसे मेंज, सेल्फ आदि पर फैला कर उस पर प्लास्टिक की शीट या पन्नी बिछा देंगे। प्लास्टिक शीट पर पर 3 -4 ईंटे या वजन रख देंगे। तीन-चार दिन बाद वजन हटाने पर हैंडमेड पेपर दिखेगा। जोकि छिलके से बना है। हम इस पेपर का उपयोग क्राफ्ट में कर सकते हैं। अलग-अलग सब्जी आलू प्याज के छिलके से अलग-अलग क्राफ्ट पेपर बना सकते हैं या कई सब्जियों के छिलके को साथ में मिलाकर एक हैंडमेड पेपर बना सकते हैं।
+                    *उपयोग*- क्राफ्ट वर्क और ग्रीटिंग कार्ड बनाने में""",
+                "image1": "Students participating in a sustainable waste management initiative by collecting fruit peels for disposal or potential composting.",
+                "image2": "A project display board showcasing various creative crafts and utility items made by students using recycled and waste materials.",
+                "image3": "A handwritten instructional document in Hindi explaining a zero-cost method for creating handmade paper from vegetable peels for craft applications.",
                 "scores": {
                     "Novelty": {
                         "score": 5.0,
@@ -476,58 +511,31 @@ def get_evaluation_examples() -> Dict[str, Any]:
     }
 
 
-def system_instruction_image() -> str:
-    return """
-IMAGE CONSIDERATION:
-
-An image has been provided alongside the problem and solution text.
-
-STEP 1: VALIDATE
-- Check if the image is related to the student's project (prototype, model, circuit, diagram, poster, working demo, etc.)
-- If the image is NOT project-related (selfie, random photo, meme, blank, unrelated screenshot),
-  return ONLY this and nothing else:
-  {"image_audit": "This image cannot be considered for evaluation"}
-  Do NOT include any scores. Stop here.
-
-STEP 2: USE AS SCORING CONTEXT
-If the image IS project-related, factor it into your scoring:
-- A visible working prototype or demo strengthens Feasibility evidence
-- Original creative work shown in image strengthens Novelty evidence
-- A well-built model or detailed diagram strengthens Usefulness evidence
-- Evidence of real-world testing or deployment strengthens Scalability evidence
-- Use of sustainable materials or eco-friendly approach visible in image strengthens Sustainability evidence
-- If the image contradicts the text description, weigh that negatively in relevant scores
-
-The image is supplementary evidence — use it to inform your scores within the same evaluation schema.
-"""
-
-
 def inference(
     *,
     problem: str,
     solution: str,
     image: str | list[str] | None = None,
     file: str | list[str] | None = None,
+    provider_name: Literal["openai", "google"] = "openai",
+    model_name: str = "gpt-4o-mini",
 ) -> str:
     solution_schema = get_evaluation_system_schema()
     examples_dataset = get_evaluation_examples()
-    image_instruction = system_instruction_image()
 
     instructions = (
         "# Evaluation System Schema\n"
         f"{json.dumps(solution_schema, indent=2)}\n\n"
-        "# Image Evaluation Guidelines\n"
-        f"{image_instruction}\n\n"
         "# Few-Shot Examples\n"
         f"{json.dumps(examples_dataset, indent=2)}\n\n"
         "# Output should be strictly in json format"
     )
 
     completion_config = KaapiCompletionConfig(
-        provider="openai",
+        provider=provider_name,
         type="text",
         params=TextLLMParams(
-            model="gpt-5.4", instructions=instructions, response_format="json_object"
+            model=model_name, instructions=instructions, response_format="json_object"
         ).model_dump(),
     )
 
@@ -572,217 +580,6 @@ def inference(
         )
 
     return response.response.output.content.value
-
-
-def run_inference_batch(input: Path | List[dict[str, str]]) -> None:
-    REQUIRED_COLUMNS = {"problem", "solution"}
-    OUTPUT_FOLDER = os.path.join(BASE_DIR, "output_multi/inference_batch")
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    OUTPUT_FILE = "parsed_resultv1.json"
-    OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
-
-    def _read_and_validate_file(file_path: Path) -> pd.DataFrame:
-        ext = file_path.suffix.lower()
-        file_data = None
-        if ext == ".csv":
-            file_data = pd.read_csv(file_path)
-        elif ext in {".xlsx", ".xls"}:
-            file_data = pd.read_excel(file_path)
-
-        else:
-            raise ValueError(f"Unsupported file type '{ext}'. Use .csv, .xlsx, or .xls")
-
-        file_data.columns = file_data.columns.str.lower().str.strip()
-
-        missing = REQUIRED_COLUMNS - set(file_data.keys())
-        if missing:
-            raise ValueError(f"Input dict must have both 'problem' and 'solution' keys")
-
-        return file_data
-
-    def _validate_dict_input(input_data: List[dict[str, str]]) -> None:
-        for item in input_data:
-            missing = REQUIRED_COLUMNS - set(item.keys())
-            if missing:
-                raise ValueError(
-                    "Input dict must have both 'problem' and 'solution' keys"
-                )
-            if not item.get("problem") or not item.get("solution"):
-                raise ValueError(
-                    "'problem' and 'solution' values must be non-empty strings"
-                )
-
-    def _generate_id(length=5):
-        return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
-    class EvaluationInput(BaseModel):
-        problem: str
-        solution: str
-        custom_id: str | None
-        image: str | List[str] | None
-
-        @field_validator("problem", "solution")
-        @classmethod
-        def must_be_non_empty(cls, v: str) -> str:
-            if not v or not v.strip():
-                raise ValueError("Value must be a non-empty string")
-            return v.strip()
-
-    data: List[dict[str, str]] | None = None
-
-    if isinstance(input, Path):
-        if os.path.exists(input):
-            data = _read_and_validate_file(input)
-
-            data = [
-                EvaluationInput(
-                    problem=row["problem"],
-                    solution=row["solution"],
-                    custom_id=str(row["cid"]) if pd.notna(row.get("cid")) else None,
-                    image=str(row["image"]) if pd.notna(row.get("image")) else None,
-                )
-                for _, row in data.iterrows()
-                if pd.notna(row["problem"]) and pd.notna(row["solution"])
-            ]
-        else:
-            raise ValueError(f"File doesn't exist : {input}")
-
-    elif isinstance(input, List):
-        _validate_dict_input(input_data=input)
-        data = [
-            EvaluationInput(
-                problem=item["problem"],
-                solution=item["solution"],
-                image=item["image"] if item.get("image") else None,
-            )
-            for item in input
-            if item["problem"] and item["solution"]
-        ]
-    else:
-        raise ValueError("make sure the input is either path or valid dict")
-
-    if data:
-        # creating batch jsonl
-        # step 1: create configuration
-        solution_schema = get_evaluation_system_schema()
-        examples_dataset = get_evaluation_examples()
-        image_instruction = system_instruction_image()
-
-        instructions = (
-            "# Evaluation System Schema\n"
-            f"{json.dumps(solution_schema, indent=2)}\n\n"
-            "# Image Evaluation Guidelines\n"
-            f"{image_instruction}\n\n"
-            "# Few-Shot Examples\n"
-            f"{json.dumps(examples_dataset, indent=2)}\n\n"
-            "# Output should be strictly in json format"
-        )
-
-        jsonl_data = []
-
-        for input_dict in data:
-            input_dict = input_dict.model_dump()
-            custom_id = (
-                input_dict.get("custom_id") or f"student_{_generate_id(length=6)}"
-            )
-            problem = input_dict.get("problem")
-            solution = input_dict.get("solution")
-            image = input_dict.get("image", None)
-
-            inputs = [
-                {
-                    "type": "input_text",
-                    "text": f"# Problem Statement\n:{problem}\n\n# Solution to the problem statement:\n{solution}",
-                }
-            ]
-
-            if image is not None:
-                images = [image] if isinstance(image, str) else image
-                for img in images:
-                    inputs.append({"type": "input_image", "image_url": img})
-
-            request = {
-                "custom_id": custom_id,
-                "method": "POST",
-                "url": "/v1/responses",
-                "body": {
-                    "model": "gpt-4o-mini",
-                    "instructions": instructions,
-                    "input": f"# Problem Statement\n:{problem}\n\n# Solution to the problem statement:\n{solution}",
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "score",
-                            "strict": True,
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "novelty_score": {"type": "string"},
-                                    "usefulness_score": {"type": "string"},
-                                    "feasibility_score": {"type": "string"},
-                                    "scalability_score": {"type": "string"},
-                                    "sustainability_score": {"type": "string"},
-                                },
-                                "required": [
-                                    "novelty_score",
-                                    "usefulness_score",
-                                    "feasibility_score",
-                                    "scalability_score",
-                                    "sustainability_score",
-                                ],
-                                "additionalProperties": False,
-                            },
-                        }
-                    },
-                },
-            }
-
-            jsonl_data.append(request)
-
-        # Submit batch to openai
-        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        provider = OpenAIBatchProvider(client=openai_client)
-        # create batch job
-        result = provider.create_batch(jsonl_data, {})
-
-        # wait for batch job to get suceed
-        batch_id = result.get("provider_batch_id", "")
-        batch_data: dict | None = None
-        if batch_id:
-            while True:
-                batch_result = provider.get_batch_status(batch_id)
-                if batch_result.get("provider_status") in (
-                    "completed",
-                    "failed",
-                    "expired",
-                    "cancelled",
-                ):
-                    batch_data = batch_result
-                    break
-
-            output_file_id = batch_data.get("provider_output_file_id", None)
-            if not output_file_id:
-                raise ValueError("No output file — batch may have failed")
-
-            content = provider.download_batch_results(output_file_id)
-
-            parsed_results = []
-            for item in content:
-                cid = item["custom_id"]
-                if item.get("error"):
-                    parsed_results.append({"custom_id": cid, "error": item["error"]})
-                else:
-                    text = item["response"]["body"]["output"][0]["content"][0]["text"]
-                    parsed_results.append(
-                        {"custom_id": cid, "scores": json.loads(text)}
-                    )
-
-            with open(OUTPUT_FILE_PATH, "w") as f:
-                json.dump(parsed_results, f, indent=2)
-
-        else:
-            raise ValueError("batch id didn't got")
 
 
 def run_inference_test_cases():
@@ -861,8 +658,308 @@ def run_inference_test_cases():
         f.write("".join(outputs))
 
 
+### ----------------------  ITERATION BASED RESPONSE ------------------------------------------
+REQUIRED_COLUMNS = {"problem", "solution"}
+
+
+def _read_and_validate_file(file_path: Path) -> pd.DataFrame:
+    ext = file_path.suffix.lower()
+    file_data = None
+    if ext == ".csv":
+        file_data = pd.read_csv(file_path)
+    elif ext in {".xlsx", ".xls"}:
+        file_data = pd.read_excel(file_path)
+
+    else:
+        raise ValueError(f"Unsupported file type '{ext}'. Use .csv, .xlsx, or .xls")
+
+    file_data = file_data.dropna(how="all")
+    file_data.columns = file_data.columns.str.lower().str.strip()
+    missing = REQUIRED_COLUMNS - set(file_data.keys())
+    if missing:
+        raise ValueError(f"Input dict must have both 'problem' and 'solution' keys")
+
+    return file_data
+
+
+def _validate_dict_input(input_data: List[dict[str, str]]) -> None:
+    for item in input_data:
+        missing = REQUIRED_COLUMNS - set(item.keys())
+        if missing:
+            raise ValueError("Input dict must have both 'problem' and 'solution' keys")
+        if not item.get("problem") or not item.get("solution"):
+            raise ValueError(
+                "'problem' and 'solution' values must be non-empty strings"
+            )
+
+
+def _generate_id(length=5):
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+
+class EvaluationInput(BaseModel):
+    problem: str
+    solution: str
+    custom_id: str | None
+    image: str | List[str] | None
+
+    @field_validator("problem", "solution")
+    @classmethod
+    def must_be_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Value must be a non-empty string")
+        return v.strip()
+
+def _to_direct_url(url: str) -> str:
+    import re
+    """Convert Google Drive sharing links to direct download URLs."""
+    match = re.match(r"https://drive\.google\.com/file/d/([^/]+)", url.strip())
+    if match:
+        return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
+    return url.strip()
+
+def run_inference_batch(
+    *,
+    input: Path | List[dict[str, str]],
+    output_path: str,
+    provider_name: Literal["openai", "google"] = "openai",
+    model_name: str = "gpt-4o-mini",
+    run_test_images: bool = False
+) -> None:
+
+    data: List[dict[str, str]] | None = None
+
+    if run_test_images:
+        print(f"\n\n------------------RUNNING MODEL: {provider_name}/{model_name} WITH IMAGES ------------------\n\n")
+    else:
+        print(f"\n\n------------------RUNNING MODEL: {provider_name}/{model_name} W/O IMAGES ------------------\n\n")
+
+    if isinstance(input, Path):
+        if os.path.exists(input):
+            data = _read_and_validate_file(input)
+
+            data = [
+                EvaluationInput(
+                    problem=row["problem"],
+                    solution=row["solution"],
+                    custom_id=str(row["cid"]) if pd.notna(row.get("cid")) else None,
+                    image=str(row["images"]) if pd.notna(row.get("images")) else None,
+                )
+                for _, row in data.iterrows()
+                if pd.notna(row["problem"]) and pd.notna(row["solution"])
+            ]
+        else:
+            raise ValueError(f"File doesn't exist : {input}")
+
+    elif isinstance(input, List):
+        _validate_dict_input(input_data=input)
+        data = [
+            EvaluationInput(
+                problem=item["problem"],
+                solution=item["solution"],
+                image=item["image"] if item.get("image") else None,
+            )
+            for item in input
+            if item["problem"] and item["solution"]
+        ]
+    else:
+        raise ValueError("make sure the input is either path or valid dict")
+
+    if data:
+        # creating batch jsonl
+        # step 1: create configuration
+        solution_schema = get_evaluation_system_schema()
+        examples_dataset = get_evaluation_examples()
+
+        instructions = (
+            "# Evaluation System Schema\n"
+            f"{json.dumps(solution_schema, indent=2)}\n\n"
+            "# Few-Shot Examples\n"
+            f"{json.dumps(examples_dataset, indent=2)}\n\n"
+            "# Output should be strictly in json format"
+        )
+
+        output = []
+        completion_config = KaapiCompletionConfig(
+            provider=provider_name,
+            type="text",
+            params=TextLLMParams(
+                model=model_name,
+                instructions=instructions,
+                temperature=0.4,
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                       
+                        "Novelty": {
+                            "type": "object",
+                            "properties": {
+                                "score": {"type": "number"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["score", "reason"],
+                            "additionalProperties": False,
+                        },
+                        "Usefulness": {
+                            "type": "object",
+                            "properties": {
+                                "score": {"type": "number"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["score", "reason"],
+                            "additionalProperties": False,
+                        },
+                        "Feasibility": {
+                            "type": "object",
+                            "properties": {
+                                "score": {"type": "number"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["score", "reason"],
+                            "additionalProperties": False,
+                        },
+                        "Scalability": {
+                            "type": "object",
+                            "properties": {
+                                "score": {"type": "number"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["score", "reason"],
+                            "additionalProperties": False,
+                        },
+                        "Sustainability": {
+                            "type": "object",
+                            "properties": {
+                                "score": {"type": "number"},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["score", "reason"],
+                            "additionalProperties": False,
+                        },
+                        **({"Image_contains_summary": {"type": "string"}} if run_test_images else {}),
+                    },
+                    "required": [
+                        "Novelty",
+                        "Usefulness",
+                        "Feasibility",
+                        "Scalability",
+                        "Sustainability",
+                        *(["Image_contains_summary"] if run_test_images else []),
+                    ],
+                    "additionalProperties": False,
+                },
+            ).model_dump(exclude_none=True),
+        )
+
+        completion_config, warnings = transform_kaapi_config_to_native(
+            completion_config
+        )
+
+        configuration = LLMCallConfig(blob=ConfigBlob(completion=completion_config))
+        provider_class = LLMProvider.get_provider_class(provider_type=provider_name)
+
+        if provider_name == "openai":
+            credential = {"api_key": os.getenv("OPENAI_API_KEY")}
+        else:
+            credential = {"api_key": os.getenv("GEMINI_API_KEY")}
+        client = provider_class.create_client(credentials=credential)
+        provider_instance = provider_class(client=client)
+        response: LLMCallResponse | None
+
+        for input_dict in data:
+            input_dict = input_dict.model_dump()
+            custom_id = (
+                input_dict.get("custom_id") or f"student_{_generate_id(length=6)}"
+            )
+            problem = input_dict.get("problem")
+            solution = input_dict.get("solution")
+            image = input_dict.get("image", None) if run_test_images else None
+
+
+            if image is not None:
+                if isinstance(image, str):
+                    image = _to_direct_url(image)
+                elif isinstance(image, list):
+                    image = [_to_direct_url(img) for img in image]
+
+            inputs = [
+                {
+                    "type": "text",
+                    "content": {
+                        "format": "text",
+                        "value": f"# Problem Statement\n:{problem}\n\n# Solution to the problem statement:\n{solution}\n\n Respond in json format.",
+                    },
+                }
+            ]
+
+            if image is not None:
+                images = [image] if isinstance(image, str) else image
+                for img in images:
+                    inputs.append({"type": "image", "content": {"format": "url", "value": img}})
+
+            query = QueryParams(input=inputs)
+
+            request = LLMCallRequest(query=query, config=configuration)
+
+            with resolved_input_context(query_input=request.query.input) as resolved_input:
+                response, error = provider_instance.execute(
+                    completion_config=request.config.blob.completion,
+                    query=query,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=False,
+                )
+
+            response_output:dict[str, Any] | None = json.loads(response.response.output.content.value)
+            if run_test_images:
+                output.append(
+                    {
+                        "CID": custom_id,
+                        "Problem": problem,
+                        "Solution": solution,
+                        "Image URL": image,
+                        "scores_with_images": response_output,
+                    }
+                )
+            else:
+                output.append(
+                    {
+                        "scores_without_images": response_output,
+                    }
+                )
+
+        with open(output_path, "w", encoding='utf-8') as f:
+            json.dump(output, f, indent=2)
+
+    else:
+        raise ValueError("batch id didn't got")
+
+
 if __name__ == "__main__":
     # TODO: uncomment to run inference test cases
-    run_inference_test_cases()
+    #run_inference_test_cases()
 
-    #run_inference_batch(Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")))
+    # run_inference_batch(Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")))
+
+    run_test_images = True
+
+    provider_name = "openai"
+    model_name = "gpt-4o-mini"
+
+    if run_test_images:
+        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multi/{provider_name}/{model_name}")
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        OUTPUT_FILE = f"{model_name}.json"
+        OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
+    else:
+        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multi/{provider_name}/{model_name}-wo-images")
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        OUTPUT_FILE = f"{model_name}-wo-images.json"
+        OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
+
+    run_inference_batch(
+        input=Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")),
+        output_path=OUTPUT_FILE_PATH,
+        provider_name=provider_name,
+        model_name=model_name,
+        run_test_images=run_test_images
+    )

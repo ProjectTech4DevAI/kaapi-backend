@@ -412,6 +412,11 @@ class GoogleAIProvider(BaseProvider):
                 include_thoughts=False, thinking_level=thinking_level
             )
 
+        output_schema = completion_config.params.get("output_schema")
+        if output_schema is not None:
+            generation_kwargs["response_mime_type"] = "application/json"
+            generation_kwargs["response_schema"] = output_schema
+
         response = self.client.models.generate_content(
             model=model,
             contents=contents,

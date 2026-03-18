@@ -1,6 +1,6 @@
 """
-This code is for translating the 
-indic language to english with different providers and llm models 
+This code is for translating the
+indic language to english with different providers and llm models
 
 The motive of this code is to find the sweet spot in terms of
 reliability, latency, accuracy and cost
@@ -32,6 +32,10 @@ import pandas as pd
 from pathlib import Path
 from typing import Any
 from pydantic import BaseModel, field_validator
+from app.services.llm.mappers import transform_kaapi_config_to_native
+from logging import Logger
+
+logger = Logger(__name__)
 
 load_dotenv()
 
@@ -81,8 +85,11 @@ def get_translation_system_prompt() -> str:
     """Returns the system prompt for translating Indic language submissions to English."""
     return TRANSLATION_SYSTEM_PROMPT
 
-
-def build_translation_user_message(problem: str, solution: str) -> str:
+from typing import Literal
+def build_translation_user_message(
+        problem: str,
+        solution: str, 
+    ) -> str:
     """Builds the user message for the translation LLM call."""
     return f"""Translate the following student innovation submission to English.
 
@@ -92,13 +99,17 @@ Problem:
 Solution:
 {solution}"""
 
-def run_inference_batch_openai(input: Path | List[dict[str, str]]):
-    REQUIRED_COLUMNS = {"problem", "solution"}
-    OUTPUT_FOLDER = os.path.join(BASE_DIR, "output_summary_indic/inference_batch_openai_4o_mini")
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    OUTPUT_FILE = "parsed_resultv1.json"
-    OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
 
+def run_inference_batch_openai(
+        input: Path | List[dict[str, str]],
+        output_path: str,
+        provider_name: Literal["openai", "google"] = "openai",
+        model_name: str = "gpt-4o-mini"
+    ):
+    logger.info(f"\n\n------------------RUNNING MODEL: {provider_name}/{model_name}------------------\n\n")
+
+    REQUIRED_COLUMNS = {"problem", "solution"}
+   
     def _read_and_validate_file(file_path: Path) -> pd.DataFrame:
         ext = file_path.suffix.lower()
         file_data = None
@@ -130,10 +141,9 @@ def run_inference_batch_openai(input: Path | List[dict[str, str]]):
                 raise ValueError(
                     "'problem' and 'solution' values must be non-empty strings"
                 )
-    
+
     def _generate_id(length=5):
         return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
 
     class EvaluationInput(BaseModel):
         problem: str
@@ -157,7 +167,7 @@ def run_inference_batch_openai(input: Path | List[dict[str, str]]):
                 EvaluationInput(
                     problem=row["problem"],
                     solution=row["solution"],
-                    custom_id=str(row["cid"]) if pd.notna(row.get("cid")) else None
+                    custom_id=str(row["cid"]) if pd.notna(row.get("cid")) else None,
                 )
                 for _, row in data.iterrows()
                 if pd.notna(row["problem"]) and pd.notna(row["solution"])
@@ -168,31 +178,58 @@ def run_inference_batch_openai(input: Path | List[dict[str, str]]):
     elif isinstance(input, List):
         _validate_dict_input(input_data=input)
         data = [
-            EvaluationInput(
-                problem=item["problem"],
-                solution=item["solution"]
-            )
+            EvaluationInput(problem=item["problem"], solution=item["solution"])
             for item in input
             if item["problem"] and item["solution"]
         ]
     else:
         raise ValueError("make sure the input is either path or valid dict")
 
-    
     if data:
         # creating batch jsonl
         # step 1: create configuration
         system_instruction = get_translation_system_prompt()
 
         output = []
-
-        configuration = LLMCallConfig(
-            blob=ConfigBlob(
-                completion=KaapiCompletionConfig(
-                    
-                )
-            )
+        completion_config = KaapiCompletionConfig(
+            provider=provider_name,
+            type="text",
+            params=TextLLMParams(
+                model=model_name,
+                instructions=system_instruction,
+                temperature=0.4,
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "problem_translated": {"type": "string"},
+                        "solution_translated": {"type": "string"},
+                        "summarization": {"type": "string"},
+                    },
+                    "required": [
+                        "problem_translated",
+                        "solution_translated",
+                        "summarization",
+                    ],
+                    "additionalProperties": False,
+                },
+            ).model_dump(exclude_none=True),
         )
+
+        completion_config, warnings = transform_kaapi_config_to_native(completion_config)
+
+
+        configuration = LLMCallConfig(blob=ConfigBlob(completion=completion_config))
+
+        provider_class = LLMProvider.get_provider_class(provider_type=provider_name)
+
+        if provider_name == "openai":
+            credential = {"api_key": os.getenv("OPENAI_API_KEY")}
+        else:
+            credential = {"api_key": os.getenv("GEMINI_API_KEY")}
+
+        client = provider_class.create_client(credentials=credential)
+        provider_instance = provider_class(client=client)
+        response: LLMCallResponse | None
 
         for input_dict in data:
             input_dict = input_dict.model_dump()
@@ -202,90 +239,50 @@ def run_inference_batch_openai(input: Path | List[dict[str, str]]):
             problem = input_dict.get("problem")
             solution = input_dict.get("solution")
 
+            query = QueryParams(
+                input=build_translation_user_message(problem, solution),
+            )
 
+            request = LLMCallRequest(query=query, config=configuration)
 
+            with resolved_input_context(
+                query_input=request.query.input
+            ) as resolved_input:
+                response, error = provider_instance.execute(
+                    completion_config=request.config.blob.completion,
+                    query=query,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=False,
+                )
+            response_output:dict[str, Any] | None = json.loads(response.response.output.content.value)
+            output.append(
+                {
+                    "CID": custom_id,
+                    "Problem": problem,
+                    "Solution": solution,
+                    "problem_translated": response_output.get("problem_translated", ""),
+                    "solution_translated": response_output.get("solution_translated", ""),
+                    "summarization": response_output.get("summarization", "")
+                }
+            )
 
-        #     request = {
-        #         "custom_id": custom_id,
-        #         "method": "POST",
-        #         "url": "/v1/responses",
-        #         "body": {
-        #             "model": "gpt-4o-mini",
-        #             "instructions": system_instruction,
-        #             "input": build_translation_user_message(problem, solution),
-        #             "text": {
-        #                 "format": {
-        #                     "type": "json_schema",
-        #                     "name": "output",
-        #                     "strict": True,
-        #                     "schema": {
-        #                         "type": "object",
-        #                         "properties": {
-        #                             "problem_translated": {"type": "string"},
-        #                             "solution_translated": {"type": "string"},
-        #                             "summarization": {"type": "string"}
-        #                         },
-        #                         "required": [
-        #                             "problem_translated",
-        #                             "solution_translated",
-        #                             "summarization"
-        #                         ],
-        #                         "additionalProperties": False,
-        #                     },
-        #                 }
-        #             },
-        #         },
-        #     }
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
 
-        #     jsonl_data.append(request)
+      
 
-        # # Submit batch to openai
-        # openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+if __name__ == "__main__":
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
 
-        # provider = OpenAIBatchProvider(client=openai_client)
-        # # create batch job
-        # result = provider.create_batch(jsonl_data, {})
+    OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_summary_indic/{provider_name}/{model_name}")
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    OUTPUT_FILE = f"{model_name}.json"
+    OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
 
-        # # wait for batch job to get suceed
-        # batch_id = result.get("provider_batch_id", "")
-        # batch_data: dict | None = None
-        # if batch_id:
-        #     while True:
-        #         batch_result = provider.get_batch_status(batch_id)
-        #         if batch_result.get("provider_status") in (
-        #             "completed",
-        #             "failed",
-        #             "expired",
-        #             "cancelled",
-        #         ):
-        #             batch_data = batch_result
-        #             break
-
-        #     output_file_id = batch_data.get("provider_output_file_id", None)
-        #     if not output_file_id:
-        #         raise ValueError("No output file — batch may have failed")
-
-        #     content = provider.download_batch_results(output_file_id)
-
-        #     parsed_results = []
-        #     for item in content:
-        #         cid = item["custom_id"]
-        #         if item.get("error"):
-        #             parsed_results.append({"custom_id": cid, "error": item["error"]})
-        #         else:
-        #             text = item["response"]["body"]["output"][0]["content"][0]["text"]
-        #             parsed_results.append(
-        #                 {"custom_id": cid, "scores": json.loads(text)}
-        #             )
-
-        #     with open(OUTPUT_FILE_PATH, "w") as f:
-        #         json.dump(parsed_results, f, indent=2)
-
-        # else:
-        #     raise ValueError("batch id didn't got")
-
-
-
-if __name__ == '__main__':
-    
-    run_inference_batch_openai(Path(os.path.join(BASE_DIR, "200_Golden_dataset_2.0.xlsx")))
+    run_inference_batch_openai(
+        Path(os.path.join(BASE_DIR, "Multi-lingual.xlsx")),
+        output_path=OUTPUT_FILE_PATH,
+        provider_name=provider_name,
+        model_name=model_name,
+    )

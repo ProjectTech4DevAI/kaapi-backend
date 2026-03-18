@@ -1,0 +1,2090 @@
+[
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of a laser-and-mirror-based intrusion detection system is a widely known security mechanism with no original adaptation described."
+      },
+      "Usefulness": {
+        "score": 5.0,
+        "reason": "The system aims to detect intrusions and alert guards, directly addressing the problem of theft from grids, but the described mechanism is basic."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "While the basic components (laser, mirrors, receiver, alarm) are individually feasible, implementing a robust and reliable system across a large, open grid environment is far more complex than described."
+      },
+      "Scalability": {
+        "score": 4.0,
+        "reason": "The system could theoretically be expanded to cover larger areas by adding more lasers and mirrors, but the practical challenges of alignment and maintenance in a large-scale grid environment are not addressed."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The electronic components would require power and maintenance, and their durability in an outdoor grid environment is not discussed, making long-term sustainability unclear."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea applies known sensor technology in a specific, integrated way to a critical safety problem, showing modest creative adaptation."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution comprehensively resolves the stated problem by providing multi-modal alerts and preventing bus movement, leading to strong real-world safety impact."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The solution relies on readily available electronic components and a logical control mechanism, making it practical to implement."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The system uses common components and can be easily replicated and installed on a large number of buses across different regions."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The system is an electronic device that would require power and periodic maintenance, but its long-term benefit in preventing accidents contributes to societal sustainability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of cutting sugarcane is a common agricultural task, and the solution provides no unique method or adaptation beyond stating the obvious goal."
+      },
+      "Usefulness": {
+        "score": 3.0,
+        "reason": "While reducing the difficulty of cutting sugarcane is a real problem for farmers, the solution offers no details on how it achieves this, making its practical usefulness unclear."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The solution is too vague, simply stating 'a project that can easily cut the sugarcane' without any description of the mechanism, technology, or design, making it impossible to assess its practical implementability."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Without any details on the proposed 'project' or its design, there is no information to evaluate its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The solution provides no information regarding materials, energy consumption, maintenance, or environmental impact, making it impossible to assess its long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of a 'special machine' to help soldiers fight is extremely generic and lacks any specific original concept or adaptation."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution is too vague to demonstrate any observable benefit or meaningful connection to the problem of killing enemies faster with missile trucks."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "Without any details about the 'special machine,' its components, or how it operates, it is impossible to assess its practical implementability."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The solution provides no information about the machine's design or function, making it impossible to determine its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "No details are given about the 'special machine's' resources, maintenance, or environmental impact, preventing any assessment of its long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The solution proposed (self-balancing bikes) is completely unrelated to the problem statement (drying clothes in facilities), indicating a fundamental mismatch rather than a novel idea for the stated problem."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution of self-balancing bikes offers no benefit or connection to the problem of efficiently drying clothes and preventing them from getting wet in rain."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The solution is practically impossible to implement to solve the stated problem, as self-balancing bikes have no functional relevance to laundry management."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The solution cannot scale to address the problem of clothes drying, as it is entirely unrelated to the context and needs of hotels and hospitals for laundry."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The solution has no relevance to the sustainability of laundry operations or resource use in the context of the problem statement."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The submission describes 'Natural Farming,' which is a well-established and widely promoted agricultural practice, not a new or original idea from the student."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "Natural farming is highly useful in addressing critical issues like high input costs, environmental degradation, and declining farm income, as clearly articulated in the solution."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "Natural farming is a proven and readily implementable practice with existing methodologies and widespread adoption, making it highly realistic to carry out."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The principles of natural farming are widely applicable and can be adopted by individual farmers, communities, and across large agricultural regions, demonstrating high scalability."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "Natural farming is inherently sustainable, focusing on ecological balance, soil fertility, and reduced reliance on external, non-renewable inputs for long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of a sensor-based anti-theft alarm is a widely known and common security solution with no described original adaptation."
+      },
+      "Usefulness": {
+        "score": 3.0,
+        "reason": "The solution broadly addresses theft, but the generic description lacks specific details on how it effectively detects or prevents the crime."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "While sensor-based alarms are generally feasible, the solution provides no specific details on implementation, sensor types, or technical execution."
+      },
+      "Scalability": {
+        "score": 3.0,
+        "reason": "The solution mentions homes, offices, and banks, but offers no explanation of how a generic sensor-based alarm would adapt to the varied security needs of these different environments."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The solution does not provide any details on power consumption, maintenance requirements, or the long-term environmental impact of the proposed electronic system."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The solution lists widely known and established waste management techniques without any original adaptation or innovative application."
+      },
+      "Usefulness": {
+        "score": 4.0,
+        "reason": "The solution identifies relevant waste management methods but lacks specific details on how they would be implemented to address the problem of liquid waste pollution effectively."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "The listed techniques are generally feasible as existing technologies, but the submission provides no details on the student's plan for implementation, required resources, or specific context."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "While the individual waste management methods are scalable in principle, the submission offers no specific strategy or plan for how the student would scale their application."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "Some listed methods can contribute to sustainability, but the solution does not detail how the overall approach ensures long-term environmental responsibility or resource management."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea 'Road light project' is a completely generic concept with no specific details or original adaptation presented."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The submission provides no details on how this specific 'Road light project' solves any particular problem or offers any unique benefit beyond the general function of a road light."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "Without any description of the design, technology, or implementation steps, it is impossible to assess the practical feasibility of this project."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "No specific features or design elements are described that would allow for an evaluation of its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The submission lacks any details regarding energy source, materials, maintenance, or environmental impact, making it impossible to assess its long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea of automatic mobile-controlled drip irrigation for hydroponics, especially for managing 'thousands of plants' from a single location, shows some creative adaptation of existing technology."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The proposed solutions directly address critical issues like wilting and dead roots, which significantly impact plant health and yield in hydroponic systems."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "While automatic drip irrigation and mobile control are feasible, managing 'thousands of hydroponic plants' from 'our house' lacks specific technical details on sensors, control systems, and infrastructure, making large-scale implementation complex without further elaboration."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The solution explicitly aims to control 'thousands of hydroponic plants,' indicating a strong potential for expansion and replication across various sizes of hydroponic farms."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "Automatic drip irrigation can optimize water and nutrient use, contributing to the inherent sustainability of hydroponics, but the solution does not detail how it addresses the 'constant power supply' challenge or other environmental impacts."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The solution proposes a standard method of collecting and pumping natural spring water, which is a widely known approach for water supply in hilly regions."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution directly addresses a critical problem of drinking water scarcity for the school and habitation, promising a continuous supply from natural springs."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "The concept of collecting and pumping spring water is technically feasible, but the solution lacks specific details on the type of pump, power source, and distribution infrastructure required for uphill supply."
+      },
+      "Scalability": {
+        "score": 4.0,
+        "reason": "The solution is highly localized to the specific school and habitation, and while the approach could be replicated, the proposed system itself has limited inherent scalability to a broader region."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "Utilizing natural, continuously flowing springs provides a sustainable water source, but the long-term sustainability depends on the energy source for the pump and a robust maintenance plan, which are not detailed."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "Drip irrigation is a widely known and established agricultural technique for water conservation, with no original adaptation or new concept presented by the student."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "Drip irrigation directly addresses water scarcity by efficiently delivering water to plants, which is highly beneficial for agriculture in Rajasthan."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "Drip irrigation systems are practical and readily implementable for gardens and trees using accessible technology and resources."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The solution can be scaled from small gardens and individual trees to larger agricultural areas and orchards."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "Drip irrigation is highly sustainable as it significantly conserves water, reduces waste, and supports long-term agricultural practices."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The use of a rain sensor, Arduino, and motor to automate a protective cover is a common and widely known concept in basic electronics projects."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses a very common and practical problem for hostelers and others in rainy seasons, providing clear and immediate benefit."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The components described (rain sensor, Arduino, relay, motor, water-resistant cover) are readily available and the system logic is straightforward to implement."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The solution can be easily replicated for individual users or adapted for larger communal drying spaces with moderate adjustments."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The system uses low-power electronic components and can be built with durable materials, supporting long-term operation with minimal resource strain."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The solution proposes a unique combination of automatic flushing linked to door operation and a temporary door lock to enforce hygiene, showing independent creative adaptation beyond a generic auto-flush system."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the significant and common problem of dirty train toilets and bad odor, which would greatly improve passenger comfort and hygiene."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "Implementing a robust system that detects if a flush hasn't occurred, activates it upon door opening, and temporarily locks the door in a high-traffic, harsh train environment presents significant engineering, safety, and maintenance challenges."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The solution is designed for train toilets, making it highly replicable across the vast Indian railway network, though mass installation and maintenance would be a large undertaking."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The system would require continuous power and maintenance for its electronic components and mechanical parts, but it promotes better hygiene which contributes to social sustainability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of a gas level indicator for cylinders is a widely known idea, and the solution does not describe any novel mechanism or unique adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the common problem of unexpectedly running out of cooking gas, providing clear practical benefit to households."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "Attaching a gas level meter to a cylinder is technically achievable with existing technologies, but the solution lacks specific details on its design or implementation."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The problem is widespread across all households using gas cylinders, allowing for broad replication and adoption of the solution."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The solution aids in better resource management by preventing unexpected gas outages, but details on the meter's own environmental impact or long-term durability are not provided."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution describes a known concept of solar-powered moisture sensor irrigation without introducing novel components or unique approaches to existing challenges."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The system directly solves the problem of inefficient watering by automating based on real-time data, leading to significant benefits for plant health and water conservation."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The solution relies on existing and implementable technologies like moisture sensors, solar panels, and batteries, making its construction realistic."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The system's modular design and application across farms, gardens, and urban areas demonstrate strong potential for widespread adoption."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The system is powered by solar energy and designed to optimize water usage, ensuring long-term environmental responsibility and resource conservation."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 5.0,
+        "reason": "The idea of using physical gates to enforce traffic flow at intersections shows a specific, albeit complex, adaptation to a known problem."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly and effectively addresses the problem of accidents at intersections by physically preventing signal violations, leading to clear safety benefits."
+      },
+      "Feasibility": {
+        "score": 3.0,
+        "reason": "Implementing physical gates at every city intersection is highly impractical due to massive infrastructure, cost, maintenance, and operational challenges like emergency vehicle access."
+      },
+      "Scalability": {
+        "score": 3.0,
+        "reason": "Scaling this solution to multiple intersections across a city would be extremely challenging due to high costs, complex infrastructure, and significant maintenance requirements per location."
+      },
+      "Sustainability": {
+        "score": 3.0,
+        "reason": "The solution implies high resource consumption for construction, continuous power for operation, and significant maintenance for physical gates, making long-term sustainability doubtful."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 5.0,
+        "reason": "The use of an ultrasonic sensor with Arduino for automated safety is a common concept in student projects, showing modest creative adaptation to a specific problem."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the critical problem of hand injuries in industrial saw machines, providing clear and reliable safety improvement for operators."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The system's core components (Arduino, ultrasonic sensor, relay) are readily available and the concept is realistically implementable, though scaling to industrial-grade machinery would require further engineering."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The safety system can be easily replicated and adapted for various saw machines and similar industrial equipment across different workshops and factories."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The electronic system is durable, requires manageable maintenance, and contributes to long-term human safety without significant resource consumption or environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of a sensor-based fire alert system sending calls and messages is a widely known and existing technology with no described original adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The system provides a crucial real-time alert for fire, directly addressing a significant safety problem and enabling prompt action to prevent severe consequences."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "Building a basic fire detection and alert system with a communication module is achievable, but the submission lacks details on real-world robustness, power, and long-term reliability."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The modular nature of a smart alert device allows for easy replication and deployment in various buildings and locations."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "Electronic alert systems can be maintained over time, but the solution does not detail aspects like power efficiency, material sourcing, or long-term operational costs."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of an earthquake alarm is a widely known concept with no described original adaptation or unique mechanism."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses a critical safety concern by providing an early warning for a natural disaster, which can save lives."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "The solution is conceptually feasible, but the lack of detail on the specific technology, detection mechanism, or how it provides 'early' warning makes practical implementation unclear."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The concept of an alarm can be replicated in many individual homes or buildings, but the description lacks details on how it would scale to cover larger geographical areas or integrate into broader warning systems."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The solution would require a power source and maintenance, but no details are provided regarding its energy efficiency, durability, or long-term operational sustainability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The solution proposes a standard gas leak detection system with an automatic shut-off and buzzer, which is a widely known safety concept without unique adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses a critical safety problem by preventing gas explosions, offering clear and reliable improvement for household safety."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The core components like gas sensors, automatic regulator shut-off mechanisms, and buzzers are readily available and the concept is realistically implementable with accessible resources."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The device is easily replicable and can be widely adopted in various kitchens, from homes to commercial settings, with minimal adaptation."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The solution promotes long-term safety by preventing accidents and is maintainable over time, although it requires power and occasional component checks."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of a touch-controlled electric board for managing electrical appliances is a widely known and implemented smart home automation solution."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution clearly addresses real-world needs for comfort, convenience, energy management, remote control, and accessibility in homes and offices."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "Implementing a touch-screen control system for electrical appliances is highly feasible with existing technology and readily available components."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The system can be easily scaled from individual rooms to entire homes, offices, and even industrial settings with appropriate design and integration."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The solution promotes smart energy management and can reduce material waste from traditional switches, contributing positively to sustainability over time."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The core premise that burning 'black oil' releases methane as blue smoke to be used as an ideal fuel is scientifically incorrect and demonstrates a fundamental misunderstanding of chemistry and combustion."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution, as described with its scientifically flawed mechanism, would not effectively solve the problem of pollution and could potentially create further environmental harm."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The proposed method of obtaining methane by simply burning 'black oil' and collecting blue smoke is not scientifically feasible or practically implementable with current knowledge or resources."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Since the fundamental scientific premise of the solution is incorrect and not feasible, it cannot be scaled or replicated in any meaningful way."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "Burning waste oil directly without advanced processing and emission controls is highly polluting and unsustainable, contradicting the goal of creating an 'ideal fuel' that reduces pollution."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea of an incentive-based dustbin that dispenses a coin for waste disposal shows modest creative adaptation for a student project."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of scattered garbage and disease by providing an incentive to encourage proper waste disposal."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "A dustbin with a simple mechanical coin-dispensing mechanism is realistically implementable with accessible resources for a student project."
+      },
+      "Scalability": {
+        "score": 5.0,
+        "reason": "While applicable to a small village, scaling this system broadly would be challenging due to the continuous cost and logistics of providing coin incentives."
+      },
+      "Sustainability": {
+        "score": 4.0,
+        "reason": "The solution's long-term sustainability is questionable due to its dependence on a continuous supply of coins for incentives, which requires ongoing funding."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea combines existing concepts like separate water tanks and remote control into a specific mopping device designed to reduce physical strain, showing modest creative adaptation for a student."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the problems of time consumption and physical strain from mopping, offering clear practical benefits for working women and those with joint pain."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "While the overall concept is plausible, critical details regarding the remote-controlled movement, navigation, and the automated mop squeezing mechanism are not described, making implementation complex."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "As a household appliance, the solution has strong potential for mass production and adoption across a wide range of homes, particularly for its target demographic."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The self-contained clean and dirty water system promotes efficient water use, and as a durable appliance, it can offer long-term utility with reasonable maintenance."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution proposes a basic drip irrigation system, which is a widely known technique for watering plants, with a specific adaptation for school holidays."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of plants withering due to lack of water during school holidays, providing a clear and practical benefit."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The system involves simple plumbing with pipes, a tank, and a tap, making it straightforward and easy to execute within a school environment using readily available materials."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The system can be easily replicated and expanded to cover more plants within the same school or implemented in other schools with similar needs."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The drip method is water-efficient and, once installed, requires minimal ongoing effort, making it environmentally responsible and maintainable over time for plant health."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The 'solution' is a generic philosophical discussion about problem-solving that offers no new or original idea related to e-waste management."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The 'solution' does not address the problem of e-waste and therefore provides no observable benefit or improvement for the stated problem."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The 'solution' is a conceptual discussion, not a practical plan or system, making it impossible to implement for e-waste management."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Since the 'solution' does not address the problem, it has no potential to expand or be replicated for e-waste management."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The 'solution' is a general discussion and does not propose any sustainable practice or method for managing e-waste over time."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The idea combines a motor-assisted web remover with an integrated umbrella for debris collection, offering a practical and thoughtful adaptation to an existing tool."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution directly and effectively addresses the problems of falling web debris into eyes/skin and physical strain, significantly improving user comfort and safety during cleaning."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The proposed design uses simple, readily available components like a motor, stick, and umbrella, making it practical and low-cost to manufacture and implement."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The product addresses a universal household cleaning problem and its straightforward design allows for easy mass production and broad adoption across various demographics and regions."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "As a durable household tool, it offers long-term utility; the collection mechanism could aid in cleaner disposal, though specific eco-friendly materials or energy efficiency are not detailed."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The idea is a simple mechanical adaptation of an existing duster with a dust collection box, showing a small variation on known concepts rather than significant originality."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of chalk dust falling on students, offering a practical benefit by containing the dust during board cleaning."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution is highly realistic and easy to implement using readily available materials like a stick, a duster, and a box."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The simple design and low cost make this solution easily replicable and adaptable for use in any classroom with a blackboard and chalk."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution is environmentally responsible by reducing airborne chalk dust and is maintainable over time with minimal resource burden, requiring only regular emptying of the dust collection box."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The submission only states a generic goal of self-protection from common threats without proposing any specific or novel method or idea."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution describes a desired outcome (escaping dangers) but provides no specific mechanism or method to achieve it, making its practical usefulness impossible to evaluate."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No specific solution or method is described, making it impossible to assess the practical implementation or resources required."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The submission lacks a defined solution, therefore there is no concrete idea or system that can be expanded or replicated."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "As no specific solution is provided, there is no basis to evaluate its long-term viability, resource consumption, or environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea proposes using coconut shells as a specific, locally available, and waste-derived alternative to plastic nursery bags, showing modest creative adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the significant problem of plastic pollution from nursery bags by offering a practical and environmentally friendly alternative."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution is easy to execute using readily available coconut shells and requires no specialized tools or complex infrastructure."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The solution is easily replicable across varied environments and populations where coconuts are consumed, from households to small-scale nurseries."
+      },
+      "Sustainability": {
+        "score": 10.0,
+        "reason": "The solution achieves exceptional sustainability by repurposing a natural waste product to eliminate plastic pollution and promote biodegradability in plant nurseries."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The concept of a multi-grain and seed health powder is a widely known traditional practice in Indian households, showing minor adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution provides a practical and affordable way to enhance daily nutrition with a mix of beneficial ingredients, directly addressing general health needs."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The preparation process uses simple, traditional methods and common, affordable ingredients, making it highly practical to implement in any household."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The solution is easily replicable at a household or community level using widely available ingredients and can be scaled with standard food processing methods."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution utilizes natural, locally sourced ingredients and low-energy preparation methods, making it environmentally responsible and maintainable long-term."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of using natural ingredients in diapers to prevent rashes is already widely known and implemented by various brands, with no unique adaptation described."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses a common and uncomfortable problem for infants, providing clear and reliable improvement for intended users."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "While natural diapers exist, the submission lacks specific details on which 'natural chemicals' would be used, how they would be integrated, or the manufacturing process, making the student's specific implementation unclear."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "Diapers are a mass-market product, and a successful natural alternative could be broadly adopted across diverse regions and populations."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The intention to use 'natural chemicals' suggests a more environmentally responsible product, supporting long-term operation with potentially balanced resource use, though specific details are absent."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of attaching a blade to a motor to cut grass describes a basic motorized grass cutter, which is a widely known and common tool with no original adaptation."
+      },
+      "Usefulness": {
+        "score": 6.0,
+        "reason": "The solution directly addresses the problem of manual grass cutting by proposing a motorized method, which would make the task easier and more efficient for cattle owners."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "Attaching a blade to a motor to cut grass is a straightforward and highly achievable concept using readily available components and existing technology."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept of a motorized grass cutter is easily replicable and can be adopted by numerous farmers or individuals for their cattle across various regions."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The solution's sustainability depends on the power source for the motor (electricity or fuel) and its maintenance, but no specific environmental benefits or long-term resource management details are provided."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of an immersion water heater is widely known, and while using waste materials shows resourcefulness, it does not introduce a novel method of heating or a new solution to the problem."
+      },
+      "Usefulness": {
+        "score": 4.0,
+        "reason": "The solution successfully heats water, addressing the stated need, but the lack of safety features makes its practical usefulness for regular use highly questionable and potentially dangerous."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The described construction with exposed wires, iron, and plaster directly in water is extremely unsafe and practically impossible to implement reliably and safely for daily use, posing a significant electrical hazard."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "This is a highly individualized, makeshift solution using specific waste materials, making it impossible to replicate consistently or expand beyond a single, narrow, and unsafe application."
+      },
+      "Sustainability": {
+        "score": 2.0,
+        "reason": "While it reuses waste materials, the inherent safety risks and likely poor energy efficiency mean the solution cannot be maintained over time without causing harm or being impractical, making it unsustainable."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The solution proposes a traditional, unscientific, and potentially harmful home remedy for dental care, lacking any novel or creative adaptation."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution, particularly with abrasive ingredients like brick powder, is likely to be detrimental to dental health, making it counterproductive rather than useful."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The ingredients are readily available and the powder can be easily prepared and used with minimal effort and resources."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The solution uses common, inexpensive ingredients and a simple preparation method, making it highly replicable and accessible across diverse populations."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution utilizes natural, readily available ingredients and a simple process, ensuring long-term viability with minimal resource burden."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea adapts the known concept of waste heat recovery to a home kitchen LPG burner for heating water, showing modest creative application."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution effectively addresses the problem of wasted heat and offers the practical benefit of hot water for other household tasks."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The proposed system using a copper coil, insulated tank, and tap is realistically implementable with accessible materials and moderate effort."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The solution is easily replicable across various households that use LPG stoves, requiring minimal adaptation for different setups."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution is environmentally responsible by utilizing waste heat from LPG, reducing energy consumption, and is realistically maintainable long-term."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of an emergency light is common, and using discarded items for a student project is a widely known approach rather than a novel solution."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The emergency light directly addresses the common and impactful problem of darkness and fear during power outages, providing clear benefit."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "Creating an emergency light, especially using readily available discarded materials, is a highly practical and achievable project for students."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept of an emergency light is widely applicable, and the solution can be easily replicated by many households or communities."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The solution emphasizes using discarded items, which promotes resource efficiency and reduces waste, contributing positively to sustainability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The proposed solutions of internal pipelines and automatic motor pumps for water drainage are standard engineering practices for waterlogging, showing negligible original thinking."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the significant problem of water stagnation in underpasses, which can cause traffic and safety issues, providing clear practical benefit."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "Constructing drainage pipelines and installing automatic pumps are technically achievable solutions, but the submission lacks details on specific implementation, cost, or maintenance, which are crucial for real-world deployment."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The solution, involving drainage systems and pumps, can be replicated and applied to numerous underpasses and road-rail crossings across different regions with similar waterlogging problems."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "While the infrastructure can be durable, the solution depends on continuous resource input for pump operation (electricity) and regular maintenance for pipelines and motors, with no details on long-term resource management."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of a low-cost flotation device for flood rescue is widely known and lacks specific innovative details or unique adaptations."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The tool directly addresses the critical need for personal flotation during floods to save lives, providing clear and practical benefit."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The problem statement explicitly mentions 'low cost,' indicating the solution can be realistically implemented with accessible materials and simple construction."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "A low-cost and simple tool for flood rescue can be easily replicated and distributed to many individuals across various flood-affected regions."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The emphasis on 'low cost' suggests potential for using accessible materials, but specific details on durability, resource use, or long-term environmental impact are not provided."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of converting household waste into organic fertilizer is a widely known and established waste management practice, not a novel concept."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses multiple problems like waste accumulation, bad smell, pests, and disease spread, providing clear and reliable improvement for urban environments."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "Composting household waste to produce organic fertilizer is a realistically implementable process with accessible resources, though it requires proper management."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The model is stated to be suitable for urban residents, indicating potential to scale from community-level initiatives to larger urban areas with manageable adjustments."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution promotes resource recycling, reduces landfill waste, and can generate income from fertilizer sales, making it highly sustainable with minimal environmental burden."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of an automatic garbage bin that opens when approached is a widely known technology with no unique adaptation or inventive design described."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of overflowing bins and aims to improve public hygiene and safe waste collection, providing clear practical benefits."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "An automatic lid mechanism using sensors is a practical and deployable solution with readily available technology and manageable constraints."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "Automatic bins can be easily replicated and deployed across various public and private settings, making the solution broadly applicable."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The solution contributes to better waste management and hygiene, but details on the device's energy consumption, material sourcing, or long-term maintenance are not provided."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The solution combines two widely known concepts: gas level detection by weight and gas leak detection using a sensor, without presenting significant original adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses critical problems of unexpected gas depletion and undetected leaks, providing clear and reliable safety and convenience benefits for users."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The system relies on readily available and affordable electronic components like load cells, gas sensors, Arduino, and LCD, making it highly practical to implement."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The device is designed for individual gas cylinders and can be easily replicated and adopted across numerous households without requiring complex infrastructure changes."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The solution enhances safety and resource management by preventing gas wastage, and while it is an electronic device, its operational sustainability is manageable with standard maintenance."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution proposes a mechanical aid for bag filling using scrap materials, which is an adaptation of a known concept rather than a novel invention."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses a significant problem for farmers by providing a mechanical aid for grain bagging during labor shortages."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The construction using old iron plates and welding is practical and achievable with basic fabrication skills and readily available materials."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The use of readily available scrap materials and simple construction methods allows for easy replication in local communities."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution promotes sustainability by explicitly utilizing old iron plates, contributing to waste reduction and resource reuse."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The idea of floating houses for disaster protection is a known concept, and the submission describes its general characteristics without proposing novel adaptations or technologies."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses a critical need for protection during natural disasters like floods, which is highly relevant in the Indian context."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "The student acknowledges significant challenges such as the need for expensive high-tech machinery, diverse raw materials, and skilled labor, making widespread implementation difficult."
+      },
+      "Scalability": {
+        "score": 5.0,
+        "reason": "The solution's scalability is limited by the high costs, maintenance requirements, and need for specialized labor, as explicitly mentioned by the student."
+      },
+      "Sustainability": {
+        "score": 3.0,
+        "reason": "The solution explicitly mentions a 'high risk of water pollution' and 'low lifespan' as disadvantages, directly contradicting claims of environmental friendliness and long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The idea adapts a common small engine to solve a specific rural problem of borewell motor extraction without electricity, showing a clear fresh perspective and independent effort in a contextual setting."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the significant problem of removing heavy borewell motors, providing a reliable and independent method for farmers without relying on electricity or extensive manual labor."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution uses readily available components like a small motorcycle engine, belt, and iron poles, making it straightforward to construct and operate in rural settings."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The simple design and use of common components mean the device can be easily replicated and adopted by many farmers across diverse rural agricultural regions."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "While it uses fuel, the solution is designed for intermittent use, making it operationally sustainable for farmers by reducing dependency on electricity and manual labor, and the mechanical nature suggests durability and repairability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The automatic wiper system is a widely known automotive feature, and the proposed implementation uses common components for a standard educational project."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The automatic wiper system directly enhances driver safety by ensuring clear visibility during rain or fog, reducing a common cause of negligence-related accidents."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The solution uses readily available components like Arduino, rain sensor, and servo motor, making a functional prototype realistically implementable."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept of an automatic wiper system is universally applicable to all vehicles, allowing for broad replication and adoption."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The electronic system is likely to be durable and low-maintenance, contributing to long-term safety and reducing potential resource waste from accidents."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The solution describes the basic function of a vacuum cleaner, which is a widely known and common appliance, showing no original thought or adaptation."
+      },
+      "Usefulness": {
+        "score": 2.0,
+        "reason": "The solution describes a generic vacuum cleaner's function without explaining how it specifically solves the problem of lack of time or physical difficulty for the target users."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "The implementation of a standard vacuum cleaner is feasible, but the solution lacks details on any innovative deployment or adaptation for the specific problem."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "While the use of vacuum cleaners can be scaled for cleaning services, the solution does not provide details on how this specific idea would expand beyond its basic concept."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The solution does not provide details on the sustainability aspects of the vacuum cleaner's operation, such as energy consumption or waste management."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of using a cart to transport heavy objects is a fundamental and widely known concept, showing no original thinking or unique adaptation."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the real problem of carrying heavy loads, providing a clear and practical benefit by reducing physical effort and improving efficiency."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "Creating a simple pulling cart is highly feasible, requiring basic materials and tools that are readily available, making it easy to implement."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The concept of a cart is universally applicable and can be easily replicated and adapted in various sizes and designs for diverse environments like schools, farms, or markets."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "A simple cart, especially if constructed from durable materials, is inherently sustainable, requiring minimal maintenance and no complex resources for long-term use."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The solution proposes an automatic railway gate using common components like IR sensors and Arduino, which is a widely known and implemented concept without significant original adaptation."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The system directly addresses the problems of gatekeeper carelessness, financial burden, and continuous operation, offering clear safety and efficiency benefits."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "The core components (IR sensors, Arduino, servomotor) are easily available and the basic functionality is implementable, though real-world railway deployment would require robust engineering beyond the scope described."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept of automatic gates is highly replicable across numerous railway crossings, and the student also identifies its potential for parking and house gates."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The automated system offers long-term operational benefits by replacing manual labor, but its sustainability depends on reliable power sources and regular maintenance, which are not detailed."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The concept of a remote-controlled boat for garbage collection is a known application in robotics, with the proposed Bluetooth and Android control being a common student project approach."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the significant problem of garbage in water bodies and the danger to human cleaners, offering a practical method for remote collection."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The proposed system uses readily available components like Android phones, Bluetooth modules, microcontrollers, and motors, making a prototype or small-scale implementation realistic for students."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The core idea can be replicated for various water bodies, but the Bluetooth control might limit its range and effectiveness for larger lakes or rivers without further adaptation."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "By removing waste from water bodies, the solution contributes to environmental sustainability, and the electronic components are generally maintainable over time with proper care."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of an automatic light control system using an LDR and LM555 IC is a widely known and common electronics project, showing negligible original adaptation."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of electricity wastage by automatically turning lights on and off based on ambient light, providing a clear practical benefit."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution uses readily available and inexpensive components (LDR, LM555 IC) and describes a straightforward circuit that is easy for students to implement."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The LDR-based automatic switching concept is easily replicable and can be applied to various lighting scenarios from individual lights to larger systems like streetlights."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution promotes energy conservation by preventing unnecessary electricity consumption, making it environmentally responsible and maintainable over time."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The idea of smart irrigation to reduce water waste and improve crop yield is a widely known concept without any unique adaptation or original mechanism described."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses significant problems of water waste and reduced crop yield in agriculture, offering clear and substantial benefits."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "While smart irrigation systems are technically achievable, the submission provides no specific details on the components, design, or implementation of 'QSmart Irrigation', making it a high-level concept."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept of optimizing water usage through smart irrigation is highly scalable, applicable to various agricultural settings from small farms to large-scale operations."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "Smart irrigation inherently promotes long-term sustainability by significantly conserving water resources and improving environmental protection in agriculture."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The problem statement is extremely generic, and the 'solution' provided is not a solution but a restatement of the problem's impact, showing no original thinking."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The 'solution' 'Many living beings will affect' does not propose any method or action to address the 'Loss of living beings' problem, thus offering no benefit."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No actual solution or method is described, making it impossible to assess any realistic implementation."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Without a defined solution, there is no basis to evaluate its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "As no solution is presented, there is no way to determine its long-term viability, resource use, or environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The submission identifies common problems related to food safety and hygiene but does not propose any novel solution or approach."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The submission only describes problems and their impacts without offering any proposed solution to address them."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No solution is described, making it impossible to evaluate its practical implementability."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Without a defined solution, there is no basis to assess its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The submission does not provide a solution, thus its long-term viability or environmental impact cannot be evaluated."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The concept of an LPG leak detection and automatic shut-off system is a widely known safety technology."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution directly addresses a critical safety problem of LPG leaks and accidents in rural areas, providing a clear and significant benefit."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The proposed system uses existing sensor and shut-off valve technologies, making its implementation practical and achievable."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The solution addresses a widespread safety issue in rural areas and can be easily replicated and deployed across many households."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The system promotes long-term safety and environmental protection by preventing gas leaks, and the device itself would be durable and low-maintenance."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The 'solution' is a generic restatement of the problem's inverse (increasing water levels to prevent decrease), showing no original thinking or specific method."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "While the goal of increasing water levels is useful, the 'solution' provides no actionable method or detail on how this would be achieved to benefit anyone."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The 'solution' is a statement of intent without any practical method or plan, making its implementation impossible to assess."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Without a defined method or approach, the 'solution' has no specific components or strategy that can be scaled."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The 'solution' lacks any specific details on resource use or environmental impact, making its long-term viability impossible to determine."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The core idea of using reflectors for visibility is not new, and the proposed mechanism of animals returning due to reflectors is based on a fundamental misunderstanding of how reflectors work."
+      },
+      "Usefulness": {
+        "score": 3.0,
+        "reason": "While the problem of animal-vehicle collisions is real, the solution's stated mechanism for making animals return is flawed, and its practical implementation for all wild animals is highly questionable."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The solution is practically impossible to implement as it requires capturing and attaching devices to a vast number of wild animals, and the proposed behavioral outcome is unrealistic."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The challenges of capturing, equipping, and maintaining reflectors on a large population of diverse wild animals make the solution impossible to scale."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The solution is not sustainable due to the impracticality of long-term maintenance, replacement, and the potential negative impact of repeatedly interfering with wild animals."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The core concept of an obstacle detection device for the visually impaired is widely known, and the described 'light warning' mechanism is fundamentally flawed rather than a novel adaptation."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The solution proposes to warn visually impaired users by 'emitting light,' which provides no observable benefit to the target audience and thus fails to address the problem effectively."
+      },
+      "Feasibility": {
+        "score": 2.0,
+        "reason": "While physically possible to build a garment with sensors and an emitter, the solution relies on the unrealistic assumption that visually impaired individuals can perceive a light-based warning for obstacle avoidance."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "A solution that is ineffective for its intended users due to a fundamental design flaw cannot be meaningfully replicated or expanded to benefit a larger population."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "Since the proposed warning mechanism renders the solution non-functional for its target users, it has no practical long-term viability or sustainable purpose."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The concept of filtering carbon dioxide from vehicle exhaust is a widely known environmental engineering challenge, not an original idea."
+      },
+      "Usefulness": {
+        "score": 5.0,
+        "reason": "The solution addresses a significant environmental problem, but the description lacks detail on how the filter would effectively reduce CO2 or its practical impact."
+      },
+      "Feasibility": {
+        "score": 3.0,
+        "reason": "Implementing an effective, compact, and cost-efficient CO2 filter for all vehicles, along with managing the captured CO2, presents significant practical and technical challenges."
+      },
+      "Scalability": {
+        "score": 3.0,
+        "reason": "The immense cost, manufacturing complexity, and logistical challenges of deploying these filters across all vehicles globally make widespread scalability highly impractical."
+      },
+      "Sustainability": {
+        "score": 3.0,
+        "reason": "The solution does not address the sustainability of the filters themselves, including their manufacturing, disposal of captured CO2, or long-term maintenance requirements."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "No solution details are provided in the text, making it impossible to assess any originality or creativity."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "Without a described solution, no connection to the problem or potential benefit can be evaluated."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No solution is described, so its practical implementability cannot be assessed."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The absence of a solution description prevents any evaluation of its potential for expansion or replication."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "With no solution details, it is impossible to determine its long-term viability or environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of using a DC motor for water access is a fundamental and widely known application of a common component, showing no original thinking."
+      },
+      "Usefulness": {
+        "score": 3.0,
+        "reason": "While an electric motor for water is inherently useful, the solution provides no specific details on how this particular DC motor application uniquely addresses the needs of 'poor people' or offers enhanced benefits."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "Using a DC motor for pumping water is a realistic concept, but the solution lacks details on the specific pump, power source, and overall system integration, preventing a higher score."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "DC motors are mass-produced and can be widely deployed, but the solution provides no specific strategy or design for how this particular application would be scaled for 'poor people' across different contexts."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "No details are provided regarding the power source, maintenance requirements, or material sourcing, making it impossible to assess the long-term environmental or resource impact of the solution."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of converting dirty water into drinking water using a water filter is a fundamental and widely known concept with no original adaptation described."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the critical problem of providing clean drinking water, which has significant health and societal benefits."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "Implementing a water filter is a realistic concept, though no specific design or operational details are provided to assess its particular feasibility."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The concept of water filtration is inherently scalable from individual to community levels, but the submission lacks details on how this specific solution would expand."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The sustainability of a generic water filter depends heavily on its specific design, materials, and maintenance, none of which are detailed in the submission."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The solution does not propose any new ideas or adaptations to address the stated problems of electric vehicles, instead offering observations and usage suggestions."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The proposed solution does not offer any mechanisms or innovations to address the identified problems of high cost, limited charging, or range anxiety."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No concrete solution or implementation plan is provided, making it impossible to assess the feasibility of any proposed action."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "The submission lacks a defined solution or innovation that could be scaled or replicated."
+      },
+      "Sustainability": {
+        "score": 2.0,
+        "reason": "The solution only reiterates a known environmental benefit of electric cars without proposing any specific sustainable practices or innovations to address the stated problems."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea adapts a common car wiper mechanism for blackboard cleaning, showing observable student thinking in applying an existing concept to a new context."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of physical discomfort for teachers and students during blackboard cleaning, providing a clear practical benefit."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The proposed system using a wiper-like mechanism with a switch is realistically implementable with moderate effort and accessible components for a student project."
+      },
+      "Scalability": {
+        "score": 7.0,
+        "reason": "The solution can be scaled to larger groups or regions, as the mechanism can be replicated for multiple blackboards with manageable adjustments for different sizes."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The solution involves an electrical and mechanical system that would require power and maintenance, demonstrating moderate sustainability with manageable needs."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The concept of a single, self-buildable, low-cost item with 32+ functions for students in tribal areas shows a fresh perspective on resourcefulness."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution provides a wide range of highly practical tools like a writing table, exam pad, and LED light, directly addressing multiple daily needs of students in resource-constrained settings."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The design prioritizes low-cost, self-buildable components using readily available materials, making it highly achievable for students in rural areas."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The solution's design for self-assembly using local, low-cost materials allows for easy replication and widespread adoption in diverse rural and tribal contexts."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The focus on utilizing readily available and potentially repurposed materials, along with low-energy solutions, contributes to its environmental responsibility and long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The solution proposes a practical, surface-operated mechanical device for safe well cleaning, showing a fresh perspective and independent effort to address a specific local problem beyond generic solutions."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The machine directly solves the critical problem of dangerous well cleaning, ensuring worker safety and promoting the use of traditional water sources, with an added benefit for cleaning canals."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "The solution uses readily available components like ropes, a motor, a bucket, and a scoop, making it practical and deployable with manageable constraints for local workers."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The machine's simple design and focus on subsidized use for workers allow for easy replication and adoption across numerous villages and regions facing similar well maintenance challenges."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "By enabling the safe and continued use of existing wells, the solution promotes a sustainable approach to local water resource management, reducing reliance on external piped water."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of a water overflow alarm is a widely known and commonly implemented solution with no original adaptation or unique mechanism described."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the problem of water wastage and increased electricity consumption by providing a practical audio-visual alert."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution explicitly states it is easy to install, low-cost, and safe, indicating high practicality with readily available components."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The solution is applicable across various environments like homes, offices, industries, swimming pools, and agriculture, demonstrating broad replicability."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution directly contributes to water conservation and electricity saving, promoting environmental responsibility and long-term resource management."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution proposes known waste-to-wealth concepts like converting rubber to fuel and plastic to products, applied to a school setting."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly tackles the significant problem of waste accumulation in schools, offering clear benefits like waste reduction, income generation, and environmental improvement."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "The proposed conversion of rubber to fuel and plastic to new products for sale requires complex infrastructure and expertise not typically available in a school setting."
+      },
+      "Scalability": {
+        "score": 5.0,
+        "reason": "The solution's reliance on complex waste conversion processes makes it difficult to replicate widely across numerous schools without substantial external investment and technical support."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution's core principle of converting waste into useful products and fuel is inherently sustainable, promoting resource recovery and reducing environmental burden."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The solution proposes common and widely implemented public health and school-based initiatives like awareness campaigns and balanced diet distribution, showing no original thinking."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses nutritional deficiency in children through practical and effective methods such as awareness, balanced diet distribution, and promoting healthy home-cooked meals."
+      },
+      "Feasibility": {
+        "score": 8.0,
+        "reason": "All proposed actions, including awareness programs and school-led food initiatives, are highly practical and can be implemented with manageable effort and resources within an educational setting."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The initiatives like awareness campaigns, balanced diet distribution, and school-based food programs are easily replicable across numerous schools and communities, leveraging existing infrastructure."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "Awareness and behavioral changes can be sustained long-term, and while food distribution requires continuous resources, it can be integrated into ongoing programs for lasting impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea combines two existing components (emergency light and fan) to address a specific contextual problem of discomfort during power outages, showing practical adaptation rather than pure invention."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the discomfort caused by heat during power cuts, providing a clear and reliable benefit for users to work or study comfortably."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution combines readily available electronic components and the students have already created a prototype, demonstrating its straightforward and practical implementability."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The portable nature and simple design of the device make it easily replicable and distributable to a large population across varied environments in India facing similar issues."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The design incorporates energy-saving through separate fan control, which supports long-term operation, though specific details on battery type or material sourcing are not provided."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution proposes known renewable energy technologies like solar windows and small wind turbines without detailing any novel adaptation or inventive design."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the critical global energy crisis and climate change by promoting renewable energy, offering clear benefits like clean energy access, reduced emissions, and lower bills."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "The solution proposes complex technologies like solar windows and smart grids without detailing practical implementation steps, cost, or technical challenges for school students in the Indian context."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The proposed renewable energy solutions, such as solar windows and small wind turbines, are inherently scalable for widespread adoption across homes, schools, and communities."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The core of the solution is based on renewable energy sources, which are inherently sustainable and aim to reduce environmental harm and fossil fuel dependence."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The solution describes a standard circuit-based quiz board, a widely known educational tool, with no original adaptation."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The interactive quiz board provides immediate feedback, making learning difficult topics more engaging and effective for students."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution uses common, inexpensive materials and a simple electrical circuit, making it very easy for students to build."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concept can be easily replicated for different subjects and topics, making it applicable to a wide range of learning needs."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The device uses minimal, low-cost components that can be reused or recycled, and it requires very little energy for operation, making it sustainable."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 7.0,
+        "reason": "The concept of an automated underground pneumatic waste collection system, while existing globally, shows strong independent thinking and inventive framing for a student project in the Indian context."
+      },
+      "Usefulness": {
+        "score": 9.0,
+        "reason": "The solution directly addresses critical urban problems of waste accumulation, traffic congestion, and labor shortages, offering comprehensive benefits to public life and hygiene."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "While the concept exists, implementing an extensive underground pipe network with automated systems across homes and flats in existing Indian cities is highly complex, costly, and disruptive."
+      },
+      "Scalability": {
+        "score": 5.0,
+        "reason": "While conceptually applicable to large areas, the immense infrastructure investment and logistical challenges make broad, rapid scaling extremely effort-intensive and difficult in diverse urban environments."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The system promotes sustainability by reducing vehicular emissions from waste transport and facilitating centralized recycling, minimizing waste accumulation and its environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The idea of a self-charging EV using its own motor to drive a generator is a common but fundamentally flawed concept, not demonstrating novel adaptation."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "The proposed solution violates the laws of energy conservation and would not effectively charge the EV, thus failing to solve the problem and potentially worsening it."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "The core mechanism of generating net positive charge from the vehicle's own motor to recharge its battery is scientifically unfeasible due to energy conservation principles."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Since the fundamental principle of the solution is unworkable, it cannot be scaled to provide any practical or effective benefit."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "The proposed system would be highly inefficient, leading to increased energy consumption rather than promoting sustainability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 2.0,
+        "reason": "The proposed solutions (solar energy, water reuse, plastic recycling) are widely known and established concepts for urban sustainability without any unique adaptation."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solutions directly address critical urban issues of waste, plastic pollution, and water scarcity, offering practical benefits for city cleanliness and resource management."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "The proposed methods (solar panels, water reuse systems, plastic purification for industry) are all realistically implementable using existing technologies and infrastructure."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "The concepts of solar energy in flats, water reuse, and plastic recycling are highly replicable and can be expanded across various urban environments."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution promotes highly sustainable practices like renewable energy, water conservation, and waste material reuse, which support long-term environmental viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The proposed solutions of using invasive plants for handicrafts, organic fertilizer, and mulching are known methods for biomass utilization and invasive species management, showing limited originality."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution effectively addresses the problem of invasive plants by proposing their removal and repurposing into useful products, fertilizer, and mulch, delivering practical benefits."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "Extracting fibers, making handicrafts, organic fertilizer, and mulching from invasive plants are realistically implementable with moderate effort and accessible resources at a local level."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The solution shows practical expansion potential for local communities or regions where invasive plants are abundant, but scaling to a broader industrial level would be effort-intensive."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "Repurposing invasive plants into useful products or organic matter is an environmentally responsible approach that supports long-term resource management and reduces waste."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The idea of generating electricity from falling water is a well-known concept, and its application to a household tank shows only minor adaptation without unique mechanisms."
+      },
+      "Usefulness": {
+        "score": 4.0,
+        "reason": "The solution aims to reduce electricity bills, but the practical power generated from water falling into a typical tank would likely be too low to provide significant benefit."
+      },
+      "Feasibility": {
+        "score": 4.0,
+        "reason": "While components exist, generating meaningful electricity from the limited head and flow of water in a household tank is technically possible but highly impractical and likely not cost-effective."
+      },
+      "Scalability": {
+        "score": 3.0,
+        "reason": "The solution is highly dependent on specific water infrastructure and head, requiring major redesign and different resources to scale beyond a very limited, localized application."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The core principle of hydroelectric power is sustainable; however, the net sustainability depends on the water source and whether energy is expended to get the water to the 'falling' point, which is not detailed."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 5.0,
+        "reason": "The solution combines three existing renewable energy generation methods (solar, wind, piezoelectric) applied to highways, which are known concepts rather than fundamentally new inventions."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the energy crisis by proposing to generate electricity from readily available resources along highways."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "While solar panels are feasible, generating significant electricity from vehicle-induced wind with horizontal axis turbines and from piezoelectric elements under roads presents significant engineering, efficiency, and maintenance challenges not detailed in the solution."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The extensive network of highways provides a large potential area for deployment, but the practical scalability is limited by the efficiency and cost-effectiveness challenges of the wind and piezoelectric components."
+      },
+      "Sustainability": {
+        "score": 7.0,
+        "reason": "The solution utilizes renewable energy sources (solar, wind, piezoelectric), which is inherently sustainable, but the long-term durability and maintenance of the proposed components under highway conditions are not detailed."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The idea of eating balanced food to combat diseases and obesity is a fundamental and widely known health recommendation, not an innovation."
+      },
+      "Usefulness": {
+        "score": 5.0,
+        "reason": "The solution provides a list of healthy food options that are useful for improving diet, directly addressing the problem of unhealthy eating, but it lacks a mechanism to ensure adoption."
+      },
+      "Feasibility": {
+        "score": 6.0,
+        "reason": "The suggested food items are common and generally accessible, making the consumption of these foods feasible, but the solution does not explain how it would be implemented to change people's eating habits."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The dietary advice can be shared widely, making the information highly scalable, but the solution does not offer a scalable mechanism for ensuring widespread adoption of these habits."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "Adopting a diet of balanced, healthy foods is a sustainable practice for personal health and can be maintained long-term without exhausting resources, and the solution itself has no environmental impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 6.0,
+        "reason": "The idea adapts a common mosquito net by integrating foldable wooden brackets to make it self-standing, showing a practical and modest creative adaptation to an existing problem."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution directly addresses the difficulty of setting up traditional mosquito nets, which would significantly increase usage and help prevent mosquito-borne diseases."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The solution uses simple, readily available materials like wood and fabric, and the folding mechanism is straightforward, making it easy to manufacture and implement."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "The design uses common, inexpensive materials and addresses a widespread problem, allowing for broad adoption and easy replication across diverse regions and populations."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "The solution promotes a durable, reusable physical product made from common materials, supporting long-term use and reducing reliance on less sustainable alternatives."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 1.0,
+        "reason": "The submission identifies a critical problem but offers no novel solution or approach to address the lack of sign language proficient teachers, instead stating student eagerness."
+      },
+      "Usefulness": {
+        "score": 1.0,
+        "reason": "While the problem is significant, the provided 'solution' does not describe any specific method or intervention to actually help students or address the teacher shortage."
+      },
+      "Feasibility": {
+        "score": 1.0,
+        "reason": "No concrete solution or method is described, making it impossible to assess the practicality of implementation."
+      },
+      "Scalability": {
+        "score": 1.0,
+        "reason": "Since no specific solution is proposed, there is no defined approach or system that can be expanded or replicated."
+      },
+      "Sustainability": {
+        "score": 1.0,
+        "reason": "Without a clear solution, there are no operational details or resource considerations to evaluate for long-term viability."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The panic button concept is an adaptation of existing safety features, and the idea of two side stands for a motorcycle is unusual but lacks detailed original design."
+      },
+      "Usefulness": {
+        "score": 5.0,
+        "reason": "The panic button offers clear utility for emergency alerts, and the two stands aim to improve balance, but the solution does not address the pollution problem mentioned."
+      },
+      "Feasibility": {
+        "score": 3.0,
+        "reason": "While a panic button is feasible, adding two side stands to a motorcycle for general use is highly impractical and could compromise safety, relying on unrealistic assumptions for real-world implementation."
+      },
+      "Scalability": {
+        "score": 4.0,
+        "reason": "The panic button could be scaled, but the practical challenges and potential safety issues of the two-stand design significantly limit its widespread adoption."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The solution does not address the problem of pollution, and while the components themselves are not inherently unsustainable, no specific long-term environmental benefits or resource efficiency are described."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The idea of using plastic waste in road construction is a widely known and implemented technique, particularly in India, with no new adaptation or original mechanism described."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "The solution effectively addresses both plastic waste management and road durability, offering clear benefits like reduced environmental harm, cost savings, and increased road lifespan."
+      },
+      "Feasibility": {
+        "score": 9.0,
+        "reason": "The described process for incorporating plastic into road construction is straightforward, does not require special machinery, and is already proven to be practical and implementable."
+      },
+      "Scalability": {
+        "score": 9.0,
+        "reason": "Given the widespread availability of plastic waste and the continuous need for road construction, this solution is highly replicable across diverse regions and populations with minimal adaptation."
+      },
+      "Sustainability": {
+        "score": 9.0,
+        "reason": "The solution promotes exceptional sustainability by repurposing plastic waste, reducing bitumen consumption, creating durable roads, and supporting employment for waste pickers."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The proposed solutions like financial aid and government-run coaching institutes for competitive exams are widely known governmental approaches, not original concepts."
+      },
+      "Usefulness": {
+        "score": 8.0,
+        "reason": "Providing financial aid and specialized coaching directly tackles key barriers for poor students, offering clear and reliable improvement in educational access."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "Government-led surveys, financial aid, and educational institutions are realistically implementable, though they require significant government effort and resources."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "Government-backed educational and financial aid programs are inherently designed for broad national implementation and can be replicated across diverse regions."
+      },
+      "Sustainability": {
+        "score": 8.0,
+        "reason": "Government-funded social programs, while requiring continuous budgetary allocation, are designed for long-term maintenance and can create lasting societal benefits."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 4.0,
+        "reason": "The solution combines several existing technologies like smart parking, fire detection, and automatic covers without presenting a novel mechanism or significant original adaptation."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The system addresses real-world problems like car protection from rain, fire safety in parking, and organized parking, providing clear practical benefits."
+      },
+      "Feasibility": {
+        "score": 5.0,
+        "reason": "While individual components are feasible, the integration of automatic parking, fire detection, and automatic covers into a single system, especially with potential robotic parking, implies significant complexity and cost without detailed implementation plans."
+      },
+      "Scalability": {
+        "score": 6.0,
+        "reason": "The individual sensor and cover systems are scalable, but the 'automatic parking' component, if it involves complex robotics, would pose significant cost and infrastructure challenges for broad expansion."
+      },
+      "Sustainability": {
+        "score": 5.0,
+        "reason": "The system relies on electronic components and mechanical structures that require power and maintenance, with no details provided on energy sources, material sustainability, or long-term operational impact."
+      }
+    }
+  },
+  {
+    "scores_without_images": {
+      "Novelty": {
+        "score": 3.0,
+        "reason": "The idea applies existing RFID technology to bank lockers without presenting any new or original adaptation of the concept."
+      },
+      "Usefulness": {
+        "score": 7.0,
+        "reason": "The solution directly addresses the problem of enhancing bank locker security and convenience, providing clear benefits over traditional methods."
+      },
+      "Feasibility": {
+        "score": 7.0,
+        "reason": "Implementing an RFID-based access system for bank lockers is realistically achievable with current technology and accessible components."
+      },
+      "Scalability": {
+        "score": 8.0,
+        "reason": "RFID systems are inherently scalable, allowing for easy expansion to accommodate more lockers and customers across multiple bank branches."
+      },
+      "Sustainability": {
+        "score": 6.0,
+        "reason": "The electronic system requires power and maintenance, but it is generally durable and can be sustained over time with manageable needs."
+      }
+    }
+  }
+]

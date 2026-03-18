@@ -4,6 +4,45 @@ import litellm
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 
 
+def _strip_additional_properties(schema: dict) -> dict:
+    """Recursively strip 'additionalProperties' from a JSON Schema dict.
+
+    Google GenAI does not support this keyword; removing it avoids API errors
+    while keeping the rest of the schema intact.
+    """
+    schema = dict(schema)
+    schema.pop("additionalProperties", None)
+
+    if "properties" in schema:
+        schema["properties"] = {
+            k: _strip_additional_properties(v) if isinstance(v, dict) else v
+            for k, v in schema["properties"].items()
+        }
+
+    if "items" in schema and isinstance(schema["items"], dict):
+        schema["items"] = _strip_additional_properties(schema["items"])
+
+    return schema
+
+
+def _convert_json_schema_to_google(schema: dict) -> dict:
+    """Convert a JSON Schema dict to Google GenAI's OpenAPI-style schema.
+
+    - Strips ``additionalProperties`` (unsupported by Gemini).
+    - Adds ``propertyOrdering`` derived from ``required`` / ``properties`` keys
+      so that field order is preserved in Google's response.
+    """
+    google_schema = _strip_additional_properties(schema)
+
+    if "properties" in google_schema and "propertyOrdering" not in google_schema:
+        google_schema["propertyOrdering"] = (
+            list(google_schema.get("required", []))
+            or list(google_schema["properties"].keys())
+        )
+
+    return google_schema
+
+
 def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
@@ -36,6 +75,7 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
     max_num_results = kaapi_params.get("max_num_results")
     response_format = kaapi_params.get("response_format")
+    output_schema = kaapi_params.get("output_schema")
 
     support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
 
@@ -67,6 +107,16 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
 
     if response_format:
         openai_params["text"] = {"format": {"type": response_format}}
+
+    if output_schema is not None:
+        openai_params["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": "output",
+                "strict": True,
+                "schema": output_schema,
+            }
+        }
 
     if knowledge_base_ids:
         openai_params["tools"] = [
@@ -102,6 +152,8 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     google_params = {}
     warnings = []
 
+    output_schema = kaapi_params.get("output_schema", None)
+
     # Model is present in all param types
     model = kaapi_params.get("model")
     if not model:
@@ -135,6 +187,10 @@ def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     reasoning = kaapi_params.get("reasoning")
     if reasoning:
         google_params["reasoning"] = reasoning
+
+    if output_schema is not None:
+        google_schema = _convert_json_schema_to_google(output_schema)
+        google_params["output_schema"] = google_schema
 
     # Warn about unsupported parameters
     if kaapi_params.get("knowledge_base_ids"):

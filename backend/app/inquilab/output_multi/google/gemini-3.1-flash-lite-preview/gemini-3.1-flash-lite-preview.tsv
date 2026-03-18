@@ -1,0 +1,2276 @@
+CID	Problem	Solution	Image URL	scores_with_images
+3	Project synopsis :- In many places, many goods are stolen from the grid like Copper plates, wires, aluminium and these goods are very expensive due to which there is a lot of loss. Dispute there has been a 24 hour security guard there, but theft happens because one security guard cannot Guard everywhere . Every item like Copper plates, wires etc are expensive and sometimes electricity is also stolen.	"We developed a system in which we will place mirrors in such a way that they can reflect the light and also place a laser light at one corner and also place a receiver in which there is an alarm which sounds when light is not received . 
+ 
+ Because one security guard cannot Guard everywhere so, when we plays this system automatically when someone come inside from some other ways the alarm will sound and guard been alert .(https://youtu.be/gKJiCGNaAwg?si=xMmwyxQNDkwS7kD5)"	https://drive.google.com/uc?export=download&id=1Xa-_KlHb9tyFLNcFXRKQ4KylVf5kGa4c	"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""The use of laser-based tripwire security is a well-known, standard concept in DIY electronics and security projects.""
+    },
+    ""Usefulness"": {
+        ""score"": 6.0,
+        ""reason"": ""The solution provides a practical and low-cost method for monitoring large areas, which is relevant for preventing theft in grid stations.""
+    },
+    ""Feasibility"": {
+        ""score"": 7.0,
+        ""reason"": ""The system is straightforward to implement using basic components like lasers, mirrors, and sensors, making it highly feasible for small-scale deployment.""
+    },
+    ""Scalability"": {
+        ""score"": 6.0,
+        ""reason"": ""While the system is easy to replicate, maintaining precise mirror alignment over large distances in outdoor, uncontrolled environments could be challenging.""
+    },
+    ""Sustainability"": {
+        ""score"": 5.0,
+        ""reason"": ""The system is durable but requires consistent power and periodic maintenance to ensure the laser and sensors remain properly aligned.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype setup featuring an Arduino board, a laser light source, and wiring, confirming the implementation of the described laser-based security system.""
+}"
+12	"The ""Bus Safety System: Protecting Kids & Pedestrians"" is an innovative solution designed to enhance safety around buses, particularly for children and other pedestrians who might be at risk when a bus is stationary. This system addresses a critical safety issue: when a bus is stopped, children or pedestrians may walk in front of the bus, potentially putting themselves in danger if the driver cannot see them. Our system utilizes simple yet effective technology to prevent such accidents and ensure a safer environment.
+ Problem Statement
+ When a bus stops, especially in areas where visibility is limited, children might walk in front of the bus without the driver's knowledge. This can lead to dangerous situations where the bus might accidentally move forward, potentially causing accidents. To address this problem, a reliable and responsive safety system is needed to alert both the driver and the pedestrians."	"Our solution is the ""Bus Safety System: Protecting Kids & Pedestrians,"" which aims to enhance safety around stationary buses. It uses IR sensors mounted at the front of the bus to detect the presence of pedestrians. When a pedestrian is detected, the system activates a buzzer and a red visual light to alert the driver. Simultaneously, a playback module announces a pre-recorded message, ""Please move away from the front of the bus,"" to notify pedestrians. Additionally, the system integrates with the bus’s control to prevent movement if a pedestrian is detected. This solution helps children, pedestrians, and drivers by providing clear, immediate alerts and preventing accidents. It ensures that pedestrians are aware of their proximity to the bus and prevents the bus from moving until the area is clear, thereby addressing visibility issues and enhancing overall safety."	https://drive.google.com/uc?export=download&id=1-9OqbK2PLzzqFWfsWN26Dcu2YSi3IRC-	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""The idea of using sensors for vehicle safety is a well-known concept, but the student's specific application for school bus safety shows thoughtful, independent effort.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses a significant safety concern with a practical, multi-modal alert system that provides clear benefits.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The prototype demonstrates that the student can successfully integrate sensors, buzzers, and logic controllers to achieve the intended functionality.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system is modular and could be adapted for various types of vehicles with manageable adjustments to the sensor array.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system is robust enough for long-term use, though it will require regular maintenance of sensors and power components to remain reliable.""
+    },
+    ""Image_contains_summary"": ""The image shows a student presenting a physical model of a school bus equipped with an Arduino-based sensor system, confirming the functional implementation of the proposed safety idea.""
+}"
+30	sugarcane like crops are not easy to cut	We are making a project that can easily cut the sugarcane it helps farmers and it reduce the work load.	https://drive.google.com/uc?export=download&id=191j58_AEm7HcZddzF3iwHKU6sWFdq_LV	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of a mechanical sugarcane cutter is a well-known agricultural concept, and the cardboard model does not provide a novel design approach.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While the intention to reduce labor is clear, the submission lacks details on how the mechanism actually functions or cuts the crop.""
+    },
+    ""Feasibility"": {
+        ""score"": 3,
+        ""reason"": ""The submission provides only a basic cardboard model without explaining the power source, cutting mechanism, or structural durability required for field use.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""Without a clear functional design or technical specifications, it is difficult to see how this concept could be scaled for real-world agricultural application.""
+    },
+    ""Sustainability"": {
+        ""score"": 3,
+        ""reason"": ""The submission does not address the energy source, maintenance, or environmental impact of the proposed machinery.""
+    },
+    ""Image_contains_summary"": ""The image shows a cardboard model of a machine, likely intended to represent a sugarcane harvester, but it lacks functional details or clear mechanical components.""
+}"
+52	In some war there are some people who faces problem to kill the enemies fast by the missile truck	Our team are creating a special machine which can help soldiers to fight	https://drive.google.com/uc?export=download&id=1LZW_XZlh58_aVWJiheWNV5oZUB_hK1Rb	"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The idea of a missile truck is a very common and generic concept, lacking any original or creative technical adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""The solution is vague and does not provide a clear mechanism for how it improves upon existing military technology.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The proposal is highly unrealistic for school students to implement and lacks any technical details or functional design.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""The idea has no practical application or scalability in a real-world context.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""The proposal does not consider resource usage, maintenance, or environmental impact.""
+    },
+    ""Image_contains_summary"": ""The image shows two students standing behind a simple cardboard model of a truck, which does not provide any functional evidence or technical insight into the proposed solution.""
+}"
+208	In hotels, hospitals, and other large facilities, drying clothes efficiently is essential due to the high volume of laundry processed daily. Typically, clothes are placed outside in the sun to dry, but sudden or unexpected rainfall leads to all of these clothes getting soaked again. This situation causes considerable inconvenience, as the entire drying process is disrupted, making it challenging to keep up with daily laundry demands. Additionally, staff are burdened with the task of constantly checking for rain and rushing to bring clothes inside, which wastes time and effort. This frequent issue results in inefficiency in laundry management, adding unnecessary delays and workload.	To address the stability and balance issues of conventional modes of transportation like bicycles and motorcycles, the development of self-balancing bikes offers a promising solution. Self-balancing bikes use advanced technologies to enhance stability and safety, making them more accessible and safer for inexperienced riders. Self-balancing bikes can use gyroscopes to detect and counteract tilts, helping to maintain balance automatically.	https://drive.google.com/uc?export=download&id=1FiTc2jhOjmKpd6lz4EwtDMC8DuwNYj42	"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The solution provided is entirely unrelated to the stated problem, rendering the innovation incoherent.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""Because the solution does not address the problem of laundry management, it provides no benefit to the stated issue.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The submission fails to provide a viable solution for the identified problem, making feasibility irrelevant.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""The lack of alignment between the problem and the solution prevents any meaningful scalability.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""No sustainable solution was proposed for the identified problem.""
+    },
+    ""Image_contains_summary"": ""The image shows a model house with a solar panel on the roof, which does not relate to the laundry drying problem or the self-balancing bike solution described in the text.""
+}"
+345	Natural Farming is a multilingual half yearly publication by National Centre for Organic an Natural Farming. Articles havindirect relevance Natural Farming technology and its regulatory mechanism, development of package of practices, success stories, news related to conferences, seminars etc.	"Natural Farming can be defined as “chemical- free farming and livestock based"". Soundly grounded in agro-ecology, it is a diversified farming system that integrates crops, trees and livestock, allowing the optimum use of functional biodiversity. Natural Farming holds the promise of enhancing farmers’ income while delivering many other benefits, such as restoration of soil fertility and environmental health, and mitigating and/or reducing greenhouse gas Substantial increase in input costs has led to decline in crop income over the years. The price of urea, DAP and potash has risen by60% - 600 % in last decade. Though, per hectare real value of output increased foremost crops in recent years, but the rise in input cost was much higher, resulting into reduced farm income. Moreover, green revolution technology is now contemplated to be degrading the agro-ecosystem: and diminishing the economic returns for the farmers. Several studies have shown that chemical fertilizer and pesticides ."	https://drive.google.com/uc?export=download&id=1mt94RO0pW0LrDV_mt3hoKalDJSrb_NlR	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The submission describes the concept of natural farming, which is a well-established agricultural practice, and the model serves as a basic educational representation rather than an innovative new solution.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While the project promotes the benefits of natural farming, it functions more as an awareness display than a practical or actionable solution to the economic challenges mentioned.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""Natural farming is a proven, feasible agricultural method, but the submission lacks a specific, implementable plan or technical detail beyond the conceptual model.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""Natural farming can be scaled, but the submission does not provide a framework or strategy for how this transition would be managed at a larger scale.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""Natural farming is inherently sustainable, focusing on ecological balance, soil health, and reducing chemical dependency.""
+    },
+    ""Image_contains_summary"": ""The image shows a diorama model representing a natural farming ecosystem, featuring small structures, crops, and containers to illustrate the integration of different agricultural elements.""
+}"
+372	Nowadays thefts are very much in the society. They are robbering the homes, offices, banks etc. So controlling theft in the society.	Anti theft alram is a sensor based it detects the when theft is going to theft the materials in home iffice also in a banks.	https://drive.google.com/uc?export=download&id=1cERBmqaf7U20BQaq0IeTIHhpMPR5oFaW	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The concept of a sensor-based anti-theft alarm is a very common and widely known project in student innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the solution addresses a genuine safety concern, the description is too generic to demonstrate effective real-world impact.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The prototype confirms the basic idea is implementable, but it lacks technical depth or details on how it functions in practical settings.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""The solution is a basic model that would require significant redesign and robust engineering to scale to real-world environments.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The system is maintainable but lacks details on power management or long-term durability in real-world conditions.""
+    },
+    ""Image_contains_summary"": ""The image shows a simple cardboard model of a house with a basic electronic sensor component attached, confirming the student's attempt to build a prototype for an anti-theft alarm system.""
+}"
+713	Liquid waste can become especially challenging and hazardous when not handled effectively, as it can cause issues due to its ability to spread quickly and pollute large areas with minimal contact. Waste can occur in many forms and requires special methods of disposal to ensure safety and prevent contamination.in our socity water is polluted due to varies reason	"Root Zoning. Root zoning is a process that is used to handle liquid waste or wastewater from homes and businesses. ...
+  Solidification. ...
+  Composting. ...
+  Sedimentation. ...
+  De watering. ...
+  Incineration."	https://drive.google.com/uc?export=download&id=1qFUzpMQ0ZT85VLM8W3knoYzsYAgdsvrR	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The submission lists standard waste management techniques without proposing a novel or original approach.""
+    },
+    ""Usefulness"": {
+        ""score"": 3,
+        ""reason"": ""While addressing water pollution is important, the submission provides a list of general concepts rather than a specific, actionable solution.""
+    },
+    ""Feasibility"": {
+        ""score"": 4,
+        ""reason"": ""The provided image shows a basic filtration setup, but the text lists complex industrial processes like incineration and root zoning without explaining how they will be implemented.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""The ideas are broad industry standards, but the submission lacks a clear plan for how these could be scaled in a local community context.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The concepts mentioned, such as composting and root zoning, are inherently sustainable, but the lack of an implementation plan limits their practical viability.""
+    },
+    ""Image_contains_summary"": ""The image shows a simple DIY water filtration or transfer experiment using plastic jars and tubing, which does not clearly represent the complex industrial processes listed in the text.""
+}"
+752	Road light project	Road light project	https://drive.google.com/uc?export=download&id=1ibkknzirZszKxN3pEUkQaBEwtRVKWsg8	"{
+    ""Novelty"": {
+        ""score"": 3.0,
+        ""reason"": ""The project is a common school-level demonstration of automatic street lighting, which is a well-known concept.""
+    },
+    ""Usefulness"": {
+        ""score"": 5.0,
+        ""reason"": ""Automatic street lighting is useful for energy conservation, but the submission lacks details on the specific mechanism or improvements over existing solutions.""
+    },
+    ""Feasibility"": {
+        ""score"": 6.0,
+        ""reason"": ""The prototype shows a basic circuit setup, making it a feasible project for students to build with standard components.""
+    },
+    ""Scalability"": {
+        ""score"": 5.0,
+        ""reason"": ""While the concept is scalable, the submission does not provide a plan or explanation for how it could be implemented on a larger scale.""
+    },
+    ""Sustainability"": {
+        ""score"": 6.0,
+        ""reason"": ""Energy-saving lighting systems are inherently sustainable, but the submission lacks details on long-term maintenance or component durability.""
+    },
+    ""Image_contains_summary"": ""The image shows a student presenting a prototype of an automatic street lighting system on a model road, featuring basic wiring and components.""
+}"
+825	"Hydroponic farming can face a number of challenges, including: 
+ High setup cost: Setting up a hydroponic system can be expensive, especially for large-scale systems. 
+ Constant power supply: Hydroponic systems need electricity to run continuously. 
+ Maintenance and monitoring: Growers need to be vigilant to avoid component failure. 
+ Common problems: Some common problems include wilting, dead roots, system clogging, infestation, and nutrient deficiencies"	"Problem: Wilting
+ 
+ It can be due to several factors such as less irrigation or high temperature, where the plant loses its rigidity, and leaves start drying.in our project automatic mobile controlled drip irrigation is used.this is managed from our house and controled thousands of hydroponic plants in one time .
+ 
+  
+ 
+ Solution: You should let your roots dry between each irrigation cycle. A backup pump should always be handy if the operating one gets fail because the plants can wilt quickly without water supply.
+ 
+  
+ 
+ Problem: Dead Roots
+ 
+ There are many reasons for dead roots like high temperature of water, very high or very low EC, overwatering in dense substrates, and others. Dead roots can also be a sign of root rot pathogen infecting the system.
+ 
+  
+ 
+ Solution: First, you should remove the plants having dead roots and then regulate the water temperature accordingly to increase aeration. Regular cleaning and sanitization of the system can eliminate the pathogen."	https://drive.google.com/uc?export=download&id=1pWF3R1BX-la66uPGx051dNW_2hVLcHUl	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The project describes standard hydroponic troubleshooting and basic automation concepts that are widely known in agricultural science.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""The submission identifies common hydroponic issues and provides standard maintenance advice, though it lacks a detailed technical implementation plan.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the basic hydroponic setup is achievable, the claim of controlling thousands of plants remotely from home lacks technical evidence or a clear system architecture.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The proposed solution is limited by the lack of a clear, scalable technical framework to manage the complexities of large-scale hydroponic systems.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""Hydroponics is inherently sustainable, but the submission does not detail how the system maintains long-term operational viability beyond manual intervention.""
+    },
+    ""Image_contains_summary"": ""The image shows three students presenting a simple, small-scale two-tier hydroponic setup using plastic containers and tubing, which serves as a basic demonstration of the concept.""
+}"
+876	Our school is facing drinking water scarcity since long.. Tape water is not available in the school.our school manages water by buckets or by tankers.. The Village in which school is located has been divided into three habitations or Mohlas Dodder Mohala,Khoja Mohlas And Raja Mohlas.. The School is located in Raja Mohla which is situated on High altitude as compared to the other two habitations or Mohlas.Two habitations among the three recieve frequent supply of tap water but the School habitation couldn't receive enough water to full fill the demand of water in the school.. Due this problem the inhabitants of the School habitation and School itself suffers a lot.	The village have about 10 natural water springs excreting pure crystal clear water continuously.The water flows 24×7 and gets wasted due to miss management.If that water is collected in a well constructed water bowl at spring site,then lifted through water pump and supplied to the school and inhabitants of school habitation.. water crisis in the school and school habitation will resolve for ever in the area.	https://drive.google.com/uc?export=download&id=1zGk2zzfGsObr34CiRTdVTNtDhGBgwdfy	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""While the concept of water harvesting is well-known, the student demonstrates strong observational skills by identifying a specific, localized natural resource (springs) to solve a community-level problem.""
+    },
+    ""Usefulness"": {
+        ""score"": 9,
+        ""reason"": ""The solution directly addresses a critical, real-world need for consistent drinking water in the school and surrounding habitation.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The idea is technically sound and practical, but implementation requires significant infrastructure investment and community/government coordination, which is beyond the scope of a student-led project.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""This model of spring-water harvesting and distribution can be replicated in other mountainous or hilly regions facing similar water scarcity issues.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""Using natural, perennial springs is an environmentally sustainable way to provide water, provided the source is protected and managed properly.""
+    },
+    ""Image_contains_summary"": ""The image shows a student collecting water from a natural spring source, providing visual evidence of the water availability mentioned in the problem statement.""
+}"
+940	rajasthan main water ki kami hai	Drip Irrigation:- faldaal podho bagicho avm vraksho main pani dene ka sarvotam tarika hai. isse podho ko boond boond karke jal prapt hota hai	https://drive.google.com/uc?export=download&id=1MPPLxcvzjI0n7Xx0iziXcvncrXLf4lox	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""Drip irrigation is a widely known and established agricultural technique, and the submission does not offer any original adaptation or innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution is highly relevant and effective for addressing water scarcity in arid regions like Rajasthan.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""Drip irrigation is a well-understood, practical, and implementable solution using readily available materials.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system is easily replicable and scalable from small home gardens to larger agricultural fields.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""This method is inherently sustainable as it significantly reduces water wastage and promotes efficient resource management.""
+    },
+    ""Image_contains_summary"": ""The image provides a basic diagram and description of a drip irrigation system, explaining how it delivers water directly to plant roots to conserve water.""
+}"
+950	This project may give solution to burning problem of drying clothes in rainy season. As iam hosteler I unable to dry my clothes in rainy season	"Rain sensor detects rain and sends signals to arduino
+ Arduino activates relay module
+ Relay module control Motor to close/open water resistant cover
+ Clothes are protected form rain"	https://drive.google.com/uc?export=download&id=1ZIU8lf7xycM3sTsH6eHI8lpJOhDNLE9y	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The use of rain sensors for automated covers is a well-known project concept in student innovation, showing limited originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses a common, practical problem for students and households, providing clear utility.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The implementation using Arduino, sensors, and motors is a standard, achievable, and well-documented technical approach.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""While the concept is easily replicable, scaling it to real-world architectural structures requires significant mechanical and material considerations.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system is durable and low-maintenance, though it requires a consistent power source to operate the sensors and motors.""
+    },
+    ""Image_contains_summary"": ""The image shows a student demonstrating a model house equipped with an automated rain-sensing system designed to protect clothes from getting wet during rain.""
+}"
+1827	मैं अभी एक हफ्ते के लिए मनाली टूर में फैमिली के साथ गया थाl इस टूर में हमारा आधे से ज्यादा सफर ट्रेन में हुआ, जिससे मैं ट्रेन में यह देखा कि सफर के दौरान हमारे रिजर्वेशन सीट के पास ही ट्रेन का टॉयलेट था जिसमें से गंदी बदबू आ रही थी जब मैं बाथरुम गया तब वहां देखा की टॉयलेट में बहुत ज्यादा गंदगी थी लोग टॉयलेट का उपयोग करके फ्लश(पानी का उपयोग ) किए बिना बाहर आ जाते थे जिसके कारण बदबू न केवल टॉयलेट में बल्कि पास की बोगी में भी होने लगा l	हमारी टीम ने इस समस्या को सुलझाने के लिए यहां एक आसान तरीका ढूंढा जिसमें हमने टॉयलेट के फ्लश को और टॉयलेट के दरवाजा को इस तरह से मैनेज किया की अगर व्यक्ति टॉयलेट को फ्लश किए बिना चला जाता है तो जैसे ही वह दरवाजा खोलेगा फ्लश ऑटोमेटिक ऑन हो जाएगा और फ्लश के कंप्लीट होने के कुछ सेंकड बाद दरवाजा वापस लॉक हो जाएगा l जिससे ट्रेन के सभी यात्रियों को टॉयलेट जाने में सुविधा होगी l	https://drive.google.com/uc?export=download&id=14DDtr8_lZRvGn_GeG9vL4-d0wCMaZwXI	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""The idea of an automated flush triggered by door operation is a creative mechanical solution to a common hygiene problem in public transport.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""This directly addresses the persistent issue of unhygienic train toilets caused by user negligence, providing a practical improvement.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the concept is logical, implementing a door-linked mechanical or electronic flushing system in existing train infrastructure presents significant engineering and maintenance challenges.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The system could be standardized across railway coaches, though retrofitting existing fleets would be a massive undertaking.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The system improves hygiene but introduces mechanical complexity that requires regular maintenance to remain functional in high-traffic environments.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical model of a train toilet, illustrating the proposed automated flushing system linked to the door mechanism.""
+}"
+2428	हमारी समस्या यह है कि कई बार लोगों के घर में सिलेंडर खत्म हो जाता है तो और उस वक्त दूसरे घर से लाने में दिक्कत होती है इस विषय पर है।	इस समस्या का सुझाव हमने बहुत अच्छी तरीके से की है। हमारी टीम ने सिलेंडर के ऊपर एक मीटर लगाया है। उस मीटर से पता चलता रहे की सिलेंडर के अंदर कितनी गैस बाकी है इससे बहुत सारे घरों के अंदर मदद भी होगी मदद इसलिए होगी कि जब उनके के घर में सिलेंडर खत्म होने वाला होगा तो वह लोग पहले से ही एक सिलेंडर खरीद लेंगे।अतः यह हमारी समस्या का सुझाव है।	https://drive.google.com/uc?export=download&id=1LSreaaYr0b8xgGBnaQ4PURf4yM2KiU3p	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of a gas level indicator for cylinders is a well-known concept and widely available in the market.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It addresses a common household pain point by providing timely alerts to prevent running out of gas.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the concept is practical, the submission lacks technical details on how the meter would measure gas levels inside a pressurized cylinder.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""This solution is highly scalable as it can be easily integrated into existing cylinder designs for widespread use.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""It promotes efficient resource management, though long-term durability of the sensor in a household environment remains a factor.""
+    },
+    ""Image_contains_summary"": ""The image shows a student standing next to a digital screen displaying a drawing of an LPG cylinder with a gauge/meter attached to the top to indicate gas levels.""
+}"
+2535	पौधों को पानी देने के लिए कुशल और विश्वसनीय प्रणालियों की कमी से या तो ज़रूरत से ज़्यादा पानी या कम पानी मिल सकता है, जो पौधों के स्वास्थ्य, विकास और उपज पर प्रतिकूल प्रभाव डालता है। सौर पैनलों द्वारा संचालित नमी सेंसर एक समाधान प्रदान कर सकते हैं, लेकिन उनके कार्यान्वयन में चुनौतियाँ उनकी प्रभावशीलता और विश्वसनीयता को सीमित कर सकती हैं। पारंपरिक सिंचाई विधियों पर निर्भरता अक्सर कृषि और बागवानी में अकुशल जल उपयोग की ओर ले जाती है, जिसके परिणामस्वरूप पौधों को ज़रूरत से ज़्यादा पानी या कम पानी मिल पाता है। जबकि सौर पैनलों द्वारा संचालित नमी सेंसर वास्तविक समय की मिट्टी की नमी के स्तर के आधार पर पानी देने को स्वचालित करने के लिए एक आशाजनक समाधान प्रदान करते हैं, कई चुनौतियाँ उनकी प्रभावशीलता में बाधा डालती हैं। इन चुनौतियों में असंगत सौर ऊर्जा आपूर्ति, अंशांकन समस्याएँ, तकनीकी विफलताएँ और उपयोगकर्ता की समझ की कमी शामिल है। नतीजतन, इसका परिणाम पौधों के खराब स्वास्थ्य, संसाधन की बर्बादी, आर्थिक नुकसान और पर्यावरण क्षरण होता है। विश्वसनीयता और दक्षता को बढ़ाने की सख्त ज़रूरत है।	"प्रस्तावित समाधान एक एकीकृत सौर-संचालित नमी सेंसर सिंचाई प्रणाली है जो वास्तविक समय की मिट्टी की नमी के स्तर के आधार पर पानी देने की प्रक्रिया को स्वचालित करती है। यह प्रणाली उन्नत नमी सेंसर, कुशल सौर पैनल और स्मार्ट सिंचाई तकनीकों को जोड़ती है ताकि संसाधनों की बर्बादी को कम करते हुए इष्टतम संयंत्र जलयोजन सुनिश्चित किया जा सके।
+ यह कैसे काम करता है...1. नमी सेंसर: - स्थापना: नमी की मात्रा को सटीक रूप से मापने के लिए मिट्टी में विभिन्न गहराई पर नमी सेंसर लगाए जाते हैं।
+ 2. सौर ऊर्जा आपूर्ति: - सौर पैनल। उच्च दक्षता वाले सौर पैनल नमी सेंसर और सिंचाई प्रणाली को शक्ति प्रदान करते हैं। वे सूर्य के प्रकाश के संपर्क को अधिकतम करने के लिए तैनात किए जाते हैं, जिससे विश्वसनीय ऊर्जा उत्पादन सुनिश्चित होता है। - ऊर्जा भंडारण: एक रिचार्जेबल बैटरी दिन के दौरान उत्पन्न अतिरिक्त ऊर्जा को बादल मौसम या रात के समय सिस्टम को शक्ति प्रदान करने के लिए संग्रहीत करती है।3. डेटा प्रोसेसिंग और सिंचाई नियंत्रण: 4, उपयोगकर्ता इंटरफ़ेस
+ ,यह किसकी मदद करता है
+ 1. किसान और कृषि श्रमिक:
+ 2. माली और बागवानी विशेषज्ञ
+ 3, शहर"	https://drive.google.com/uc?export=download&id=1dDjlkaQVCFOCl1lcS125zI1MHjQT2Ke-	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using soil moisture sensors for automated irrigation is a well-known concept in student innovation, and the submission does not introduce a unique or novel approach to this established technology.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses the problem of inefficient water usage in agriculture, providing a practical and effective method for optimizing plant hydration.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The system is based on standard, readily available components like Arduino and moisture sensors, making it highly implementable for students with basic technical knowledge.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The modular nature of the sensor-based irrigation system allows it to be scaled from small home gardens to larger agricultural fields with appropriate adjustments.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""By integrating solar power and optimizing water usage, the system promotes long-term environmental sustainability and resource conservation.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype setup featuring an Arduino board, a soil moisture sensor inserted into a pot, and connecting wires, confirming the student's implementation of an automated irrigation concept.""
+}"
+2539	शहर में कई लोग ट्रैफिक सिग्नल के पास बिना सिग्नल के ही चले जाते हैं जिससे दुर्घटना होने की आशंका रहती है इसके लिए हमने स्मार्ट ट्रैफिक सिस्टम बनाया है जो एक ही सिग्नल को ही जाने देता है उसके बाद बाकी सिग्नल बंद हो जाता है जिससे घटना होने की संभावना बहुत कम हो जाती है	स्मार्ट ट्रैफिक सिस्टम में अगर सिग्नल बाय साइड की और है तो वह ऑटोमेटिक बाकी सभी रास्तों को गेट के द्वारा बंद कर देता है जिससे कोई भी गाड़ी सवार व्यक्ति बिना सिग्नल के रास्ता पार नहीं कर सकता है जिससे सिग्नल पर होने वाले घटनाएं को बहुत ही काम किया जा सकता है क्योंकि एक ही साइड से वाहनों का जाना हो सकता है जिससे उनके टकराने की संभावना बहुत ही काम हो जाएगी और सड़क में होने वाली घटनाओं को कम किया जा सकता है जिससे मनुष्य की जनहानि बहुत कम होगी यह मनुष्य के लिए बहुत लाभदायक है खासकर वाहन चलाने वालों के लिए यह हमारे प्रोजेक्ट का एक आइडिया है जिसे हमने प्रोटोटाइप के रूप में बनाया है यह ट्रैफिक संबंधित होने वाली दुर्घटनाओं को बहुत काम कर देता है यही स्मार्ट ट्रैफिक सिस्टम है	https://drive.google.com/uc?export=download&id=1gQDp19vrzZrnDtCpzIqnmKkrRxWvwmZl	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using physical barriers for traffic control is a known concept, and the prototype shows a basic implementation of this idea.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution directly addresses the problem of traffic signal violations, which is a significant safety issue.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the prototype demonstrates the concept, scaling this to real-world infrastructure involves significant mechanical and safety challenges.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""The solution is conceptually applicable to various intersections but would require extensive infrastructure modification for real-world deployment.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The mechanical barriers would require regular maintenance and power, making long-term sustainability dependent on consistent operational support.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical model of a four-way traffic intersection featuring a 'STOP' barrier arm, which illustrates the student's concept of using physical gates to prevent traffic signal violations.""
+}"
+2821	"औद्योगिक कार्यशालाओं में, आरा मशीनों का उपयोग आम तौर पर सामग्री काटने के लिए किया जाता है। हालाँकि, ये मशीनें ऑपरेटरों के लिए महत्वपूर्ण सुरक्षा जोखिम पैदा करती हैं, जिसमें आकस्मिक हाथ की चोट एक बड़ी चिंता का विषय है। आपातकालीन स्टॉप बटन या सुरक्षात्मक गार्ड जैसे पारंपरिक सुरक्षा तंत्र दुर्घटनाओं को रोकने के लिए पर्याप्त तेज़ी से प्रतिक्रिया नहीं कर सकते हैं।
+ 
+ इस परियोजना का उद्देश्य एक *अल्ट्रासोनिक सेंसर* और *Arduino* का उपयोग करके एक *वास्तविक समय सुरक्षा प्रणाली* को डिज़ाइन और कार्यान्वित करना है। यदि कोई वस्तु (जैसे ऑपरेटर का हाथ) आरा ब्लेड के **30 सेमी* के भीतर आती है, तो सिस्टम स्वचालित रूप से आरा मशीन को रोक देगा, जिससे संभावित चोटों को रोका जा सकेगा। इसके अतिरिक्त, अतिरिक्त सुरक्षा के लिए एक *मैनुअल आपातकालीन स्टॉप बटन* एकीकृत किया जाएगा। मोटर केवल तभी संचालन फिर से शुरू करेगी जब वस्तु निर्दिष्ट सुरक्षा दूरी से आगे बढ़ जाएगी।1. ब्लेड के 30 सेमी के भीतर किसी वस्तु या हाथ का पता चलने पर आरा मोटर को रोककर दुर्घटनाओं को रोकें।"	"हमारा समाधान एक *स्वचालित सुरक्षा प्रणाली* है जो ब्लेड के *30 सेमी* के भीतर किसी वस्तु या हाथ के आने पर आरा मोटर को रोक देती है। यह प्रणाली एक *अल्ट्रासोनिक सेंसर (HC-SR04), **Arduino UNO, और एक **रिले मॉड्यूल* का उपयोग करके बनाई गई है जो आरा ब्लेड का अनुकरण करने वाली 5V DC मोटर को नियंत्रित करती है। इसके अतिरिक्त, एक *आपातकालीन स्टॉप बटन* तत्काल शटडाउन के लिए मैन्युअल नियंत्रण प्रदान करता है।
+ ### *समाधान कैसे काम करता है:*
+ 1. *ऑब्जेक्ट डिटेक्शन:*
+ - यदि ऑपरेटर का हाथ *30 सेमी* के भीतर आता है, तो तरंगें वापस उछलती हैं, और Arduino गणना करता है कि यदि दूरी *30 सेमी* से कम है, तो Arduino मोटर को *बंद* करने के लिए **रिले मॉड्यूल* को ट्रिगर करता है।
+ 2. *स्वचालित मोटर नियंत्रण:*- यदि 30 सेमी के भीतर कोई हाथ नहीं पाया जाता है, तो मोटर सामान्य रूप से चलती है।
+  3. *आपातकालीन स्टॉप बटन:*
+ 
+ *समाधान किसकी मदद करता है:*
+ 1. मशीन ऑपरेटर:
+ 
+ 2. कार्यशाला प्रबंधक और पर्यवेक्षक:
+ 
+ 3. कंपनी के मालिक:
+ 
+ *समाधान समस्या का समाधान कैसे करता है:*
+ दुर्घटना की रोकथाम: स्वचालित नियंत्रण: न्यूनतम डाउनटाइम:बेहतर सुरक्षा"	https://drive.google.com/uc?export=download&id=1AvbWuh2kzhATruryUzC-L3KdRmirSO_B	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""The use of ultrasonic sensors for safety cut-offs is a well-known application in student projects, showing moderate originality in its specific implementation for saw machines.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses a significant safety hazard in industrial settings with a practical, functional mechanism.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the prototype is functional and well-documented, scaling this to actual high-power industrial machinery requires significant safety certification and robust engineering.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The logic is easily replicable across different types of machinery, though hardware integration needs to be customized for each specific tool.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system is durable and low-maintenance, though it requires a reliable power source and consistent sensor calibration to remain effective.""
+    },
+    ""Image_contains_summary"": ""The image shows a functional prototype using an Arduino Uno, an ultrasonic sensor, a buzzer, and a breadboard setup, confirming the student's described safety system design.""
+}"
+5947	यदि कही किसी दुर्घटना से आग लग जाय और यदि इसका सही समय में समाधान न किया जाय तो यह भयंकर रूप धारण कर लेती है। यदि किसी जगह पर आग लग जाती है और हमे उसका पता नही है तो यह धीरे धीरे विशाल रूप धारण कर लेता है जहा आग लगा है उसके साथ आस पास का पूरा क्षेत्र बर्बाद हो जाता है।	"हमने इस समस्या के समाधान के लिए एक स्मार्ट डिवाइस जिसका नाम है फायर अलर्ट सिस्टम का निर्माण किया है। यह स्मार्ट उपकरण है यह जिस नंबर से कनेक्ट है उसे नंबर पर आग लग जाने पर मैसेज और कॉल करता है जिससे हमें पता चल जाता है आग लगी है और हम फायर ब्रिगेड के पास कॉल कर सकते हैं और इसे होने वाले भयंकर परिणाम को रोक सकते हैं।
+ यह फायर या स्मोक को डिटेक्ट करता है उसके बाद अलर्ट सिग्नल भेजता है। हम दुनिया के किसी भी कोने पर होंगे हमे इसका मैसेज,कॉल प्राप्त होगा।"	https://drive.google.com/uc?export=download&id=1Fp2KwYZ7l8piN5svb9c2ZESOsJpf9M0C	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""Fire detection systems using sensors are a well-established technology and this project represents a common student-level implementation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The system provides a clear and practical benefit by enabling early fire detection and remote alerts, which can prevent significant damage.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The implementation is achievable using standard microcontrollers and sensors, though real-world deployment requires robust integration and reliability testing.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system is highly replicable and can be deployed in various residential or commercial settings with minimal adjustments.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system is sustainable if maintained properly, though it relies on continuous power and connectivity to remain functional.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical model of a building structure equipped with a sensor module, likely representing the fire detection system described in the text.""
+}"
+6869	भूकंप एक प्राकृतिक आपदा है जो किसी भी समय और किसी भी स्थान पर आ सकती है।	भूकंप अलार्म भूकंप आने के समय बजने लगता है जिससे समय रहते लोग घरों से लोग सुरक्षित स्थान पर जा सकते हैं।	https://drive.google.com/uc?export=download&id=1Oq-zp14KYtwHoLGoKs9f1Foi3N3SxATb	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""Earthquake alarm systems are a very common, well-known project idea with no original adaptation presented.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the concept is useful for safety, the submission lacks detail on how it effectively detects seismic waves versus simple vibrations.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""The project is a basic demonstration model, but lacks technical explanation for real-world reliability or implementation.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The solution is a simple model and lacks the technical depth required for scaling to actual infrastructure.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""There is no information on how the system would be maintained or powered for long-term, reliable operation.""
+    },
+    ""Image_contains_summary"": ""The image shows two students presenting a simple model of a house and a tower, representing an earthquake alarm system.""
+}"
+7766	हमारे गांव में एक महिला अपने किचन में गैस में दूध चढ़ा कर चली चली गई थी तो हवा के कारण गैस के बजने से पूरे किचन में एलपीजी गैस फैल जाता है । फिर वह महिला वापस किचन में आती है तो उसने देखा कि गैस बुझ चुका था फिर उसने गैस जलाने के लिए लाइटर में क्लिक किया फिर वहां ब्लास्ट हुआ जिससे उस महिला के साथ दुर्घटना हो गई ।	यह गैस सेफ्टी डिवाइस गैस के रिसाव को सेंस करके रेगुलेटर को ऑफ करेगा और एक बजर बजेगा । जिससे अगर कोई व्यक्ति आसपास हो तो उसे पता चल जाएगा कि यहां गैस रिसाव हुआ है। जिससे दुर्घटना होने के संभावना कम हो जाएगी । यह किचन में काम करने वाले महिलाओं , वर्कर सभी के लिए उपयोगी है ।	https://drive.google.com/uc?export=download&id=1Zg0Tyri5EcilJwdoOjhf4VT_D5d-5MVb	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using sensors for LPG leakage detection is a well-known concept in student projects, with limited original adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses a critical household safety issue by providing automated detection and alerts.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the prototype demonstrates the core components (Arduino, sensor, servo/relay), integrating this with actual high-pressure gas regulators requires significant safety engineering and testing.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system uses common, affordable components that could be easily replicated for wider household use.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The device is sustainable in terms of operation, though it requires reliable power and periodic sensor maintenance to ensure long-term effectiveness.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype of an LPG gas leakage detection system built inside a cardboard box, featuring an Arduino board, a gas sensor, a servo motor (likely for the regulator valve), a buzzer, and a breadboard.""
+}"
+9468	"""टच इलेक्ट्रिक बोर्ड"" एक प्रकार का इंटरएक्टिव बोर्ड है, जिसका उपयोग शिक्षा, कार्यस्थल, और अन्य इंटरएक्टिव उद्देश्यों के लिए किया जाता है। यह आमतौर पर एक डिजिटल डिस्प्ले के रूप में होता है, जिसे टचस्क्रीन तकनीक के माध्यम से नियंत्रित किया जा सकता है। इसमें किसी भी प्रकार के कंटेंट (जैसे कि टेक्स्ट, इमेज, वीडियो आदि) को प्रदर्शित किया जा सकता है और उसे टच स्क्रीन से इंटरैक्ट करके उपयोग किया जा सकता है। यह खासकर क्लासरूम, मीटिंग रूम, और कॉन्फ्रेंस में काम आता है।"	"TOUCH ELECTRIC BOARD एक इंटरेक्टिव और स्मार्ट तकनीक है जो विद्युत उपकरणों के संचालन को टच स्क्रीन के माध्यम से नियंत्रित करने की सुविधा प्रदान करती है। इसका उद्देश्य पारंपरिक स्विच और कंट्रोल सिस्टम की जगह एक अधिक उन्नत, यूजर-फ्रेंडली, और स्मार्ट समाधान देना है। इलेक्ट्रिक बोर्ड में एक डिजिटल टच स्क्रीन होती है, जो उपयोगकर्ता को सीधे स्क्रीन पर टच करने के माध्यम से विभिन्न विद्युत उपकरणों को नियंत्रित करने की सुविधा देती है।विद्युत सर्किट से जुड़ी जानकारी को प्रोसेस करके सही आदेश भेजते हैं। जैसे ही आप स्क्रीन पर किसी बटन को टैप करते हैं, यह सिग्नल विद्युत सर्किट को मिलता है और संबंधित उपकरण सक्रिय या निष्क्रिय हो जाता है, मदद करता है-घरों में,ऑफिस और इंडस्ट्रियल सेटिंग्स में,विशेष आवश्यकताओं वाले व्यक्तियों के लिए,
+ यह समस्या को सुलझाएगा-1कम्फर्ट और कंवीनियंस- किसी भी स्विच को ढूंढ़ने या हाथ से चलाने की जरूरत नहीं, बस टच करें और उपकरण चालू हो जाएगा। 2.स्मार्ट एनर्जी मैनेजमें3.रिमोट कंट्रोल 4.एक्सेसिबिलिटी
+ इस तरह से एक स्मार्ट, सुविधाजनक, और ऊर्जा की बचत करनेकरने वाला समाधान है"	https://drive.google.com/uc?export=download&id=1DoCtnpVQ7QE-3NW1FoeAC7Yu89joPswT	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""Touch-based switching is a well-known electronics project using standard modules, offering minimal original innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""Provides a convenient alternative to traditional switches, though its practical impact in real-world home automation is limited.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The circuit is highly feasible and commonly implemented by students using readily available electronic components.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""While individual units are easy to build, scaling this to a full home automation system requires significant wiring and integration effort.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The solution is durable if properly housed, but relies on electronic components that require standard maintenance.""
+    },
+    ""Image_contains_summary"": ""The image shows a basic electronic prototype of a touch-sensitive switch connected to an LED bulb using a relay module and a touch sensor component.""
+}"
+9686	दिन प्रतिदिन जनसंख्या बढ़ने के कारण यातायात के साधनों में अत्यधिक वृद्धि हुई है जिस कारण यातायात साधनों में पेट्रोल एवं डीजल का अत्यधिक प्रयोग बढ़ता ही जा रहा है इनसे निकलने वाली गैसों के कारण वायु प्रदूषण बढ़ता ही जा रहा है आज के समय में एक ऐसे आदर्श ईंधन की आवश्यकता है जो कम से कम प्रदूषण उत्पन्न करें वहां से निकलने वाले ब्लैक तेल से ऐसे ही एक आदर्श ईंधन का निर्माण किया जा सकता है ब्लैक ऑयल के जलने पर नीले रंग के धुएं के रूप में मिथुन गैस निकलती है मेथेन एक महत्वपूर्ण गैस है जिसका उपयोग ईंधन के रूप में किया जा सकता है मीथेन गैस का उपयोग विभिन्न क्षेत्रों में किया जा सकता है जैसे ऊर्जा उत्पादन रसोई गैस औद्योगिक उपयोग वाहन चालन कृषि चिकित्सा वैज्ञानिक अनुसंधान आदि	ब्लैक ऑयल जो लोग वेस्ट समझ कर फेंक देते हैं उसका आदर्श ईंधन के रूप में उपयोग किया जा सकता है एवं जिसका ज्वलन ताप भी उच्च होता है इस ब्लैक तेल में मीथेन गैस प्रेजेंट रहती है जो एक आदर्श ईंधन के रूप में काम करती हैइसका उपयोग घर से लेकर उद्योगों तक चिकित्सा क्षेत्र अनुसंधान क्षेत्र वहां हर क्षेत्र में किया जा सकता है क्योंकि यह एक आदर्श ईंधन है इसलिए इसका उपयोग व्यापक स्तर पर किया जा सकता है यह हर तरीके से उत्तम ईंधन होता है	https://drive.google.com/uc?export=download&id=1bTd2CHedOO2EPkFeeJaEQbRl6MsZ9oRE	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of using waste oil for fuel is not new, and the claim that burning 'black oil' produces methane is scientifically inaccurate.""
+    },
+    ""Usefulness"": {
+        ""score"": 2,
+        ""reason"": ""The proposed solution is based on a fundamental misunderstanding of chemical processes, rendering it ineffective as a real-world fuel solution.""
+    },
+    ""Feasibility"": {
+        ""score"": 2,
+        ""reason"": ""The concept lacks a scientific basis and clear implementation steps, making it practically impossible to execute as described.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""Since the core premise is scientifically flawed, the idea cannot be scaled or applied to any practical use case.""
+    },
+    ""Sustainability"": {
+        ""score"": 2,
+        ""reason"": ""Burning waste oil without proper processing or understanding of the chemical byproducts would likely increase pollution rather than reduce it.""
+    },
+    ""Image_contains_summary"": ""The image shows three students presenting a project titled 'Black oil convert to fuel' with a poster detailing the concept, but the scientific claims regarding methane production from burning waste oil are not supported by standard chemistry.""
+}"
+10951	हमारे आसपास कचरे की समस्या बहुत होती है और कचरा सड़कों पर बिखरा होता है जिससे मलेरिया जैसी बीमारियां फैलती है	हम यह एक डस्टबिन की तरह ही है इसमें कचरा डालेंगे और वह डंडा डूबेगा और जिससे एक सिक्का बाहर निकलेगा और उसे सिक्के को लोग देखकर उसमें ज्यादा कचरा डालेंगे और जिस गांव क्लीन होगा और कचरा एकत्रित करने में सहायता मिलेगी इसलिए यह दो-तीन ऐसे ही गांव में लगा देंगे जिससे सभी लोग डालेंगे और कचरा करते तो होगा जिससे बीमारियां न मिलेगी यह कचरा विकिरण करने वाले लोगों को देंगे जिससे यह नई चीज बनाएंगे जिससे लोगों को काम आएगी	https://drive.google.com/uc?export=download&id=1HPJgAVO2TJnCP2tlC2infoRU-WFv_mKP	"{
+    ""Novelty"": {
+        ""score"": 5.0,
+        ""reason"": ""The idea of a reward-based dustbin (gamification of waste disposal) is a creative approach to encourage cleanliness, though the mechanism is simple.""
+    },
+    ""Usefulness"": {
+        ""score"": 5.0,
+        ""reason"": ""It addresses the problem of littering by incentivizing waste disposal, but relies on manual coin replenishment which limits long-term effectiveness.""
+    },
+    ""Feasibility"": {
+        ""score"": 4.0,
+        ""reason"": ""While the cardboard prototype is simple, maintaining a system that dispenses coins for every piece of trash is logistically and economically impractical.""
+    },
+    ""Scalability"": {
+        ""score"": 3.0,
+        ""reason"": ""The model is difficult to scale because it requires constant manual refilling of coins and lacks a sustainable funding or operational model.""
+    },
+    ""Sustainability"": {
+        ""score"": 3.0,
+        ""reason"": ""The solution is not self-sustaining as it depends on continuous human intervention and a constant supply of incentives, which are not environmentally or economically durable.""
+    },
+    ""Image_contains_summary"": ""The image shows a cardboard prototype of a dustbin designed to dispense a coin when waste is deposited, intended to incentivize waste disposal.""
+}"
+12185	"कामकाजी महिलाओं को घर की साफ सफाई में, पोछा लगाने में बहुत समय लगता है साथ ही आजकल के खान पान की वजह से और अन्य कारणों से भी महिलाओं को जोड़ों के दर्द आदि से परेशानी का सामना करना पड़ता है।
+ घर की साफ सफाई में दिक्कत आती है।"	"हमने घरेलू और कामकाजी महिलाओं की साफ सफाई की परेशानी को देखते हुए एक एसी मशीन बनाई है। जिससे महिलाओं को साफ़ सफ़ाई में समय की बचत होगी।
+ साथ ही जीनको जोड़ो में दर्द है वो भी इसका उपयोग एक जगह बैठकर कर सकती हैं।
+ इसके पोछा मारने के लिए बार बार पानी बदलने की जरूरत नही होती।
+ इस मशीन में हमने पानी डालने का डिब्बा बना दिया है, और नीचे की तरफ पोछे का कपड़ा, साथ ही गंदे पानी को बाहर निकालने की व्यवस्था की है।
+ 
+ साफ पानी एक अलग डिब्बे में डाला और एक डिब्बे में गंदा पानी निकलता रहेगा।
+ साफ़ पानी पोछा लगे हुए डिब्बे में जाता रहेगा। और जब पोछा गंदा हो जाएगा तो उसको एक डिब्बे में निचोड़ लेगे जिससे पानी गंदा पानी एकत्रित करने वाले डिब्बे में इकट्ठा हो जाएगा। 
+ यह मशीन रिमोट से चलेगी, जिसको एक जगह बैठकर चलाया जा सकेगा।
+ इस प्रकार महिलाएं इस रिमोट की सहायता से एक जगह बैठकर पूछा लगा सकेगी।
+ इसमें एक बार पानी डालना पड़ता है और मशीन को एक जगह रख कार कंट्रोल कर सकते हैं।
+ इस प्रकार महिलाएं एक बार पानी डालकर एक रूम कर जगह बैठकर आराम से साफ सफाई कर सकती हैं।
+ तथा अपने समय को भी बचा सकती हैं।"	https://drive.google.com/uc?export=download&id=1Q3Q52U7rqunjs6sKvTE7GL3n6I4AMOCm	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""While robotic floor cleaners exist, the student's focus on a specific mechanism for water management and remote-controlled mopping for elderly or health-challenged users shows thoughtful, independent adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses the physical strain of mopping for women with joint pain, providing a clear, practical benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The design is conceptually sound using basic components like DC motors and pumps, though practical implementation of the water-squeezing mechanism would require careful engineering.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The design is modular and could be scaled for household use, though manufacturing and cost-optimization would be necessary for wider adoption.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The device promotes efficient water usage by recycling and separating dirty water, which is a sustainable approach to household cleaning.""
+    },
+    ""Image_contains_summary"": ""The image provides a hand-drawn diagram of a remote-controlled floor cleaning machine, labeling components like DC motors, water tanks, tires, and a PVC pipe structure, illustrating the student's conceptual design for an automated mopping system.""
+}"
+12810	विद्यालय में छुट्टियों में पेड़ पौधों का पानी की कमी से मुर्झा जाना तथा कभी तो पौधे पूरी तरह ही खतम हो जाते सुख कर।	"हमने विद्यालय में लगे पेड़ पौधों की अच्छी वृद्धि के लिए ऐसी तकनीक विकसित की है, जिससे पौधों की अच्छी वृद्धि होगी उनको पानी की समस्या से जूझना नहीं पड़ेगा।
+ विद्यालय में लगे सभी छोटे पौधों और बड़ी पेड़ों को एक पाईप लाईन के माध्यम से विद्यालय में बनी टंकी या टांका जिसमे नल लगा हुआ है से जोड़ देगे। 
+ नल से एक पाईप बड़ी लंबी पाईप लगाएंगे अब इस मुख्य पाईप से छोटी छोटी पाईप निकालेगे और प्रत्यक छोटी पाईप को विद्यालय में लगे पेड़ पौधों से जोड़ देंगे।
+ अब नल में टूटी लगाएंगे ताकि टंकी का पानी उसमें आ सके।
+ अब जब भी विद्यालय की लंबी छुट्टी होगी तो हम टूटी को धीमी बूंद बूंद पानी आए ऐसे चालू करके छोड़ देंगे।
+ जिससे मुख्य पाईप में पानी जाता रहेगा और उसके माध्यम से छोटी पाईप में।
+ छोटी पाईप से प्रेत्यक पेड़ और पोधे में जाता रहेगा।
+ इस प्रकार छुट्टियों में भी सभी पौधे हरे भरे रहेंगे और उनकी अच्छी वृद्धि होती रहेगी।
+ इस प्रकार इस तकनीक से हम पेड़ को सुरक्षित रख सकते हैं।"	https://drive.google.com/uc?export=download&id=1ZwNCCffO_3FFiazMIzbcMpAAIueXthow	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea is a basic implementation of a drip irrigation system, which is a well-known agricultural technique.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It effectively addresses the practical problem of plant maintenance during school holidays with a simple, functional solution.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The system is highly practical, low-cost, and easy to implement using standard hardware like pipes and a water tank.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The design is easily replicable in other school gardens or home settings with minimal adjustments.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""It promotes water conservation through controlled drip irrigation and ensures the long-term survival of school greenery.""
+    },
+    ""Image_contains_summary"": ""The image provides a clear hand-drawn diagram illustrating a gravity-fed drip irrigation system connected to a central water tank, with pipes distributing water to individual plants.""
+}"
+14477	ई-वेस्ट में वे सभी इलेक्ट्रॉनिक उपकरण शामिल होते हैं जिनको अब उपयोग में नहीं लिया जाता है। आज के डिजिटल युग में इलेक्ट्रॉनिक उपकरण हमारे जीवन का हिस्सा बन गए हैं स्मार्टफोन से लेकर लैपटॉप टेलीविजन से लेकर घरेलू उपकरणों तक हम सब में इलेक्ट्रॉनिक उपकरण का प्रयोग करते हैं। लेकिन जैसे-जैसे इन उपकरणों का उपयोग बढ़ रहा है वैसे-वैसे इनसे जुड़ी समस्याएं भी बढ़ रही है, जिनमें से एक प्रमुख समस्या है ई-वेस्ट।ई-वेस्ट यानी की इलेक्ट्रॉनिक कचरा, वे सभी इलेक्ट्रॉनिक उपकरण जिन्हें अब प्रयोग में नहीं लाया जाता या जो खराब हो चुके हैं । इनसे निकलने वाले खतरनाक रसायन के साथ यह मिट्टी में घुल जाते हैं और वातावरण को भी प्रदूषित करते हैं ई-वेस्ट का प्रबंध जैसी गंभीर समस्या के बारे में लोगों को जागरूक करना अति आवश्यक है।	"चाहे हम कार्यस्थल पर किसी तकनीकी समस्या को हल करने का प्रयास कर रहे हों, या किसी ऐसी बाधा को दूर करने का प्रयास कर रहे हों जिसे गूगल मैप्स नहीं देख पाता है - अधिकांश लोग हर दिन समस्या का समाधान कर रहे होते हैं । 
+ 
+ लेकिन आप अपने जीवन में चुनौतियों से निपटने में कितने प्रभावी हैं ? क्या आपके पास कोई बुलेटप्रूफ प्रक्रिया है जिसका पालन करके आप ठोस परिणाम सुनिश्चित करते हैं, या... क्या आप अपनी गंभीर समस्याओं को हल करने के लिए प्रेरणा की सनक (या उसकी कमी) पर काम करते हैं?"	https://drive.google.com/uc?export=download&id=1CURFnY4i_Dn1QdhTC18U1balOPS3Jx8s	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The text discusses e-waste awareness while the image shows a joystick-controlled wheelchair, indicating a complete mismatch between the stated problem and the presented solution.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""The solution provided in the image does not address the e-waste problem mentioned in the text, rendering it ineffective for the stated goal.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""Since the solution is completely unrelated to the problem, it cannot be considered a feasible approach to the stated issue.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""There is no scalability potential as the solution does not align with the problem statement.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""The submission fails to address the sustainability of e-waste management as the proposed solution is irrelevant to the problem.""
+    },
+    ""Image_contains_summary"": ""The image shows two students with a prototype of a joystick-controlled wheelchair, which contradicts the text's focus on e-waste management.""
+}"
+6709	సాధారణంగా మనం చూసినట్లయితే మన ఇండ్లలో సీలింగ్లలో ఏర్పడే బల్లి పాతరను వెబ్ రిమూవర్ స్టిక్ తో తొలగించినప్పుడు ఆ బల్లి పాతర మన కళ్ళల్లో పడుతుంది. అలాగే చర్మం మీద పడి దురద లేస్తుంది. అంతేకాకుండా ఎక్కువ సమయం పాటు మనము తీయడానికి ప్రయత్నించినప్పుడు చేతులు కూడా నొప్పులు పెడతాయి.	"women friendly web remover stick.
+  సాధారణంగా మనం చూసినట్లయితే మన ఇండ్లలో సీలింగ్లలో ఏర్పడే బల్లి పాతరను వెబ్ రిమూవర్ స్టిక్ తో తొలగించినప్పుడు ఆ బల్లి పాతర మన కళ్ళల్లో పడుతుంది. అలాగే చర్మం మీద పడి దురద లేస్తుంది. అంతేకాకుండా ఎక్కువ సమయం పాటు మనము తీయడానికి ప్రయత్నించినప్పుడు చేతులు కూడా నొప్పులు పెడతాయి. ఈ సమస్యకు పరిష్కారంగా మేము ఉమెన్ ఫ్రెండ్లీ వెబ్ రిమూవర్ స్టిక్ తయారు చేసాము. మోటార్ సహాయంతో వేబ్ రిమూవర్ తిరుగుతుంది ఇది తిరిగినప్పుడు పడే బల్లి పాతర అంతా మన మీద పడకుండా మధ్యలో ఒక అంబ్రెల్లా ఉంచడం జరిగింది. ఈ అంబ్రెల్లా బల్లి పాతరను కలెక్ట్ చేసుకుంటుంది అంటే మన మీద పడకుండా చూస్తుంది. దీని ఈజీగా తక్కువ ఖర్చుతో తయారు చేయవచ్చు సులభంగా వినియోగించవచ్చు."	https://drive.google.com/uc?export=download&id=1gVrcB4Jy3zjMBxRStS9NBMksvXdjcKnc	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""The addition of an umbrella to a cobweb brush is a simple yet creative and practical adaptation that addresses a common household annoyance.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It effectively solves the problem of debris falling on the user while cleaning ceilings, providing a clear benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The solution is highly practical, easy to assemble with common household items, and requires no complex technology.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""This design is very easy to replicate and could be widely adopted in households as a simple, low-cost modification.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""The solution uses durable, reusable materials and requires minimal maintenance, making it a sustainable household tool.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype of a cobweb cleaning stick modified with an umbrella attached below the brush to catch falling debris.""
+}"
+7334	సాధారణంగా పాఠశాలలో మా టీచర్లు బోర్డును తుడిసేటప్పుడు చాక్ పీస్ డస్ట్ ముందు వరుసలో కూర్చున్న విద్యార్థుల మీద,కళ్ళల్లో పడుతుంది. దీనివల్ల కళ్ళల్లో మంట అలాగే ఎలర్జీ వచ్చే అవకాశం ఉంది	సాధారణంగా పాఠశాలలో మా టీచర్లు బోర్డును తుడిసేటప్పుడు చాక్ పీస్ డస్ట్ ముందు వరుసలో కూర్చున్న విద్యార్థుల మీద,కళ్ళల్లో పడుతుంది. దీనివల్ల కళ్ళల్లో మంట అలాగే ఎలర్జీ వచ్చే అవకాశం ఉంది. దీనికి పరిష్కారంగా ఈ ప్రాజెక్టును తయారు చేయడం జరిగింది. ఒక స్టిక్ తీసుకొని దానికి ఒక చివర్ల డస్టర్ నుంచి,మధ్యలో ఆ డస్ట్ ను కలెక్ట్ చేసుకోవడానికి ఒక బాక్స్ నుంచడం జరిగింది. టీచర్స్ బోర్డును తుడుపేసేటప్పుడు ఆ డస్ట్ అంతా ఆ బాక్స్ లో పడుతుంది కాబట్టి విద్యార్థులకు ఇలాంటి ఇబ్బంది కలగదు.	https://drive.google.com/uc?export=download&id=1PgT0njDrA6b2ZQNQ9KY5xobL_AQzR1FL	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using a dust-collecting attachment for a duster is a simple, practical modification of existing cleaning tools.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It effectively addresses a common classroom health issue by capturing chalk dust at the source.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The design is very simple to construct using basic, readily available materials like a stick and a plastic bottle.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""This low-cost solution can be easily replicated and implemented in any school using chalkboards.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The device is made from repurposed materials and requires minimal maintenance, making it a sustainable classroom aid.""
+    },
+    ""Image_contains_summary"": ""The image shows students demonstrating a prototype of a blackboard duster attached to a stick with a plastic bottle segment designed to catch falling chalk dust.""
+}"
+20713	స్వయం సురక్షితం	అడవి జంతువుల నుండి కీటకాలనుండి ఇంకా ఎ ఇతర అపాయాలనుండి అయిన తప్పించుకుంటారు	https://drive.google.com/uc?export=download&id=1-GkqMP-y0ukxzrAAlv-KXAUVe_ZYrV6g	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of adding attachments to a shoe for safety is a very basic concept with no clear explanation of how it actually functions to protect the user.""
+    },
+    ""Usefulness"": {
+        ""score"": 2,
+        ""reason"": ""The solution is too vague and lacks a clear mechanism to address the stated problem of protection from animals or insects.""
+    },
+    ""Feasibility"": {
+        ""score"": 2,
+        ""reason"": ""There is no technical explanation or evidence of how these attachments would provide safety, making the implementation unclear.""
+    },
+    ""Scalability"": {
+        ""score"": 2,
+        ""reason"": ""Without a functional design or clear purpose, the idea cannot be effectively scaled or replicated.""
+    },
+    ""Sustainability"": {
+        ""score"": 3,
+        ""reason"": ""The solution does not provide enough detail to assess its long-term environmental or operational sustainability.""
+    },
+    ""Image_contains_summary"": ""The image shows a person holding a shoe with two small, circular, colored plastic attachments (one green, one red) glued to the side of the sole, but there is no indication of how these components function as a safety mechanism.""
+}"
+20893	సరుగుడు బొప్పాయి వంటి తోటలు వేసుకునే వాళ్ళు నారుని చిన్నచిన్న నల్లటి ప్లాస్టిక్ సంచుల్లో తెచ్చుకుంటారు అలాగే ఇళ్లల్లో కొన్ని రకాల పూల చెట్లు కానివ్వండి పండ్ల చెట్లు కానివ్వండి వేసుకోవాలనుకున్నప్పుడు కూడా వారు ఆ చెట్లని నల్లటి ప్లాస్టిక్ సంచుల్లో ఇవ్వడం అనేది మనం చూస్తుంటాం ఈ సంచులు తర్వాత ఉపయోగపడం రీసైకిలింగ్ చేయలేం అలాగే ఇవి అలాగే గనక పడేస్తే ప్లాస్టిక్ కాలుష్యం కింద భూమిని కలుషితం చేస్తాయి కనుక ఈ ఎక్కువ చెట్లని తెచ్చుకునేటువంటి రైతులు ఎక్కువగా ఈ ప్లాస్టిక్ కవర్లను ఉపయోగించటం అనేది నేను గమనించినటువంటి పెద్ద సమస్య ఇది భూ కాలుష్యానికి సంబంధించిన సమస్య ఇల్లా ఇళ్లల్లోనూ ఇది సమస్యగానే ఉంది తోటల్లోనూ ఇది సమస్యగానే నాకు కనిపించింది కాబట్టి దీని పరిష్కరించాలని చిన్న ప్రయత్నాన్ని చేయడం జరిగింది	రైతులు పండ్ల చెట్లు, నిమ్మనారు ఇలాంటివన్నీ తెచ్చుకునేటప్పుడు చిన్న చిన్న ప్లాస్టిక్ కవర్లలో వాళ్ళు నారుని తెచ్చుకుంటూ ఉంటారు. అది రీసైక్లింగ్ కి పనికిరాదు కాబట్టి వాళ్ళు ఆ ప్లాస్టిక్ ని బయటే పారేస్తారు. ప్లాస్టిక్ కాబట్టి అది నీటిని భూమిలోకి చేరనివ్వదు, ఆ ప్లాస్టిక్ భూమిలో కరిగిపోకుండా కొన్ని లక్షల సంవత్సరాలు భూమిలోపల ఉండి భూకాలుష్యంగా రూపాంతరం చెందుతుంది. దీని వల్ల మా చుట్టూ ప్రక్కల గ్రామాల ప్రజలు కష్టాలు ఎదుర్కోవాల్సిన పరిస్థితి వస్తుంది. కాబట్టి దానికి పరిష్కారం కనుక్కుందాము అన్న ఆలోచన నాకు వచ్చింది. దీన్ని మా టీచర్ గారు కూడా బాగుంది అన్నారు. నా ఆలోచన ఏంటంటే, గుళ్ళల్లో గాని ఇళ్ళల్లో గాని కావాల్సినన్ని టెంకాయ చిప్పలు దొరుకుతుంటాయి. వాటిల్లోని కొబ్బరిని వినియోగించిన తర్వాత ఆ ఆ కొబ్బరిచిప్పల్లో నారు నాటి మనము వాటిల్ని పెంచుకోవచ్చు. ప్లాస్టిక్ కవర్లను వాడేకన్నా ఈ కొబ్బరిచిప్పల్లో నారు నాటుకొని దాన్ని మొత్తాన్ని మనం భూమిలో నాటుకోవచ్చు లేదా మొక్క భూమిలో నాటేసిన తర్వాత ఆ చిప్పల్ని తిరిగి కొత్త నారు వేయటానికి ఉపయోగించుకోవచ్చు. ఇలా చేయడం వల్ల భూకాలుష్యాన్ని తగ్గించవచ్చు అని నా ఉద్దేశం.	https://drive.google.com/uc?export=download&id=1-CIEQ8kj6OK6LaPlSqSWValvslCgapq3	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""While using coconut shells as biodegradable pots is a known sustainable practice, the student's application to replace non-recyclable plastic nursery bags is a thoughtful and contextually relevant adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses the problem of plastic waste in agriculture and gardening by providing a functional, biodegradable alternative that supports plant growth.""
+    },
+    ""Feasibility"": {
+        ""score"": 9,
+        ""reason"": ""The solution is highly feasible, as it utilizes readily available waste material (coconut shells) and requires no complex technology or high costs to implement.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""The idea is easily scalable as coconut shells are widely available in India and can be adopted by nurseries and households across different regions with minimal effort.""
+    },
+    ""Sustainability"": {
+        ""score"": 10,
+        ""reason"": ""This is an inherently sustainable solution that promotes a circular economy by repurposing agricultural waste and eliminating the use of harmful single-use plastics.""
+    },
+    ""Image_contains_summary"": ""The image shows three students demonstrating the proposed solution by holding saplings planted in coconut shells, while one student holds up a piece of the problematic plastic nursery bag, effectively contrasting the two methods.""
+}"
+35402	ఆరోగ్యం చూర్ణం అందరికీ ఆవశ్యకం	మా బృందం చాలామంది తో మాట్లాడి ఏదైనా పోషకవిలువలు గల పదార్ధాన్ని తయారుచేయాలని ఆలోచన చేసాము ఇందులో భాగంగా పెసలు,సెనగలు, బీన్స్ గింజలు, గోధుమలు, మెంతులు,అవిసె గింజలను మొలకెత్తింది నీడలో బాగా ఆరబెట్టాలి వీటితోపాటు ఉసిరికాయ ముక్కలను కూడా ఆరబెట్టి పూర్తిగా తేమ పోయేందుకు వేడిచేయాలి మిక్సీలో వేసి పౌడర్ చేయాలి దీనిని ప్రతిరోజూ అన్నంలో చెంచాడు పౌడర్, పావు చెంచా ఆవు నెయ్యి ‌కలిపి‌తినవచ్చు అన్నంతో తినలేమంటే కాస్త తేనె లో నానబెట్టి తినవచ్చు ఇది చౌకగా లభించే పౌష్టికాహారం వీటివలన విటమిన్లు A,C,EKమరియూ ఇనుము, పొటాషియం, మెగ్నీషియం లభిస్తాయి రోగనిరోధక శక్తి పెరుగుతుంది	https://drive.google.com/uc?export=download&id=1icOpGxeFJJx3ZZYd_SVdMsZwNMcaN1r4	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of a multi-grain nutritional powder is a traditional concept common in Indian households, though the student's effort to formalize and present it is commendable.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution provides a practical, low-cost, and nutrient-dense dietary supplement that addresses common nutritional deficiencies.""
+    },
+    ""Feasibility"": {
+        ""score"": 9,
+        ""reason"": ""The process is highly feasible as it uses easily available ingredients and simple household equipment for preparation.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The recipe is easily replicable and can be scaled for community or small-scale production with minimal infrastructure.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""The ingredients are natural, locally sourced, and the process is environmentally friendly with no harmful waste.""
+    },
+    ""Image_contains_summary"": ""The image shows three students presenting their nutritional powder project, with bowls containing the ingredients (grains and seeds) used to make the mixture.""
+}"
+37069	పూర్వం ప్రజలు పిల్లలు ఒంటికి పసుపు రాసేవారు ఎందుకంటే పసుపు యాంటి బయాటిక్స్ మరియు శరీరానికి దురదలు రాకుండా చేస్తుంది.పసుపు అంటే మనం వాడే ప్యాకెట్ పసుపు కాదు వాళ్ళే పండించిన పసుపు కొమ్ములను బాగా దంచి తయారు చేసిన పసుపును రాసేవారు.కాని ఇప్పుడు బోడీ లోషన్స రాస్తున్నారు మరియు డైపర్స వాడుతున్నారు దీని కారణంగా రాషెస్ వస్తున్నాయి.	చిన్న పిల్లల ఒంటికి రాషెస్ రాకుండా చేయడం కోసం సహజమైన రసాయనాలు ఉపయోగించి డైపర్స్ ను తయారు చేయడం.	https://drive.google.com/uc?export=download&id=1ZhmEViVCKTcYkGSGZLAh80WY3RRWQ9n4	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using natural materials like turmeric for skin care is traditional, but applying it to diaper manufacturing is a modest, relevant adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""Addressing diaper rashes is a practical and common problem, and natural alternatives provide a clear potential benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the concept is simple, manufacturing diapers with specific natural additives requires careful material science and testing to be safe and effective.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""If a safe and effective formula is developed, this could be scaled as a niche product for health-conscious parents.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""Using natural, potentially biodegradable materials for diapers is a highly sustainable approach compared to synthetic alternatives.""
+    },
+    ""Image_contains_summary"": ""The image shows three students presenting their project, which appears to be a prototype or demonstration related to their proposed natural diaper solution.""
+}"
+40769	పశువులకు గడ్డి కోయడం లో ఇబ్బందులు	ఒక మోటార్ కు బ్లేడ్ పెట్టి గడ్డిని కొస్తం	https://drive.google.com/uc?export=download&id=1tVJQCUrvfs07ksNtLJ8HQpShFgm-KtKT	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of using a motor with a blade for cutting is a very common and widely known concept for simple DIY projects.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While it addresses the difficulty of manual grass cutting, the proposed solution is too small-scale to be effective for agricultural needs.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""The concept is technically simple to build, but the provided motor is far too weak for actual grass cutting, making it impractical without significant scaling.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""The current design is limited to a very small scale and would require a complete redesign of power and structure to be useful in a real-world field setting.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The device is simple to maintain, but its lack of power and durability for real-world use limits its long-term viability.""
+    },
+    ""Image_contains_summary"": ""The image shows a student holding a small DC motor, which is the core component of their proposed grass-cutting device.""
+}"
+43321	"ఇంట్లో వాడేసిన వస్తువులు కాలుష్యాన్ని కలగజేస్తాయి 
+ 
+ చలికాలంలో స్నానానికి వేడి నీరు అవసరం"	ముందుగా మేము ఒక చిన్న వైరు తీసుకున్నాము.గోడలకు రంగును వేసే బ్రష్ ను తీసుకొని దానిని కొంచెం కత్తిరించి వైరును దానిలో పెట్టాము. వైరులో ఉండే జీ వైరును తీసి రెండు భాగాలు చేశాము. ఆ రెండు భాగాలను ఇనుమును గుండ్రంగా చుట్టాము. ప్లాస్టర్ దానికి అతికించాము. ఆ తర్వాత వైరుకి ప్లగ్ ను పెట్టాము. ఒక మగ్గులో నీళ్లను పోసి మేము తయారు చేసిన వాటర్ హీటర్ ఆ నీళ్లలో పెట్టి స్విచ్ ఆన్ చేశాము. 20 నిమిషాల తర్వాత హీటర్ స్విచ్ ఆఫ్ చేశాము. నీళ్లు వేడిగా మారాయి. పొగలు కూడా ఎల్లాయి.మేము ఈ ప్రాజెక్టును ఇంట్లో పనికిరాని పదార్థాలతో తయారు చేశాము. మనం మార్కెట్లో డబ్బులు పెట్టుకొని అవసరం లేకుండా ఇలా పనికిరాని పదార్థాలతో ఇంట్లో తయారు చేసుకోవచ్చు.	https://drive.google.com/uc?export=download&id=1aGQAaU_-2rqqOcrdiC2Z0eijDeVFzaiU	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of using exposed wires for water heating is a well-known, dangerous DIY concept that lacks innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 2,
+        ""reason"": ""While it heats water, the solution is extremely hazardous due to the risk of electrocution and short circuits.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The design is highly unsafe and should not be implemented, making it practically infeasible for real-world use.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""Due to severe safety risks, this solution cannot be scaled or recommended for any user.""
+    },
+    ""Sustainability"": {
+        ""score"": 2,
+        ""reason"": ""While it uses waste materials, the safety hazards outweigh any sustainability benefits.""
+    },
+    ""Image_contains_summary"": ""The image shows a DIY water heating setup using exposed wires and a plastic handle, which presents a significant electrical shock hazard.""
+}"
+44236	దంతాల ఆరోగ్యం చెడిపోవడం	ఇ టుకపొడి ,పసుపు ,ఉప్పు,బొగ్గుపొడి తో పౌడర్ తయారు చేసుకొని వాడడం	https://drive.google.com/uc?export=download&id=1OXwOC_GyMsuGxYOb1kmR2zGAYeVxAeBM	"{
+    ""Novelty"": {
+        ""score"": 2.0,
+        ""reason"": ""The use of traditional ingredients like turmeric, salt, and charcoal for dental care is a well-known, age-old practice with no original innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 4.0,
+        ""reason"": ""While these ingredients have known properties, the lack of scientific formulation or safety considerations limits its usefulness as a modern dental solution.""
+    },
+    ""Feasibility"": {
+        ""score"": 8.0,
+        ""reason"": ""The solution is highly feasible as it uses easily accessible, low-cost household ingredients.""
+    },
+    ""Scalability"": {
+        ""score"": 5.0,
+        ""reason"": ""It can be easily prepared at home, but lacks the standardization or regulatory approval needed for wider commercial scaling.""
+    },
+    ""Sustainability"": {
+        ""score"": 7.0,
+        ""reason"": ""The ingredients are natural and biodegradable, making the solution environmentally sustainable.""
+    },
+    ""Image_contains_summary"": ""The image shows a student presenting small cups containing various natural powders like turmeric, salt, and charcoal, which are intended to be mixed for dental care.""
+}"
+47368	ఈ మంట నుండి కొంత ఉష్ణం పరిసరాల్లోకి విడుదలగుట వలన బర్నర్ పరిసరాల్లోని గాలి వంటగదిలో గాలి వేడెక్కడాన్ని మనం గమనిస్తూ ఉంటాం దీనివలన మనం చేసే వంట ఆలస్యం అవ్వడమే గాక చాలా ఎల్పిజి వృధా అవుతుంది.	బర్నర్ చుట్టూ కాపర్ ఘట్టాన్ని ఒక కాయిల్ లాగా పాత్ర నుంచుటకు ఇబ్బంది లేకుండా అమర్చవలెను ఈ కాయిల్ రెండు వైపులా ఒక ఇన్సులేటర్ వాటర్ ట్యాంకు అమర్చ వలెను ఇన్సులేటర్ ట్యాంకును స్టవ్కు దగ్గరగా, మనం వంట వండి పాత్రకు తగలకుండా అమర్చ వలెను ఇన్సులేటర్ ట్యాంకుకు ఒక టాప్ ను బిగించి వేడి నీటిని అవసరమైన వంట, ఇతర పనులలో ఉపయోగించుకోవచ్చు	https://drive.google.com/uc?export=download&id=1e88pynyFJoTB55T4p_dDwBx0eRYdYTUE	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""The idea of using waste heat from a stove to heat water is a known concept, but the student's specific design of a copper coil around the burner shows modest independent creative effort.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution effectively captures wasted heat to provide hot water, offering a practical dual-purpose benefit in a kitchen setting.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the concept is theoretically sound, implementing a copper coil around a gas burner safely without interfering with flame efficiency or causing cleaning issues is technically challenging.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""This system could be adapted for various gas stove models, though it would require professional design to ensure safety and compatibility.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""By utilizing waste heat, the solution promotes energy efficiency and reduces overall fuel consumption, contributing positively to sustainability.""
+    },
+    ""Image_contains_summary"": ""The image illustrates a gas stove with a copper coil placed around the burner, connected to an insulated water tank above, designed to capture waste heat for water heating.""
+}"
+48888	రాత్రి పూట కరెంటు పోయినప్పుడు పిల్లలు భయపడతారు పెద్దవారికి కూడా వస్తువులు కనిపించవు అందుకోసమే ఎమర్జెన్సీ లైట్ అవసరం అవుతుంది	ఇంట్లో పనికిరాని వస్తువులతో ఉపయోగించి మేము తయారు చేసిన ఎమర్జెన్సీ లైట్ చూసి మా ఉపాధ్యాయులు మరియు మా ఇంటి సభ్యులు ఫ్రెండ్స్ అందరూ చాలా సంతోషించారు ఈ ఎమర్జెన్సీ లైట్ అందరికీ ఉపయోగపడుతుంది	https://drive.google.com/uc?export=download&id=1r_o9iyJdiW-6EffUSEUW-8Vmy9AYQv0k	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of a basic emergency light is a common, well-known concept with no original technical innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While an emergency light is helpful, the provided solution is a very basic circuit that offers limited utility compared to existing commercial alternatives.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The project is easy to implement using basic electronic components, making it highly feasible for a student level.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""As a simple DIY project, it lacks the design refinement or robustness required for meaningful scaling.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The reliance on basic components and potentially non-rechargeable batteries limits its long-term environmental and operational sustainability.""
+    },
+    ""Image_contains_summary"": ""The image shows a student demonstrating a simple, handheld DIY emergency light circuit using basic components like an LED and a battery.""
+}"
+49180	రోడ్డు క్రాసింగ్, రోడ్డు రైలు క్రాసింగ్, వద్ద నిర్మించే భూస్వరంగాల వద్ద వర్షాకాలంలో నీ మీరు నిల్వ ఉండడం ప్రధాన సమస్య	"1. భూస్వరంగాల వద్ద, సారంగపు సమీపంలో అంతర్గత పైపులైందు నిర్మించి వీటిని పంపినట్లయితే మీరు అప్పటికప్పుడే తొలగిపోవును 
+ 2. నీరు ప్రమాదకర స్థాయికి చేరగానే స్వయం చలిత మోటార్ వ్యవస్థను ఏర్పాటు చేసి నీటిని తోడటానికి ఏర్పాటు చేయాలి. 
+ ఈ విధంగా ట్రాఫిక్ నియంత్రణ చేయవచ్చుమరియు వాహనదారులను కచ్చితంగా ప్రయాణించినట్లుగా ఏర్పాటు చేయవచ్చు."	https://drive.google.com/uc?export=download&id=1DbFlvkd9-JUt5DHWz5pDNLKfrvZ8pQlR	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of using pumps and drainage for underpass water logging is a standard civil engineering solution and lacks significant innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution directly addresses a common and significant problem of water logging in underpasses, providing a practical benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the concept is technically sound and implementable, it requires significant infrastructure planning and maintenance beyond a simple student-level project.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The solution is replicable in various underpass locations, though it requires site-specific engineering and power infrastructure.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The system requires consistent maintenance and electricity to operate, which can be a challenge in many public infrastructure settings.""
+    },
+    ""Image_contains_summary"": ""The image provides a basic sketch labeled 'SAFE UNDER PASS TUNNEL', illustrating a road over an underpass area, which serves as a conceptual diagram for the proposed drainage solution.""
+}"
+65354	వరదల సమయంలో ఈ వస్తువును తక్కువ ఖర్చు తో తయారు చేసుకోవచ్చును.	వరదలపుడు ఈ టూల్ ను ఉపయోగించి ప్రాణాలను కాపాడుకోవచ్చు.దీనిని ఉపయోగించి వరద ప్రవాహంలో దీనిపై కూర్చుని ఒడ్డుకు చేరి.ప్రాణాలు కాపాడుకోవచ్చు.	https://drive.google.com/uc?export=download&id=1pY9G0lV0rRPuILHAzBaQiUFOWYbfN4aP	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""Using plastic bottles as a makeshift flotation device is a well-known and common DIY hack.""
+    },
+    ""Usefulness"": {
+        ""score"": 3,
+        ""reason"": ""While it provides buoyancy, the proposed design is too small and unstable to effectively serve as a reliable life-saving tool in flood conditions.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""The materials are easily accessible, but the construction lacks the structural integrity required for actual emergency use.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""It is easily replicable by individuals, but its limited effectiveness prevents it from being a scalable solution for flood safety.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""It repurposes plastic waste, which is environmentally positive, though the device itself is not a long-term durable solution.""
+    },
+    ""Image_contains_summary"": ""The image shows three students presenting a small, makeshift raft or flotation device constructed from a few plastic bottles placed inside a blue plastic bucket.""
+}"
+17191	ಗೃಹತಜ್ಯವನ್ನು ಬೀದಿಗೆ ಎಸೆಯುವುದರಿಂದ ಸೊಳ್ಳೆಗಳ ಕಾಟ ಹಂದಿಗಳ ಕಾಟ ವಾಸನೆ ಇವುಗಳಿಂದ ಮನೆಯ ಸುತ್ತಮುತ್ತಲು ತೊಂದರೆಯಾಗುತ್ತಿದೆ ಬೀದಿಯ ಜನರಿಗೆ ಸಹ ತೊಂದರೆಯಾಗುತ್ತದೆ ರೋಗರುಜಿನಿಗಳು ಜನರಿಗೆ ಹರಡುತ್ತಿವೆ ಇವುಗಳನ್ನು ತಡೆಯಬೇಕಾಗಿದೆ	"1 ಎಚ್ಚರಹಿತ ಪರಿಸರಸ್ನೇಹಿ ಮಾದರಿಯಾಗಿದೆ 
+ 1 ಬೃಹ ತ್ಯಾಜ್ಯದಿಂದ ಸಾವಯವ ಗೊಬ್ಬರ ತಯಾರಿಸಲಾಗುವುದು 
+ 3 ಈ ಗೊಬ್ಬರವನ್ನು ಮಾರಾಟ ಮಾಡಿ ಹಣ ಗಳಿಸಬಹುದು 
+ 4 ಈ ಮಾದರಿ ನಗರವಾಸಿಗಳಿಗೆ ಸೂಕ್ತವಾಗಿದೆ 
+ 5 ಇಲಿ ಹೆಗ್ಗಣ ಸೊಳ್ಳೆ ಹಂದಿಗಳಿಂದ ಮುಕ್ತವಾಗುವುದು 
+ 6 ವಾಸನೆಯ ಕಾಟದಿಂದ ಮುಕ್ತವಾಗಬಹುದು"	https://drive.google.com/uc?export=download&id=1C_gslnJlyvFTl9GiT7ojZXJi0XmDHrfd	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of home composting is a widely known and standard practice, with this specific vertical pipe design being a common DIY adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It addresses a significant local sanitation problem by providing a structured way to manage household organic waste and reduce public health risks.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The solution is highly practical, low-cost, and uses simple, readily available materials, making it easy to implement in urban households.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The modular design is easily replicable across many households, though it requires individual user commitment to maintain the composting process.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""It promotes a circular economy by turning waste into organic fertilizer, which is an environmentally responsible way to manage household refuse.""
+    },
+    ""Image_contains_summary"": ""The image shows students presenting a vertical composting system made from a pipe, with labels indicating ingredients like cow dung, water, jaggery, and soil, demonstrating a practical approach to home waste management.""
+}"
+17734	ಕಸದ ಸಂಗ್ರಹಣೆ ಮತ್ತು ಸೂಕ್ತ ವಿಲೇವಾರಿ	"ಈ ಮಾದರಿಯ ಉಪಯೋಗಗಳು 
+ 1. ಕಸದ ತೊಟ್ಟಿಯು ತುಂಬಿ ತುಳುಕುವುದಿಲ್ಲ 
+ 2. ಸಾರ್ವಜನಿಕರ ನೈರ್ಮಲ್ಯವನ್ನು ಕಾಪಾಡುತ್ತದೆ.
+ 3. ಕಸದ ಸುರಕ್ಷಿತ ಸಂಗ್ರಹಣೆ.
+ 
+ ಈ ಮಾದರಿ ಹತ್ತಿರ ಕಸವನ್ನು ತಂದಾಗ ಮುಚ್ಚಳವು ಸ್ವಯಂಚಾಲಿತವಾಗಿ 
+ ತೆರೆಯುತ್ತದೆ."	https://drive.google.com/uc?export=download&id=1h_kbztmsxfsCEcHKmIh2uD1XwsBz6-ZC	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The automatic dustbin using ultrasonic sensors is a widely known and common school-level project with very little original adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""It addresses a real sanitation problem by promoting touchless waste disposal, which is hygienic.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The use of Arduino and ultrasonic sensors is a standard, well-documented, and highly achievable implementation for students.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""While the design is simple to replicate, scaling it for large-scale public waste management would require significant durability and power considerations.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""It improves hygiene, but the reliance on electronic components and battery power requires ongoing maintenance and proper e-waste disposal.""
+    },
+    ""Image_contains_summary"": ""The image shows two students presenting a 'Smart Garbage Collector' prototype, which uses an Arduino, ultrasonic sensor, and servo motor to automatically open the lid of a dustbin.""
+}"
+25907	ಗ್ಯಾಸ್ ಸಿಲಿಂಡರ್ ಬಳಸುವಾಗ ಗ್ಯಾಸ್ ಸಿಲಿಂಡರನಲ್ಲಿ ಖಾಲಿ ಆಗುವ ಅನಿಲದ ಪ್ರಮಾಣ ಗೊತ್ತಾಗುವುದಿಲ್ಲ ಹಾಗೂ ಅ ಅನಿಲಸೋರಿಕೆಯಾಗುವುದು ತಿಳಿಯದಿರುವುದು	"ಈ ಉತ್ಪನ್ನವು ಿಲಿಂಡರ್‌ನಲ್ಲಿ ಖಾಲಿಯಾಗುವ ಅನಿಲದ ಪ್ರಮಾಣ ಹಾಗೂ ಸೋರಿಕೆಯನ್ನು ಸುಲಭವಾಗಿ ಅರಿಯುವಂತೆ ತಯಾರಿಸಲಾಗಿದೆ
+ ಉತ್ಪನ್ನದ ಕಾರ್ಯವಿಧಾನ
+ ಲೋಡ್ ಮೌಂಟ್ ಮೇಲೆಸಿಲಿಂಡರಿಟ್ಟಾಗ ಅದರ ಕೆಳಗಿರುವ ಲೊಡ್ ಸೇಲ್ ಒತ್ತಡವನ್ನು HX711amplifier ಗೆ ಕಳುಹಿಸುತ್ತದೆಅಲ್ಲಿಂದ aurdino nano ಗೆ ಕಳುಹಿಸಿದರೆ ಅದು ವಿದ್ಯುತ್ ಸಂಕೇತಗಳಾಗಿ ಪರಿವರ್ತನೆಗೊಂಡು ಎಲ್ಸಿಡಿ ಡಿಸ್ಪ್ ಗೆ ರವಾನಿಸಿದಾಗ ಆ ಪರದೆಯ ಮೇಲೆ ಸಿಲಿಂಡರ್ ನಲ್ಲಿರುವ ಅನಿಲದ ಪ್ರಮಾಣವನ್ನುಶೇಕಡವಾರು ರೂಪದಲ್ಲಿ ತೋರಿಸುತ್ತದೆ ಹಾಗೂಏನಾದರೂ ಸಿಲಿಂಡರ್ ಹಾಗೂಸ್ಟೌನಿಂದ ಅನಿಲ ಸೋರಿಕೆ ಆದರೆ ಸುಲಭವಾಗಿ ಅರಿಯುವಂತೆಈ ಉಪಕರಣದಲ್ಲಿ ಅಳವಡಿಸಿರುವ ಗ್ಯಾಸ್ ಸೆನ್ಸರ್ ಆ ಅನಿಲವನ್ನು ಹೀರಿಕೊಂಡು ತಕ್ಷಣವೇ ಬಜಾರ್ ನಲ್ಲಿ ಶಬ್ದವನ್ನು ಉಂಟು ಮಾಡಿ ಎಲ್ಇಡಿ ವಿದ್ಯುತ್ ದೀಪ ಬೆಳಗುತ್ತದೆ ಇದರಿಂದ ಅನಿಲ ಸೋರಿಕೆಯಾಗಿದೆ ಎಂದು ಸುಲಭವಾಗಿ ತಿಳಿಯಲು ಸಾಧ್ಯವಾಗುತ್ತದೆ ಇದರಿಂದ ಆಗುವ ಅವಘಡವನ್ನು ತಪ್ಪಿಸಲು ಸಹಾಯಕವಾಗಿದೆ"	https://drive.google.com/uc?export=download&id=1rLitESc6hfNeVAC3SI8a5oRYFQ9uje6b	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The integration of weight sensing and gas leakage detection is a well-known concept in student projects with limited original adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution effectively addresses two critical household safety and convenience issues related to LPG cylinders.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The project uses standard, readily available components like Arduino, load cells, and gas sensors, making it highly implementable.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system is modular and can be easily replicated or mass-produced for wider household adoption.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The device is durable and provides long-term safety benefits, though it requires periodic sensor calibration and power management.""
+    },
+    ""Image_contains_summary"": ""The image shows a functional prototype of a gas cylinder monitoring system using an Arduino Nano, a load cell platform for weight measurement, an LCD display, a gas sensor for leakage detection, and a buzzer/LED alarm.""
+}"
+28490	ಮಳೆಗಾಲ ಸಮಯದಲ್ಲಿ ರೈತರು ತಮ್ಮ ರಾಶಿಯ ಧಾನ್ಯಗಳನ್ನು ಗೋಣಿ ಚೀಲದಲ್ಲಿ ತುಂಬಲು ಆಳುಗಳ ಕೊರತೆಯಿಂದ ಕಷ್ಟಕರವಾಗುತ್ತಿತ್ತು	"1 take old iron plate
+ 2 cut iron plates in rectangle shape and weld. As a base
+ 3 weld another rectangle iron plates perpendicular to base iron plate
+ 4 world the iron play rods to the horizontal iron plate 
+ 5 make iron rectangle box it is used for crane piling 
+ 6 weld the hooks to the whole the bag
+ 7 XD wheels to the model to moving purpose"	https://drive.google.com/uc?export=download&id=1sTeD4QT-rPEaigk0q9mbnev81QMbjbtf	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""The idea of a mechanical aid for filling grain bags is practical and shows clear student effort in addressing a local agricultural labor problem.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""This device directly addresses the labor-intensive task of filling grain bags, providing a clear benefit to farmers during harvest seasons.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The design is straightforward, utilizing basic mechanical principles and accessible materials, making it highly implementable.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The design is simple enough to be easily replicated and adapted for various bag sizes and agricultural settings.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""The device is made of durable materials and requires minimal maintenance, ensuring long-term utility for farmers.""
+    },
+    ""Image_contains_summary"": ""The image shows two students standing behind a prototype of a grain-filling trolley, which features a frame, wheels, and a container to hold the grain bag open for easy filling.""
+}"
+30301	ಪ್ರಕೃತಿ ವಿಕೋಪದ ಸಂದರ್ಭದಲ್ಲಿ ತನ್ನನ್ನು ರಕ್ಷಿಸಿಕೊಳ್ಳುವ ಒಂದು ದಾರಿಯಾಗಿದೆ ತೇಲುವ ಮನೆ. ಇದು ಆಧುನಿಕ ತಂತ್ರಜ್ಞಾನವನ್ನು ಬಳಸಿ ನಿರ್ಮಿಸಲಾಗುವ ವಾಸಸ್ಥಳವಾಗಿದೆ.	"ನಿರ್ಮಾಣ ರೀತಿ
+ ತೇಲುವ ಮನೆಯು ಪಂಚಾಂಗ ರಹಿತವಾಗಿರುತ್ತದೆ. ಸಾಮರ್ಥ್ಯವಿರುವ ವಸ್ತುವಿನಿಂದ ನಿರ್ಮಿಸಲಾಗುತ್ತದೆ.
+ ವಿಧಗಳು 
+ 1ತಾತ್ಕಾಲಿಕ ತೇಲುವ ಮನೆ
+ 2 ಶಾಶ್ವತ ತೇಲುವ ಮನೆ
+ ಪ್ರಯೋಜನಗಳು
+ 1ವೇಗದ ನಿರ್ಮಾಣ 
+ 2 ಅರಣ್ಯ ನಾಶ ಕಡಿತ 
+ 3 ಭೂಕಂಪನ ಪ್ರತಿರೋಧ 
+ 4 ಪರಿಸರ ವ್ಯವಸ್ಥೆಯಲ್ಲಿ ಸಹಕಾರಿ
+ 5ಸುಲಭ ಸಾರಿಗೆ
+ 6ಆಕರ್ಷಕ
+ 7ಕಡಿಮೆ ಖರ್ಚು
+ ದುಷ್ಪರಿಣಾಮಗಳು
+ 1ಹೆಚ್ಚಿನ ನಿರ್ವಹಣೆ ಅಗತ್ಯ
+ 2 ಹೆಚ್ಚಿನ ಅಪಾಯದಲ್ಲಿ ಜಲಮಾಲಿನ್
+ 3 ನುರಿತ ಕಾರ್ಮಿಕರ ಅವಶ್ಯಕತೆ
+ 4 ಹವಾಮಾನ ಬದಲಾವಣೆ 
+ 5 ಕಡಿಮೆ ಜೀವಿತಾವಧಿ
+ 
+ ಒಟ್ಟಿನಲ್ಲಿ ತೇಲುವ ಕಟ್ಟಡಕ್ಕೆ ಹೆಚ್ಚಿನ ವೈವಿಧ್ಯಮಯ ಕಚ್ಚಾ ಸಾಮಗ್ರಿಗಳು ಮತ್ತು ಸುಧಾರಿತ ನಿರ್ಮಾಣ ತಂತ್ರಗಳ ಅಗತ್ಯವಿರುತ್ತದೆ, ಹೆಚ್ಚಿನ ತಂತ್ರಜ್ಞಾನದ ಯಂತ್ರೋಪಕರಣಗಳ ಅಗತ್ಯವಿರುತ್ತದೆ, ಅದು ದುಬಾರಿಯಾಗಿದೆ. ಇದಕ್ಕೆ ನುರಿತ ಕಾರ್ಮಿಕರ ಅಗತ್ಯವಿರುತ್ತದೆ, ಇದು ಹೆಚ್ಚು ದುಬಾರಿಯಾಗಿದೆ ಮತ್ತು ಇಡೀ ವ್ಯವಸ್ಥೆಯು ಸಮಾಜಕ್ಕೆ ಹೊಸದಾಗಿರುವ ಕಾರಣ, ಹೆಚ್ಚಿನ ಬೇಡಿಕೆ ಇರಬಹುದು."	https://drive.google.com/uc?export=download&id=1h9qAUAxrS2csXC2Jd51JD8iVWN9nOUgp	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The concept of floating structures is a well-known engineering solution for flood-prone areas, showing limited original innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the idea addresses a critical need for disaster resilience, the proposal lacks a clear mechanism for how the structure would remain stable or functional during actual flood conditions.""
+    },
+    ""Feasibility"": {
+        ""score"": 3,
+        ""reason"": ""The student acknowledges that the project is expensive, requires skilled labor, and complex machinery, making it impractical for standard implementation.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""Due to high costs and technical requirements, scaling this to a community or regional level is highly challenging.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The student correctly identifies significant drawbacks like water pollution risks and maintenance issues, which undermine the long-term sustainability of the design.""
+    },
+    ""Image_contains_summary"": ""The image shows three students standing behind a cardboard model of a 'Government Higher Secondary School', which represents their conceptual idea of a floating building.""
+}"
+36500	ಗ್ರಾಮೀಣ ಪ್ರದೇಶದಲ್ಲಿ ಕೃಷಿ ಆಧಾರಿತ ಬೇಸಾಯ ನಮ್ಮದಾಗಿದ್ದು ಇಲ್ಲಿ ಬಹುತೇಕ ಬೋರೆಲ್ ಗಳನ್ನು ಕೊರೆದಿದ್ದೇವೆ ಬೋರ್ವೆಲ್ ಮೋಟಾರ್ ಕೆಟ್ಟಾಗ ಅದನ್ನು ಹೊರ ತೆಗೆಯಲು ಮೊದಲು ಜನರನ್ನ ಅವಲಂಬಿಸಿದ್ದಿವಿ ಇದು ಜನರಿಗೆ ಹೊರೆಯಾಗುತ್ತಿತ್ತು ನಂತರ ವಿದ್ಯುತ್ ಆಧಾರಿತ ಯಾಂತ್ರಿಕ ಮಷೀನ್ ತಯಾರಿಸಿದ್ದೀವಿ. ಇದು ಕರೆಂಟ್ ಇಲ್ಲದೆ ಇರುವಾಗ ಕಾರ್ಯನಿರ್ವಹಿಸುತ್ತಿರಲಿಲ್ಲ ಆದ್ದರಿಂದ ನಾವು ಸೈಕಲ್ ಮೋಟಾರ್ ಇಂಜಿನ್ ಆಧಾರಿತ ಬೋರ್ ಮೋಟಾರ್ ಮೇಲೆ ಕೆತ್ತುವ ಸಾಧನವನ್ನು ತಯಾರಿಸಿದ್ದೇವೆ ಇದಕ್ಕೆ ಯಾವುದೇ ವಿದ್ಯುತ್ತಿನ ಅವಶ್ಯಕತೆ ಇಲ್ಲ ನಮಗೆ ಯಾವಾಗ ಬೇಕಾದಾಗ ಮೋಟಾರ್ ಇಂಜಿನ್ ಸ್ಟಾರ್ಟ್ ಮಾಡಿ ಬೋರ್ ಮೋಟಾರ್ ಮೇಲೆ ಎತ್ತಬಹುದು	ಸಾಮಾನ್ಯವಾಗಿ ಕೃಷಿಗೆ ನೀರಾವರಿ ಅತಿ ಅವಶ್ಯಕವಾಗಿದೆ ಆದರೆ ನೀರಾವರಿಯಲ್ಲಿ ಬೋರ್ವೆಲ್ನಿಂದ ನೀರನ್ನು ಮೇಲೆ ಕೆತ್ತುವುದು ಅನಿವಾರ್ಯವಾಗಿದೆ ಇಂಥ ಸಂದರ್ಭದಲ್ಲಿ ನಾವು ಬರವಣಿಗೆ ವಿದ್ಯುತ್ ಮೋಟಾರನ್ನು ಅಳವಡಿಸಬೇಕಾಗುತ್ತದೆ ಆ ವಿದ್ಯುತ್ ಮೋಟಾರ್ ಕೆಟ್ಟಾಗ ಅದನ್ನು ಹೊರ ತೆಗೆಯಬೇಕಾಗುತ್ತದೆ ಹೊರ ತೆಗೆಯಲು ಅನೇಕ ಸಾಧನಗಳಿದ್ದರೂ ಅದು ನಿರ್ದಿಷ್ಟ ಸಮಯಕ್ಕೆ ಮಾತ್ರ ಬಳಸಬಹುದಾಗಿದೆ ಆದ್ದರಿಂದ ನಾವು ತಯಾರಿಸಿದ ಈ ಒಂದು ಸಾಧನ ಒಂದು ಚಿಕ್ಕ ಮೋಟರ್ ಸೈಕಲ್ ನ ಇಂಜಿನ ವಾಗಿದ್ದು ಇದನ್ನು ಮೂರು ಕಬ್ಬಿಣದ ಕಂಬಗಳನ್ನು ನಿಲ್ಲುವ ಹಾಗೆ ಮಾಡಿ ಅದಕ್ಕೆ ಜೋಡಿಸಲಾಗಿದೆ ಸೈಕಲ್ ಮೋಟಾರ್ ನ ಇಂಜಿನ್ ಸ್ಟಾರ್ಟ್ ಮಾಡಿದಾಗ ಬೆಲ್ಟ್ ನ ಸಹಾಯದಿಂದ ನಾವು ಮೊಟರನ್ನು ಮೇಲಕ್ಕೆ ಎತ್ತಬಹುದು ಮತ್ತು ಅತಿ ಕಡಿಮೆ ಇಂಧನದಲ್ಲಿ ನಾವು ಮೋಟಾರನ್ನ ಮೇಲೆ ಕೆತ್ತಬಹುದು ಮತ್ತು ಯಾವುದೇ ಸಮಯದಲ್ಲಿ ಮೇಲೆ ಕೆತ್ತಬಹುದು ಇದಕ್ಕೆ ವಿದ್ಯುತ್ ಅಥವಾ ಜಾಸ್ತಿ ಜನರ ಅವಶ್ಯಕತೆ ಇರುವುದಿಲ್ಲ ಆದ್ದರಿಂದ ಇದು ಸಮಾಜಕ್ಕೆ ಅತ್ಯಂತ ಉತ್ತಮ ಸಾಧನವಾಗಿದೆ	https://drive.google.com/uc?export=download&id=1tNVufMMHhTGCH7vC8Pv_JX0YLJV-zOX9	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""While tripod lifting mechanisms are known, the specific adaptation of using a motorcycle engine for portable, off-grid borehole motor retrieval shows practical, independent student thinking.""
+    },
+    ""Usefulness"": {
+        ""score"": 8,
+        ""reason"": ""This solution directly addresses a significant, recurring pain point for rural farmers by providing an off-grid, labor-saving method for borehole maintenance.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The prototype is clearly functional and uses readily available components (motorcycle engine, tripod frame), making it highly practical for local implementation.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The design is simple and modular, allowing it to be easily replicated and deployed in other rural agricultural regions facing similar challenges.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The device is durable and reduces reliance on grid electricity, though it requires fuel and basic mechanical maintenance to remain operational.""
+    },
+    ""Image_contains_summary"": ""The image shows a functional tripod-based lifting mechanism powered by a small engine, used for extracting borehole motors, with students and adults observing the prototype.""
+}"
+36574	ಡ್ರೈವರ್ ನ ನಿರ್ಲಕ್ಷಕ್ಕೆ ಒಳಗಾಗಿ ಅಪಘಾತಗಳು ಸಂಭವಿಸುತ್ತಿದ್ದವು.	ಈ ಸಾಧನವನ್ನು ತಯಾರಿಸಲು ರೇನ್ ಡ್ರಾಪ್ ಸೆನ್ಸಾರ್ ಮತ್ತು ಸರ್ವ ಮೋಟಾರ್ ಆರ್ಡಿನೋ ಬೋರ್ಡ್ ಹಾಗೂ ಬ್ರೆಡ್ ಬೋರ್ಡ್ ಬಳಸಿಕೊಂಡು ನಾವು ಸ್ವಯಂ ಚಾಲಿತ ವೈಪರನ್ನು ನಿರ್ಮಿಸಿದ್ದೇವೆ. ಇದು ಯಾವುದೇ ಸಮಯದಲ್ಲಿ ಮಳೆ ಅಥವಾ ಮಂಜು ಬಂದಾಗ ಯಾವುದೇ ರೀತಿಯ ನಿರ್ವಹಣೆಯ ಅವಶ್ಯಕತೆ ಇಲ್ಲದೆ ಸ್ವಯಂ ಚಾಲಿತವಾಗಿ ಕಾರ್ಯವನ್ನು ಪ್ರಾರಂಭಿಸುತ್ತದೆ ಹಾಗೂ ಮಂಜು ಮತ್ತು ಮಳೆ ನಿಂತಾಗ ಕಾರ್ಯವನ್ನು ಸ್ಥಗಿತಗೊಳಿಸುತ್ತದೆ.	https://drive.google.com/uc?export=download&id=1uGxzf0rj2-IKLRx6ONSk8_Ontb3EJ4cR	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""Automatic rain-sensing wiper systems are a well-known concept in automotive technology and student projects, offering limited novelty.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution provides a practical and functional way to improve driver safety by automating wiper operation during adverse weather.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The use of Arduino, rain sensors, and servo motors is a standard, highly feasible approach for building this type of prototype.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""While the concept is easily replicable, scaling it to real-world automotive standards requires significant integration and durability testing.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system is energy-efficient and promotes safety, though long-term durability in harsh outdoor environments remains a consideration.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype of an automatic wiper system mounted on a toy vehicle, utilizing an Arduino Uno, a breadboard, a rain sensor (FC-37), and a servo motor to demonstrate the concept.""
+}"
+38690	ವಯಸ್ಸಾದ ದುರ್ಬಲ ಅಥವಾ ಅಂಗವಿಕಲ ರಿಗೆ ಅಥವಾ ಹೆಚ್ಚು ಸಮಯ ಹೊರಗೆ ಕೆಲಸ ಮಾಡುವವರಿಗೆ ಮನೆ ಸ್ವಚ್ಛಗೊಳಿಸಲು ಸಮಯ ಇರುವುದಿಲ್ಲ	"ಕಸ ಇರುವ ಪ್ರದೇಶಕ್ಕೆ ವ್ಯಾಕ್ಯೂಂ ಕ್ಲೀನರ್ ಪೈಪನ್ನು
+ ಅಳವಡಿಸಿದಾಗ ಕಸವನ್ನು ಒಳಗಡೆ ಎಳೆದುಕೊಳ್ಳುತ್ತದೆ."	https://drive.google.com/uc?export=download&id=1bNCJgV8VrEfI1CZZx8_mnCuEIOj89GRg	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The DIY vacuum cleaner made from a plastic bottle is a very common school project and lacks originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While it can pick up small paper scraps as shown, its utility for actual home cleaning is extremely limited due to low suction power and small capacity.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The prototype is simple to construct using readily available household materials.""
+    },
+    ""Scalability"": {
+        ""score"": 2,
+        ""reason"": ""This manual DIY approach cannot be scaled to address the cleaning needs of elderly or disabled individuals effectively.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""While it repurposes a plastic bottle, the device's lack of durability and efficiency limits its long-term sustainable use.""
+    },
+    ""Image_contains_summary"": ""The image shows a student-made, handheld DIY vacuum cleaner prototype constructed from a plastic bottle, being used to pick up small paper scraps from a table.""
+}"
+40862	ನಮ್ಮ ಸುತ್ತ ಮುತ್ತ ಹಲವಾರು ಜನರು ಭಾರವಾದ ವಸ್ತುಗಳನ್ನು ಹೊತ್ತುಕೊಂಡು ಹೋಗುವುದನ್ನು ನಾವು ನೋಡಿದಾಗ ಅದಕ್ಕೆ ಸರಳ ಉಪಾಯ ಕಂಡು ಹಿಡಿಯಬೇಕೆಂದು ಅನಿಸಿತು ಅದರ ಫಲವೇ ಜಗ್ಗುವ ಗಾಡಿ	ದಿನನಿತ್ಯ ನಮ್ಮ ಶಾಲೆಯಲ್ಲಿ ಮಧ್ಯಾಹ್ನದ ಬಿಸಿ ಊಟ ಮತ್ತು ಬಾಳಿಯನ್ನು ನೀಡುವಾಗ ನಮ್ಮ ಶಾಲೆಯಲ್ಲಿ ಇರತಕ್ಕಂತಹ ವ್ಯಕ್ತಿಗಳು ಅವುಗಳ ಎತ್ತುವುದನ್ನೇ ನೋಡಿದ್ದೇವೆ ಅದೇ ರೀತಿ ಹೊಲಗಳಲ್ಲಿ ಬಹಳಷ್ಟು ಜನರು ವ್ಯವಸಾಯದ ವಸ್ತುಗಳನ್ನು ತರುವುದನ್ನು ನೋಡಿದ್ದೇವೆ ಇದರಿಂದ ನಾವು ಚಿಕ್ಕ ಗಾಡಿಯನ್ನು ತಯಾರಿಸಿ ಅದರ ಮೇಲೆ ಯಾವ ಬೇಕಾದ ವಸ್ತುಗಳನ್ನು ಒಂದು ಸ್ಥಳದಿಂದ ಇನ್ನೊಂದು ಸ್ಥಳಕ್ಕೆ ತೆಗೆದುಕೊಂಡು ಈಸಿಯಾಗಿ ಹೋಗಬಹುದು	https://drive.google.com/uc?export=download&id=1J-W76j7gAXaLN_LoGDWW1sdUo9l1iYSU	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of a hand-pulled cart is a very common and traditional solution for transporting goods, lacking significant innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""It provides a practical and effective solution for reducing physical strain when carrying heavy loads in school or farm environments.""
+    },
+    ""Feasibility"": {
+        ""score"": 9,
+        ""reason"": ""The design is straightforward, uses readily available materials, and is highly practical to construct and use.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""Such simple carts are easily replicable and can be adapted for various local transport needs in rural or institutional settings.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""The solution is durable, requires no external energy source, and relies on manual effort, making it highly sustainable.""
+    },
+    ""Image_contains_summary"": ""The image shows two students demonstrating a simple, manually operated two-wheeled cart made from recycled or repurposed materials, used for carrying crates.""
+}"
+41019	ಸರ್ಕಾರಕ್ಕೆ ಆರ್ಥಿಕ ಹೊರೆ ಗೇಟ್ ಮನ್ ಗಳ ಅಜಾಗರುಕತೆಯಿಂದ ವಾಹನಗಳ ಅಪಘಾತ ಉಂಟಾಗುತ್ತಿದ್ದವು ಹಗಲು ರಾತ್ರಿ ಎಲ್ಲ ಸಮಯದಲ್ಲೂ ಕಾರ್ಯನಿರ್ವಹಣೆ	"ಸ್ವಯಂ ಚಾಲಿತ ರೈಲ್ವೆ ಗೇಟ್ ಅನ್ನು ತಯಾರಿಸಲು ಬಳಸಿದ ಉಪಕರಣಗಳು I R ಸೆನ್ಸರ್ ಸರ್ವೋಮೋಟರ್ ಆರ್ಡಿನೋ ಬೋರ್ಡ್ ಬಜರ್ ಮುಂತಾದವುಗಳು
+  ಸ್ವಯಂ ಚಾಲಿತ ರೈಲ್ವೆ ಗೇಟ್ ಇದು ಸ್ವಯಂ ಚಾಲಿತವಾಗಿ ಗೇಟ್ ಹಾಕುವುದು ಮತ್ತು ಹೇಗೆಂದರೆ ನಾವು ರೈಲ್ವೆ ಗೇಟ್ನಿಂದ ಸ್ವಲ್ಪ ದೂರದಲ್ಲಿ ಅಳವಡಿಸಿದ್ದೇವೆ ಅದು ಅಲ್ಲಿ ರೈಲು ಬಂದ ತಕ್ಷಣ ಸೆನ್ಸರ್ ಸೆನ್ಸ್ ಮಾಡಿ ಅದು ರೈಲ್ವೆ ಗೇಟ್ ಹಾಕುವಂತೆ ಮಾಡುತ್ತದೆ ನಂತರ ರೈಲು ಸಂಪೂರ್ಣವಾಗಿ ದಾಟಿದ ನಂತರ ಅದರ ನಂತರದಲ್ಲಿ ಅಳವಡಿಸಿದ್ದ ಸೆನ್ಸರ್ ಸೆನ್ಸ್ ಮಾಡಿ ರೈಲ್ವೆ ಗೇಟ್ ತೆಗೆಯುವಂತೆ ಮಾಡುತ್ತದೆ ಇದರಿಂದ ಗೇಟ್ ಮನ್ಗಳ ಅವಶ್ಯಕತೆ ಇರುವುದಿಲ್ಲ ಮತ್ತು ಇದು ಹಗಲು-ರಾತ್ರಿ ಎರಡು ಸಮಯದಲ್ಲಿ ಕಾರ್ಯನಿರ್ವಹಿಸುವುದರಿಂದ ರಾತ್ರಿ ವೇಳೆಯಲ್ಲಿ ಗೆಟ್ ಮನ್ ಗಳು ನಿದ್ದೆಗೆ ಜಾರುವ ಸಂದರ್ಭವಿತ್ತು ಆದರೆ ಇದು ಎಲ್ಲ ಸಮಯದಲ್ಲೂ ಕಾರ್ಯನಿರ್ವಹಿಸುತ್ತದೆ
+  ಈ ಮಾದರಿಯನ್ನು ನಾವು ಪಾರ್ಕಿಂಗ್ ಗೇಟ್ಗಳಲ್ಲಿ ಮತ್ತು ಮನೆಯ ಗೇಟುಗಳಿಗೂ ಕೂಡ ಅಳವಡಿಸಬಹುದು
+  ಗೇಟ್ ಮನ್ ಗಳು ನಿದ್ದೆಗೆ ಜಾರಿದಾಗ ಮತ್ತು ರಾತ್ರಿ ಸಮಯದಲ್ಲಿ ಸಮಸ್ಯೆಯಾಗುತ್ತಿತ್ತು ಮತ್ತು ಸರಕಾರಕ್ಕೆ ಗೇಟ್ ಮನ್ ಗಳ ಸಂಬಳವೂ ಕೂಡ ಆರ್ಥಿಕ ಹೊಣೆಯಾಗುತ್ತಿತ್ತು"	https://drive.google.com/uc?export=download&id=18m5k4I7YH6sstuME-BMXJmlAykIDeGst	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The concept of an automated railway gate using sensors and microcontrollers is a well-known project and lacks significant originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution effectively addresses the problem of human error and operational costs in railway gate management.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The use of Arduino, IR sensors, and servo motors is a standard, practical, and highly achievable approach for a prototype.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""While the concept is replicable for small-scale applications like parking or private gates, scaling to national railway infrastructure requires immense safety and reliability standards.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system reduces human dependency and operational costs, though it requires consistent power and maintenance to remain functional.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical prototype of an automated railway gate system, featuring a model track, a gate barrier, and a small toy vehicle, confirming the student's explanation of the sensor-based gate mechanism.""
+}"
+43231	ಕೆರೆಯ ಮಧ್ಯಭಾಗ ಅಥವಾ ನದಿಯ ಮಧ್ಯಭಾಗದಲ್ಲಿರುವ ಕಸವನ್ನು ಸ್ವಚ್ಛಗೊಳಿಸಲು ಮತ್ತು ಅದನ್ನು ಸ್ವಚ್ಛಗೊಳಿಸಲು ಮಾನವನನ್ನು ಬಳಸಿದ್ದಲ್ಲಿ ಅವರ ಪ್ರಾಣ ಹಾನಿಯನ್ನು ತಪ್ಪಿಸಲು	ನಾವು ಒಂದು ಕೆರೆಗೆ ಭೇಟಿ ಕೊಟ್ಟಂತಹ ಸಮಯದಲ್ಲಿ ಆ ಕೆರೆಯು ಮಧ್ಯಭಾಗದಲ್ಲಿ ಬಹಳ ಗಲೀಜು ಆಗಿರುವುದು ಕಂಡು ಬಂತು ಅವಾಗ ನಾವು ಆ ಮಧ್ಯಭಾಗದಲ್ಲಿರುವ ಕಸವನ್ನು ತೆಗೆದುಹಾಕಲು ಈ ಮಾದರಿಯನ್ನು ತಯಾರಿಸಿದೆವು ಈ ಬ್ಲೂಟೂತ್ ಆಧಾರಿತ ಬೋಟ್ Andriod ಫೋನ್‌ನಿಂದ ನಿಯಂತ್ರಿಸಲಾಗುತ್ತದೆ, ಅದು ರೋಬೋಟ್‌ಗೆ ಲಗತ್ತಿಸಲಾದ ಇತರ andriod ಮೊಬೈಲ್ ಫೋನ್‌ಗೆ ಬ್ಲೂಟೂತ್ ಸಂಪರ್ಕವನ್ನು ಮಾಡುತ್ತದೆ. ಬ್ಲೂಟೂತ್ ಸಂಪರ್ಕವು ರೂಪುಗೊಂಡ ತಕ್ಷಣ, ಮೊಬೈಲ್ ಅಪ್ಲಿಕೇಶನ್‌ನಲ್ಲಿ ಯಾವುದೇ ಗುಂಡಿಯನ್ನು ಒತ್ತಿದರೆ, ಒತ್ತಿದ ಬಟನ್‌ಗೆ ಸಂಬಂಧಿಸಿದ ಕೋಡ್ ಅನ್ನು ಬ್ಲೂಟೂತ್ ಮಾಡ್ಯೂಲ್‌ನ ಇನ್ನೊಂದು ತುದಿಯಲ್ಲಿ ಸ್ವೀಕರಿಸಲಾಗುತ್ತದೆ. ರೋಬೋಟ್‌ನಲ್ಲಿ ಜೋಡಿಸಲಾದ ಬ್ಲೂಟೂತ್ ಸಹಾಯದಿಂದ ರೋಬೋಟ್ ಈ ಕೋಡ್ ಅನ್ನು ಗ್ರಹಿಸುತ್ತದೆ. ಸ್ವೀಕರಿಸಿದ ಕೋಡ್ ಅನ್ನು ಬ್ಲೂಟೂತ್ ಮಾಡ್ಯೂಲ್ HC-05 ಸಹಾಯದಿಂದ ಮೈಕ್ರೋಕಂಟ್ರೋಲರ್ ಮೂಲಕ ಸಂಸ್ಕರಿಸಲಾಗುತ್ತದೆ. ಕೋಡ್ ಸಂಖ್ಯೆಯನ್ನು ಮೈಕ್ರೊಕಂಟ್ರೋಲರ್ಗೆ ಕಳುಹಿಸಲಾಗುತ್ತದೆ. ಮೈಕ್ರೊಕಂಟ್ರೋಲರ್ ಯಾವುದೇ ಇನ್‌ಪುಟ್‌ಗೆ ನಿರ್ಧಾರ ತೆಗೆದುಕೊಳ್ಳಲು ಪ್ರೋಗ್ರಾಮ್ ಮಾಡಲ್ಪಟ್ಟಿದೆ ಮತ್ತು ಮೋಟಾರ್ ಡ್ರೈವರ್‌ಗಳಿಗೆ ಅದರ ನಿರ್ಧಾರವನ್ನು ಔಟ್‌ಪುಟ್ ಮಾಡುತ್ತದೆ ಮೋಟಾರ್‌ಗಳನ್ನು ಫಾರ್ವರ್ಡ್ ಅಥವಾ ಬ್ಯಾಕ್‌ವರ್ಡ್ ಚಲನೆ ಅಥವಾ ತಿರುವು ಮತ್ತು ಬಿನ್ ಮೂವ್‌ಮೆಂಟ್‌ಗೆ ಚಾಲನೆ ಮಾಡುತ್ತದೆ.	https://drive.google.com/uc?export=download&id=1-pndoh9E_V5fBkLHKOc4CGjJTdLm-g4K	"{
+    ""Novelty"": {
+        ""score"": 5,
+        ""reason"": ""Remote-controlled waste collection boats are a known concept, but the student's implementation using Bluetooth and mobile app control shows good independent effort.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses the safety and hygiene problem of cleaning water bodies by removing the need for human intervention.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The use of microcontrollers, Bluetooth modules, and motor drivers is a standard and achievable approach for a school-level prototype.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The design can be scaled up for larger water bodies, though it would require more robust materials and power systems for real-world deployment.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system helps in environmental cleaning, but its long-term sustainability depends on the durability of the electronics and the efficiency of the waste collection mechanism.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype of a remote-controlled boat made of cardboard and craft materials, featuring a paddle wheel mechanism and a storage area for collected waste.""
+}"
+45689	ಹಗಲು ಹೊತ್ತು ಸದಾ ದೀಪಗಳು ಉರಿಯುವುದರಿಂದ ವಿದ್ಯುತ್ ನಷ್ಟವಾಗುತ್ತಿತ್ತು	ಈ ಮಾದರಿಯನ್ನು ಸಿದ್ದಗೊಳಿಸಲು ಬಳಸಿದ ಪ್ರಮುಖ ಉಪಕರಣಗಳು ಎಂದರೆIC LM555 ಬೆಳಕಿನ ಕಿರಣಗಳು lDR ಮೇಲೆ ಬಿದ್ದಾಗ ಅಡೆತಡೆ ಉಂಟಾಗಿ lDR ನ ವಿದ್ಯುತ್ ರೋಧ ಹೆಚ್ಚಾಗುತ್ತದೆ ಇದರಿಂದ ವೋಲ್ಟೇಜ್ ಆಗಿ ದೀಪಗಳು ಆರುತ್ತವೆ ನಂತರ ಕತ್ತಲೆಯಾದಾಗ LDR ಇ ಮೇಲೆ ಬೆಳಕು ಬಿಡುವುದು ನೀಡುತ್ತದೆ ಆಗ ಸರ್ಕ್ಯೂಟ್ ಪೂರ್ಣಗೊಳ್ಳುತ್ತದೆ ಮತ್ತು ವೋಲ್ಟೇಜಾಗಿ ಹೆಚ್ಚಾಗಿ ಎಲ್ಲಾ ದೀಪಗಳು ಹತ್ತುತ್ತವೆ ಅಂದರೆ ಬೆಳಕಿದ್ದಾಗ ದೀಪಗಳು ಕತ್ತಲೆಯಾದಾಗ ತನ್ನಿಂದ ತಾನೇ ದೀಪಗಳು ಉರಿಯಲಾರಂಭಿಸುತ್ತವೆ ಇದರಿಂದ ಬೆಳಕಿನ ಅಪವೇಯ ತಪ್ಪುತ್ತದೆ	https://drive.google.com/uc?export=download&id=1CCyYwAXAShDEGQD08Z8Lwy2E-JHsdFoW	"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""The LDR-based automatic street light system is a classic, widely known electronics project with minimal original adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7.0,
+        ""reason"": ""It effectively addresses the real-world problem of energy wastage in street lighting through automation.""
+    },
+    ""Feasibility"": {
+        ""score"": 8.0,
+        ""reason"": ""The solution is highly feasible, using standard, easily accessible components like the 555 timer and LDR.""
+    },
+    ""Scalability"": {
+        ""score"": 7.0,
+        ""reason"": ""The concept is easily scalable and can be implemented across various urban and rural road networks.""
+    },
+    ""Sustainability"": {
+        ""score"": 8.0,
+        ""reason"": ""By reducing unnecessary electricity consumption, the solution promotes energy conservation and long-term sustainability.""
+    },
+    ""Image_contains_summary"": ""The image shows two students presenting a model of an automatic street light system, featuring a road, houses, and the LDR-based circuit board.""
+}"
+61924	ನೀರನ್ನು ನೇರವಾಗಿ ಭೂಮಿಯಲ್ಲಿ ನೀರಾವರಿ ಮಾಡುವುದರಿಂದ, ಮಣ್ಣಿನ ತೇವಾಂಶದಲ್ಲಿನ ವ್ಯತ್ಯಾಸದಿಂದ ಸಸ್ಯಗಳು ಹೆಚ್ಚಿನ ಒತ್ತಡಕ್ಕೆ ಒಳಗಾಗುತ್ತವೆ, ಆದ್ದರಿಂದ ಸಸ್ಯದ ನೋಟವು ಕಡಿಮೆಯಾಗುತ್ತದೆ. ಸಿಸ್ಟಮ್ನ ಸ್ವಯಂಚಾಲಿತ ನಿಯಂತ್ರಣದ ಅನುಪಸ್ಥಿತಿಯು ಅನುಚಿತ ನೀರಿನ ನಿಯಂತ್ರಣ ವ್ಯವಸ್ಥೆಗೆ ಕಾರಣವಾಗುತ್ತದೆ.	"ಕ್ಯೂಸ್ಮಾರ್ಟ್ ನೀರಾವರಿ...
+ 
+ ಸ್ಮಾರ್ಟ್ ನೀರಾವರಿ ಹಲವಾರು ಸಮಸ್ಯೆಗಳನ್ನು ಪರಿಹರಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ, ಅವುಗಳೆಂದರೆ:
+ 
+ ನೀರಿನ ತ್ಯಾಜ್ಯ
+ 
+ ಸ್ಮಾರ್ಟ್ ನೀರಾವರಿ ವ್ಯವಸ್ಥೆಗಳು ಸಸ್ಯಗಳಿಗೆ ಅಗತ್ಯವಿರುವಾಗ ಸರಿಯಾದ ಪ್ರಮಾಣದ ನೀರನ್ನು ಒದಗಿಸುವ ಮೂಲಕ ನೀರಿನ ವ್ಯರ್ಥವನ್ನು ಕಡಿಮೆ ಮಾಡಬಹುದು. ಸಾಂಪ್ರದಾಯಿಕ ನೀರಿನ ವಿಧಾನಗಳು ಅತಿಯಾದ ನೀರುಹಾಕುವುದು, ಆವಿಯಾಗುವಿಕೆ ಮತ್ತು ಅಸಮರ್ಥತೆಗಳಿಂದ 50% ನಷ್ಟು ನೀರನ್ನು ವ್ಯರ್ಥ ಮಾಡಬಹುದು.
+ 
+ ಬೆಳೆ ಇಳುವರಿ
+ 
+ ಸ್ಮಾರ್ಟ್ ನೀರಾವರಿ ವ್ಯವಸ್ಥೆಗಳು ಸಸ್ಯಗಳಿಗೆ ಸೂಕ್ತವಾದ ನೀರನ್ನು ಒದಗಿಸುವ ಮೂಲಕ ಬೆಳೆ ಇಳುವರಿ ಮತ್ತು ಗುಣಮಟ್ಟವನ್ನು ಸುಧಾರಿಸಬಹುದು.
+ 
+ ಪರಿಸರ ರಕ್ಷಣೆ
+ 
+ ಸ್ಮಾರ್ಟ್ ನೀರಾವರಿ ಪರಿಸರ ವ್ಯವಸ್ಥೆಗಳನ್ನು ರಕ್ಷಿಸಲು ಮತ್ತು ನೀರನ್ನು ಕಾಪಾಡಿಕೊಳ್ಳಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ"	https://drive.google.com/uc?export=download&id=1rKIgULQTWzdz6jlAgX5Ag0zAxAeGDanp	"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""Smart irrigation using soil moisture sensors is a widely known and common student project.""
+    },
+    ""Usefulness"": {
+        ""score"": 6.0,
+        ""reason"": ""The system effectively addresses the problem of inefficient water usage and plant stress through automation.""
+    },
+    ""Feasibility"": {
+        ""score"": 7.0,
+        ""reason"": ""The project is highly feasible as it uses standard, easily available components like Arduino and sensors.""
+    },
+    ""Scalability"": {
+        ""score"": 7.0,
+        ""reason"": ""The system can be scaled from small home gardens to larger agricultural plots with appropriate modifications.""
+    },
+    ""Sustainability"": {
+        ""score"": 7.0,
+        ""reason"": ""By optimizing water consumption, the solution promotes long-term resource conservation in agriculture.""
+    },
+    ""Image_contains_summary"": ""The image shows a prototype of a smart irrigation system with an Arduino board, a buzzer, and a soil moisture sensor placed in a potted plant.""
+}"
+2169	Loss of living beings	Many living beings will affect	https://drive.google.com/uc?export=download&id=1tLlkvIXlwzTfIXzhecVRPdJO-QgVJmDQ	"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The submission lacks a clear problem definition and a proposed solution, making it impossible to assess originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""There is no actionable solution provided to evaluate for its effectiveness or utility.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The absence of a defined technical approach or methodology makes the idea infeasible to implement.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""Without a clear concept or solution, there is no basis to determine scalability.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""The submission does not outline any process or mechanism that could be evaluated for sustainability.""
+    },
+    ""Image_contains_summary"": ""The image shows a group of four students holding a model of a small house, but the accompanying text does not explain the function or purpose of the model.""
+}"
+2692	"1.அழுக்கான தயாரிப்பு சூழ்நிலை
+ 2.பாதுகாப்பு சேமிப்பு முறை
+ 3.மாசுபாடு"	"அழுக்கான தயாரிப்பு சூழ்நிலைகள்: விவசாய மற்றும் உணவுப் பொருள் உற்பத்தியாளர் பகுதிகளில் சுகாதார நிபந்தனைகள் குறைவாக இருக்கும்போது,
+ 
+ 
+ 2. பாதுகாப்பான சேமிப்பு முறைகள்: உணவுப் பொருட்களைச் சரியாகச் சேமிக்காத போது, அவை தொற்று மற்றும் அழுக்கால் பாதிக்கப்படலாம். நிலைத்திருக்கும் காலத்தைக் கவனிக்காமல் உணவு பாதுகாப்பு குறைக்கப்படுகிறது.
+ 
+ 
+ 3. மாசுபாடு: pesticides, heavy metals, மற்றும் இவ்வாறான வேதியியல் பொருட்கள் உணவுப் பொருட்களில் உள்ளதால், மக்கள் உடல் நலத்திற்கு பாதிப்புகளை ஏற்படுத்தும்.
+ 
+ 
+ 4. உணவு போலிகள்: உணவுப் பொருட்களின் உண்மைத்தன்மையை உறுதிப்படுத்த முடியாத போது, மக்கள் மோசமான அல்லது பாதிக்கப்பட்ட உணவுகளை சாப்பிடுவார்கள்.
+ 
+ 
+ 5. உணவுப் பாதுகாப்பு விதிமுறைகள்: பல நாடுகளில் உணவுப் பாதுகாப்பு விதிமுறைகள் அல்லது நடைமுறைகள் குறைவாக இருக்கலாம், இதனால் பாதுகாப்பான உணவு கிடைப்பதற்கு கடினமாகிவிடுகிறது.
+ 
+ 
+ 6. பாரம்பரிய விவசாயம்: மூலிகை மற்றும் மரபுச்செல்வத்தைப் பயன்படுத்தாத விவசாயம், உயர் மாசுபாடு மற்றும் அழுக்கின் ஆபத்தை அதிகரிக்கிறது."	https://drive.google.com/uc?export=download&id=1PLOsD58sQTwudJs2I2DrUhsKquzVRi4z	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The submission presents a collection of standard agricultural practices like rainwater harvesting and drip irrigation rather than a novel, unified solution to the stated problems of food safety and contamination.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While the components shown (rainwater harvesting, irrigation) are useful in farming, they do not directly address the specific issues of food contamination, chemical pollutants, or food fraud mentioned in the text.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The components shown in the model are well-established, practical agricultural technologies that are easily implementable.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""These agricultural practices are widely scalable in rural settings, though the submission lacks a clear plan for how they would be implemented at scale.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""Rainwater harvesting and efficient irrigation are inherently sustainable practices that promote long-term resource management.""
+    },
+    ""Image_contains_summary"": ""The image shows a model of a farmstead featuring a cattle shed, a water purification tank, and a rainwater harvesting system, with labels indicating drip irrigation.""
+}"
+5576	கிராமப்புறங்களில் LPG பயன்பாடு அதிகரித்துள்ளது. ஆனால் அவற்றைப் பற்றிய விழிப்புணர்வு அதிகமாக இல்லை. எனவே சிறியவர்கள் மற்றும் வயதானவர்கள் LPG யை பயன்படுத்தும் போது கவன குறைவாக செயல்படுகின்றனர்.	கிராமப்புறங்களில் LPG பயன்பாடு அதிகரித்துள்ளது. ஆனால் அவற்றைப் பற்றிய விழிப்புணர்வு அதிகமாக இல்லை. எனவே சிறியவர்கள் மற்றும் வயதானவர்கள் LPG யை பயன்படுத்தும் போது கவன குறைவாக செயல்படுகின்றனர். இவற்றைப் பயன்படுத்தும் போது அடுப்பை அணைப்பதற்கு மறந்து விடுகின்றனர். எனவே LPG கசிவு ஏற்பட்டு பெரிய விபத்துக்கள் மற்றும் சுற்றுச்சூழல் பாதிப்பு ஏற்படுகிறது எனவே LPG வாயுவின் கசிவு ஏற்பட்டவுடன் தானியங்கியாக LPG கசிவை OFF செய்வதற்கு Sensor உருவாக்கப்படுவதற்கான யோசனையை சமர்ப்பிக்கிறோம்.	https://drive.google.com/uc?export=download&id=11J_qyPteJ9g8eJC3zRvv4I-mPjpWIzLt	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""Automatic LPG leakage detection using sensors is a widely known and common student project concept.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses a critical safety issue in households, providing a practical and necessary benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The concept is technically achievable using standard sensors and microcontrollers, but requires careful engineering for safety-critical gas applications.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The solution is highly replicable and can be easily adapted for various household LPG setups.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The system improves safety and prevents accidents, though it requires long-term maintenance of sensors to remain effective.""
+    },
+    ""Image_contains_summary"": ""The image shows a poster titled 'LPG Awareness' which outlines the problem of unsafe LPG usage by elderly and children, leading to potential leaks and accidents, and proposes an automatic sensor-based shut-off solution.""
+}"
+6606	நீரின் அளவு குறைந்து கொண்டு வருகிறது.	நீரின் அளவை அதிகரிப்பதால் தடுக்க முடியும். நன்றாக வேலை செய்கிறது. மக்கள் அனைவருக்கும் உதவுகிறது.	https://drive.google.com/uc?export=download&id=1BL4QiLDbWN5BnCegBgXUKS7g-TIJfiFS	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The water level indicator is a very common school project and lacks any original or novel adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""While it effectively monitors water levels, it does not solve the underlying problem of water scarcity mentioned in the problem statement.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The prototype is a standard, well-understood electronic circuit that is easily replicable with readily available components.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The system can be easily deployed in various household or small-scale water storage contexts.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""It promotes water conservation by preventing overflow, though it requires basic electronic maintenance.""
+    },
+    ""Image_contains_summary"": ""The image shows a functional water level indicator prototype using a container with sensors at different levels (25%, 50%, 75%, Full) connected to an LED display panel with a buzzer.""
+}"
+8527	நிறைய காட்டு விலங்குகள் இடம்பெறுகிறது இடம்பெயரும் பொழுது வாகனங்களில் சிக்க நேரிடும் அதுமட்டுமல்லாமல் வாகன ஓட்டிகளுக்கு இடையூறாகவும் உள்ளது வாகனங்கள் ஒலிகளால் பாதிப்படைகிறது ஆகவே காட்டு விலங்குகளை பாதுகாக்க காட்டு விலங்குகளின் உடம்பில் reflector பயன்படுத்தி விலங்குகள் சாலைகளில் செல்லும் பொழுது எந்தவிதமான பாதிப்புக்கு உள்ளாகாமல் பாதுகாப்புக்கு சிறந்த வழி	"Reflectorபயன்படுத்தி வனவிலங்குகள் வாகன ஒலி மற்றும்
+ ஒளியை கண்டவுடன் தாங்கள் இடத்திற்குச் சென்று விடும்"	https://drive.google.com/uc?export=download&id=1NnNCA3hvOpjKvqitAN36OCeCfbOcYm6t	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The use of reflectors for wildlife safety is a known concept, though the student has attempted to build a model to demonstrate this application.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the idea aims to prevent accidents, the effectiveness of passive reflectors in scaring animals away from roads is debatable and lacks evidence of behavioral impact.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""Implementing reflectors on wild animals is practically challenging due to the difficulty of tagging or attaching them to diverse species in their natural habitat.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""Scaling this solution would require massive efforts to capture and tag wildlife, which is not logistically or ethically straightforward.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""Reflectors are durable, but their long-term maintenance on wild animals and potential for environmental impact (if lost) are concerns.""
+    },
+    ""Image_contains_summary"": ""The image shows a group of students presenting a model of a road with colored blocks representing vehicles or surroundings, demonstrating their concept of using reflectors for wildlife safety.""
+}"
+8698	வாய்ப்புகள் கிடைக்காதது	"எங்களுக்கு ஒரு கண் பார்வையற்றார்கள் தடுமாறி கீழே விழுதல் அல்லது எங்காவது சென்று ஏற்றிக் கொள்ளுதல் போன்றவற்றை கண்டறிந்து அதற்கான உபயோக உடையை யோசித்தனர். அந்த உடையானது எதிரில் ஏதும் தடுப்புகள் போன்றவை இருந்தால் அதில் மோதிக் கொள்வதற்கு முன்பே 
+  ஒளியை எழுப்பி எச்சரிக்கை செய்கிறது"	https://drive.google.com/uc?export=download&id=154Hi6Y--Uymj57ej3mHrRZC_SjMMiHhe	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of using sensors for visually impaired navigation is a well-known concept, and the student's implementation of integrating them into clothing is a minor variation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution addresses a genuine safety problem for the visually impaired by providing obstacle detection, which is highly beneficial.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the concept is technically possible, the practical integration of multiple sensors into clothing and ensuring user comfort and reliability requires significant engineering effort.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The solution is replicable and could be adapted for different clothing types, though manufacturing and maintenance at scale would be challenging.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The device would require regular battery maintenance and sensor calibration to remain effective over time.""
+    },
+    ""Image_contains_summary"": ""The image illustrates a conceptual design for a 'smart' outfit for the visually impaired, featuring sensors placed on glasses, a shirt, pants, and shoes to detect obstacles and provide warnings.""
+}"
+9679	பெருகி வரும் வாகனப் புகையால் ஓசோன் படலத்தின் அடர்த்தி குறைந்து புவி வெப்பமடைகிறது. புவி வெப்பமடைவதால் பருவகால மாற்றங்கள் நிகழ்ந்து உணவுப்பொருட்களின் உற்பத்தி பாதிக்கப்படுகிறது.	வாகனங்களின் புகை போக்கிகளுக்குள் கார்பன் டை ஆக்சைடு வடிகட்டியை பொருத்துதல்.	https://drive.google.com/uc?export=download&id=1Vk17lOG3OCW9xW2LDk5ehHbSKLJ5qmrZ	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The concept of installing filters in vehicle exhaust systems is a well-known, existing solution for reducing vehicular emissions.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the intention to reduce pollution is clear, the effectiveness depends entirely on the filter material and design, which are not specified.""
+    },
+    ""Feasibility"": {
+        ""score"": 4,
+        ""reason"": ""Implementing an effective CO2 filter on vehicle exhausts is technically challenging due to back-pressure issues and the need for frequent replacement of filter media.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""Scalability is limited by the need for standardized, cost-effective, and durable filter technology that can be integrated into diverse vehicle models.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The sustainability of the solution depends on the disposal or recycling of the used filters, which could create secondary waste issues.""
+    },
+    ""Image_contains_summary"": ""The image shows a cardboard model of a car with a small pipe-like structure attached at the rear, representing the proposed exhaust filter.""
+}"
+10064	பேட்ரி	It was explained in our video	https://drive.google.com/uc?export=download&id=1Bh_WLaoqsnYfmoPES_2FhqJANaLlPW_n	"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The submission lacks a clear problem statement and solution description, making it impossible to evaluate for novelty.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""Without a defined problem or solution, the project's usefulness cannot be determined.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The lack of technical details or explanation prevents an assessment of feasibility.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""The project's potential for scaling cannot be assessed due to the absence of project details.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""Sustainability cannot be evaluated as the core concept of the project is not provided.""
+    },
+    ""Image_contains_summary"": ""The image shows a group of five students standing behind a table with a metal bowl, a blue water bottle, and a small plastic bottle, but no clear innovation or project details are visible.""
+}"
+10990	மக்களுக்கு நேரடியாக நீரைப் பயன்படுத்துவதற்கு மின் மோட்டார் தேவை	Current dc motor.poor people	https://drive.google.com/uc?export=download&id=1wobSsY-5JUejlFDu9gEISTMF70LACIbv	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The use of a small DC motor for water pumping is a common, well-known project and lacks original innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 3,
+        ""reason"": ""While it demonstrates the concept of pumping, the solution is too small-scale to address the actual water needs of people.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The prototype is simple and easy to build, but its practical application for real-world water usage is limited by power and capacity.""
+    },
+    ""Scalability"": {
+        ""score"": 2,
+        ""reason"": ""This specific setup cannot be scaled to provide meaningful water access for households or communities.""
+    },
+    ""Sustainability"": {
+        ""score"": 3,
+        ""reason"": ""Battery-powered motors are not a sustainable long-term solution for water access due to battery waste and limited power.""
+    },
+    ""Image_contains_summary"": ""The image shows a small DC motor connected to a battery and a plastic tube, demonstrating a basic water pump prototype.""
+}"
+20669	அசுத்தமான தண்ணீரை நல்ல குடிநீராக மாற்றுதல்	நீர் வடிகட்டியின் மூலம் சுத்தமான குடிநீரை பெறுதல்	https://drive.google.com/uc?export=download&id=1rX7MAxr4fihnVqmg7lJu5q4MBg5D1Eyu	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The project is a standard, widely known science experiment demonstrating multi-stage water filtration using layers of materials like sand and charcoal.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While it effectively demonstrates the basic principle of filtration, it is a small-scale model and does not provide a comprehensive solution for potable water production.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The model is highly feasible as it uses accessible, low-cost materials that are easy to assemble for educational purposes.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""As a small-scale model, it is not directly scalable to provide drinking water for communities without significant engineering and safety modifications.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The filtration layers require frequent replacement to maintain effectiveness, which limits its long-term operational sustainability.""
+    },
+    ""Image_contains_summary"": ""The image shows a multi-stage water filtration model constructed with clear containers arranged in a step-like structure, demonstrating the process of filtering water through different layers.""
+}"
+24811	எலக்ட்ரிக் கார்களின் விலை அதிகமாக உள்ளது. சார்ஜ் போடுவதற்கு குறைந்த இடமே உள்ளது. அதிக தூரம் பயணம் செய்ய முடிவதில்லை. வெப்பநிலை இடத்திற்கு இடம் வேறுபடுகிறது.	எலக்ட்ரிக் கார்களை பயன்படுத்துவதால் சுற்றுப்புறம் பாதுகாக்கப்படுகிறது. குறைந்த தூரம் பயணம் செய்பவர்களுக்கு உதவியாக இருக்கும். அதிக வெப்பநிலை உள்ள இடங்களில் பயன்படுத்தலாம் . குளிர் பிரதேசங்களில் தவிர்க்கலாம்.	https://drive.google.com/uc?export=download&id=1ARe7dywFPNKQsKosH0I12nOcU1jFDc9u	"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The submission identifies common challenges of electric vehicles without proposing any original solution or innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""The response describes existing limitations of electric vehicles rather than providing a solution to address them.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""No actionable implementation plan or solution is provided to evaluate.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""As there is no proposed solution, there is no potential for scalability.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""The submission does not offer a sustainable solution, only a general observation of environmental impacts.""
+    },
+    ""Image_contains_summary"": ""The image contains a list of challenges associated with electric vehicles, such as limited range, lack of charging infrastructure, and performance issues in different temperatures, but does not propose a solution.""
+}"
+25223	என்னுடைய யோசனை EASY BOARD RUBBING. ஆசிரியர்கள் மற்றும் மாணவர்கள் கரும்பலகையை பக்கத்தில் இருந்து சுத்தம் செய்யும் போது பாதிப்பிற்கு உள்ளாகிறார்கள்.எனவே என்னுடைய யோசனைப் படி கார்களில் உள்ள wiper போல வைத்து கரும்பலகைகளுக்கு அடியில் வைத்து ஒரு switch மூலம் கட்டுப்படுத்த முடியும். இதனால் யாருக்கும் உடல் உபாதைகள் ஏற்படாது.	"என்னுடைய யோசனை EASY BOARD RUBBING. ஆசிரியர்கள் மற்றும் மாணவர்கள் கரும்பலகையை பக்கத்தில் இருந்து சுத்தம் செய்யும் போது பாதிப்பிற்கு உள்ளாகிறார்கள்.எனவே என்னுடைய யோசனைப் படி கார்களில் உள்ள wiper போல வைத்து கரும்பலகைகளுக்கு அடியில் வைத்து ஒரு switch மூலம் கட்டுப்படுத்த முடியும். இதனால் யாருக்கும் உடல் உபாதைகள் ஏற்படாது.
+ 
+ எங்களுடைய தீர்வு நன்றாக வேலை செய்கிறது.
+ 
+ ஆசிரியர்கள் மற்றும் மாணவர்களுக்கு உதவுகிறது."	https://drive.google.com/uc?export=download&id=1MHzpIBeCWuqiAHtQDOeZhVful3Pu7n7S	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The concept of an automated blackboard wiper is a known idea, and the wiper-style mechanism is a common adaptation.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""It addresses a genuine problem of physical strain for teachers, providing a practical, albeit simple, solution.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The mechanism is conceptually simple to build, but integrating it effectively onto existing blackboards requires careful mechanical planning.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""It could be adapted for different blackboard sizes, but installation on existing boards in various schools presents a moderate logistical challenge.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""It is a mechanical solution that, if built with durable materials, could have a reasonable lifespan with minimal maintenance.""
+    },
+    ""Image_contains_summary"": ""The image provides a simple sketch showing a wiper-like mechanism attached to a blackboard, illustrating the proposed automated cleaning system.""
+}"
+27837	"நாங்கள் ஆய்விற்காக நாமக்கல் மாவட்டம், கொல்லிமலை வட்டம் ,குண்டூர் நாட்டில் உள்ள நத்துக்குழிபட்டி மற்றும் அதனை சுற்றி உள்ள தமிழ்நாடு அரசு, பள்ளி கல்வித்துறையில் உள்ள மலைவாழ் பகுதியில் அமைந்துள்ள பள்ளிகளில் படிக்கும் மாணவர்களிடம் சென்று முதலில் கல்வி மற்றும் அவர்கள் எதிர்கொள்ளும் பிரச்சனைகள் சார்ந்த வினாபட்டியலைக் கொண்டு ஆய்வு மேற்கொண்டோம். அடுத்ததாக , அவர்களின் விடைகளில் இருந்து சில ஆலோசனைகளை பெற்றுக் கொண்டோம்.
+ 
+  ஒவ்வொரு நாளும் அவர்கள் எவ்வகையான பிரச்சனைகளை சந்திக்கிறார்கள் என்பதை அறிந்து கொள்ளும் வகையில் எங்களது ஆய்வு அமைக்கப்பட்டது. மேலும் இந்த ஆய்வின் மூலம் மாணவ, மாணவிகள் ஒவ்வொரு நாளும் தாங்கள் எதிர்கொள்ளும் பிரச்சனைகளை கேட்டறிந்து அதன் மூலம் அவர்களின் பிரச்சனைகளுக்கு தீர்வு காணும் வகையில் எங்களது ஆய்வு மேற்கொள்ளப்பட்டது"	"இதில் மொத்தமாக 32 + விதத்தில் மாணவர்களுக்கு பயன்படும் வகையில் இந்த ப்ராஜெக்ட் வடிவமைக்கப்பட்டுள்ளது. இதை ஏழை எளிய மாணவர்களும் தங்களுக்கு கிடைக்கும் பொருட்களை வைத்துக் கொண்டு தாங்களே மிகக் குறைந்த செலவில் எளிதில் உருவாக்கி கொள்ளும் வகையில் மிக மிக எளிமையாக வடிவமைக்கப்பட்டுள்ளது. 
+ 
+ • 1.WRITING TABLE 
+ • 2. EXAM PAD 
+ • 3.CHESS BOARD 
+ • 4. LEAF FILE PROJECT WORK PURPOSE 
+ • 5.IMPORTANTLY FILES FOR CERTIFICATE PURSE 
+ • 6. LED LIGHT WITHOUT ELECTRICITY OR LOW LIGHT 
+ • 7. SMALL TABLE FAN 
+ • 8.VEGETABLE CUTTING PURPOSE 
+ • 9.LUNCH TIME DINING TABLE 
+ • 10.FIRST AID BOX ETC..
+ இதில் மொத்தமாக 32+ விதத்தில் மாணவர்களுக்கு பயன்படும் வகையில் இந்த ப்ராஜெக்ட் வடிவமைக்கப்பட்டுள்ளது.
+ இதை ஏழை எளிய மாணவர்களும் தங்களுக்கு கிடைக்கும் பொருட்களை வைத்துக் கொண்டு தாங்களே மிகக் குறைந்த செலவில் எளிதில் உருவாக்கி கொள்ளும் வகையில் மிக மிக எளிமையாக வடிவமைக்கப்பட்டுள்ளது. 
+ எதிர்காலத்தில் இவ்வடிவமைப்பில் பல்வேறு நவீன தொழில்நுட்பத்தை புகுத்தி , மெருகேற்றி அரசுப் பள்ளி மாணவர்களுக்கு வழங்கலாம்."	https://drive.google.com/uc?export=download&id=1RBlDnBfpd-fGnW_emdH6lyfJRvGjTdz3	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The idea of a multi-purpose school bag is a known concept, though the student's effort to tailor it for rural students in hilly areas shows some original intent.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""The proposed list of features addresses various student needs, but the practicality of integrating 32+ functions into a single bag is questionable.""
+    },
+    ""Feasibility"": {
+        ""score"": 4,
+        ""reason"": ""While the student claims it is easy to make, the actual engineering required to combine these diverse functions into a portable bag is highly complex and not clearly explained.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""The concept could be adapted for other regions, but the design would need significant refinement to be mass-produced and functional.""
+    },
+    ""Sustainability"": {
+        ""score"": 5,
+        ""reason"": ""The use of locally available materials is a sustainable approach, though the long-term durability of a multi-functional bag is uncertain.""
+    },
+    ""Image_contains_summary"": ""The image shows two students standing next to a trolley-style school bag labeled 'SMART SCHOOL BAG FOR KOLLEHILLS SCHOOL STUDENTS', which serves as the physical prototype for their multi-purpose project.""
+}"
+4328	ആഗോളതാപനം കാരണം ഇന്ന് ജലദൗർലഭ്യമുണ്ട്.എല്ലാവരും പൈപ്പ് വെള്ളത്തെ ആശ്രയിക്കുന്നു.നല്ല കിണറുകളുണ്ടെങ്കിലും മൂടുന്നു.കാരണം കിണർ വൃത്തിയാക്കാൻ സാധിക്കുന്നില്ല.വായു സഞ്ചാരം കുറവായതു കാരണം അപകടമാണ്.ഇതിനാൽ ഗ്രാമീണർ പോലും കിണർ മൂടി പൈപ്പ് ജലത്തെ ആശ്രയിക്കുന്നു.ഇത് ഭാവിയിൽ കിണർ വെള്ളവുമില്ല,പൈപ്പ് വെള്ളവുമില്ല എന്ന സ്ഥിതിയിലെത്തിക്കും.	കിണർ വൃത്തിയാക്കാനായി തൊഴിലാളികൾക്ക് സബ്‍സിഡിയോടെ ഉപയോഗിക്കാവുന്ന ഒരു യന്ത്രം ആണ് ഇത്.ഇതിൽ രണ്ട് റോപ്പും ഒരു മോട്ടോറും ബക്കറ്റും ചെളിയും മാലിന്യവും നീക്കാനായി ഒരു കോരികയും ഉണ്ടായിരിക്കും.കിണർ വെള്ളം മോട്ടോർ അടിച്ച് വറ്റിച്ച ശേഷം കരയിൽ നിന്നു കൊണ്ട് തൊഴിലാളി ഇതിനെ താഴേയ്ക്ക് ഇറക്കുന്നു.യന്ത്രത്തിലെ മോട്ടോർ പ്രവർത്തിപ്പിച്ച് ചെളി കോരുന്നു.തുടർന്ന് കോരികയെ പതുക്കെ യന്ത്രസഹായത്തോടെ ചരിച്ച് അടുത്ത റോപ്പിൽ ഇറക്കുന്ന ബക്കറ്റിലേയ്ക്ക് ഈ ചെളിയും മാലിന്യവും നിക്ഷേപിക്കുന്നു.തുടർന്ന് മോട്ടോർ പ്രവർത്തിപ്പിച്ച് റോപ്പിനെ കരയിലേയ്ക്ക് വലിച്ച് ബക്കറ്റിലെ ചെളി കളഞ്ഞ ശേഷം പ്രവർത്തനം തുടരുന്നു.ഇങ്ങനെ വായു സഞ്ചാരമില്ലാത്ത കിണർ അപകടരഹിതമായി വൃത്തിയാക്കാം.തോടുകളും മറ്റും വൃത്തിയാക്കാനും ഇതുപയോഗിക്കാം.	https://drive.google.com/uc?export=download&id=1GiO5rsfddIM_pUX8tTXpAtyg3LG7qnsx	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""The idea of a remote-operated well-cleaning device is a practical and creative response to a genuine safety issue in rural areas.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""It directly addresses the safety risks of manual well cleaning, which is a significant and relevant problem.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""The mechanism is conceptually sound and achievable, though the real-world engineering of a robust, water-resistant device requires careful execution.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The design is simple enough to be replicated and used in various rural contexts for well and small canal maintenance.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""By enabling safer well maintenance, it encourages the continued use of traditional water sources, promoting long-term water security.""
+    },
+    ""Image_contains_summary"": ""The image shows a simple cardboard model representing a well-cleaning mechanism, illustrating the student's conceptual design.""
+}"
+5518	ഓരോ വീടും, കെട്ടിടവും, ഓഫീസും, വ്യവസായശാലകളും ഓവർഹെഡ് വാട്ടർ ടാങ്കുകൾ ഉപയോഗിക്കുന്നു. ഇവ നിറയ്ക്കാൻ വളരെയധികം ജലം ഉപയോഗിക്കുന്നു. എന്നാൽ മിക്കപ്പോഴും, ടാങ്കിൽ വെള്ളം നിറഞ്ഞതിന് ശേഷം പമ്പ് ഓഫ് ചെയ്യാൻ നമ്മൾ മറക്കുന്നു, അതിനാൽ ടാങ്കറുകളിൽ നിന്ന് വെള്ളം കവിഞ്ഞൊഴുകുകയും വൈദ്യുതി ഉപയോഗം അതിലൂടെ കൂടുകയും ചെയ്യുന്നു.	"*ജലസംഭരണി കവിഞ്ഞൊഴുകുന്നത് വെള്ളം പാഴാകുന്നതിന് കാരണമാകുന്ന ഒരു പ്രശ്നമാണ്. ഈയൊരു വാട്ടർ ഓവർഫ്ലോ അലാറം സ്ഥാപിക്കുന്നത് വഴി വെള്ളം കവിഞ്ഞൊഴുകുന്നതും പാഴായി പോകുന്നതും തടയാൻ സാധിക്കും.
+ *water ടാങ്ക്കൽ, നീന്തൽ കുളങ്ങൾ, വ്യവസായിക പ്രക്രിയകൾ, ബേസ്‌മെന്റ്,കാർഷിക ജലസേചന സംവിധാനങ്ങൾ ഇവിടെയെല്ലാം നമുക്കിത് ഉപയോഗപ്പെടുത്താവുന്നതാണ്.
+ * എളുപ്പത്തിൽ സ്ഥാപിക്കാനും ചിലവ് കുറഞ്ഞതും സുരക്ഷിതവും ആണ് ഇത്.
+ * വൈദ്യുതിയും ലാഭിക്കാൻ നമ്മളെ സഹായിക്കും.
+ *audio visual alert നൽകുന്നു"	https://drive.google.com/uc?export=download&id=12_kdipZolmsRC5S2x0aXoua7wHab19CW	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""Water overflow alarms are a very common, well-known project in school-level innovation and lack original design or unique implementation.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution effectively addresses a common, practical problem of water wastage and electricity consumption in households.""
+    },
+    ""Feasibility"": {
+        ""score"": 8,
+        ""reason"": ""The system is highly practical, low-cost, and easy to implement using readily available electronic components.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""This solution is easily replicable and can be installed in any building, home, or industrial setting with a water tank.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""It promotes water and energy conservation, contributing to long-term resource efficiency.""
+    },
+    ""Image_contains_summary"": ""The image shows a student-made model of a house with a water tank on top, demonstrating the implementation of the water overflow alarm system.""
+}"
+6543	"സ്കൂളുകളിൽ വ്യത്യസ്ത തരത്തിലുള്ള മാലിന്യങ്ങളുടെ ശെരിയായ രീതിയിലുള്ള നിർമാർജനം നടക്കുന്നില്ല .ഇതുകൊണ്ട് തന്നെ സ്കൂളുകളിലും സ്കൂളിൻ്റെ പരിസര പ്രദേശങ്ങളിൽ ഉള്ള മാലിന്യങ്ങൾ ക്രമാതീതമായി വർദ്ധിക്കുന്നു .ഇത് എല്ലാ സ്‌കൂളുകളിലും പൊതുവായി കണ്ടുവരുന്ന പ്രശ്‌നമാണ്. എന്തെന്നാൻ സ്‌കൂളുകളിൽ വ്യത്യസ്‌തതരത്തിലുള്ള മാലിന്യ സംസ്ക്‌കരണം നടക്കുന്നില്ല, മാലിന്യങ്ങളുടെ തോത് പോകെ പോകെ വർധിച്ചു വരുന്നു.
+ 
+ * പ്ലാസ്റ്റിക് മാലിന്യങ്ങൾ
+ 
+ •പേപ്പർ മാലിന്യങ്ങൾ
+ 
+ •ഭക്ഷ്യ മാലിന്യങ്ങൾ
+ 
+ •ചോക്ക് പൊട്ടുകൾ 
+ 
+ •റബ്ബർ മാലിന്യങ്ങൾ
+ 
+ •ഇരുമ്പ് മാലിന്യങ്ങൾ
+ 
+ •തുണിത്തര മാലിന്യങ്ങൾ
+ 
+ •സെറാമിക് മാലിന്യങ്ങൾ
+ 
+ ഇത്തരത്തിലുള്ള മാലിന്യങ്ങളാണ് സ്കൂളുകളിൽ പ്രധാനമായി കണ്ടുവരുന്നത്.ഇത്തരത്തിലുള്ള മാലിന്യങ്ങളുടെ അമിധമായ വർധനവ് സ്കൂളിൻ്റെ പരിസ്ഥിതിയെയും കുട്ടികളുടെ ആരോഗ്യത്തെയും പ്രതികൂലമായി ബാധിക്കുന്നു അതുകൂടാതെ നമ്മുടെ സമൂഹത്തെയും ബാധിക്കുന്നു.
+ വ്യത്യസ്ത മാലിന്യങ്ങൾ സ്കൂളുകളിൽ കൂട്ടിയിട്ട് കത്തിക്കുന്നതുകൊണ്ട് പ്രകൃതിക്ക് ദോഷമുണ്ടാക്കുന്നു"	"ഞങ്ങൾ ഈ ആശയം കണ്ടെത്തിയത് പ്രാധാനമായും സ്കൂളുകളിലെ മാലിന്യങ്ങളുടെ അളവ് കുറക്കുന്നതിനു വേണ്ടിയാണ് .സ്കൂളുകളിൽ നിന്ന് ലഭിക്കുന്ന വ്യത്യസ്ത തരത്തിലുള്ള മാലിന്യങ്ങളെ നമുക്കുപയോഗമുള്ള രീതിയിൽ മാടിയെടുക്കുന്നതാണ് ഞങൾ അവതരിപ്പിക്കുന്ന ഈ ആശയം.ഉദാഹരണത്തിന് സ്കൂളുകളിൽ നിന്നും ലഭിക്കുന്ന റബ്ബർ മാലിന്യങ്ങളെ നമുക്ക് ഇന്ധനമാക്കി മാറ്റാൻ കഴിയുംഈ ഇന്ധനം വിൽക്കുന്നതു വഴി നമുക്ക് നല്ലൊരു വരുമാന മാർഗ്ഗം കണ്ടെത്താനാവും.നമ്മുടെ സമൂഹത്തെ മാലിന്യ വിമുക്തമാക്കാനും കഴിയും.സ്കൂളിലെ കുട്ടികളും അധ്യാപകരും അതുപോലെ മറ്റുള്ളവരുമാണ് ഈ പ്രശ്നം നേരിടുന്നത്.പ്ലാസ്റ്റിക് മാലിന്യങ്ങൾ ശേഖരിച്ച് പുതിയ ഉൽപന്നങ്ങൾ ആക്കുന്നു.ഈ ഉൽപ്പന്നങ്ങൾ ഒരു വെബ്സൈറ്റ് വഴി വിൽക്കുന്നത്തിലൂടെ നമുക്ക് ഒരു വരുമാന മാർഗം ലഭിക്കുന്ന ഇതിലൂടെ തന്നെ നമ്മുടെ രാജ്യത്തിൻ്റെ വരുമാനം വർധിപ്പിക്കാനും സാധിക്കുന്നു .അതുകൂടാതെ നമ്മുടെ സമൂഹത്തിലെ മാലിന്യങ്ങൾ നിർമാർജനം ചെയ്യുവാനും സാധിക്കും.
+ അതുപോലെത്തന്നെ,
+  അതുപോലെ തന്നെ നമ്മുടെ രാജ്യത്തിൻ്റെ വികസന പ്രവർത്തനങ്ങളിൽ പങ്കാളികൾ ആവാനും സാധിക്കുന്നതാണ്"	https://drive.google.com/uc?export=download&id=1qO_DR7vWN0qeyI9fM1KAJEQYJg4fRnAG	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of recycling school waste into products or fuel is a well-known concept, and the proposal lacks specific technical details on how these processes would be implemented.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While the goal of reducing school waste is highly relevant, the solution remains at a conceptual level without explaining the practical steps to achieve the stated benefits.""
+    },
+    ""Feasibility"": {
+        ""score"": 3,
+        ""reason"": ""Implementing industrial-scale recycling processes like converting rubber to fuel within a school environment is highly impractical and lacks technical or safety planning.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The model is theoretically applicable to other schools, but the lack of a clear, manageable execution plan makes broad adoption difficult.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The intention to reduce waste is sustainable, but the proposed methods (like fuel conversion) require significant resources and infrastructure that are not sustainable for a school setting.""
+    },
+    ""Image_contains_summary"": ""The image provides a simple flowchart illustrating the recycling process: collecting various wastes, processing them, creating products, and selling them via a website to generate income.""
+}"
+7603	കുട്ടികളിൽ കണ്ടെത്തിയ പോഷകാഹാര അപര്യാപ്തത	"ബോധവത്കരണം - പോഷകാഹാരത്തിന്റെ ആവശ്യകതയും . അപര്യാപ്തത മൂലമുണ്ടാകുന്ന രോഗങ്ങളെ കുറിച്ച് ബോധവത്കരണം
+ സമീകൃതാഹാര വിതരണം
+ ആഴ്ച്ചയിൽ ഒരു ദിവസം Happy dishes ആചരണം
+ കുട്ടികൾ വീട്ടിൽ നിന്നും ഉണ്ടാക്കിയ പോഷക സമൃദ്ധമായ ഭക്ഷണങ്ങൾ സ്കൂളിൽ കൊണ്ടുവന്ന് അധ്യാപകരുടെ നേതൃത്വത്തിൽ കഴിക്കുന്നു അധ്യാപകരും അതിൽ പങ്കാളികളാകുന്നു"	https://drive.google.com/uc?export=download&id=1BV-PkJkGovEOsTzHEhYk2npUbIvSYtN-	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of awareness campaigns and school lunch initiatives is a standard, widely practiced approach to addressing malnutrition.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While it promotes healthy eating habits, it is a conventional social intervention rather than a novel solution to the problem of malnutrition.""
+    },
+    ""Feasibility"": {
+        ""score"": 9,
+        ""reason"": ""The proposed solution is highly practical and easily implementable within a school setting with minimal resources.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""This model can be easily replicated in other schools and communities with minimal effort.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The initiative is sustainable as it relies on community participation and consistent school-level implementation.""
+    },
+    ""Image_contains_summary"": ""The image shows a student participating in a school activity, likely related to the 'Happy Dishes' initiative, with food containers on a table, confirming the implementation of the proposed school-based nutrition program.""
+}"
+8240	ഞങ്ങൾ ഒരു ഫാനോടുകൂടിയ എമർജൻസിയുടെ പ്രോട്ടോടൈപ്പ് ആണ് നിർമിച്ചത്. കറണ്ട് പോകുമ്പോൾ നമ്മുടെ ആൾക്കാർ സാധാരണയായി ഉപയോഗിക്കുന്ന ഒന്നാണ് എമർജൻസി. ഇപ്പോഴത്തെ കാലാവസ്ഥയുടെ ഒരു പ്രത്യേകത ഭയങ്കര ചൂടാണ്. കറണ്ടില്ലാത്തപ്പോൾ എമർജൻസി യുടെ സഹായത്തോടെ നമ്മുക്ക് അത്യാവശ്യം ജോലികളും പഠനവുമൊക്കെ സാധിക്കും. എന്നാൽ അന്തരീക്ഷത്തിൽ ചൂട് കൂടുതലായതുകൊണ്ട് നമ്മൾ വിയർക്കാൻ തുടങ്ങും. ഇത് പ്രവർത്തിച്ചെയ്യുന്നതിനു പ്രതികൂലമായി ബാധിക്കും. ഇത് ഒഴിവാക്കാനാണ് എമർജൻസി ലൈറ്റ് with ഫാൻ എന്ന ഒരു ഐഡിയ ഞങ്ങൾ മുന്നോട്ടു വയ്ക്കുന്നത്. ലൈറ്റും ഫാനും രണ്ടു വ്യത്യസ്ത സ്വിച്ചിൽ ക്രമീകരിച്ചിരിക്കുന്നതുകൊണ്ട്നമ്മുക്ക് ആവശ്യമുള്ളപ്പോൾ മാത്രം ഫാൻ ഉപയോഗിച്ചാൽ മതി.. ഇത്‌ എനർജി ലഭിക്കാൻ സാധിക്കും. ഇത്തരം ഒരു ഉപകരണം വികസിച്ചുവന്നാൽ അത് ജനങ്ങൾക്ക് വളരെ ഉപകാരപ്പെടും.	ഞങ്ങളുടെ ജീവിതത്തിൽ ഉള്ള ഒരു പ്രശ്നമായിരുന്നു ഇത്. ഇതിനു എന്ത് പരിഹാരമണുള്ളതെന്നു ഞങ്ങൾ ആലോചിച്ചു. അതിനായ് ഞങ്ങൾക്ക് തോന്നിയ ഐഡിയ ഉപയോഗിച്ച് അതിന്റെ ഒരു പ്രോട്ടോടൈപ്പ് നിർമിച്ചു. ഇതിന്റെ നിർമാണത്തിന് ഞങ്ങളുടെ പേരെന്റ്സും ടീച്ചറും സഹായിച്ചു. ഇത് പ്രവർത്തിക്കുന്നത് സാധാരണ എമർജൻസി പോലെ തന്നെ. എന്നാൽ ലൈറ്റ് കൊടുത്തിരിക്കുന്നതിന്റെ മറുവശത്തായി ഒരു ചെറിയ ഫാൻ കൂടി കണക്ട് ചെയ്യുന്നു. ഇവയെ വ്യത്യസ്ത സ്വിച്ച് കൊണ്ട് ബന്ധിപ്പിക്കുന്നു. കറണ്ട് പോകുമ്പോൾ ലൈറ്റ്നോടൊപ്പോം ഫാൻ കൂടി വർക്ക്‌ ചെയ്യിക്കാം. ഇത് മൂലം നമ്മുക്ക് കംഫോർട്ട് ആയി ജോലിചയ്യാനും പഠിക്കാനും സാധിക്കും. ഇത് വികസിച്ചെടുത്താൽ ജനങ്ങൾക്ക് വളരെ ഉപകാരപ്പെടും.	https://drive.google.com/uc?export=download&id=1zoTY20xqYjuph8ig7YdQ7jAte7P7siyM	"{
+    ""Novelty"": {
+        ""score"": 3.0,
+        ""reason"": ""The idea of combining a light and a fan is a common DIY project and lacks significant originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 5.0,
+        ""reason"": ""It addresses a practical discomfort during power outages, providing a simple cooling solution while working or studying.""
+    },
+    ""Feasibility"": {
+        ""score"": 7.0,
+        ""reason"": ""The prototype is simple to construct using basic electrical components and is highly achievable for students.""
+    },
+    ""Scalability"": {
+        ""score"": 5.0,
+        ""reason"": ""While the concept is simple, scaling it into a commercial product would require better design and safety integration.""
+    },
+    ""Sustainability"": {
+        ""score"": 5.0,
+        ""reason"": ""The device is sustainable in terms of utility, but long-term use depends on battery quality and maintenance.""
+    },
+    ""Image_contains_summary"": ""The image shows a student-made prototype of an emergency light integrated with a small cooling fan, powered by batteries, demonstrating a functional DIY approach to dealing with heat during power outages.""
+}"
+9064	കാലാവസ്ഥാ വ്യതിയാനം, പാരിസ്ഥിതിക തകർച്ച, ഫോസിൽ ഇന്ധന സ്രോതസ്സുകളുടെ ശോഷണം എന്നിവയാൽ നയിക്കപ്പെടുന്ന അഭൂതപൂർവമായ ഊർജ്ജ പ്രതിസന്ധിയാണ് ലോകം അഭിമുഖീകരിക്കുന്നത്. ആഗോള ഊർജ്ജ ആവശ്യകതകൾ വർദ്ധിച്ചുകൊണ്ടിരിക്കുന്നതിനാൽ, സുസ്ഥിരവും പുനരുപയോഗിക്കാവുന്നതുമായ ഊർജ്ജ സ്രോതസ്സുകളിലേക്ക് മാറേണ്ടത് അനിവാര്യമായിരിക്കുന്നു.	"""ഊർജ്ജത്തിൻ്റെ ഭാവി പുനഃസ്ഥാപിക്കുക"" പദ്ധതി ലക്ഷ്യമിടുന്നത് സുസ്ഥിരവും തുല്യവും ഊർജ്ജ-സുരക്ഷിതവുമായ ഭാവിയിലേക്ക് മാറുന്നതിനുള്ള നൂതനമായ പരിഹാരങ്ങൾ പര്യവേക്ഷണം ചെയ്യുകയണ്.
+  1. സോളാർ വിൻഡോകൾ: വീടുകൾക്കും സ്‌കൂളുകൾക്കും വേണ്ടിയുള്ള സൗരോർജ ജാലകങ്ങൾ 
+  2. കാറ്റ് ടർബൈനുകൾ: വീട്ടുമുറ്റത്ത് സ്ഥാപിക്കുന്നതിനുള്ള ചെറുകിട ടർബൈനുകൾ.
+ *ഇത് എങ്ങനെ പ്രവർത്തിക്കുന്നു
+  1. പുനരുപയോഗ ഊർജ്ജ സ്രോതസ്സുകൾ വൈദ്യുതി ഉത്പാദിപ്പിക്കുന്നു.
+  2. സ്മാർട്ട് ഗ്രിഡുകൾ ഊർജ്ജ വിഹിതം കൈകാര്യം ചെയ്യുന്നു.
+  4. സാമൂഹിക ഇടപെടൽ ഊർജ്ജ സംരക്ഷണം പ്രോത്സാഹിപ്പിക്കുന്നു.
+  *ആരെയാണ് സഹായിക്കുന്നത്:*
+ 1. പ്രാദേശിക കമ്മ്യൂണിറ്റികൾ: വിശ്വസനീയമായ, ശുദ്ധമായ ഊർജ്ജ പ്രവേശനം.
+  2. പരിസ്ഥിതി: ഹരിതഗൃഹ വാതക ഉദ്‌വമനം കുറച്ചു.
+  3. ഭാവി തലമുറകൾ: സുസ്ഥിര ഊർജ്ജ പാരമ്പര്യം.
+  *പ്രയോജനങ്ങൾ:*
+ 1. പുനരുൽപ്പാദിപ്പിക്കാവുന്ന ഊർജ്ജ സ്രോതസ്സ്
+  2. കുറഞ്ഞ ഊർജ്ജ ബില്ലുകൾ
+  3. തൊഴിൽ സൃഷ്ടിക്കൽ"	https://drive.google.com/uc?export=download&id=1DO3U9km34IEnn7sFKh36nAFcDWJZc1ZT	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The project combines common renewable energy concepts like solar panels and wind turbines into a model, which is a standard school project approach without significant new innovation.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""The project demonstrates awareness of sustainable energy solutions, but the implementation is a basic model that doesn't provide a functional, real-world application.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the model is easy to build for educational purposes, scaling these concepts to real-world infrastructure requires significant technical and financial resources not addressed here.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The concept of using solar and wind energy is inherently scalable, but the student's specific proposal lacks a clear plan for how to achieve this on a larger scale.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The project promotes the use of renewable energy, which is inherently sustainable, though the model itself does not provide a mechanism for long-term operational maintenance.""
+    },
+    ""Image_contains_summary"": ""The image shows a school-level science model featuring a house with a solar panel on the roof, a small wind turbine, and street lights, illustrating a basic concept of renewable energy integration.""
+}"
+9327	എല്ലാവിഷയങ്ങളിലും ചെറിയ ക്ലാസ്സ്‌ മുതൽ തന്നെ പ്രയാസമേറിയതും കൺഫ്യൂഷൻ ഉണ്ടാക്കുന്നതുമായ ധാരാളം പാഠഭാഗങ്ങൾ ഉണ്ട്.	ബുദ്ധിമുട്ടുള്ള പാഠഭാഗങ്ങൾ പഠിക്കുന്നതിനുവേണ്ടിയാണ് ഇങ്ങനെയൊരു മോഡൽ രൂപകല്പന ചെയ്തത്.. ഇത് നിർമ്മിക്കുന്നതിനുവേണ്ടി രണ്ട് തുല്യ ആകൃതിയുള്ള കാർഡ് ബോർഡ്, കേബിൾ, ബാറ്ററി, ബസർ സ്ക്രൂ കണക്ട് ചെയ്ത രണ്ട് പേനയുടെ ബോഡിയും, ചാർട്ട് പേപ്പർ, പഠിക്കേണ്ട പാഠഭാഗത്തിന്റെ വലിപ്പമുള്ള ചിത്രവും ആവശ്യമുണ്ട്. കാർഡ് ബോർഡിന് മുകളിൽ വൈറ്റ് ചാർട്ട് പേപ്പർ ഒട്ടിക്കുക. ആദ്യത്തെ കാർഡ്ബോർഡിൽ ചോദ്യവലികൾ എഴുതിയൊട്ടിക്കണം ഓരോ ചോദ്യത്തിലും ഓരോ ചെറിയ സ്ക്രൂ കണക്ട് ചെയ്യണം അടുത്ത കാർഡ്ബോർഡിൽ പഠിക്കേണ്ട ഭാഗം ഒട്ടിക്കണം. അതിനുശേഷം കേബിൾ ഉപയോഗിച്ച് കണക്ട് ചെയ്യുക.. രണ്ടു പേനയുടെ ബോഡിയിലും ഓരോ സ്ക്രൂ വീതം കണക്ട് ചെയ്യുക.കാർഡ് ബോർഡിന്റെ മറുവശത്ത് ബാറ്ററിയും ബസ്സറും കണക്ട് ചെയ്യണം സ്ക്രൂ ഉള്ള പേനയുടെ ബോഡി കൊണ്ടാണ് ചോദ്യവും ഉത്തരവും തമ്മിൽ ടച്ച്‌ ചെയ്യുന്നത്.ഉത്തരം ശരിയാണെങ്കിൽ ബസറിൽ നിന്ന് ശബ്ദം വരും. തെറ്റാണെങ്കിൽ ശബ്ദം കേൾക്കില്ല. ഇങ്ങനെ നമ്മുക്ക് വളരെ രസകരമായി പഠിക്കാം.	https://drive.google.com/uc?export=download&id=1OcW5h5ZZyO62OxooffsQWCoJ9_IbmrjD	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""This is a well-known educational DIY project using basic circuits for matching games, showing minimal originality.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution provides a practical and engaging way for students to practice and memorize educational content.""
+    },
+    ""Feasibility"": {
+        ""score"": 9,
+        ""reason"": ""The project is highly feasible, using simple, readily available materials and basic electrical principles.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The model is easily replicable for various subjects and can be adapted for different grade levels.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The device is durable and can be reused multiple times with different question sets, though it requires battery replacements.""
+    },
+    ""Image_contains_summary"": ""The image shows a DIY educational matching board where a student uses a probe to connect a question on the right to an image on the left, completing a circuit to trigger a buzzer.""
+}"
+9638	വർധിച്ചു വരുന്ന ഗതാഗത കുരുക്ക്, തൊഴിലാളികളുടെ ലഭ്യത കുറവ് മൂലം മാലിന്യ നീക്കം ദുഷ്കരമാകുന്ന ഈ കാലത്ത് പൊതുജങ്ങളുടെ ജീവിതത്തെ ബാധിക്കാതെ ഉള്ള മാലിന്യ സംഭരണവും അവയുടെ സംസ്കരണ സ്ഥലത്തേക്ക് ഉള്ള സുഗമമായ കൈമാറ്റവും ഭൂഗർഭാന്തര സംവിധാനങ്ങളിലൂടെ ഈ ആശയം എങ്ങനെ പ്രാവർത്തികമാക്കാം.	വീടുകളിൽ നിന്നും ഫ്ലാറ്റുകളിൽ നിന്നും ശേഖരിച്ച മാലിന്യം പ്രത്യേകം തയ്യാറാക്കിയ മാലിന്യ പെട്ടിയിൽ നിക്ഷേപിച്ചു കഴിഞ്ഞാൽ ഒരു നിശ്ചിത അളവ് മാലിന്യമാകുമ്പോൾ പെട്ടിയുടെ അടിയിലെ വാൽവ് തുറക്കുകയും മർദ്ദം കുറഞ്ഞ പൈപ്പ് വ്യൂഹത്തിലേക്ക് മാലിന്യം സ്വയം കൈമാറ്റം ചെയ്യപ്പെടുകയും ചെയ്യുന്നു. മാലിന്യം മർദ്ദ വ്യത്യാസത്തിൽ പൈപ്പിലൂടെ അടുത്തുള്ള മാലിന്യ ശേഖരണ സ്ഥലത്ത് എത്തുകയും അവിടെ വേർതിരിക്കലും പുനചക്രമണവും സാധ്യമാവുകയും ചെയ്യും. മേൽ പ്രവർത്തി പൂർണ്ണമായും ഓട്ടോമാറ്റിക് ആയതിനാൽ മാലിന്യം ഒരു സ്ഥലത്ത് കെട്ടിക്കിടക്കുന്ന പ്രശ്നം ഉണ്ടാകുകയോ മാലിന്യം റോഡിലൂടെ ട്രാഫിക് ബുദ്ധിമുട്ട് ഉണ്ടാക്കി ദൂരേക്ക് കൊണ്ടുപോകേണ്ടി വരുകയോ ചെയ്യുന്നില്ല.	https://drive.google.com/uc?export=download&id=1I7J6GKYuawoMKgJBH6r2f1XEyTtaA_PR	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""While pneumatic waste collection is an existing industrial technology, the student's application for residential/apartment waste management shows clear independent thinking and effort.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""The solution directly addresses the significant urban problems of traffic congestion and manual labor shortages in waste management.""
+    },
+    ""Feasibility"": {
+        ""score"": 4,
+        ""reason"": ""While the concept is sound, large-scale implementation of underground pneumatic pipe networks in existing urban infrastructure is extremely complex and costly.""
+    },
+    ""Scalability"": {
+        ""score"": 5,
+        ""reason"": ""The system is highly scalable for new urban developments or planned townships, but difficult to retrofit into established, dense city areas.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The system promotes long-term cleanliness and reduces the carbon footprint associated with traditional garbage truck transport.""
+    },
+    ""Image_contains_summary"": ""The image shows a student presenting a physical model of a building connected to an underground pipe network, illustrating the proposed automated waste collection and transport system.""
+}"
+10250	"EV യുടെ ചാർജ് പെട്ടന്ന് തീരുന്നതിനുള്ള പരിഹാരം
+ ചാർജ് പെട്ടെന്ന് തീരുന്നു.അത്യാവശ്യ സാഹചര്യങ്ങളിൽ യാത്ര ചെയ്യുമ്പോൾ വാഹനം ഇടയിൽ നിൽക്കുന്നതിന് പരിഹാരമായി വാഹനത്തിൻറെ മോട്ടോറിൽ നിന്ന് ബെൽറ്റ് വഴി മറ്റൊരു മോട്ടോറിലേക്ക് കണക്ട് ചെയ്യുക.അതിൻറെ ഔട്ട്പുട്ട് DC യിലൂടെ ചാർജ് പോയിന്റുമായി ബന്ധിപ്പിക്കുക. അപ്പോൾ വാഹനം ഓടുന്ന സമയത്ത് കാറ്റിൻ്റെ ശക്തികൊണ്ട് വാഹനം ചാർജ് നിറയുന്നതാണ്."	"EV യുടെ ചാർജ് പെട്ടന്ന് തീരുന്നതിനുള്ള പരിഹാരം
+ ചാർജ് പെട്ടെന്ന് തീരുന്നു.അത്യാവശ്യ സാഹചര്യങ്ങളിൽ യാത്ര ചെയ്യുമ്പോൾ വാഹനം ഇടയിൽ നിൽക്കുന്നതിന് പരിഹാരമായി വാഹനത്തിൻറെ മോട്ടോറിൽ നിന്ന് ബെൽറ്റ് വഴി മറ്റൊരു മോട്ടോറിലേക്ക് കണക്ട് ചെയ്യുക.അതിൻറെ ഔട്ട്പുട്ട് DC യിലൂടെ ചാർജ് പോയിന്റുമായി ബന്ധിപ്പിക്കുക. അപ്പോൾ വാഹനം ഓടുന്ന സമയത്ത് കാറ്റിൻ്റെ ശക്തികൊണ്ട് വാഹനം ചാർജ് നിറയുന്നതാണ്."	https://drive.google.com/uc?export=download&id=1G9WFBg0zX6QN1L0KLkVM9SF4Oezl7r3e	"{
+    ""Novelty"": {
+        ""score"": 2,
+        ""reason"": ""The idea of using a motor as a generator to recharge an EV while in motion is a common misconception that violates the laws of thermodynamics.""
+    },
+    ""Usefulness"": {
+        ""score"": 1,
+        ""reason"": ""The proposed solution is scientifically flawed and would not provide a net energy gain for the vehicle.""
+    },
+    ""Feasibility"": {
+        ""score"": 1,
+        ""reason"": ""The concept is physically impossible as it would create a perpetual motion machine, which cannot exist.""
+    },
+    ""Scalability"": {
+        ""score"": 1,
+        ""reason"": ""Since the core principle is scientifically incorrect, the solution cannot be scaled or applied.""
+    },
+    ""Sustainability"": {
+        ""score"": 1,
+        ""reason"": ""The system would actually increase energy loss due to friction and conversion inefficiencies, making it unsustainable.""
+    },
+    ""Image_contains_summary"": ""The image shows a basic remote-controlled toy car chassis with an Arduino, motor driver, and battery pack, which does not support the student's claim of a self-charging mechanism.""
+}"
+10358	"നഗരങ്ങളിൽ ആണ് ഏറ്റവും കൂടുതൽ മാലിന്യ പ്രശ്നം രൂക്ഷമായി കാണുന്നത് . ഇന്ന് പല നഗരങ്ങളും നേരിടുന്ന ഏറ്റവും വലിയ പ്രശ്നമാണ് മാലിന്യ പ്രശ്നം. 
+ ജനസംഖ്യാ വർധനവും വ്യവസായ ശാലകളുടെ വർധനവും മാലിന്യ പ്രശ്നം ഭാവിയിലും കൂട്ടുകയേ ഉള്ളൂ. ഇതിന് ഒരു ശാശ്വത പരിഹാരം ശരിയായ രീതിയിൽ മാലിന്യ സംസ്കരണമാണ്."	"നഗരങ്ങൾ കേന്ദ്രീകരിച്ച് പ്ലാസ്റ്റിക് മലിനീകരണവും ്്ജലദൗർലഭ്യവും കൂടുതലാണ്. പ്ലാസ്റ്റിക് സംസ്കരണം ശരിയായ രീതിയിൽ നടക്കുന്നത് നഗരത്തെ വൃത്തിയാക്കി വെക്കാൻ സഹായിക്കുന്നു. 
+  1. ഫ്ളാറ്റുകൾ കേന്ദ്രീകരിച്ച് സോളാർ എനർജി ഉപയോഗിക്കുന്നത് 
+ 2. വാട്ടർ റീ യൂസ് ചെയ്യുന്നത്
+ 3. പ്ലാസ്റ്റിക് മാലിന്യം ശുദ്ധീകരിച്ച് വ്യവസ്ഥയ ശാലകൾക്ക് നൽകുന്നത്"	https://drive.google.com/uc?export=download&id=16mPCHZgz46rcB_7uihPg65Escyr3gMDL	"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of a 'Clean City' model integrating solar energy, water reuse, and waste management is a standard, widely known concept in school science projects.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While the components address real urban problems, the submission lacks a specific mechanism or unique approach to solve them effectively.""
+    },
+    ""Feasibility"": {
+        ""score"": 4,
+        ""reason"": ""The project is presented as a general conceptual model without technical details on how these systems would be integrated or implemented in a real-world urban setting.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The model represents a generic urban planning concept that is difficult to scale without a more concrete, actionable framework.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""The inclusion of solar energy and water reuse demonstrates an intention toward sustainable urban development, even if the implementation plan is broad.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical model titled 'CLEAN CITY' featuring miniature houses with solar panels, water storage tanks, and various waste processing units, illustrating a concept for sustainable urban infrastructure.""
+}"
+10511	അധിനിവേശ സസ്യങ്ങളുടെ സാന്നിധ്യം കണ്ടെത്തുക അവമൂലം ഉണ്ടാകുന്ന പാരിസ്ഥിതിക പ്രശ്നങ്ങൾക്ക് പരിഹാരം കണ്ടെത്തുക.	"അധിനിവേശ സസ്യങ്ങൾ ബയോമാസ്സ് ആയതിനാൽ. നശിപ്പിച്ചു കളയുന്നതിനേക്കാൾ അവിയിൽ നിന്ന് പ്രകൃതി ദത്ത നാരുകൾ എടുത്ത് പ്രോഡക്ടസ് ആക്കി മാറ്റാം. ബ്രഷ്, മാറ്റുകൾ, ബാഗുകൾ,കര കൗശല വസ്തുക്കൾ എന്നിവ നിർമ്മിക്കാം. 
+ ജൈവ വളം നിർമിക്കാൻ ഉപയോഗിക്കാം. 
+ പുതയിടാൻ ഉപയോഗിക്കാം. 
+ അധിനിവേശ സ്വഭാവം കാർഷിക വിളകളുടെ വിത്തുകളിലേക്ക് എത്തിക്കാൻ ആയാൽ ( ജീനോമിക് ലെവൽ ). കാർഷിക രംഗത്ത് വിളവ് കൂടും. 
+ . നിയന്ത്രിത ഉപയോഗം കൃഷി സ്ഥല ലഭ്യത കൂട്ടാൻ സഹായിക്കും."	https://drive.google.com/uc?export=download&id=1xnCjchopAv2cWssiEdO04inRiJ1BGXSx	"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""The idea of repurposing invasive plant biomass into useful products like handicrafts and fertilizer is a creative and practical approach to a significant environmental problem.""
+    },
+    ""Usefulness"": {
+        ""score"": 7,
+        ""reason"": ""This solution addresses both the ecological threat of invasive species and the potential for economic value creation, providing a dual benefit.""
+    },
+    ""Feasibility"": {
+        ""score"": 6,
+        ""reason"": ""While the conversion of biomass into products is technically feasible, the suggestion of genomic modification is highly complex and beyond the scope of a school project.""
+    },
+    ""Scalability"": {
+        ""score"": 7,
+        ""reason"": ""The model is highly scalable as invasive species are widespread and the methods for processing biomass are adaptable to different regions.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""Utilizing invasive biomass is an environmentally responsible way to manage ecological imbalances while promoting circular economy principles.""
+    },
+    ""Image_contains_summary"": ""The image shows two students presenting a small structural model made of sticks or plant stems, which likely represents their concept for utilizing invasive plant material.""
+}"
+10533	മോട്ടറിടാത്ത ഒരു ദിവസവും നമ്മുടെ ജീവീതത്തിൽ കടന്നുപോകാറില്ല. എന്നാൽ മാസവും നല്ല രീതിയിലുള്ള കരന്റുമ്പില്ലും നമ്മൾ അഭിമുഗീകരിക്കാറുണ്ട്. എന്നാൽ വീടുകളിൽ സോളാർപേനലുകൾ വെക്കൽ വലിയ രീതിയിൽ പൈസ ചിലാവാകും. ഇത് ഒരു പ്രശ്നം തന്നെ	ട്ടാഗിയിലേക് വെള്ളം ചാടുബോൾ ജനറേറ്റർ കറങ്ങുകയും തുടർന്ന് ജനറേറ്റർ കുരന്റ് ഉൽപാതിപ്പി ചെയ്യുന്നു. ഈ കരന്റ് ഇൻവേറ്ററിലെതുകയും ചെയ്യുന്നു. ഈ കരന്റ് നമ്മുക്ക് ആവശ്യമുള്ളപോൾ ഉപയോഗിക്കുകയും ചെയ്യാം. ഇതിലൂടെ ഒരു വിദം കരന്റുമ്പില്ലിനെ നമുക്ക് നിയന്ത്രിക്കാൻ കഴിയും. ഇത് കൂടുതലും വിടകൾക്കും പിന്നെ സ്കൂളുകൾക്കും പിന്നെ ഹോസ്പിറ്റിലലുകൾക്കുമാണ് ഉപകാരപെടുക.	https://drive.google.com/uc?export=download&id=1ScBksl992flRB3F_nj239JrldLKGEGU5	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""Small-scale hydroelectric generation using a DC motor is a well-known DIY science project concept.""
+    },
+    ""Usefulness"": {
+        ""score"": 5,
+        ""reason"": ""While it generates electricity, the power output of such a small motor is likely insufficient to meaningfully power household appliances or hospital equipment as claimed.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""The prototype is simple to build, but the practical application for real-world power generation is limited by the low energy conversion efficiency of the setup.""
+    },
+    ""Scalability"": {
+        ""score"": 3,
+        ""reason"": ""Scaling this to meet the energy needs of homes or institutions would require a massive, complex, and costly water infrastructure that is not addressed.""
+    },
+    ""Sustainability"": {
+        ""score"": 6,
+        ""reason"": ""Using water flow to generate electricity is a sustainable practice, though the current setup lacks the durability for long-term use.""
+    },
+    ""Image_contains_summary"": ""The image shows a small DC motor attached to a makeshift turbine wheel being powered by a stream of water from a hose, with the generated electricity connected to a portable LED light.""
+}"
+10966	ഇന്ന് വികസനവുമായി ബന്ധപ്പെട്ട് നമ്മുടെ രാജ്യത്ത് ആറ് വരി ഹൈവേ ലൈനുകൾ കൂടി കൂടി വരികയാണ് .മുഴുവൻ സമയങ്ങളിലും വാഹനങ്ങൾ നിരന്തരം ഓടിക്കൊണ്ടിരിക്കുന്നു .ഊർജ പ്രതിസന്ധി എന്ന് നാം നിരന്തരം കേട്ട് കൊണ്ടിരിക്കുന്ന പ്രധാന പ്രശ്നമാണ് . ഈ വികസന പ്രവർത്തനത്തോടൊപ്പം ഊർജ പ്രതിസന്ധിക്ക് ഒരു പരിഹാരവും കൂടി കൊണ്ടുവരിക എന്നതാണ് ഞങ്ങളുടെ ആശയം.ഊർജത്തിന്റെ ആവശ്യകത വര്ധിക്കാനിടയായ സാഹചര്യങ്ങളിൽ പ്രധാനപ്പെട്ട ഒന്നാണ് ജനസംഖ്യ വർദ്ധനവ് .ഇതു ഊർജ ഉപഭോഗത്തെ വലിയതരത്തിൽ ബാധിക്കുന്നു .ഊർജത്തിന്റെ ആവശ്യത്തിലുള്ള വർധനവും ലഭ്യതയിലുള്ള കുറവുമാണ് ഊർജ്ജപ്രതിസന്ധി .പാരമ്പര്യേതര ഊർജസ്രോതസ്സുകൾ ഉപയോഗപ്പെടുത്തി നമുക്ക് ഇതു ഒരു പരിധിവരെ പരിഹരിക്കാം.	സ്വയം പര്യാപ്ത ഹൈവേലൈന്‍ വഴി മൂന്നു രീതിയില്‍ വൈദ്യുതി നിര്‍മിക്കാന്‍ കഴിയുന്നു. ഹൈവേയുടെ ഒരു സൈഡില്‍ ക്രമീകരിച്ചിരിക്കുന്ന സോളാര്‍ പാനലുകള്‍ വഴി വൈദ്യുതി നിര്‍മ്മിക്കാന്‍ കഴിയുന്നു. വാഹനങ്ങള്‍ 50 km/hr വേഗതയില്‍ പോകുമ്പോള്‍ ലഭ്യമാകുന്ന കാറ്റില്‍ നിന്ന് വൈദ്യുതി ഉണ്ടാക്കാനുള്ള horizontal axis wind turbine രണ്ട് ഹൈവേ ലൈനിനു മധ്യത്തില്‍ ക്രമീകരിച്ചിരിക്കുന്നു. മൂന്നാമതായി പീസോ ഇലക്ട്രിസിറ്റിയും നിര്‍മ്മിക്കാം. വസ്തുക്കളെ അമര്‍ത്തുന്നതിലൂടെയുള്ള മര്‍ദ്ദത്തില്‍ നിന്നും വൈദ്യുതി നിര്‍മിക്കുന്നതാണ് പീസോ ഇലക്ട്രിസിറ്റി. റോഡിന് 5 cm താഴെയായി പീസോ ഇലക്ട്രിക് ഘടകങ്ങള്‍ ക്രമീകരിക്കുന്നതിനാല്‍ പീസോ ഇലക്ട്രിസിറ്റിയും നിര്‍മ്മിക്കാവുന്നതാണ്.	https://drive.google.com/uc?export=download&id=1ORXsr2QYAUqvK2WkME_SqjtTHjwMQlx_	"{
+    ""Novelty"": {
+        ""score"": 4,
+        ""reason"": ""The combination of solar, wind, and piezoelectric energy harvesting on highways is a well-known conceptual framework in student projects.""
+    },
+    ""Usefulness"": {
+        ""score"": 6,
+        ""reason"": ""The solution addresses the energy crisis by utilizing multiple renewable sources, though the actual power generation efficiency of such small-scale highway installations is often debated.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""While the individual technologies are proven, implementing them on a large-scale highway infrastructure involves significant engineering, maintenance, and safety challenges.""
+    },
+    ""Scalability"": {
+        ""score"": 6,
+        ""reason"": ""The modular nature of the system allows for application across various highway stretches, though costs and infrastructure integration remain barriers.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The project promotes renewable energy generation, which is inherently sustainable, provided the maintenance of the hardware does not outweigh the energy produced.""
+    },
+    ""Image_contains_summary"": ""The image shows a physical model of a highway equipped with solar panels, wind turbines (labeled as VAWT), and representative structures, illustrating the proposed multi-source energy harvesting system.""
+}"
+2113	आजकल हम दैनिक जीवन मे स्वास्थ्यवर्धक भोजन नहीं कर रहे हैं जिससे हमारे बहुत सारी बीमारियां हो रही है आजकल बच्चे जंक फूड खा रहे हैं जिससे मोटापा बढ़ रहा है	"हमें दैनिक जीवन में यह संतुलित भोजन करना चाहिए 
+ 
+ *नाश्ता*
+ 
+ 1. ओट्स का पोहा (Oats Poha)
+ 2. फलों का सलाद (Fruit Salad)
+ 3. सब्जी की टिक्की (Veggie Tikki)
+ 4. ग्रीक योगर्ट और फल (Greek Yogurt with Fruit)
+ 5. इडली सांभर (Idli Sambhar)
+ 
+ *दोपहर का भोजन*
+ 
+ 1. ब्राउन राइस और सब्जी की करी (Brown Rice and Veggie Curry)
+ 2. साबुत अनाज की रोटी और सब्जी (Whole Grain Roti and Veggie)
+ 3. चिकन या मछली की ग्रिल (Grilled Chicken or Fish)
+ 4. सलाद और साबुत अनाज की पुलाव (Salad and Brown Rice Pulav)
+ 5. दाल मखनी और साबुत अनाज की रोटी (Dal Makhni and Whole Grain Roti)
+ 
+ *शाम का नाश्ता*
+ 
+ 1. फलों का जूस (Fruit Juice)
+ 2. हरी चाय और बिस्किट (Green Tea and Biscuits)
+ 3. नट्स और ड्राई फ्रूट्स (Nuts and Dry Fruits)
+ 4. सब्जी के स्नैक्स (Veggie Snacks)
+ 5. दही और फल (Yogurt and Fruit)
+ 
+ इन स्वस्थ भोजन विचारों को अपनाकर आप अपने स्वास्थ्य को बेहतर बना सकते हैं और अपने शरीर को आवश्यक पोषक तत्व प्रदान कर सकते हैं।"		"{
+    ""Novelty"": {
+        ""score"": 1,
+        ""reason"": ""The submission provides a generic list of healthy food options that are widely known and do not represent an innovative or original solution.""
+    },
+    ""Usefulness"": {
+        ""score"": 3,
+        ""reason"": ""While the advice is healthy, it is common knowledge and does not provide a functional tool or system to solve the problem of unhealthy eating habits.""
+    },
+    ""Feasibility"": {
+        ""score"": 10,
+        ""reason"": ""The solution is highly feasible as it involves simple dietary choices that anyone can implement without special resources.""
+    },
+    ""Scalability"": {
+        ""score"": 10,
+        ""reason"": ""Dietary advice is universally applicable and can be adopted by any individual or community.""
+    },
+    ""Sustainability"": {
+        ""score"": 8,
+        ""reason"": ""Adopting a healthy diet is a sustainable long-term lifestyle choice, though it requires consistent personal discipline.""
+    },
+    ""Image_contains_summary"": ""No images were provided in the submission.""
+}"
+9054	हमारे देश में मच्छरों एवं अन्य कीटों के कारण मलेरिया और डेंगू जैसे बहुत सारे रोग उत्पन्न होते है जिसका एक बहुत बड़ा कारण लोगों द्वारा मच्छर दानी का पर प्रयोग नहीं करना क्योंकि मच्छर दानी को बांधने में समस्या होती है उसके लिए या तो चारपाई के चारों पायो पर एक एक लकड़ी बांधनी होती है या दीवारों पर कील की सहायता से बांधना होता है जो बहुत ही कठिन होता है इसलिए लोग मच्छर दानी का प्रयोग नहीं करते.	एक सामान्य आयताकार मच्छर दानी जिसके ऊपरी दोनो किनारों पर एक एक लकड़ी का ब्रैकेट जो नीचे की तरफ जुड़े हैं तथा फ़ोल्ड किये जा सकते है इसी प्रकार मच्छर दानी के निचले भाग में भी लकड़ी का चौकोर ब्रैकेट जो एक तरफ से खुला हो लगा दिया जा जाता है जो आसानी से ओपन और फोल्ड किया जा सकता है इस प्रकार आसानी से ओपन और फोल्ड हो सकने वाली मच्छर दानी तैयार हो जाती है जिसे आसानी से चारपाई और जमीन पर नीचे लगाया जा सकता है वो भी बिना किसी सहारे के, इसे सहेजना भी काफी आसान है.		"{
+    ""Novelty"": {
+        ""score"": 6,
+        ""reason"": ""The idea of a self-supporting, foldable mosquito net frame provides a practical and creative improvement over traditional, cumbersome installation methods.""
+    },
+    ""Usefulness"": {
+        ""score"": 8,
+        ""reason"": ""The solution directly addresses a common barrier to using mosquito nets, significantly increasing the likelihood of adoption for disease prevention.""
+    },
+    ""Feasibility"": {
+        ""score"": 7,
+        ""reason"": ""The design uses simple, accessible materials like wooden brackets and hinges, making it highly realistic for local manufacturing or DIY assembly.""
+    },
+    ""Scalability"": {
+        ""score"": 8,
+        ""reason"": ""The design is easily replicable and can be mass-produced or adapted for various bed sizes, making it highly scalable.""
+    },
+    ""Sustainability"": {
+        ""score"": 7,
+        ""reason"": ""The use of durable materials like wood and simple mechanical hinges ensures long-term usability with minimal maintenance.""
+    },
+    ""Image_contains_summary"": ""No images were provided in the submission.""
+}"
+10367	"हमारे देश के सभी शिक्षक सांकेतिक भाषा में पारंगत नहीं होते , न ही सभी विद्यालय में विशेष शिक्षक उपलब्ध होते है , जहां पर है भी , वहां में ऐसे विशेष बच्चो को संपूर्ण विषयों के सांकेतिक भाषा में पढ़ा पाना मुश्किल हो जाता है जिससे एक समावेशी शिक्षा के लक्ष्यों को प्राप्त कर पाने में समस्या का सामना करना पड़ता है ।
+ जैसा कि हम जानते है नई शिक्षा नीति 2020 का समावेशी शिक्षा पर विशेष जोर है साथ ही नई शिक्षा नीति 2020 कहती है कि जो हमारे दिव्यांग बच्चे है वे सामान्य विद्यालयों में शिक्षा ग्रहण करेंगे , अलग से विशेष विद्यालय नहीं होंगे , उन बच्चों के लिए सामान्य विद्यालयों में ही जारी सुविधा उपलब्ध करना है ।
+ 
+ 
+ यदि हम विशेष बच्चो में ऐसे बच्चो की बात करे जो सुन बोल नहीं सकते जिनके लिए विद्यालय क्या समस्या है तो हम देख पाते है कि ऐसे बच्चो के लिए सांकेतिक भाषा में पारंगत शिक्षक की कमी है जिसके कारण जो बच्चे सुन बोल नहीं सकते उनके लिए शिक्षा बड़ी चुनौती बन रही है ।"	स्कूल के विद्यार्थी जो सुन बोल नहीं सकते उनको संकेतों के माध्यम से शिक्षा देने के लिए तत्पर		"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""The idea of using sign language support for inclusive education is a well-recognized challenge, and the solution lacks a specific technical or pedagogical mechanism to address it.""
+    },
+    ""Usefulness"": {
+        ""score"": 5.0,
+        ""reason"": ""The solution addresses a critical gap in inclusive education, but it remains a high-level intent without a clear implementation strategy.""
+    },
+    ""Feasibility"": {
+        ""score"": 3.0,
+        ""reason"": ""Without a defined method or tool, the implementation is vague and difficult to execute in a real-world school setting.""
+    },
+    ""Scalability"": {
+        ""score"": 4.0,
+        ""reason"": ""While the need is universal, the lack of a scalable model or technology makes it difficult to replicate effectively.""
+    },
+    ""Sustainability"": {
+        ""score"": 4.0,
+        ""reason"": ""The proposal lacks a long-term operational plan to maintain support for students with hearing and speech impairments.""
+    },
+    ""Image_contains_summary"": ""No attachments were provided for this submission.""
+}"
+45710	हम आय दिन देख रहे है कि मोटरसाइकिल से कितनी दुर्घटना हो रही है। हर दिन कोई न कोई मर रहा है और ये प्रदूषण भी करती है।इसलिए इससे सुरक्षा के लिए हमे हेलमेट का उपयोग तो जरूर करना चाहिए इससे व्यक्ति का सिर बचा रहता है। इसमें भी एक पैनिक बटन लगाना चाहिए ताकि जब व्यक्ति असुरक्षित हो तो वह इसका उपयोग कर सकता है।	मोटरसाइकिल मै भी एक पैनिक बटन लगाना चाहिए । साथ ही मोटरसाइकिल के दोनो तरफ स्टैंड लगाने चाहिए।ताकि अगर वह उसे सम्हाल न पाए तो वह स्टैंड का उपयोग कर सकता है। और पैनिक बटन को बाइक पर लगाने से व्यक्ति समस्या के समय बटन दबाकर पुलिस को बुला सकता है।		"{
+    ""Novelty"": {
+        ""score"": 3,
+        ""reason"": ""The idea of a panic button on a vehicle is a known concept, and the addition of side stands is a standard feature already present on many motorcycles.""
+    },
+    ""Usefulness"": {
+        ""score"": 4,
+        ""reason"": ""While a panic button could assist in emergencies, the proposed side stand solution does not effectively address the primary problem of motorcycle accidents or pollution.""
+    },
+    ""Feasibility"": {
+        ""score"": 5,
+        ""reason"": ""Implementing a panic button connected to emergency services is technically possible but requires significant infrastructure and regulatory support.""
+    },
+    ""Scalability"": {
+        ""score"": 4,
+        ""reason"": ""The solution is limited to individual vehicle modifications and lacks a broader system-level approach to safety or pollution.""
+    },
+    ""Sustainability"": {
+        ""score"": 4,
+        ""reason"": ""The proposal does not address the core issue of pollution mentioned in the problem statement and relies on manual intervention for safety.""
+    },
+    ""Image_contains_summary"": ""No images were provided with this submission.""
+}"
+100754	हमारे आस पास प्लास्टिक बैग केरी बैग,प्लास्टिक बोटल आदी बहुत अधिक मात्रा में पाए जाते हैं हम इन सभी प्लास्टिक बैग केरी बेग आदी एकत्रित करके प्लास्टिक कचरे का इस्तमाल सड़क निर्माण में काम में लाया जा सकता है प्लास्टिक से सड़क निर्माण करके की प्रक्रिया कुछ इस प्रकार से है कटे हुए प्लास्टिक कचरे को एग्रीमेंट में मिलाया जाता हैं यह 30 से 60 सेकंड में एग्रीमेंट पर समान रूप से मिल जाता है इसी प्रकार से प्लॉस्टिक कचरे से लेपित एग्रीमेंट को गर्म बिटूमेन के साथ मिलाया जाता हैं इस मिश्रण का इस्तमाल सड़क निर्माण के लिया किया जाता हैं प्लास्टिक से बनीं सड़के टूट फुट के प्रति क जादा मज़बूत या प्रतिरोधी होती हैं/ इन सड़कों में अत्याधिक या कहे की भारी बारिश और जादा तापमान जैसी चरम मौसम स्थितियों का सामना करने कि क्षमता होती हैं प्लास्टिक कचरे का इस्तमाल करने से बीटूमेन की जरूरत कम हो जाती हैं जिससे लागत में बचत होती हैं और प्लास्टिक से सड़के पर्यावरण के लिए फायदेमंद होती हैं इन सड़को को बनाने की प्रक्रिया आसान हे और किसी खास मशीन की जरूरत नही ,प्लास्टिक से सड़के बनाने से प्लास्टिक बिनने वाले मजदूरो काम।	प्लास्टिक की सड़के बनाने में सबसे पहले प्लास्टिक केरी बेग कप, नरम और कठोर फोम और प्लास्टिक सहित बेकार प्लास्टिक को इकट्ठा करना शामिल है फिर इन्हें धोकर साफ किया जाता हैं पर्यावरण के लिए फायदेमंद प्लास्टिक से सड़क बनाने से पर्यावरण को होने वाले नुकसान को कम किया जा सकता है प्लास्टिक कचरे का इस्तमाल करने से लेडफिल या समुद्र में कचरा जाने से बचाया जा सकता है लागत में बचत प्लास्टिक से सड़क बनाने से बीटूमेन की जरूरत कम होती है जिसमें लागत में काफ़ी बचत होती है टिकाउ प्लास्टिक से बनी सड़के ज्यादा टिकाउ होती है ये भारी बारिश और ज्यादा गर्मी जैसी मौसम की मुश्किल परिस्थिति में भी टूटती फूटती नहीं हैं फिसलन कम प्लास्टिक से बनीं सड़के पारंपरिक सड़कों के मुकाबले ज्यादा सुरक्षित होती हैं इन पर फिसलन कम होती हैं रोजगार प्लास्टिक से सड़क बनाने से कूड़ा बिनने वालों को रोजगार मिलता है कम रखरखाव प्लास्टिक से बनी सड़को का रखरखाव कम करना पड़ता हैं पर्यावरण अनुकूल प्लास्टिक से सड़के बनाने कि प्रक्रिया में कोई जहरीली गैसे नही निकलती l		"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""The use of plastic waste in road construction is a known engineering concept, though the student demonstrates a good understanding of the process.""
+    },
+    ""Usefulness"": {
+        ""score"": 8.0,
+        ""reason"": ""This solution addresses two major problems simultaneously: plastic waste management and the durability of road infrastructure.""
+    },
+    ""Feasibility"": {
+        ""score"": 7.0,
+        ""reason"": ""The process is technically established and implementable, though it requires standardized quality control for real-world road safety.""
+    },
+    ""Scalability"": {
+        ""score"": 8.0,
+        ""reason"": ""This approach is highly scalable as it can be integrated into existing public works programs across different regions.""
+    },
+    ""Sustainability"": {
+        ""score"": 9.0,
+        ""reason"": ""It offers a strong environmental benefit by diverting plastic waste from landfills and reducing the consumption of bitumen.""
+    },
+    ""Image_contains_summary"": ""No images were provided for this submission.""
+}"
+97800	"हर बच्चे को मुफ्त एवं प्राथमिक एवं माध्यमिक शिक्षा देनी चाहिए |
+ लिंग और धन असमानताओं को खत्म करना |
+ किफायती व्यवसायिक प्रशिक्षण तक समान पहुंच सुनिश्चित करना |"	"इस समस्या को इस प्रकार सुलझाया जा सकता है कि सरकार शिक्षा तो फ्री कर ही रही है | और जो ये अन्य फ्री में पैसे देने वाली योजनाएं चला रही है , इसके बजाय सरकार को देश के वो गरीब वर्गों का सर्वे करना चाहिए जो न तो खुद शिक्षित हे और न ही अपने बच्चों को शिक्षित कर पा रहे हे | उनका सर्वे करे उनको आर्थिक मदद दी जाय |
+ सरकार को यह कदम भी उठाना चाहिए कि जो JEE तथा NEET की परीक्षा के लिए जो बड़े नाडे संस्थान खोले गए हे सरकार भी एक ऐसा संस्था खोले जो गरीब वर्गों के लिए ही हो और उनकी शिक्षा उन संस्थानों में हो"		"{
+    ""Novelty"": {
+        ""score"": 2.0,
+        ""reason"": ""The suggestion relies on existing government policy frameworks like surveys and public coaching institutions, lacking original or innovative mechanisms.""
+    },
+    ""Usefulness"": {
+        ""score"": 4.0,
+        ""reason"": ""While the focus on supporting underprivileged students is socially relevant, the solution lacks a concrete implementation plan or unique approach to address the systemic educational barriers.""
+    },
+    ""Feasibility"": {
+        ""score"": 4.0,
+        ""reason"": ""Proposing large-scale government-funded institutions for competitive exams is a complex policy suggestion that is difficult to execute without detailed operational or financial planning.""
+    },
+    ""Scalability"": {
+        ""score"": 3.0,
+        ""reason"": ""The idea is highly dependent on government-scale intervention and funding, making it difficult for an individual student project to scale independently.""
+    },
+    ""Sustainability"": {
+        ""score"": 3.0,
+        ""reason"": ""The model relies entirely on government subsidies and long-term state funding, which may not be sustainable without significant structural economic changes.""
+    },
+    ""Image_contains_summary"": ""No images were provided in the submission.""
+}"
+28685	"कार पार्किंग सिस्टम के साथ कार रेन प्रोटेक्शन और स्मोक डिटेक्शन सिस्टम एक ऐसा प्रोजेक्ट है जो कई समस्याओं का समाधान करने के लिए बनाया जा रहा है।
+  * कार की सुरक्षा: यह सिस्टम कार को बारिश से होने वाले नुकसान से बचाने में मदद करता है। बारिश के पानी से कार के पेंट और इंटीरियर को नुकसान हो सकता है। यह सिस्टम कार को धूप से भी बचाता है।
+  * आग से सुरक्षा: स्मोक डिटेक्टर सिस्टम कार पार्किंग में आग लगने की स्थिति में तुरंत अलार्म बजाता है। इससे लोगों को समय रहते सुरक्षित स्थान पर जाकर अपनी जान बचाने का मौका मिल जाता है।
+  * पार्किंग की समस्या का समाधान: यह सिस्टम कार पार्किंग की समस्या का भी समाधान करता है। यह सिस्टम कार को सुरक्षित और व्यवस्थित तरीके से पार्क करने में मदद करता है।
+  * प्रदूषण नियंत्रण: यह सिस्टम कारों से निकलने वाले धुएं को कम करने में मदद करता है। स्मोक डिटेक्टर सिस्टम धुएं का पता लगाकर तुरंत अलार्म बजा देता है, जिससे कार के मालिक को धुएं का कारण पता चल जाता है और वह इसे ठीक करवा सकता है।"	"1. एकीकृत स्मार्ट पार्किंग सिस्टम:
+  * पार्किंग स्थानों का ऑटोमैटिक आवंटन: एक स्मार्ट सिस्टम जो खाली पार्किंग स्थानों को ढूंढकर कारों को स्वचालित रूप से पार्क करने में मदद करता है।
+  2. आग का पता लगाने और अलार्म सिस्टम: प्रत्येक पार्किंग स्थान पर धुआं और तापमान सेंसर लगाए जा सकते हैं जो आग लगने की स्थिति में तुरंत अलार्म बजा देंगे।
+ 3बारिश से सुरक्षा:
+  * स्वचालित छायादार संरचना: बारिश होने पर कारों को ढकने के लिए स्वचालित छायादार संरचनाएं लगाई जा सकती हैं।"		"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""The integration of parking, fire safety, and rain protection is a functional concept but relies on standard, well-known sensor and automation technologies.""
+    },
+    ""Usefulness"": {
+        ""score"": 6.0,
+        ""reason"": ""The solution addresses multiple relevant safety and maintenance issues in a parking environment effectively.""
+    },
+    ""Feasibility"": {
+        ""score"": 5.0,
+        ""reason"": ""While the individual components are achievable, implementing an integrated automated parking and structural protection system requires significant infrastructure investment and engineering.""
+    },
+    ""Scalability"": {
+        ""score"": 5.0,
+        ""reason"": ""The system is adaptable to various parking facilities, but the high installation cost and complexity limit rapid or widespread deployment.""
+    },
+    ""Sustainability"": {
+        ""score"": 6.0,
+        ""reason"": ""The system promotes vehicle longevity and safety, though it requires ongoing maintenance and energy for sensors and automated structures.""
+    },
+    ""Image_contains_summary"": ""No images were provided for this submission.""
+}"
+6934	आजकल की डिजिटल दुनिया में, सुरक्षा एक महत्वपूर्ण पहलू बन चुकी है। बैंक लॉकर की सुरक्षा भी अत्यंत महत्वपूर्ण है क्योंकि ग्राहक अपने बहुमूल्य दस्तावेज़ और सामान को सुरक्षित रखना चाहते हैं। पारंपरिक लॉकर सिस्टम में उपयोगकर्ताओं को चाबी या पिन का इस्तेमाल करना पड़ता था, लेकिन RFID (Radio Frequency Identification) तकनीक के साथ लॉकर सिस्टम को और भी सुरक्षित और सुविधाजनक बनाया जा सकता है।	RFID एक वायरलेस तकनीक है जो रेडियो तरंगों के माध्यम से डिवाइसों के बीच डेटा ट्रांसफर करती है। इसमें एक RFID टैग और एक RFID रीडर होता है। RFID टैग में एक छोटा चिप और एंटीना होता है, जो डेटा को रीडर को भेजता है। यह डेटा बिना किसी शारीरिक संपर्क के पढ़ा जा सकता है, जिससे यह तकनीक पारंपरिक चाबी या पिन सिस्टम से कहीं अधिक सुरक्षित और प्रभावी होती है। बैंक लॉकर सिस्टम में RFID तकनीक का उपयोग ग्राहक की पहचान और लॉकर खोलने की प्रक्रिया को आसान और सुरक्षित बनाने के लिए किया जाता है। यहाँ पर RFID रीडर और RFID कार्ड का प्रमुख रूप से उपयोग होता है।ग्राहक को एक RFID कार्ड प्रदान किया जाता है जिसमें उनके लॉकर का डाटा और पहचान होती है। जब ग्राहक बैंक में प्रवेश करता है, तो वह अपने RFID कार्ड को रीडर के पास लाता है। यह रीडर ग्राहक के कार्ड से डेटा प्राप्त करता है और उसकी पहचान सत्यापित करता है। RFID रीडर एक डिवाइस है जो RFID टैग से सिग्नल प्राप्त करता है। यह सिग्नल रीडर को ग्राहक की पहचान, लॉकर का विवरण और अन्य जानकारी भेजता है। अगर ग्राहक का डेटा सही होता है, तो सिस्टम लॉकर को खोलने का आदेश देता है		"{
+    ""Novelty"": {
+        ""score"": 4.0,
+        ""reason"": ""RFID-based access control is a well-established technology, and its application to lockers is a common industry practice.""
+    },
+    ""Usefulness"": {
+        ""score"": 7.0,
+        ""reason"": ""The solution effectively replaces traditional physical keys with a more secure and convenient automated identification method.""
+    },
+    ""Feasibility"": {
+        ""score"": 8.0,
+        ""reason"": ""RFID technology is readily available, affordable, and widely used, making the proposed implementation highly practical.""
+    },
+    ""Scalability"": {
+        ""score"": 8.0,
+        ""reason"": ""The system can be easily deployed across multiple bank branches and integrated into existing security infrastructure.""
+    },
+    ""Sustainability"": {
+        ""score"": 7.0,
+        ""reason"": ""The solution is durable and requires minimal maintenance, contributing to long-term operational efficiency.""
+    },
+    ""Image_contains_summary"": ""No images provided.""
+}"
