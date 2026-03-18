@@ -429,6 +429,9 @@ class TestUploadAudioFile:
 
         mock_uploaded_file = MagicMock()
         mock_uploaded_file.name = "files/audio-abc123"
+        mock_uploaded_file.uri = (
+            "https://generativelanguage.googleapis.com/v1beta/files/audio-abc123"
+        )
         mock_genai_client.files.upload.return_value = mock_uploaded_file
 
         with patch("tempfile.NamedTemporaryFile") as mock_temp:
@@ -437,13 +440,17 @@ class TestUploadAudioFile:
             mock_temp.return_value.__enter__.return_value = mock_temp_file
 
             with patch("os.unlink"):
-                result = provider.upload_audio_file(
+                file_name, file_uri = provider.upload_audio_file(
                     content=audio_bytes,
                     mime_type="audio/mpeg",
                     display_name="stt-eval-1-sample-42",
                 )
 
-        assert result == "files/audio-abc123"
+        assert file_name == "files/audio-abc123"
+        assert (
+            file_uri
+            == "https://generativelanguage.googleapis.com/v1beta/files/audio-abc123"
+        )
         mock_genai_client.files.upload.assert_called_once()
 
     def test_upload_audio_file_error(self, provider, mock_genai_client):
@@ -468,6 +475,9 @@ class TestUploadAudioFile:
         """Test that a default display name is generated when not provided."""
         mock_uploaded_file = MagicMock()
         mock_uploaded_file.name = "files/audio-xyz"
+        mock_uploaded_file.uri = (
+            "https://generativelanguage.googleapis.com/v1beta/files/audio-xyz"
+        )
         mock_genai_client.files.upload.return_value = mock_uploaded_file
 
         with patch("tempfile.NamedTemporaryFile") as mock_temp:
@@ -476,12 +486,13 @@ class TestUploadAudioFile:
             mock_temp.return_value.__enter__.return_value = mock_temp_file
 
             with patch("os.unlink"):
-                result = provider.upload_audio_file(
+                file_name, file_uri = provider.upload_audio_file(
                     content=b"audio-data",
                     mime_type="audio/x-wav",
                 )
 
-        assert result == "files/audio-xyz"
+        assert file_name == "files/audio-xyz"
+        assert "generativelanguage.googleapis.com" in file_uri
 
 
 class TestDeleteFiles:

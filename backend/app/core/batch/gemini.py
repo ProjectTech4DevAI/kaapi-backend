@@ -338,7 +338,7 @@ class GeminiBatchProvider(BatchProvider):
         content: bytes,
         mime_type: str,
         display_name: str | None = None,
-    ) -> str:
+    ) -> tuple[str, str]:
         """Upload an audio file to Gemini File API.
 
         Args:
@@ -347,7 +347,10 @@ class GeminiBatchProvider(BatchProvider):
             display_name: Optional display name for the file
 
         Returns:
-            Gemini file name (e.g., "files/xxx")
+            Tuple of (file_name, file_uri):
+                - file_name: Short name for API calls (e.g., "files/xxx")
+                - file_uri: Full URI for use in batch requests
+                  (e.g., "https://generativelanguage.googleapis.com/v1beta/files/xxx")
         """
         display_name = display_name or f"stt-audio-{int(time.time())}"
         logger.info(
@@ -374,10 +377,10 @@ class GeminiBatchProvider(BatchProvider):
 
                 logger.info(
                     f"[upload_audio_file] Uploaded audio to Gemini | "
-                    f"file_name={uploaded_file.name}"
+                    f"file_name={uploaded_file.name} | file_uri={uploaded_file.uri}"
                 )
 
-                return uploaded_file.name
+                return uploaded_file.name, uploaded_file.uri
 
             finally:
                 os.unlink(tmp_path)

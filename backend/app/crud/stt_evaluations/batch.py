@@ -96,12 +96,19 @@ def start_stt_evaluation_batch(
 
     def _upload_to_gemini(
         sample: STTSample,
-    ) -> tuple[STTSample, str | None, str | None, str | None]:
-        """Download from S3 and upload to Gemini File API. Thread-safe."""
+    ) -> tuple[STTSample, str | None, str | None, str | None, str | None]:
+        """Download from S3 and upload to Gemini File API. Thread-safe.
+
+        Returns:
+            Tuple of (sample, file_uri, file_name, mime_type, error):
+                - file_uri: Full Gemini URI for batch requests
+                - file_name: Short name for cleanup via delete API
+        """
         file_record = file_map.get(sample.file_id)
         if not file_record:
             return (
                 sample,
+                None,
                 None,
                 None,
                 f"File record not found for file_id: {sample.file_id}",
@@ -117,14 +124,14 @@ def start_stt_evaluation_batch(
             audio_bytes = body.read()
 
             # Upload to Gemini File API
-            gemini_file_name = upload_provider.upload_audio_file(
+            file_name, file_uri = upload_provider.upload_audio_file(
                 content=audio_bytes,
                 mime_type=mime_type,
                 display_name=f"stt-eval-{run.id}-sample-{sample.id}",
             )
-            return sample, gemini_file_name, mime_type, None
+            return sample, file_uri, file_name, mime_type, None
         except Exception as e:
-            return sample, None, None, str(e)
+            return sample, None, None, None, str(e)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         upload_tasks = {
@@ -132,12 +139,12 @@ def start_stt_evaluation_batch(
         }
 
         for completed_task in as_completed(upload_tasks):
-            sample, gemini_file_name, mime_type, error = completed_task.result()
-            if gemini_file_name:
-                file_uris.append(gemini_file_name)
+            sample, file_uri, file_name, mime_type, error = completed_task.result()
+            if file_uri:
+                file_uris.append(file_uri)
                 mime_types.append(mime_type)
                 sample_keys.append(str(sample.id))
-                gemini_file_names.append(gemini_file_name)
+                gemini_file_names.append(file_name)
             else:
                 failed_samples.append((sample, error))
                 logger.error(
