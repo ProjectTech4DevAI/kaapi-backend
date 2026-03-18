@@ -350,7 +350,7 @@ def test_execute_job_success_creates_collection_with_callback(
 
     sample_request = CreationRequest(
         documents=[document.id],
-        0,
+        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
