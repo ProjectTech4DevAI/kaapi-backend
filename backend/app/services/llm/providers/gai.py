@@ -23,9 +23,15 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
+from app.models.llm.constants import (
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+)
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
+from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
+from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg, pcm_to_wav
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +125,11 @@ class GoogleAIProvider(BaseProvider):
         if not isinstance(resolved_input, str):
             return None, f"{provider} STT requires file path as string"
 
-        model = generation_params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
-
+        model = generation_params.get("model") or DEFAULT_STT_MODEL
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
-        temperature = generation_params.get("temperature", 0.7)
+        temperature = generation_params.get("temperature") or 0.0
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -137,7 +140,7 @@ class GoogleAIProvider(BaseProvider):
             lang_instruction = f"Transcribe the audio from {input_language} in the native script of {input_language}"
 
         if output_language and output_language != input_language:
-            lang_instruction += f" and translate to {output_language} in the native script of {output_language}"
+            lang_instruction += f" and translate to {output_language} in the native script of {output_language} and only return transcribed script in {output_language}."
 
         forced_transcription_text = "Only return transcribed text and no other text."
         # Merge user instructions with language instructions
@@ -147,6 +150,10 @@ class GoogleAIProvider(BaseProvider):
             )
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
+
+        logger.info(
+            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
+        )
 
         # Upload file and generate content
         gemini_file = self.client.files.upload(file=resolved_input)
@@ -161,8 +168,10 @@ class GoogleAIProvider(BaseProvider):
             contents=contents,
             # switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
-                # thinking_config=ThinkingConfig(thinking_level="low"),
-                temperature=temperature
+                thinking_config=ThinkingConfig(
+                    include_thoughts=True, thinking_budget=1000
+                ),
+                temperature=temperature,
             ),
         )
 
@@ -240,18 +249,11 @@ class GoogleAIProvider(BaseProvider):
         if not resolved_input.strip():
             return None, "Text input cannot be empty"
 
-        # Extract required params
-        model = generation_params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
-
-        voice = generation_params.get("voice")
-        if not voice:
-            return None, "Missing 'voice' in native params"
+        # Extract params with defaults (language is optional — Gemini auto-detects from script)
+        model = generation_params.get("model") or DEFAULT_TTS_MODEL
+        voice = generation_params.get("voice") or DEFAULT_TTS_VOICE
 
         language = generation_params.get("language")
-        if not language:
-            return None, "Missing 'language' in native params"
 
         # Extract optional params
         response_format = generation_params.get("response_format", "wav")
@@ -260,7 +262,7 @@ class GoogleAIProvider(BaseProvider):
         provider_specific = generation_params.get("provider_specific", {})
         gemini_params = provider_specific.get("gemini", {})
 
-        director_notes = gemini_params.get("director_notes")
+        director_notes = gemini_params.get("director_notes", "")
         # Build Gemini TTS config
         config_kwargs = {
             "response_modalities": ["AUDIO"],
@@ -293,9 +295,10 @@ class GoogleAIProvider(BaseProvider):
             return None, "Google AI response missing audio data"
 
         # Post-process audio format conversion if needed
-        # Gemini TTS natively outputs 24kHz 16-bit PCM (WAV format)
-        actual_format = "wav"  # Native Gemini TTS output format
-        encoded_content = base64.b64encode(raw_audio_bytes or b"").decode("ascii")
+        # Gemini TTS natively outputs 24kHz 16-bit raw PCM — wrap in WAV container
+        actual_format = "wav"
+        wav_bytes = pcm_to_wav(raw_audio_bytes)
+        encoded_content = base64.b64encode(wav_bytes).decode("ascii")
 
         if response_format and response_format != "wav":
             # Need to convert from WAV to requested format
