@@ -65,12 +65,13 @@ class ConfigVersionCrud:
             validated_blob = ConfigBlob.model_validate(merged_config)
         except ValidationError as e:
             logger.error(
-                f"[ConfigVersionCrud.create_from_partial] Validation failed | "
-                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}"
+                f"[ConfigVersionCrud.create_or_raise] Validation failed | "
+                f"{{'config_id': '{self.config_id}', 'error_count': {len(e.errors())}, "
+                f"'fields': {['.'.join(str(l) for l in err['loc']) for err in e.errors()]}}}"
             )
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid config after merge: {str(e)}",
+                detail=e.errors(),
             )
 
         try:
