@@ -82,7 +82,7 @@ def test_credential_data(db: Session) -> CredsCreate:
         credential={
             Provider.OPENAI.value: {
                 "api_key": api_key,
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             }
         },
@@ -129,7 +129,7 @@ def create_test_credential(db: Session) -> tuple[list[Credential], Project]:
         credential={
             Provider.OPENAI.value: {
                 "api_key": api_key,
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             }
         },
@@ -175,7 +175,7 @@ def create_test_fine_tuning_jobs(
     for ratio in ratios:
         job_request = FineTuningJobCreate(
             document_id=document.id,
-            base_model="gpt-4",
+            base_model="gpt-4o",
             split_ratio=[ratio],
             system_prompt="str",
         )
@@ -271,7 +271,7 @@ def create_test_config(
                     provider="openai",
                     type="text",
                     params={
-                        "model": "gpt-4",
+                        "model": "gpt-4o",
                         "temperature": 0.7,
                     },
                 )
@@ -283,7 +283,7 @@ def create_test_config(
                     provider="openai-native",
                     type="text",
                     params={
-                        "model": "gpt-4",
+                        "model": "gpt-4o",
                         "temperature": 0.7,
                         "max_tokens": 1000,
                     },
@@ -350,7 +350,7 @@ def create_test_version(
                         type=config_type,
                         params={
                             "model": completion_config.get("params", {}).get(
-                                "model", "gpt-4"
+                                "model", "gpt-4o"
                             ),
                             "temperature": 0.8,
                             "max_tokens": 1500,
@@ -365,7 +365,7 @@ def create_test_version(
                         type=config_type,
                         params={
                             "model": completion_config.get("params", {}).get(
-                                "model", "gpt-4"
+                                "model", "gpt-4o"
                             ),
                             "temperature": 0.8,
                         },
@@ -378,7 +378,7 @@ def create_test_version(
                     provider="openai-native",
                     type="text",
                     params={
-                        "model": "gpt-4",
+                        "model": "gpt-4o",
                         "temperature": 0.8,
                         "max_tokens": 1500,
                     },

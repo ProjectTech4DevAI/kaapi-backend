@@ -224,7 +224,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "language_code": "hin",
                 "output_format": "mp3_44100_128",
@@ -251,7 +251,8 @@ class TestElevenlabsProviderTTS:
         assert result.response.output.content.value == expected_b64
         assert result.response.output.content.format == "base64"
         assert result.response.output.content.mime_type == "audio/mpeg"
-        assert result.response.model == "eleven_multilingual_v2"
+        assert result.response.model == "eleven_v3"
+
         assert result.response.provider == "elevenlabs-native"
 
     def test_tts_chunked_audio_response(
@@ -273,7 +274,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "output_format": "wav_24000",
             },
@@ -293,7 +294,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
                 "output_format": "opus_48000_128",
             },
@@ -306,12 +307,12 @@ class TestElevenlabsProviderTTS:
         assert result.response.output.content.mime_type == "audio/opus"
 
     def test_tts_default_output_format(self, provider, mock_client, query_params):
-        """Test TTS defaults to mp3_44100_128 when output_format is not specified."""
+        """Test TTS defaults to wav_24000 when output_format is not specified."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
             },
         )
@@ -321,8 +322,10 @@ class TestElevenlabsProviderTTS:
 
         assert error is None
         call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
-        assert call_kwargs["output_format"] == "mp3_44100_128"
-        assert result.response.output.content.mime_type == "audio/mpeg"
+        assert call_kwargs["output_format"] == "wav_24000"
+        assert (
+            result.response.output.content.mime_type == "audio/wav"
+        )  # Fixed: wav format → audio/wav mime type
 
     def test_tts_passes_language_code(
         self, provider, mock_client, tts_config, query_params
@@ -343,7 +346,7 @@ class TestElevenlabsProviderTTS:
             provider="elevenlabs-native",
             type="tts",
             params={
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
             },
         )
@@ -380,7 +383,7 @@ class TestElevenlabsProviderTTS:
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
             type="tts",
-            params={"model_id": "eleven_multilingual_v2"},
+            params={"model_id": "eleven_v3"},
         )
         mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
 

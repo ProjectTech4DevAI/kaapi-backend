@@ -31,13 +31,13 @@ def test_create_version_success(
         "config_blob": {
             "completion": {
                 "params": {
-                    "model": "gpt-4-turbo",
+                    "model": "gpt-4o-mini",
                     "temperature": 0.9,
                     "max_tokens": 3000,
                 },
             }
         },
-        "commit_message": "Updated model to gpt-4-turbo",
+        "commit_message": "Updated model to gpt-4o-mini",
     }
 
     response = client.post(
@@ -57,7 +57,7 @@ def test_create_version_success(
 
     # Verify params were updated
     config_blob = data["data"]["config_blob"]
-    assert config_blob["completion"]["params"]["model"] == "gpt-4-turbo"
+    assert config_blob["completion"]["params"]["model"] == "gpt-4o-mini"
     assert config_blob["completion"]["params"]["temperature"] == 0.9
 
     # Verify type was inherited from existing config
@@ -75,7 +75,7 @@ def test_create_version_nonexistent_config(
         "config_blob": {
             "completion": {
                 "provider": "openai",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Test",
@@ -106,7 +106,7 @@ def test_create_version_different_project_fails(
         "config_blob": {
             "completion": {
                 "provider": "openai",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Should fail",
@@ -138,10 +138,10 @@ def test_create_version_auto_increments(
             "config_blob": {
                 "completion": {
                     "provider": "openai",
-                    "params": {"model": f"gpt-4-version-{i}"},
+                    "params": {"model": "gpt-4o"},
                 }
             },
-            "commit_message": f"Version {i}",
+            "commit_message": f"Version 4o",
         }
 
         response = client.post(
@@ -286,7 +286,7 @@ def test_get_version_by_number(
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4-turbo", "temperature": 0.5},
+                params={"model": "gpt-4o-mini", "temperature": 0.5},
             )
         ),
         commit_message="Updated config",
@@ -481,7 +481,7 @@ def test_create_version_cannot_change_type_from_text_to_stt(
         completion=KaapiCompletionConfig(
             provider="openai",
             type="text",
-            params={"model": "gpt-4", "temperature": 0.7},
+            params={"model": "gpt-4o", "temperature": 0.7},
         )
     )
     config = create_test_config(
@@ -604,7 +604,7 @@ def test_create_version_cannot_change_type_from_tts_to_text(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                 },
             }
@@ -634,7 +634,7 @@ def test_create_version_same_type_succeeds(
             provider="openai",
             type="text",
             params={
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             },
         )
@@ -653,12 +653,12 @@ def test_create_version_same_type_succeeds(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4-turbo",
+                    "model": "gpt-4o-mini",
                     "temperature": 0.9,
                 },
             }
         },
-        "commit_message": "Updated to gpt-4-turbo with same type",
+        "commit_message": "Updated to gpt-4o-mini with same type",
     }
 
     response = client.post(
@@ -687,7 +687,7 @@ def test_create_version_partial_update_params_only(
             provider="openai",
             type="text",
             params={
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "temperature": 0.7,
             },
         )
@@ -704,7 +704,7 @@ def test_create_version_partial_update_params_only(
         "config_blob": {
             "completion": {
                 "params": {
-                    "model": "gpt-4-turbo",
+                    "model": "gpt-4o-mini",
                     "temperature": 0.9,
                 },
             }
@@ -727,7 +727,7 @@ def test_create_version_partial_update_params_only(
     assert config_blob_result["completion"]["provider"] == "openai"
     assert config_blob_result["completion"]["type"] == "text"
     # Params should be updated
-    assert config_blob_result["completion"]["params"]["model"] == "gpt-4-turbo"
+    assert config_blob_result["completion"]["params"]["model"] == "gpt-4o-mini"
     assert config_blob_result["completion"]["params"]["temperature"] == 0.9
 
 
@@ -745,7 +745,7 @@ def test_create_config_with_kaapi_provider_success(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                 },
             }
