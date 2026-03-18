@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models import Language
@@ -16,10 +17,15 @@ def get_languages(session: Session, skip: int = 0, limit: int = 100) -> list[Lan
     return list(session.exec(statement).all())
 
 
-def get_language_by_id(session: Session, language_id: int) -> Optional[Language]:
-    """Retrieve a language by its ID."""
+def get_language_by_id(session: Session, language_id: int) -> Language:
+    """Retrieve a language by its ID. Raises HTTPException if not found."""
     statement = select(Language).where(Language.id == language_id)
-    return session.exec(statement).first()
+    language = session.exec(statement).first()
+    if not language:
+        raise HTTPException(
+            status_code=400, detail="Invalid language_id: language not found"
+        )
+    return language
 
 
 def get_language_by_locale(session: Session, locale: str) -> Optional[Language]:

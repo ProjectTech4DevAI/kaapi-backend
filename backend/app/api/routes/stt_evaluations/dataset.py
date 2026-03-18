@@ -46,13 +46,7 @@ def create_dataset(
     """Create an STT evaluation dataset."""
     # Validate language_id
     if dataset_create.language_id is not None:
-        language = get_language_by_id(
-            session=session, language_id=dataset_create.language_id
-        )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
+        get_language_by_id(session=session, language_id=dataset_create.language_id)
 
     dataset, samples = upload_stt_dataset(
         session=session,
@@ -231,13 +225,7 @@ def update_sample(
     logger.info(f"[update_sample] Updating sample | " f"sample_id: {sample_id}")
 
     if sample_update.language_id is not None:
-        language = get_language_by_id(
-            session=session, language_id=sample_update.language_id
-        )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
+        get_language_by_id(session=session, language_id=sample_update.language_id)
 
     sample = update_stt_sample(
         session=session,
