@@ -1,35 +1,15 @@
-"""Parameter mappers for converting Kaapi-abstracted parameters to provider-specific formats."""
-
 import litellm
 import logging
+
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
+from app.models.llm.constants import (
+    BCP47_LOCALE_TO_GEMINI_LANG,
+    BCP47_TO_ELEVENLABS_LANG,
+    ELEVENLABS_VOICE_TO_ID,
+    DEFAULT_TTS_VOICE,
+)
 
 logger = logging.getLogger(__name__)
-# BCP-47 language tag → ElevenLabs ISO 639-3 code (Indic + English)
-BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
-    "en-IN": "en",
-    "hi-IN": "hi",
-    "bn-IN": "bn",  # Bengali
-    "ta-IN": "ta",
-    "te-IN": "te",
-    "mr-IN": "mr",
-    "gu-IN": "gu",
-    "kn-IN": "kn",
-    "ml-IN": "ml",
-    "pa-IN": "pa",
-    # "od-IN": "or",  # Not supported by Elevenlabs explicitly but works in auto detect mode
-    "as-IN": "as",
-    "ur-IN": "ur",
-    "ne-IN": "ne",
-    "sd-IN": "sd",
-}
-
-ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
-    "Sarah": "EXAVITQu4vr4xnSDxMaL",
-    "George": "JBFqnCBsd6RMkjVDRZzb",
-    "Callum": "N2lVS1w4EtoT3dr4eOWO",
-    "Liam": "TX3LPaxmHKxFdv7VOQHJ",
-}
 
 
 def voice_to_id(voice: str) -> str | None:
@@ -50,7 +30,7 @@ def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
         bcp47_code: BCP-47 language tag (e.g. "en-IN", "hi-IN", "ta-IN")
 
     Returns:
-        ISO 639-3 code (e.g. "eng", "hin", "tam") or None if unsupported
+        ISO 639-1 code (e.g. "en", "hi", "ta") or None if unsupported
     """
     return BCP47_TO_ELEVENLABS_LANG.get(bcp47_code)
 
@@ -182,20 +162,31 @@ def map_kaapi_to_google_params(
 
     elif completion_type == "tts":
         # TTS mode - voice, language, response_format
-        voice = kaapi_params.get("voice")
-        if voice:
-            google_params["voice"] = voice
+        # Apply smart defaults for voice and response_format (following ElevenLabs pattern)
+        voice = kaapi_params.get("voice") or DEFAULT_TTS_VOICE
+        google_params["voice"] = voice
 
+        response_format = kaapi_params.get("response_format") or "wav"
+        google_params["response_format"] = response_format
+
+        # Language: Only set if explicitly provided (None/missing = auto-detect)
         language = kaapi_params.get("language")
         if language:
-            google_params["language"] = language
-
-        response_format = kaapi_params.get("response_format")
-        if response_format:
-            google_params["response_format"] = response_format
+            google_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language) or None
+            if not google_lang:
+                warnings.append(
+                    f"Unsupported language '{language}' for Gemini TTS, using auto-detect"
+                )
+            else:
+                google_params["language"] = google_lang
 
     elif completion_type == "stt":
         # STT mode - instructions, temperature, input_language, output_language, response_format
+        # Apply smart default for input_language
+        input_language = kaapi_params.get("input_language") or "auto"
+        google_params["input_language"] = input_language
+
+        # Optional parameters - only set if provided
         instructions = kaapi_params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
@@ -203,10 +194,6 @@ def map_kaapi_to_google_params(
         temperature = kaapi_params.get("temperature")
         if temperature is not None:
             google_params["temperature"] = temperature
-
-        input_language = kaapi_params.get("input_language")
-        if input_language:
-            google_params["input_language"] = input_language
 
         output_language = kaapi_params.get("output_language")
         if output_language:
@@ -325,7 +312,7 @@ def map_kaapi_to_sarvam_params(
 
     else:
         return {}, [f"Unsupported completion type '{completion_type}' for SarvamAI"]
-
+    logger.info(f"Sarvam params {sarvam_params}")
     return sarvam_params, warnings
 
 
@@ -388,7 +375,7 @@ def map_kaapi_to_elevenlabs_params(
                 "ogg": "opus_48000_128",  # Map ogg to opus
             }
             elevenlabs_params["output_format"] = format_mapping.get(
-                response_format, "mp3_44100_128"
+                response_format, "wav_24000"
             )
 
     elif completion_type == "stt":

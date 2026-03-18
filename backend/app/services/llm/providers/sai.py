@@ -73,12 +73,9 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI STT"
-
+        model = params.get("model") or "saaras:v3"
         language_code = params.get("language_code")
-        mode = params.get("mode")
+        mode = params.get("mode") or "transcribe"
 
         # Parse and validate input
         parsed_input_path = self._parse_input(
@@ -167,10 +164,7 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI TTS"
-
+        model = params.get("model") or "bulbul:v3"
         target_language_code = params.get("target_language_code")
         if not target_language_code:
             return (
