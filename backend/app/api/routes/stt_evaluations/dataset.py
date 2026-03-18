@@ -12,7 +12,6 @@ from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
     get_samples_by_dataset_id,
     get_stt_dataset_by_id,
-    get_stt_sample_by_id,
     list_stt_datasets,
     update_stt_sample,
 )
@@ -162,7 +161,6 @@ def get_dataset(
                 session=session, project_id=auth_context.project_.id
             )
 
-        samples = []
         for s in sample_records:
             signed_url = None
             if storage and s.file_id in file_map:
@@ -235,6 +233,9 @@ def update_sample(
         language_id=sample_update.language_id,
         ground_truth=sample_update.ground_truth,
     )
+
+    if not sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
 
     return APIResponse.success_response(
         data=STTSamplePublic(

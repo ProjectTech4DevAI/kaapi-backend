@@ -239,7 +239,7 @@ def update_stt_sample(
     project_id: int,
     language_id: int | None = None,
     ground_truth: str | None = None,
-) -> STTSample:
+) -> STTSample | None:
     """Update an STT sample's language and/or ground truth.
 
     Args:
@@ -251,10 +251,7 @@ def update_stt_sample(
         ground_truth: Optional new ground truth transcription
 
     Returns:
-        STTSample: Updated sample
-
-    Raises:
-        HTTPException: If sample not found
+        STTSample | None: Updated sample, or None if not found
     """
     sample = get_stt_sample_by_id(
         session=session,
@@ -264,7 +261,7 @@ def update_stt_sample(
     )
 
     if not sample:
-        raise HTTPException(status_code=404, detail="Sample not found")
+        return None
 
     if language_id is not None:
         sample.language_id = language_id
@@ -275,8 +272,7 @@ def update_stt_sample(
     sample.updated_at = now()
 
     session.add(sample)
-    session.commit()
-    session.refresh(sample)
+    session.flush()
 
     logger.info(
         f"[update_stt_sample] Sample updated | "

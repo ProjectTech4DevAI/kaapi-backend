@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.crud.language import get_language_by_id, get_languages
@@ -37,9 +37,10 @@ def get_language(session: SessionDep, auth_context: AuthContextDep, language_id:
     """
     Retrieve a language by ID.
     """
-    try:
-        language = get_language_by_id(session=session, language_id=language_id)
-    except HTTPException:
-        logger.error(f"[get_language] Language not found | language_id={language_id}")
-        raise HTTPException(status_code=404, detail="Language not found")
+    language = get_language_by_id(
+        session=session,
+        language_id=language_id,
+        status_code=404,
+        detail="Language not found",
+    )
     return APIResponse.success_response(language)
