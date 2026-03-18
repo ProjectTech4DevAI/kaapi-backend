@@ -12,18 +12,20 @@ from app.core.batch.gemini import (
 )
 
 
+@pytest.fixture
+def mock_genai_client():
+    """Create a mock Gemini client."""
+    return MagicMock()
+
+
+@pytest.fixture
+def provider(mock_genai_client):
+    """Create a GeminiBatchProvider instance with mock client."""
+    return GeminiBatchProvider(client=mock_genai_client)
+
+
 class TestGeminiBatchProvider:
     """Test cases for GeminiBatchProvider."""
-
-    @pytest.fixture
-    def mock_genai_client(self):
-        """Create a mock Gemini client."""
-        return MagicMock()
-
-    @pytest.fixture
-    def provider(self, mock_genai_client):
-        """Create a GeminiBatchProvider instance with mock client."""
-        return GeminiBatchProvider(client=mock_genai_client)
 
     @pytest.fixture
     def provider_with_model(self, mock_genai_client):
@@ -390,15 +392,15 @@ class TestGeminiBatchProvider:
     def test_download_file_unicode_content(self, provider, mock_genai_client):
         """Test downloading file with unicode content."""
         file_id = "files/abc123"
-        expected_content = '{"text":"Hello 世界 🌍"}'
+        expected_content = '{"text":"Hello \u4e16\u754c \U0001f30d"}'
 
         mock_genai_client.files.download.return_value = expected_content.encode("utf-8")
 
         content = provider.download_file(file_id)
 
         assert content == expected_content
-        assert "世界" in content
-        assert "🌍" in content
+        assert "\u4e16\u754c" in content
+        assert "\U0001f30d" in content
 
     def test_download_file_error(self, provider, mock_genai_client):
         """Test handling of error during file download."""
@@ -410,6 +412,118 @@ class TestGeminiBatchProvider:
             provider.download_file(file_id)
 
         assert "File not found" in str(exc_info.value)
+
+
+class TestUploadAudioFile:
+    """Test cases for GeminiBatchProvider.upload_audio_file."""
+
+    def test_upload_audio_file_success(self, provider, mock_genai_client):
+        """Test successful audio file upload to Gemini."""
+        audio_bytes = b"\xff\xfb\x90\x00" * 100  # fake MP3 bytes
+
+        mock_uploaded_file = MagicMock()
+        mock_uploaded_file.name = "files/audio-abc123"
+        mock_uploaded_file.uri = (
+            "https://generativelanguage.googleapis.com/v1beta/files/audio-abc123"
+        )
+        mock_genai_client.files.upload.return_value = mock_uploaded_file
+
+        with patch("tempfile.NamedTemporaryFile") as mock_temp:
+            mock_temp_file = MagicMock()
+            mock_temp_file.name = "/tmp/test.mp3"
+            mock_temp.return_value.__enter__.return_value = mock_temp_file
+
+            with patch("os.unlink"):
+                file_name, file_uri = provider.upload_audio_file(
+                    content=audio_bytes,
+                    mime_type="audio/mpeg",
+                    display_name="stt-eval-1-sample-42",
+                )
+
+        assert file_name == "files/audio-abc123"
+        assert (
+            file_uri
+            == "https://generativelanguage.googleapis.com/v1beta/files/audio-abc123"
+        )
+        mock_genai_client.files.upload.assert_called_once()
+
+    def test_upload_audio_file_error(self, provider, mock_genai_client):
+        """Test error handling during audio file upload."""
+        mock_genai_client.files.upload.side_effect = Exception("Quota exceeded")
+
+        with patch("tempfile.NamedTemporaryFile") as mock_temp:
+            mock_temp_file = MagicMock()
+            mock_temp_file.name = "/tmp/test.mp3"
+            mock_temp.return_value.__enter__.return_value = mock_temp_file
+
+            with patch("os.unlink"):
+                with pytest.raises(Exception) as exc_info:
+                    provider.upload_audio_file(
+                        content=b"audio-data",
+                        mime_type="audio/mpeg",
+                    )
+
+        assert "Quota exceeded" in str(exc_info.value)
+
+    def test_upload_audio_file_default_display_name(self, provider, mock_genai_client):
+        """Test that a default display name is generated when not provided."""
+        mock_uploaded_file = MagicMock()
+        mock_uploaded_file.name = "files/audio-xyz"
+        mock_uploaded_file.uri = (
+            "https://generativelanguage.googleapis.com/v1beta/files/audio-xyz"
+        )
+        mock_genai_client.files.upload.return_value = mock_uploaded_file
+
+        with patch("tempfile.NamedTemporaryFile") as mock_temp:
+            mock_temp_file = MagicMock()
+            mock_temp_file.name = "/tmp/test.wav"
+            mock_temp.return_value.__enter__.return_value = mock_temp_file
+
+            with patch("os.unlink"):
+                file_name, file_uri = provider.upload_audio_file(
+                    content=b"audio-data",
+                    mime_type="audio/x-wav",
+                )
+
+        assert file_name == "files/audio-xyz"
+        assert "generativelanguage.googleapis.com" in file_uri
+
+
+class TestDeleteFiles:
+    """Test cases for GeminiBatchProvider.delete_files."""
+
+    def test_delete_files_all_success(self, provider, mock_genai_client):
+        """Test successful deletion of all files."""
+        file_names = ["files/a", "files/b", "files/c"]
+
+        success, failed = provider.delete_files(file_names)
+
+        assert success == 3
+        assert failed == 0
+        assert mock_genai_client.files.delete.call_count == 3
+
+    def test_delete_files_partial_failure(self, provider, mock_genai_client):
+        """Test that partial failures are handled gracefully."""
+        file_names = ["files/a", "files/b", "files/c"]
+
+        mock_genai_client.files.delete.side_effect = [
+            None,
+            Exception("Not found"),
+            None,
+        ]
+
+        success, failed = provider.delete_files(file_names)
+
+        assert success == 2
+        assert failed == 1
+
+    def test_delete_files_empty_list(self, provider, mock_genai_client):
+        """Test deletion with empty file list."""
+        success, failed = provider.delete_files([])
+
+        assert success == 0
+        assert failed == 0
+        mock_genai_client.files.delete.assert_not_called()
 
 
 class TestBatchJobState:
@@ -430,14 +544,12 @@ class TestCreateSTTBatchRequests:
 
     def test_create_requests_with_keys(self):
         """Test creating batch requests with custom keys."""
-        signed_urls = [
-            "https://bucket.s3.amazonaws.com/audio1.mp3?signature=abc",
-            "https://bucket.s3.amazonaws.com/audio2.wav?signature=def",
-        ]
+        file_uris = ["files/audio1", "files/audio2"]
+        mime_types = ["audio/mpeg", "audio/x-wav"]
         prompt = "Transcribe this audio file."
         keys = ["sample-1", "sample-2"]
 
-        requests = create_stt_batch_requests(signed_urls, prompt, keys=keys)
+        requests = create_stt_batch_requests(file_uris, mime_types, prompt, keys=keys)
 
         assert len(requests) == 2
         assert requests[0]["key"] == "sample-1"
@@ -455,26 +567,22 @@ class TestCreateSTTBatchRequests:
 
     def test_create_requests_without_keys(self):
         """Test creating batch requests without keys (auto-generated)."""
-        signed_urls = [
-            "https://bucket.s3.amazonaws.com/audio.mp3?signature=xyz",
-        ]
+        file_uris = ["files/audio1"]
+        mime_types = ["audio/mpeg"]
         prompt = "Transcribe."
 
-        requests = create_stt_batch_requests(signed_urls, prompt)
+        requests = create_stt_batch_requests(file_uris, mime_types, prompt)
 
         assert len(requests) == 1
         assert requests[0]["key"] == "0"
 
-    def test_create_requests_mime_type_detection(self):
-        """Test that MIME types are correctly detected from URLs."""
-        signed_urls = [
-            "https://bucket.s3.amazonaws.com/audio.mp3?sig=1",
-            "https://bucket.s3.amazonaws.com/audio.wav?sig=2",
-            "https://bucket.s3.amazonaws.com/audio.m4a?sig=3",
-        ]
+    def test_create_requests_mime_types_passed_through(self):
+        """Test that provided MIME types are used in requests."""
+        file_uris = ["files/audio1", "files/audio2", "files/audio3"]
+        mime_types = ["audio/mpeg", "audio/x-wav", "audio/mp4"]
         prompt = "Transcribe."
 
-        requests = create_stt_batch_requests(signed_urls, prompt)
+        requests = create_stt_batch_requests(file_uris, mime_types, prompt)
 
         assert (
             requests[0]["request"]["contents"][0]["parts"][1]["file_data"]["mime_type"]
@@ -484,38 +592,46 @@ class TestCreateSTTBatchRequests:
             requests[1]["request"]["contents"][0]["parts"][1]["file_data"]["mime_type"]
             == "audio/x-wav"
         )
-        # .m4a can return different MIME types depending on the system
-        m4a_mime = requests[2]["request"]["contents"][0]["parts"][1]["file_data"][
-            "mime_type"
-        ]
-        assert m4a_mime in ("audio/mp4", "audio/mp4a-latm", "audio/x-m4a")
+        assert (
+            requests[2]["request"]["contents"][0]["parts"][1]["file_data"]["mime_type"]
+            == "audio/mp4"
+        )
 
     def test_create_requests_key_length_mismatch(self):
-        """Test that mismatched keys and URLs raise error."""
-        signed_urls = [
-            "https://example.com/audio1.mp3",
-            "https://example.com/audio2.mp3",
-        ]
+        """Test that mismatched keys and URIs raise error."""
+        file_uris = ["files/audio1", "files/audio2"]
+        mime_types = ["audio/mpeg", "audio/mpeg"]
         keys = ["only-one-key"]
         prompt = "Transcribe."
 
         with pytest.raises(ValueError) as exc_info:
-            create_stt_batch_requests(signed_urls, prompt, keys=keys)
+            create_stt_batch_requests(file_uris, mime_types, prompt, keys=keys)
 
         assert "Length of keys" in str(exc_info.value)
 
-    def test_create_requests_file_uri_preserved(self):
-        """Test that signed URLs are preserved in file_uri."""
-        signed_url = "https://bucket.s3.amazonaws.com/audio.mp3?X-Amz-Signature=abc123&X-Amz-Expires=3600"
+    def test_create_requests_mime_types_length_mismatch(self):
+        """Test that mismatched file_uris and mime_types raise error."""
+        file_uris = ["files/audio1", "files/audio2"]
+        mime_types = ["audio/mpeg"]
         prompt = "Transcribe."
 
-        requests = create_stt_batch_requests([signed_url], prompt)
+        with pytest.raises(ValueError) as exc_info:
+            create_stt_batch_requests(file_uris, mime_types, prompt)
 
-        file_uri = requests[0]["request"]["contents"][0]["parts"][1]["file_data"][
+        assert "Length of file_uris" in str(exc_info.value)
+
+    def test_create_requests_file_uri_preserved(self):
+        """Test that Gemini file URIs are preserved in file_data."""
+        file_uri = "files/abc123xyz"
+        mime_types = ["audio/mpeg"]
+        prompt = "Transcribe."
+
+        requests = create_stt_batch_requests([file_uri], mime_types, prompt)
+
+        result_uri = requests[0]["request"]["contents"][0]["parts"][1]["file_data"][
             "file_uri"
         ]
-        assert file_uri == signed_url
-        assert "X-Amz-Signature" in file_uri
+        assert result_uri == file_uri
 
 
 class TestExtractTextFromResponseDict:
@@ -603,22 +719,3 @@ class TestExtractTextFromResponse:
 
         text = GeminiBatchProvider._extract_text_from_response(response)
         assert text == ""
-
-
-class TestCreateSttBatchRequestsMimeTypeFallback:
-    """Test cases for create_stt_batch_requests MIME type fallback."""
-
-    def test_unknown_mime_type_defaults_to_audio_mpeg(self):
-        """Test that unknown file extensions default to audio/mpeg."""
-        # URL with no recognizable audio extension
-        signed_urls = ["https://bucket.s3.amazonaws.com/audio.unknown?signature=xyz"]
-        prompt = "Transcribe this audio."
-
-        with patch("app.core.batch.gemini.get_mime_from_url", return_value=None):
-            requests = create_stt_batch_requests(signed_urls, prompt)
-
-        assert len(requests) == 1
-        # Check that the request was created with default mime type
-        # parts[0] is text prompt, parts[1] is file_data
-        file_data = requests[0]["request"]["contents"][0]["parts"][1]["file_data"]
-        assert file_data["mime_type"] == "audio/mpeg"
