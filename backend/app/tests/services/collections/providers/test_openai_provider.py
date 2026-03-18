@@ -18,7 +18,7 @@ def test_create_openai_vector_store_only() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1", "doc2"],
-        batch_size=1,
+        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
@@ -57,7 +57,7 @@ def test_create_openai_with_assistant() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=1,
+        batch_size=10,
         model="gpt-4o",
         instructions="You are helpful",
         temperature=0.7,
@@ -138,7 +138,7 @@ def test_create_propagates_exception() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=1,
+        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
