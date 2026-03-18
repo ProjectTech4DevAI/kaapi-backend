@@ -103,7 +103,7 @@ class CollectionOptions(SQLModel):
         description="List of document IDs",
     )
     batch_size: int = Field(
-        default=1,
+        default=10,
         description=(
             "Number of documents to send to OpenAI in a single "
             "transaction. See the `file_ids` parameter in the "
