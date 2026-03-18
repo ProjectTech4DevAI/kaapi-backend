@@ -580,7 +580,7 @@ class TestProcessCompletedEmbeddingBatch:
         assert "summary_scores" in result.score
         summary_scores = result.score["summary_scores"]
         cosine_score = next(
-            (s for s in summary_scores if s["name"] == "cosine_similarity"), None
+            (s for s in summary_scores if s["name"] == "Cosine Similarity"), None
         )
         assert cosine_score is not None
         assert cosine_score["avg"] == 0.95

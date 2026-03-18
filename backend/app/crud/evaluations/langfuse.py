@@ -209,7 +209,7 @@ def update_traces_with_cosine_scores(
         try:
             langfuse.score(
                 trace_id=trace_id,
-                name="cosine_similarity",
+                name="Cosine Similarity",
                 value=cosine_score,
                 comment=(
                     "Cosine similarity between generated output and "

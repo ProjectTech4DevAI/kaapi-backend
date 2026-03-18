@@ -137,12 +137,19 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
             field.strip().lower(): field for field in csv_reader.fieldnames
         }
 
-        # Validate required headers (case-insensitive)
-        if "question" not in clean_headers or "answer" not in clean_headers:
+        # Validate exactly 'question' and 'answer' columns (case-insensitive)
+        if set(clean_headers.keys()) != {"question", "answer"}:
+            extra = set(clean_headers.keys()) - {"question", "answer"}
+            missing = {"question", "answer"} - set(clean_headers.keys())
+            parts = []
+            if missing:
+                parts.append(f"Missing: {sorted(missing)}")
+            if extra:
+                parts.append(f"Unexpected: {sorted(extra)}")
             raise HTTPException(
                 status_code=422,
-                detail=f"CSV must contain 'question' and 'answer' columns "
-                f"Found columns: {csv_reader.fieldnames}",
+                detail=f"CSV must contain exactly 'question' and 'answer' columns. "
+                f"{'. '.join(parts)}. Found columns: {csv_reader.fieldnames}",
             )
 
         question_col = clean_headers["question"]

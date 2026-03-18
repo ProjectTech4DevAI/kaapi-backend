@@ -70,6 +70,8 @@ def update_result_feedback(
         update_kwargs["is_correct"] = feedback.is_correct
     if "comment" in feedback.model_fields_set:
         update_kwargs["comment"] = feedback.comment
+    if "score" in feedback.model_fields_set:
+        update_kwargs["score"] = feedback.score
 
     result = update_tts_human_feedback(
         session=session,

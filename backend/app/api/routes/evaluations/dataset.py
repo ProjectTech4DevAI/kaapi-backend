@@ -42,6 +42,7 @@ def _dataset_to_response(
     return DatasetUploadResponse(
         dataset_id=dataset.id,
         dataset_name=dataset.name,
+        description=dataset.description,
         total_items=dataset.dataset_metadata.get("total_items_count", 0),
         original_items=dataset.dataset_metadata.get("original_items_count", 0),
         duplication_factor=dataset.dataset_metadata.get("duplication_factor", 1),
