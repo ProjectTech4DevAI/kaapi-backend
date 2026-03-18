@@ -262,6 +262,22 @@ async def process_completed_stt_batch(
         if stt_result_rows:
             session.commit()
 
+        # Clean up Gemini audio files after successful processing
+        gemini_file_ids = batch_job.config.get("gemini_audio_file_ids", [])
+        if gemini_file_ids:
+            try:
+                deleted, failed = batch_provider.delete_files(gemini_file_ids)
+                logger.info(
+                    f"[process_completed_stt_batch] Gemini file cleanup | "
+                    f"batch_job_id={batch_job.id}, deleted={deleted}, failed={failed}"
+                )
+            except Exception as e:
+                # Cleanup failure is non-critical; Gemini files auto-expire after 48h
+                logger.warning(
+                    f"[process_completed_stt_batch] Gemini file cleanup failed | "
+                    f"batch_job_id={batch_job.id}, error={str(e)}"
+                )
+
     except Exception as e:
         logger.error(
             f"[process_completed_stt_batch] Failed to process batch results | "

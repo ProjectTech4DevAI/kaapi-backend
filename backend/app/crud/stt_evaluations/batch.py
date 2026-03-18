@@ -14,6 +14,7 @@ from app.core.batch import (
 )
 from app.models.batch_job import BatchJobType
 from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import get_mime_from_url
 from app.crud.file import get_files_by_ids
 from app.crud.stt_evaluations.run import update_stt_run
 from app.models import EvaluationRun
@@ -36,12 +37,12 @@ def start_stt_evaluation_batch(
     samples: list[STTSample],
     org_id: int,
     project_id: int,
-    signed_url_expires_in: int = 86400,
 ) -> dict[str, Any]:
-    """Generate signed URLs and submit Gemini batch jobs for STT evaluation.
+    """Upload audio files to Gemini and submit batch jobs for STT evaluation.
 
-    Submits one batch job per model. Each batch job is tracked via
-    its config containing evaluation_run_id and stt_provider.
+    Downloads audio from S3 and uploads to Gemini File API, then submits
+    one batch job per model. Each batch job is tracked via its config
+    containing evaluation_run_id and stt_provider.
 
     Args:
         session: Database session
@@ -49,7 +50,6 @@ def start_stt_evaluation_batch(
         samples: List of STT samples to process
         org_id: Organization ID
         project_id: Project ID
-        signed_url_expires_in: Signed URL expiry in seconds (default: 24 hours)
 
     Returns:
         dict: Result with batch job information per model
@@ -85,56 +85,80 @@ def start_stt_evaluation_batch(
     )
     file_map = {f.id: f for f in file_records}
 
-    # Generate signed URLs for audio files concurrently (shared across all models)
-    signed_urls: list[str] = []
+    # Upload audio files to Gemini File API concurrently (shared across all models)
+    upload_provider = GeminiBatchProvider(client=gemini_client.client)
+
+    file_uris: list[str] = []
+    mime_types: list[str] = []
     sample_keys: list[str] = []
+    gemini_file_names: list[str] = []
     failed_samples: list[tuple[STTSample, str]] = []
 
-    def _generate_signed_url(
+    def _upload_to_gemini(
         sample: STTSample,
-    ) -> tuple[STTSample, str | None, str | None]:
-        """Generate a signed URL for a single sample. Thread-safe."""
+    ) -> tuple[STTSample, str | None, str | None, str | None]:
+        """Download from S3 and upload to Gemini File API. Thread-safe."""
         file_record = file_map.get(sample.file_id)
         if not file_record:
-            return sample, None, f"File record not found for file_id: {sample.file_id}"
-        try:
-            url = storage.get_signed_url(
-                file_record.object_store_url, expires_in=signed_url_expires_in
+            return (
+                sample,
+                None,
+                None,
+                f"File record not found for file_id: {sample.file_id}",
             )
-            return sample, url, None
+        try:
+            # Detect MIME type from S3 URL path
+            mime_type = get_mime_from_url(file_record.object_store_url)
+            if mime_type is None:
+                mime_type = file_record.content_type or "audio/mpeg"
+
+            # Download audio from S3
+            body = storage.stream(file_record.object_store_url)
+            audio_bytes = body.read()
+
+            # Upload to Gemini File API
+            gemini_file_name = upload_provider.upload_audio_file(
+                content=audio_bytes,
+                mime_type=mime_type,
+                display_name=f"stt-eval-{run.id}-sample-{sample.id}",
+            )
+            return sample, gemini_file_name, mime_type, None
         except Exception as e:
-            return sample, None, str(e)
+            return sample, None, None, str(e)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        sign_url_tasks = {
-            executor.submit(_generate_signed_url, sample): sample for sample in samples
+        upload_tasks = {
+            executor.submit(_upload_to_gemini, sample): sample for sample in samples
         }
 
-        for completed_task in as_completed(sign_url_tasks):
-            sample, url, error = completed_task.result()
-            if url:
-                signed_urls.append(url)
+        for completed_task in as_completed(upload_tasks):
+            sample, gemini_file_name, mime_type, error = completed_task.result()
+            if gemini_file_name:
+                file_uris.append(gemini_file_name)
+                mime_types.append(mime_type)
                 sample_keys.append(str(sample.id))
+                gemini_file_names.append(gemini_file_name)
             else:
                 failed_samples.append((sample, error))
                 logger.error(
-                    f"[start_stt_evaluation_batch] Failed to generate signed URL | "
+                    f"[start_stt_evaluation_batch] Failed to upload to Gemini | "
                     f"sample_id: {sample.id}, error: {error}"
                 )
 
     if failed_samples:
         logger.warning(
-            f"[start_stt_evaluation_batch] Signed URL failures | "
+            f"[start_stt_evaluation_batch] Gemini upload failures | "
             f"run_id: {run.id}, failed_count: {len(failed_samples)}, "
-            f"succeeded_count: {len(signed_urls)}"
+            f"succeeded_count: {len(file_uris)}"
         )
 
-    if not signed_urls:
-        raise Exception("Failed to generate signed URLs for any audio files")
+    if not file_uris:
+        raise Exception("Failed to upload audio files to Gemini for any samples")
 
     # Create JSONL batch requests (shared across all models)
     jsonl_data = create_stt_batch_requests(
-        signed_urls=signed_urls,
+        file_uris=file_uris,
+        mime_types=mime_types,
         prompt=DEFAULT_TRANSCRIPTION_PROMPT,
         keys=sample_keys,
     )
@@ -162,6 +186,7 @@ def start_stt_evaluation_batch(
                     "model": model,
                     "stt_provider": model,
                     "evaluation_run_id": run.id,
+                    "gemini_audio_file_ids": gemini_file_names,
                 },
             )
 
@@ -199,12 +224,12 @@ def start_stt_evaluation_batch(
     logger.info(
         f"[start_stt_evaluation_batch] Batch submission complete | "
         f"run_id: {run.id}, models_submitted: {list(batch_jobs.keys())}, "
-        f"sample_count: {len(signed_urls)}"
+        f"sample_count: {len(file_uris)}"
     )
 
     return {
         "success": True,
         "run_id": run.id,
         "batch_jobs": batch_jobs,
-        "sample_count": len(signed_urls),
+        "sample_count": len(file_uris),
     }
