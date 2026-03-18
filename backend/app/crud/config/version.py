@@ -68,10 +68,7 @@ class ConfigVersionCrud:
                 f"[ConfigVersionCrud.create_from_partial] Validation failed | "
                 f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}"
             )
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid config after merge: {str(e)}",
-            )
+            raise HTTPException(status_code=400, detail=e.errors())
 
         try:
             next_version = self._get_next_version(self.config_id)
