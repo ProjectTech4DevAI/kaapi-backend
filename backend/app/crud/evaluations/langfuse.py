@@ -492,28 +492,9 @@ def fetch_trace_scores_from_langfuse(
                 )
                 continue
 
-        # 4. Identify complete scores (all traces must have the score)
-        total_traces = len(traces)
-        complete_score_names = {
-            name
-            for name, data in score_aggregations.items()
-            if len(data["values"]) == total_traces
-        }
-
-        # 5. Filter trace scores to only include complete scores
-        for trace in traces:
-            trace["scores"] = [
-                score
-                for score in trace["scores"]
-                if score["name"] in complete_score_names
-            ]
-
-        # 6. Calculate summary scores (only for complete scores)
+        # 4. Calculate summary scores for all scores that have at least one value
         summary_scores = []
         for score_name, agg_data in score_aggregations.items():
-            if score_name not in complete_score_names:
-                continue
-
             data_type = agg_data["data_type"]
             values = agg_data["values"]
 
@@ -552,7 +533,7 @@ def fetch_trace_scores_from_langfuse(
 
         logger.info(
             f"[fetch_trace_scores_from_langfuse] Successfully fetched scores | "
-            f"total_traces={len(traces)} | complete_scores={list(complete_score_names)}"
+            f"total_traces={len(traces)} | score_names={list(score_aggregations.keys())}"
         )
 
         return result
