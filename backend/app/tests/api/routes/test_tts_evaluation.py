@@ -1006,6 +1006,76 @@ class TestTTSEvaluationRun:
         assert "Hello world" in texts
         assert "Good morning" in texts
 
+    @patch("app.api.routes.tts_evaluations.evaluation.get_cloud_storage")
+    def test_get_run_with_signed_urls_and_null_object_store_url(
+        self,
+        mock_get_cloud_storage: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        """Test that signed URL generation handles results with null object_store_url."""
+        dataset = test_dataset_with_samples
+
+        mock_storage = MagicMock()
+        mock_storage.get_signed_url.return_value = (
+            "https://signed-url.example.com/audio.wav"
+        )
+        mock_get_cloud_storage.return_value = mock_storage
+
+        run = create_tts_run(
+            session=db,
+            run_name="signed_url_null_test",
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            org_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["gemini-2.5-pro-preview-tts"],
+            total_items=2,
+        )
+
+        # Result with valid S3 URL
+        create_test_tts_result(
+            db=db,
+            evaluation_run_id=run.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            sample_text="Completed result",
+            status=JobStatus.SUCCESS.value,
+            object_store_url="s3://bucket/audio/test.wav",
+        )
+        # Result with null object_store_url (failed)
+        create_test_tts_result(
+            db=db,
+            evaluation_run_id=run.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            sample_text="Failed result",
+            status=JobStatus.FAILED.value,
+            object_store_url=None,
+        )
+
+        response = client.get(
+            f"/api/v1/evaluations/tts/runs/{run.id}",
+            params={"include_results": True, "include_signed_url": True},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["results_total"] == 2
+
+        results_by_text = {r["sample_text"]: r for r in data["results"]}
+        assert results_by_text["Completed result"]["signed_url"] is not None
+        assert results_by_text["Failed result"]["signed_url"] is None
+
+        # get_signed_url should only be called for the result with a valid URL
+        mock_storage.get_signed_url.assert_called_once_with(
+            "s3://bucket/audio/test.wav"
+        )
+
     def test_get_run_without_results(
         self,
         client: TestClient,
