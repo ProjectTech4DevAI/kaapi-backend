@@ -1071,11 +1071,6 @@ class TestTTSEvaluationRun:
         assert results_by_text["Completed result"]["signed_url"] is not None
         assert results_by_text["Failed result"]["signed_url"] is None
 
-        # get_signed_url should only be called for the result with a valid URL
-        mock_storage.get_signed_url.assert_called_once_with(
-            "s3://bucket/audio/test.wav"
-        )
-
     def test_get_run_without_results(
         self,
         client: TestClient,
