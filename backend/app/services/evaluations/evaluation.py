@@ -240,9 +240,9 @@ def get_evaluation_with_scores(
         return eval_run, None
 
     # Caching strategy: On the first request, trace scores are fetched from Langfuse
-    # and a copy is stored in S3 (and DB as fallback). Subsequent requests serve from
-    # S3/DB instead of Langfuse, which is significantly faster. Use resync_score=true
-    # to bypass the cache and re-fetch from Langfuse (e.g., when new evaluators have run).
+    # and a copy is stored in S3. Subsequent requests serve from
+    # S3 instead of Langfuse, which is significantly faster. Use resync_score=true
+    # to bypass the cache and re-fetch from Langfuse and store to S3 again.
     has_cached_traces_s3 = eval_run.score_trace_url is not None
     has_cached_traces_db = eval_run.score is not None and "traces" in eval_run.score
     if not resync_score:
