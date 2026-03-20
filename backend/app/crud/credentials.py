@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from sqlalchemy import delete
@@ -144,17 +145,45 @@ def get_provider_credential(
     Raises:
         HTTPException: If credentials are not found
     """
-    validate_provider(provider)
+    cred_start = time.perf_counter()
 
+    t_validate_start = time.perf_counter()
+    validate_provider(provider)
+    t_validate = (time.perf_counter() - t_validate_start) * 1000
+
+    t_query_start = time.perf_counter()
     statement = select(Credential).where(
         Credential.organization_id == org_id,
         Credential.provider == provider,
         Credential.project_id == project_id,
     )
     creds = session.exec(statement).one_or_none()
+    t_query = (time.perf_counter() - t_query_start) * 1000
 
     if creds and creds.credential:
-        return creds if full else decrypt_credentials(creds.credential)
+        if full:
+            result = creds
+            t_decrypt = 0.0
+        else:
+            t_decrypt_start = time.perf_counter()
+            result = decrypt_credentials(creds.credential)
+            t_decrypt = (time.perf_counter() - t_decrypt_start) * 1000
+
+        total_time = (time.perf_counter() - cred_start) * 1000
+
+        logger.info(
+            f"[TIMING] get_provider_credential | provider={provider} | "
+            f"validate={t_validate:.2f}ms, query={t_query:.2f}ms, "
+            f"decrypt={t_decrypt:.2f}ms, total={total_time:.2f}ms"
+        )
+
+        return result
+
+    total_time = (time.perf_counter() - cred_start) * 1000
+    logger.info(
+        f"[TIMING] get_provider_credential (not found) | provider={provider} | "
+        f"total={total_time:.2f}ms"
+    )
 
     return None
 

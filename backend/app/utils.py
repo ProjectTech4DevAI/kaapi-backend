@@ -5,6 +5,7 @@ import functools as ft
 import ipaddress
 import logging
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -395,16 +396,23 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     Returns:
         bool: True if callback succeeded, False otherwise
     """
+    callback_start = time.perf_counter()
+
     try:
+        t_validate_start = time.perf_counter()
         validate_callback_url(str(callback_url))
+        t_validate = (time.perf_counter() - t_validate_start) * 1000
+        logger.info(f"[TIMING] Callback URL validation | duration={t_validate:.2f}ms")
     except ValueError as ve:
         logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
 
     try:
+        t_http_start = time.perf_counter()
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
+            t_request_start = time.perf_counter()
             response = session.post(
                 callback_url,
                 json=data,
@@ -414,11 +422,19 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
                 ),
                 allow_redirects=False,
             )
+            t_request = (time.perf_counter() - t_request_start) * 1000
 
             response.raise_for_status()
 
-            logger.info(f"[send_callback] Callback sent successfully to {callback_url}")
-            return True
+        t_http_total = (time.perf_counter() - t_http_start) * 1000
+        total_callback_time = (time.perf_counter() - callback_start) * 1000
+
+        logger.info(f"[TIMING] ═══ CALLBACK DELIVERY TIMING ═══")
+        logger.info(f"[TIMING]   HTTP POST request:   {t_request:>8.2f}ms")
+        logger.info(f"[TIMING]   Total callback time: {total_callback_time:>8.2f}ms")
+        logger.info(f"[TIMING] ════════════════════════════════")
+        logger.info(f"[send_callback] Callback sent successfully to {callback_url}")
+        return True
 
     except requests.RequestException as e:
         logger.error(f"[send_callback] Callback failed: {str(e)}", exc_info=True)

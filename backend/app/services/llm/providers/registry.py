@@ -1,4 +1,5 @@
 import logging
+import time
 from sqlmodel import Session
 
 from app.services.llm.providers.base import BaseProvider
@@ -57,17 +58,23 @@ def get_llm_provider(
 ) -> BaseProvider:
     from app.crud.credentials import get_provider_credential
 
+    provider_start = time.perf_counter()
+
+    t_class_start = time.perf_counter()
     provider_class = LLMProvider.get_provider_class(provider_type)
+    t_class = (time.perf_counter() - t_class_start) * 1000
 
     # e.g., "openai-native" → "openai", "claude-native" → "claude"
     credential_provider = provider_type.replace("-native", "")
 
+    t_cred_start = time.perf_counter()
     credentials = get_provider_credential(
         session=session,
         provider=credential_provider,
         project_id=project_id,
         org_id=organization_id,
     )
+    t_cred = (time.perf_counter() - t_cred_start) * 1000
 
     if not credentials:
         raise ValueError(
@@ -75,8 +82,20 @@ def get_llm_provider(
         )
 
     try:
+        t_client_start = time.perf_counter()
         client = provider_class.create_client(credentials=credentials)
-        return provider_class(client=client)
+        provider_instance = provider_class(client=client)
+        t_client = (time.perf_counter() - t_client_start) * 1000
+
+        total_time = (time.perf_counter() - provider_start) * 1000
+
+        logger.info(
+            f"[TIMING] get_llm_provider | provider={provider_type} | "
+            f"get_class={t_class:.2f}ms, get_creds={t_cred:.2f}ms, "
+            f"create_client={t_client:.2f}ms, total={total_time:.2f}ms"
+        )
+
+        return provider_instance
     except ValueError:
         # Re-raise ValueError for credential/configuration errors
         raise

@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, Depends
 
@@ -44,17 +45,39 @@ def llm_call(
     """
     Endpoint to initiate an LLM call as a background job.
     """
+    # ═══ START: End-to-End Timing ═══
+    # Use time.time() for cross-process timing (wall-clock time)
+    api_start_time_wall = time.time()
+    # Use perf_counter for local API timing (higher precision)
+    api_start_time_local = time.perf_counter()
+    logger.info("[E2E_TIMING] ═══ API REQUEST RECEIVED ═══")
+
     project_id = _current_user.project_.id
     organization_id = _current_user.organization_.id
 
+    t_validate_start = time.perf_counter()
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
+    t_validate = (time.perf_counter() - t_validate_start) * 1000
 
-    start_job(
+    t_job_start = time.perf_counter()
+    job_id = start_job(
         db=session,
         request=request,
         project_id=project_id,
         organization_id=organization_id,
+        api_start_time_wall=api_start_time_wall,  # Wall-clock time for cross-process timing
+    )
+    t_job = (time.perf_counter() - t_job_start) * 1000
+
+    api_total_time = (time.perf_counter() - api_start_time_local) * 1000
+
+    logger.info(
+        f"[E2E_TIMING] API endpoint timing | "
+        f"callback_validate={t_validate:.2f}ms, "
+        f"start_job={t_job:.2f}ms, "
+        f"total_api_time={api_total_time:.2f}ms | "
+        f"job_id={job_id}"
     )
 
     return APIResponse.success_response(
