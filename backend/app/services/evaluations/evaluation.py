@@ -279,7 +279,7 @@ def get_evaluation_with_scores(
             )
             return eval_run, None
 
-    # Cache miss or resync requested — fetch fresh scores from Langfuse
+    # Resync requested — fetch fresh scores from Langfuse
     langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
@@ -314,7 +314,6 @@ def get_evaluation_with_scores(
         )
         return eval_run, f"Failed to fetch trace info from Langfuse: {str(e)}"
 
-    print(langfuse_score)
     # Merge summary_scores: existing scores + new scores from Langfuse
     # Create a map of existing scores by name
     existing_scores_map = {s["name"]: s for s in existing_summary_scores}
