@@ -31,7 +31,7 @@ def warmup_job_modules(sender, **kwargs: object) -> None:
     for module_path in _JOB_MODULES:
         try:
             importlib.import_module(module_path)
-            logger.info(f"[warmup_job_modules] Pre-imported {module_path}")
+            logger.debug(f"[warmup_job_modules] Pre-imported {module_path}")
         except Exception as exc:
             logger.warning(
                 f"[warmup_job_modules] Failed to pre-import {module_path}: {exc}"
