@@ -7,10 +7,6 @@ from typing import Any, Dict, Optional
 from celery.result import AsyncResult
 
 from app.celery.celery_app import celery_app
-from app.celery.tasks.job_execution import (
-    execute_high_priority_task,
-    execute_low_priority_task,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +27,8 @@ def start_high_priority_job(
     Returns:
         Celery task ID (different from job_id)
     """
+    from app.celery.tasks.job_execution import execute_high_priority_task
+
     task = execute_high_priority_task.delay(
         function_path=function_path,
         project_id=project_id,
@@ -59,6 +57,8 @@ def start_low_priority_job(
     Returns:
         Celery task ID (different from job_id)
     """
+    from app.celery.tasks.job_execution import execute_low_priority_task
+
     task = execute_low_priority_task.delay(
         function_path=function_path,
         project_id=project_id,

@@ -1,11 +1,37 @@
 import logging
-import importlib
+from collections.abc import Callable
 from celery import current_task
 from asgi_correlation_id import correlation_id
 
 from app.celery.celery_app import celery_app
+import app.services.llm.jobs as _llm_jobs
+import app.services.response.jobs as _response_jobs
+import app.services.doctransform.job as _doctransform_job
+import app.services.collections.create_collection as _create_collection
+import app.services.collections.delete_collection as _delete_collection
+import app.services.stt_evaluations.batch_job as _stt_batch_job
+import app.services.stt_evaluations.metric_job as _stt_metric_job
+import app.services.tts_evaluations.batch_job as _tts_batch_job
+import app.services.tts_evaluations.batch_result_processing as _tts_result_processing
 
 logger = logging.getLogger(__name__)
+
+# Hardcoded dispatch table — avoids dynamic importlib at task execution time.
+# Imports above happen once in the main Celery process before worker forks,
+# so all child workers inherit them via copy-on-write instead of each loading
+# them independently (which was causing OOM with warmup_job_modules).
+_FUNCTION_REGISTRY: dict[str, Callable] = {
+    "app.services.llm.jobs.execute_job": _llm_jobs.execute_job,
+    "app.services.llm.jobs.execute_chain_job": _llm_jobs.execute_chain_job,
+    "app.services.response.jobs.execute_job": _response_jobs.execute_job,
+    "app.services.doctransform.job.execute_job": _doctransform_job.execute_job,
+    "app.services.collections.create_collection.execute_job": _create_collection.execute_job,
+    "app.services.collections.delete_collection.execute_job": _delete_collection.execute_job,
+    "app.services.stt_evaluations.batch_job.execute_batch_submission": _stt_batch_job.execute_batch_submission,
+    "app.services.stt_evaluations.metric_job.execute_metric_computation": _stt_metric_job.execute_metric_computation,
+    "app.services.tts_evaluations.batch_job.execute_batch_submission": _tts_batch_job.execute_batch_submission,
+    "app.services.tts_evaluations.batch_result_processing.execute_tts_result_processing": _tts_result_processing.execute_tts_result_processing,
+}
 
 
 @celery_app.task(bind=True, queue="high_priority")
@@ -85,10 +111,11 @@ def _execute_job_internal(
     logger.info(f"Set correlation ID context: {trace_id} for job {job_id}")
 
     try:
-        # Dynamically import and resolve the function
-        module_path, function_name = function_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        execute_function = getattr(module, function_name)
+        execute_function = _FUNCTION_REGISTRY.get(function_path)
+        if execute_function is None:
+            raise ValueError(
+                f"[_execute_job_internal] Unknown function path: {function_path}"
+            )
 
         logger.info(
             f"Executing {priority} job {job_id} (task {task_id}) using function {function_path}"

@@ -1,41 +1,11 @@
-import importlib
 import logging
 
 from celery import Celery
-from celery.signals import worker_process_init
 from kombu import Exchange, Queue
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# All modules referenced as function_path in execute_high/low_priority_task calls.
-# Pre-importing these at worker process startup eliminates the 2-5s cold-import
-# penalty on the first task execution.
-_JOB_MODULES = [
-    "app.services.llm.jobs",
-    "app.services.response.jobs",
-    "app.services.doctransform.job",
-    "app.services.collections.create_collection",
-    "app.services.collections.delete_collection",
-    "app.services.stt_evaluations.batch_job",
-    "app.services.tts_evaluations.batch_job",
-    "app.services.tts_evaluations.batch_result_processing",
-    "app.services.stt_evaluations.metric_job",
-]
-
-
-@worker_process_init.connect
-def warmup_job_modules(sender, **kwargs: object) -> None:
-    """Pre-import all job modules so the first task execution is not delayed by cold imports."""
-    for module_path in _JOB_MODULES:
-        try:
-            importlib.import_module(module_path)
-            logger.debug(f"[warmup_job_modules] Pre-imported {module_path}")
-        except Exception as exc:
-            logger.warning(
-                f"[warmup_job_modules] Failed to pre-import {module_path}: {exc}"
-            )
 
 
 # Create Celery instance
