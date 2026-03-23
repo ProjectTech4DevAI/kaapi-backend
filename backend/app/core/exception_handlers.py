@@ -25,12 +25,25 @@ def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
     strips internal fields, returning only loc, msg, and type.
     """
     try:
+        value_errors: list[dict] = []
+        schema_errors: list[dict] = []
+        for err in errors:
+            if err.get("type") == "value_error":
+                value_errors.append(
+                    {k: v for k, v in err.items() if k in ("loc", "msg", "type")}
+                )
+            else:
+                schema_errors.append(err)
+
+        if not schema_errors:
+            return value_errors
+
         branch_errors: dict[str, dict[str, list[dict]]] = defaultdict(
             lambda: defaultdict(list)
         )
         non_union_errors: list[dict] = []
 
-        for err in errors:
+        for err in schema_errors:
             loc = err.get("loc", ())
             branch_name = None
             parent_field = None
@@ -90,21 +103,24 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         errors = _sanitize_validation_errors(exc.errors())
+        has_value_error = any(
+            e.get("type") == "value_error" for e in exc.errors()
+        )
+        error_summary = "Value error" if has_value_error else "Validation failed"
         return JSONResponse(
             status_code=HTTP_422_UNPROCESSABLE_ENTITY,
-            content=APIResponse.failure_response(errors).model_dump(),
+            content=APIResponse.failure_response(
+                errors, error_summary=error_summary
+            ).model_dump(),
         )
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(
         request: Request, exc: HTTPException
     ) -> JSONResponse:
-        detail = exc.detail
-        if isinstance(detail, list):
-            detail = _sanitize_validation_errors(detail)
         return JSONResponse(
             status_code=exc.status_code,
-            content=APIResponse.failure_response(detail).model_dump(),
+            content=APIResponse.failure_response(exc.detail).model_dump(),
         )
 
     @app.exception_handler(Exception)

@@ -373,8 +373,8 @@ def get_evaluation_examples() -> Dict[str, Any]:
                 },
             },
             {
-                "problem": "Railway accidents caused by obstacles on tracks pose a significant threat to safety. This project utilizes an Arduino Uno, ultrasonic sensor, and buzzer to detect obstacles within a predefined range and alert train operators in real-time, preventing collisions and ensuring safety.",
-                "solution": "The proposed solution involves implementing an obstacle detection system using Arduino Uno, an ultrasonic sensor, and a buzzer. The ultrasonic sensor continuously monitors the railway tracks for obstacles by emitting ultrasonic waves and measuring the time it takes for the waves to return. If an obstacle is detected within a predefined distance, the Arduino Uno processes the data and triggers the buzzer to alert the train operator. This system provides real-time warnings, enabling prompt action to avoid collisions.\n The solution is cost-effective, easy to deploy, and can function in diverse environmental conditions, making it suitable for both urban and remote railway networks. By integrating this system into railway operations, accidents caused by undetected obstacles can be significantly reduced, ensuring passenger and crew safety while minimizing infrastructure damage and service disruptions.",
+                "problem": "பேட்ரி",
+                "solution": "It was explained in our video",
                 "scores": {
                     "Novelty": {
                         "score": 5.0,
@@ -743,7 +743,7 @@ def run_inference_batch(
                     problem=row["problem"],
                     solution=row["solution"],
                     custom_id=str(row["cid"]) if pd.notna(row.get("cid")) else None,
-                    image=str(row["images"]) if pd.notna(row.get("images")) else None,
+                    image=str(row["documents"]) if pd.notna(row.get("documents")) else None,
                 )
                 for _, row in data.iterrows()
                 if pd.notna(row["problem"]) and pd.notna(row["solution"])
@@ -909,7 +909,16 @@ def run_inference_batch(
                     include_provider_raw_response=False,
                 )
 
-            response_output:dict[str, Any] | None = json.loads(response.response.output.content.value)
+            if error is not None or response is None:
+                logger.error(f"[run_inference_batch] Error for CID {custom_id}: {error}")
+                response_output = None
+            else:
+                try:
+                    response_output = json.loads(response.response.output.content.value)
+                except json.JSONDecodeError as e:
+                    logger.error(f"[run_inference_batch] JSON decode error for CID {custom_id}: {e}")
+                    response_output = None
+
             if run_test_images:
                 output.append(
                     {
@@ -940,24 +949,24 @@ if __name__ == "__main__":
 
     # run_inference_batch(Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")))
 
-    run_test_images = True
+    run_test_images = False
 
-    provider_name = "openai"
-    model_name = "gpt-4o-mini"
+    provider_name = "google"
+    model_name = "gemini-3.1-flash-lite-preview"
 
     if run_test_images:
-        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multi/{provider_name}/{model_name}")
+        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multiple_imagesv1/{provider_name}/{model_name}")
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         OUTPUT_FILE = f"{model_name}.json"
         OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
     else:
-        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multi/{provider_name}/{model_name}-wo-images")
+        OUTPUT_FOLDER = os.path.join(BASE_DIR, f"output_multiple_imagesv1/{provider_name}/{model_name}-wo-images")
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         OUTPUT_FILE = f"{model_name}-wo-images.json"
         OUTPUT_FILE_PATH = os.path.join(OUTPUT_FOLDER, OUTPUT_FILE)
 
     run_inference_batch(
-        input=Path(os.path.join(BASE_DIR, "mutli_input_batch.xlsx")),
+        input=Path(os.path.join(BASE_DIR, "200 Golden_dataset_2.O-3.xlsx")),
         output_path=OUTPUT_FILE_PATH,
         provider_name=provider_name,
         model_name=model_name,

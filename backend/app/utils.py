@@ -68,6 +68,7 @@ class APIResponse(BaseModel, Generic[T]):
         error: str | list,
         data: Optional[T] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        error_summary: str = "Validation failed",
     ) -> "APIResponse[None]":
         if isinstance(error, list):  # to handle cases when error is a list of errors
             structured_errors = []
@@ -84,7 +85,7 @@ class APIResponse(BaseModel, Generic[T]):
             return cls(
                 success=False,
                 data=data,
-                error="Validation failed",
+                error=error_summary,
                 errors=structured_errors,
                 metadata=metadata,
             )
