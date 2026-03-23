@@ -93,4 +93,4 @@ celery_app.conf.update(
 )
 
 # Auto-discover tasks
-celery_app.autodiscover_tasks()
+# celery_app.autodiscover_tasks()
