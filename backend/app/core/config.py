@@ -109,7 +109,7 @@ class Settings(BaseSettings):
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
-    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 1000
+    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 1
     CELERY_WORKER_MAX_MEMORY_PER_CHILD: int = 200000
     CELERY_TASK_SOFT_TIME_LIMIT: int = 300
     CELERY_TASK_TIME_LIMIT: int = 600

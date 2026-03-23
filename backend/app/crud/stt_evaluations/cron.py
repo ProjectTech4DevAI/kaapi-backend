@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_stt_metric_computation
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
@@ -174,8 +174,7 @@ async def poll_stt_run(
     # Trigger automated metric computation (WER, CER, lenient WER, WIP)
     if result.any_succeeded:
         try:
-            celery_task_id = start_low_priority_job(
-                function_path="app.services.stt_evaluations.metric_job.execute_metric_computation",
+            celery_task_id = start_stt_metric_computation(
                 project_id=run.project_id,
                 job_id=str(run.id),
                 organization_id=run.organization_id,
