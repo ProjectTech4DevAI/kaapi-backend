@@ -30,8 +30,9 @@
 - We’ve also included a list of the providers currently supported by kaapi.
 
    ### Supported Providers
-   - **LLM:** openai
+   - **LLM:** openai, google, sarvamai
    - **Observability:** langfuse
+   - **Audio:** elevenlabs
 
    ### Example: For sending multiple credentials -
    ```
@@ -39,6 +40,21 @@
      {
        "openai": {
          "api_key": "sk-proj-..."
+       }
+     },
+     {
+       "google": {
+         "api_key": "AIzaSy..."
+       }
+     },
+     {
+       "sarvamai": {
+         "api_key": "sarvam-..."
+       }
+     },
+     {
+       "elevenlabs": {
+         "api_key": "sk_..."
        }
      },
      {

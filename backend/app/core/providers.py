@@ -10,11 +10,13 @@ class Provider(str, Enum):
     """Enumeration of supported credential providers."""
 
     OPENAI = "openai"
-    AWS = "aws"
     LANGFUSE = "langfuse"
     GOOGLE = "google"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
+
+
+# AWS = "aws"
 
 
 @dataclass
@@ -27,15 +29,15 @@ class ProviderConfig:
 # Provider configurations
 PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.OPENAI: ProviderConfig(required_fields=["api_key"]),
-    Provider.AWS: ProviderConfig(
-        required_fields=["access_key_id", "secret_access_key", "region"]
-    ),
     Provider.LANGFUSE: ProviderConfig(
         required_fields=["secret_key", "public_key", "host"]
     ),
     Provider.GOOGLE: ProviderConfig(required_fields=["api_key"]),
     Provider.SARVAMAI: ProviderConfig(required_fields=["api_key"]),
     Provider.ELEVENLABS: ProviderConfig(required_fields=["api_key"]),
+    # Provider.AWS: ProviderConfig(
+    #     required_fields=["access_key_id", "secret_access_key", "region"]
+    # ),
 }
 
 
