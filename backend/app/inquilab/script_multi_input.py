@@ -711,12 +711,33 @@ class EvaluationInput(BaseModel):
         return v.strip()
 
 def _to_direct_url(url: str) -> str:
+    """Convert Google Drive sharing links to direct image URLs."""
     import re
-    """Convert Google Drive sharing links to direct download URLs."""
-    match = re.match(r"https://drive\.google\.com/file/d/([^/]+)", url.strip())
-    if match:
-        return f"https://drive.google.com/uc?export=download&id={match.group(1)}"
-    return url.strip()
+    url = url.strip()
+
+    file_id = None
+
+    # https://drive.google.com/file/d/{ID}/...
+    m = re.match(r"https://drive\.google\.com/file/d/([^/]+)", url)
+    if m:
+        file_id = m.group(1)
+
+    # https://drive.google.com/open?id={ID}
+    if not file_id:
+        m = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url)
+        if m and "drive.google.com" in url:
+            file_id = m.group(1)
+
+    # https://drive.usercontent.google.com/download?id={ID}
+    if not file_id:
+        m = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url)
+        if m and "drive.usercontent.google.com" in url:
+            file_id = m.group(1)
+
+    if file_id:
+        return f"https://lh3.googleusercontent.com/d/{file_id}"
+
+    return url
 
 def run_inference_batch(
     *,
