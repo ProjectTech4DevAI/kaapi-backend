@@ -5,7 +5,7 @@ from sqlmodel import Session
 from asgi_correlation_id import correlation_id
 from app.crud import JobCrud
 from app.models import JobType, JobStatus, JobUpdate, ResponsesAPIRequest
-from app.celery.utils import start_high_priority_job
+from app.celery.utils import start_response_job
 
 from app.services.response.response import process_response
 from app.services.response.callbacks import send_response_callback
@@ -22,8 +22,7 @@ def start_job(
     job = job_crud.create(job_type=JobType.RESPONSE, trace_id=trace_id)
 
     try:
-        task_id = start_high_priority_job(
-            function_path="app.services.response.jobs.execute_job",
+        task_id = start_response_job(
             project_id=project_id,
             job_id=str(job.id),
             trace_id=trace_id,
