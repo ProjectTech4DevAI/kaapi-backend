@@ -206,6 +206,8 @@ def test_remove_creds_for_org(db: Session) -> None:
 
 def test_invalid_provider(db: Session) -> None:
     """Test handling of invalid provider names."""
+    from app.core.exception_handlers import HTTPException
+
     project = create_test_project(db)
 
     credentials_data = {"invalid_provider": {"api_key": "test-key"}}
@@ -214,13 +216,16 @@ def test_invalid_provider(db: Session) -> None:
         credential=credentials_data,
     )
 
-    with pytest.raises(ValueError, match="Unsupported provider"):
+    with pytest.raises(HTTPException) as exc_info:
         set_creds_for_org(
             session=db,
             creds_add=credentials_create,
             organization_id=project.organization_id,
             project_id=project.id,
         )
+
+    assert exc_info.value.status_code == 400
+    assert "Unsupported provider" in exc_info.value.detail
 
 
 def test_duplicate_provider_credentials(db: Session) -> None:
@@ -253,6 +258,8 @@ def test_duplicate_provider_credentials(db: Session) -> None:
 
 def test_langfuse_credential_validation(db: Session) -> None:
     """Test validation of Langfuse credentials structure."""
+    from app.core.exception_handlers import HTTPException
+
     project = create_test_project(db)
 
     # Test with missing required fields
@@ -268,13 +275,16 @@ def test_langfuse_credential_validation(db: Session) -> None:
         credential=invalid_credentials,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPException) as exc_info:
         set_creds_for_org(
             session=db,
             creds_add=credentials_create,
             organization_id=project.organization_id,
             project_id=project.id,
         )
+
+    assert exc_info.value.status_code == 400
+    assert "Missing required fields for langfuse" in exc_info.value.detail
 
     valid_credentials = {
         "langfuse": {

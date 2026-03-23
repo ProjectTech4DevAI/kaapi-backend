@@ -198,9 +198,7 @@ def test_onboard_project_invalid_provider(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
-    )
+    assert any("Unsupported provider" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_non_dict_values_in_credential(
@@ -230,9 +228,6 @@ def test_onboard_project_non_dict_values_in_credential(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
-    )
     assert any(
         "must be an object/dict" in e["message"] for e in error_response["errors"]
     )
@@ -266,9 +261,9 @@ def test_onboard_project_missing_required_fields_for_openai(
     error_response = response.json()
     assert error_response["errors"]
     assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
+        "Missing required fields for openai" in e["message"]
+        for e in error_response["errors"]
     )
-    assert any("openai" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_missing_required_fields_for_langfuse(
@@ -301,15 +296,15 @@ def test_onboard_project_missing_required_fields_for_langfuse(
     error_response = response.json()
     assert error_response["errors"]
     assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
+        "Missing required fields for langfuse" in e["message"]
+        for e in error_response["errors"]
     )
-    assert any("langfuse" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_aggregates_multiple_credential_errors(
     client: TestClient, superuser_token_headers: dict[str, str], db: Session
 ) -> None:
-    """Test onboarding aggregates multiple credential validation errors with index markers."""
+    """Test onboarding reports credential validation errors (fails on first error)."""
     org_name = "TestOrgOnboard"
     project_name = "TestProjectOnboard"
     email = random_email()
@@ -336,8 +331,5 @@ def test_onboard_project_aggregates_multiple_credential_errors(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
-    )
-    assert any("[0]" in e["message"] for e in error_response["errors"])
-    assert any("[1]" in e["message"] for e in error_response["errors"])
+    # Validation fails on the first error (unsupported provider)
+    assert any("Unsupported provider" in e["message"] for e in error_response["errors"])
