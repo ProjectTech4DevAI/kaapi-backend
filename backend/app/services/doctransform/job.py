@@ -22,7 +22,7 @@ from app.models import (
     DocTransformationJob,
 )
 from app.core.cloud import get_cloud_storage
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_doctransform_job
 from app.utils import send_callback, APIResponse
 from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
 from app.core.db import engine
@@ -43,12 +43,11 @@ def start_job(
     job_crud.update(job_id, DocTransformJobUpdate(trace_id=trace_id))
     job = job_crud.read_one(job_id)
 
-    task_id = start_low_priority_job(
-        function_path="app.services.doctransform.job.execute_job",
+    task_id = start_doctransform_job(
         project_id=project_id,
         job_id=str(job.id),
-        source_document_id=str(job.source_document_id),
         trace_id=trace_id,
+        source_document_id=str(job.source_document_id),
         transformer_name=transformer_name,
         target_format=target_format,
         callback_url=callback_url,

@@ -7,7 +7,7 @@ from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.celery.utils import start_high_priority_job
+from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.crud.config import ConfigVersionCrud
@@ -57,8 +57,7 @@ def start_job(
     )
 
     try:
-        task_id = start_high_priority_job(
-            function_path="app.services.llm.jobs.execute_job",
+        task_id = start_llm_job(
             project_id=project_id,
             job_id=str(job.id),
             trace_id=trace_id,
@@ -99,8 +98,7 @@ def start_chain_job(
     )
 
     try:
-        task_id = start_high_priority_job(
-            function_path="app.services.llm.jobs.execute_chain_job",
+        task_id = start_llm_chain_job(
             project_id=project_id,
             job_id=str(job.id),
             trace_id=trace_id,
