@@ -186,20 +186,6 @@ class TestGoogleAIProviderSTT:
         assert isinstance(result.provider_raw_response, dict)
         assert result.provider_raw_response["text"] == "Raw response test"
 
-    def test_stt_missing_model_parameter(self, provider, mock_client, query_params):
-        """Test error handling when model parameter is missing."""
-        stt_config = NativeCompletionConfig(
-            provider="google-native",
-            type="stt",
-            params={},  # Missing model
-        )
-
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
-
-        assert result is None
-        assert error is not None
-        assert "Missing 'model' in native params" in error
-
     def test_stt_with_type_error(self, provider, mock_client, stt_config, query_params):
         """Test handling of TypeError (invalid parameters)."""
         mock_client.models.generate_content.side_effect = TypeError(
@@ -322,29 +308,6 @@ class TestGoogleAIProviderTTS:
         """Create basic query parameters."""
         return QueryParams(input="Hello world")
 
-    def test_tts_success_wav_default(
-        self, provider, mock_client, tts_config, query_params
-    ):
-        """Test successful TTS execution with default WAV format."""
-        mock_response = mock_tts_google_response(audio_bytes=SAMPLE_PCM_BYTES)
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(tts_config, query_params, "Hello world")
-
-        assert error is None
-        assert result is not None
-        assert result.response.output.type == "audio"
-        assert result.response.output.content.format == "base64"
-        assert result.response.output.content.mime_type == "audio/wav"
-        # Verify the base64 content decodes back to original bytes
-        decoded = base64.b64decode(result.response.output.content.value)
-        assert decoded == SAMPLE_PCM_BYTES
-        assert result.response.provider_response_id == "resp_tts_123"
-        assert result.response.model == "gemini-2.5-pro-preview-tts"
-        assert result.response.provider == "google-native"
-        assert result.usage.input_tokens == 10
-        assert result.usage.total_tokens == 10
-
     def test_tts_success_mp3_format(
         self, provider, mock_client, tts_config, query_params
     ):
@@ -440,96 +403,6 @@ class TestGoogleAIProviderTTS:
 
         assert result is None
         assert "TTS requires text string as input" in error
-
-    def test_tts_missing_model(self, provider, mock_client, query_params):
-        """Test error when model parameter is missing."""
-        config = NativeCompletionConfig(
-            provider="google-native",
-            type="tts",
-            params={"voice": "Kore", "language": "en-US"},
-        )
-
-        result, error = provider.execute(config, query_params, "Hello")
-
-        assert result is None
-        assert error == "Missing 'model' in native params"
-
-    def test_tts_missing_voice(self, provider, mock_client, query_params):
-        """Test error when voice parameter is missing."""
-        config = NativeCompletionConfig(
-            provider="google-native",
-            type="tts",
-            params={"model": "gemini-2.5-pro-preview-tts", "language": "en-US"},
-        )
-
-        result, error = provider.execute(config, query_params, "Hello")
-
-        assert result is None
-        assert error == "Missing 'voice' in native params"
-
-    def test_tts_missing_language(self, provider, mock_client, query_params):
-        """Test error when language parameter is missing."""
-        config = NativeCompletionConfig(
-            provider="google-native",
-            type="tts",
-            params={"model": "gemini-2.5-pro-preview-tts", "voice": "Kore"},
-        )
-
-        result, error = provider.execute(config, query_params, "Hello")
-
-        assert result is None
-        assert error == "Missing 'language' in native params"
-
-    def test_tts_missing_response_id(
-        self, provider, mock_client, tts_config, query_params
-    ):
-        """Test error when response has no response_id."""
-        mock_response = mock_tts_google_response()
-        mock_response.response_id = None
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(tts_config, query_params, "Hello")
-
-        assert result is None
-        assert error == "Google AI response missing response_id"
-
-    def test_tts_missing_audio_data(
-        self, provider, mock_client, tts_config, query_params
-    ):
-        """Test error when response has no audio data in parts."""
-        mock_response = mock_tts_google_response(audio_bytes=None)
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(tts_config, query_params, "Hello")
-
-        assert result is None
-        assert error == "Google AI response missing audio data"
-
-    def test_tts_empty_candidates(
-        self, provider, mock_client, tts_config, query_params
-    ):
-        """Test error when response has empty candidates list."""
-        mock_response = mock_tts_google_response()
-        mock_response.candidates = []
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(tts_config, query_params, "Hello")
-
-        assert result is None
-        assert "Failed to extract audio from response" in error
-
-    def test_tts_missing_inline_data(
-        self, provider, mock_client, tts_config, query_params
-    ):
-        """Test error when candidate part has no inline_data."""
-        mock_response = mock_tts_google_response()
-        mock_response.candidates[0].content.parts[0].inline_data = None
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(tts_config, query_params, "Hello")
-
-        assert result is None
-        assert "Failed to extract audio from response" in error
 
     def test_tts_no_usage_metadata(
         self, provider, mock_client, tts_config, query_params

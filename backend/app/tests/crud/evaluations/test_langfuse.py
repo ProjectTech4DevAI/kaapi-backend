@@ -382,7 +382,7 @@ class TestUpdateTracesWithCosineScores:
 
         calls = mock_langfuse.score.call_args_list
         assert calls[0].kwargs["trace_id"] == "trace_1"
-        assert calls[0].kwargs["name"] == "cosine_similarity"
+        assert calls[0].kwargs["name"] == "Cosine Similarity"
         assert calls[0].kwargs["value"] == 0.95
         assert "cosine similarity" in calls[0].kwargs["comment"].lower()
 

@@ -13,12 +13,14 @@ from app.crud.stt_evaluations import (
     get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     list_stt_datasets,
+    update_stt_sample,
 )
 from app.models.stt_evaluation import (
     STTDatasetCreate,
     STTDatasetPublic,
     STTDatasetWithSamples,
     STTSamplePublic,
+    STTSampleUpdate,
 )
 from app.services.stt_evaluations.dataset import upload_stt_dataset
 from app.utils import APIResponse, load_description
@@ -43,13 +45,7 @@ def create_dataset(
     """Create an STT evaluation dataset."""
     # Validate language_id
     if dataset_create.language_id is not None:
-        language = get_language_by_id(
-            session=session, language_id=dataset_create.language_id
-        )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
+        get_language_by_id(session=session, language_id=dataset_create.language_id)
 
     dataset, samples = upload_stt_dataset(
         session=session,
@@ -165,7 +161,6 @@ def get_dataset(
                 session=session, project_id=auth_context.project_.id
             )
 
-        samples = []
         for s in sample_records:
             signed_url = None
             if storage and s.file_id in file_map:
@@ -208,4 +203,51 @@ def get_dataset(
             samples=samples,
         ),
         metadata={"samples_total": samples_total},
+    )
+
+
+@router.patch(
+    "/samples/{sample_id}",
+    response_model=APIResponse[STTSamplePublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    summary="Update STT sample",
+    description=load_description("stt_evaluation/update_sample.md"),
+)
+def update_sample(
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    sample_id: int,
+    sample_update: STTSampleUpdate = Body(...),
+) -> APIResponse[STTSamplePublic]:
+    """Update an STT sample's language and/or ground truth."""
+    logger.info(f"[update_sample] Updating sample | " f"sample_id: {sample_id}")
+
+    if sample_update.language_id is not None:
+        get_language_by_id(session=session, language_id=sample_update.language_id)
+
+    sample = update_stt_sample(
+        session=session,
+        sample_id=sample_id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+        language_id=sample_update.language_id,
+        ground_truth=sample_update.ground_truth,
+    )
+
+    if not sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    return APIResponse.success_response(
+        data=STTSamplePublic(
+            id=sample.id,
+            file_id=sample.file_id,
+            language_id=sample.language_id,
+            ground_truth=sample.ground_truth,
+            sample_metadata=sample.sample_metadata,
+            dataset_id=sample.dataset_id,
+            organization_id=sample.organization_id,
+            project_id=sample.project_id,
+            inserted_at=sample.inserted_at,
+            updated_at=sample.updated_at,
+        )
     )

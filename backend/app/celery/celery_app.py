@@ -1,7 +1,13 @@
+import logging
+
 from celery import Celery
+from celery.signals import worker_process_init
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 # Create Celery instance
 celery_app = Celery(

@@ -22,7 +22,7 @@ def test_create_config_success(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.8,
                     "max_tokens": 2000,
                 },
@@ -51,7 +51,7 @@ def test_create_config_success(
     assert data["data"]["version"]["config_blob"]["completion"]["type"] == "text"
     assert (
         data["data"]["version"]["config_blob"]["completion"]["params"]["model"]
-        == "gpt-4"
+        == "gpt-4o"
     )
     assert (
         data["data"]["version"]["config_blob"]["completion"]["params"]["temperature"]
@@ -100,7 +100,7 @@ def test_create_config_duplicate_name_fails(
             "completion": {
                 "provider": "openai",
                 "type": "text",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Initial",

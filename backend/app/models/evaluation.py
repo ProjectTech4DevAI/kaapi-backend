@@ -28,6 +28,7 @@ class DatasetUploadResponse(BaseModel):
 
     dataset_id: int = Field(..., description="Database ID of the created dataset")
     dataset_name: str = Field(..., description="Name of the created dataset")
+    description: str | None = Field(None, description="Description of the dataset")
     total_items: int = Field(
         ..., description="Total number of items uploaded (after duplication)"
     )

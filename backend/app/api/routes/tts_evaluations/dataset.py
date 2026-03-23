@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud import get_cloud_storage
 from app.crud.language import get_language_by_id
 from app.crud.tts_evaluations import (
     get_tts_dataset_by_id,
@@ -38,13 +39,7 @@ def create_dataset(
     """Create a TTS evaluation dataset."""
     # Validate language_id if provided
     if dataset_create.language_id is not None:
-        language = get_language_by_id(
-            session=session, language_id=dataset_create.language_id
-        )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
+        get_language_by_id(session=session, language_id=dataset_create.language_id)
 
     dataset = upload_tts_dataset(
         session=session,
@@ -71,6 +66,9 @@ def list_datasets(
     auth_context: AuthContextDep,
     limit: int = Query(50, ge=1, le=100, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    include_signed_url: bool = Query(
+        False, description="Include signed URL for dataset files"
+    ),
 ) -> APIResponse[list[TTSDatasetPublic]]:
     """List TTS evaluation datasets."""
     datasets, total = list_tts_datasets(
@@ -81,8 +79,21 @@ def list_datasets(
         offset=offset,
     )
 
+    storage = None
+    if include_signed_url:
+        storage = get_cloud_storage(
+            session=session, project_id=auth_context.project_.id
+        )
+
+    data = []
+    for dataset in datasets:
+        signed_url = None
+        if storage and dataset.object_store_url:
+            signed_url = storage.get_signed_url(dataset.object_store_url)
+        data.append(TTSDatasetPublic.from_model(dataset, signed_url=signed_url))
+
     return APIResponse.success_response(
-        data=datasets,
+        data=data,
         metadata={"total": total, "limit": limit, "offset": offset},
     )
 
@@ -98,6 +109,9 @@ def get_dataset(
     session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int,
+    include_signed_url: bool = Query(
+        False, description="Include signed URL for dataset file"
+    ),
 ) -> APIResponse[TTSDatasetPublic]:
     """Get a TTS evaluation dataset."""
     dataset = get_tts_dataset_by_id(
@@ -110,8 +124,15 @@ def get_dataset(
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    signed_url = None
+    if include_signed_url and dataset.object_store_url:
+        storage = get_cloud_storage(
+            session=session, project_id=auth_context.project_.id
+        )
+        signed_url = storage.get_signed_url(dataset.object_store_url)
+
     return APIResponse.success_response(
-        data=TTSDatasetPublic.from_model(dataset),
+        data=TTSDatasetPublic.from_model(dataset, signed_url=signed_url),
         metadata={
             "sample_count": (dataset.dataset_metadata or {}).get("sample_count", 0)
         },

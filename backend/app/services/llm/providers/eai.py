@@ -176,7 +176,7 @@ class ElevenlabsAIProvider(BaseProvider):
         if not voice_id:
             return None, "Missing 'voice_id' in native params for Elevenlabs TTS"
 
-        output_format = params.get("output_format", "mp3_44100_128")
+        output_format = params.get("output_format", "wav_24000")
         language_code = params.get("language_code")
         voice_settings = params.get("voice_settings")
 
