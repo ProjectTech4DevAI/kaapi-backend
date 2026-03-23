@@ -37,7 +37,7 @@ Credentials are encrypted and stored securely for provider integrations (OpenAI,
       "api_key": "sk_..."
     },
     "langfuse": {
-      "public_key": "pk-lf-...",
+      "public_key": "pk-lf-....",
       "secret_key": "sk-lf-...",
       "host": "https://cloud.langfuse.com"
     }

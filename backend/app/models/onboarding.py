@@ -114,7 +114,7 @@ class OnboardingRequest(SQLModel):
                     f"Value for provider '{provider_key}' must be an object/dict."
                 )
 
-            # validate_provider_credentials will raise ValueError with clear message if invalid
+            # validate_provider_credentials will raise ValueError with clear message
             validate_provider_credentials(provider_key, values)
 
         return v

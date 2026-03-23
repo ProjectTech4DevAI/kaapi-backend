@@ -76,7 +76,7 @@ class APIResponse(BaseModel, Generic[T]):
                 parts = [str(p) for p in loc if p != "body"]
                 field = ".".join(parts) if parts else "unknown"
 
-                # Strip Pydantic error type prefixes to get clean error message
+                # Strip Pydantic error type prefixes to get better error message
                 msg = str(err.get("msg", ""))
                 prefixes = ["Value error, ", "Type error, ", "Assertion error, "]
                 for prefix in prefixes:
