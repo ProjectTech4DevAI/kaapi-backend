@@ -816,8 +816,8 @@ class TestFetchTraceScoresFromLangfuse:
         assert summary["distribution"] == {"CORRECT": 2, "INCORRECT": 1}
         assert summary["total_pairs"] == 3
 
-    def test_fetch_trace_scores_filters_incomplete_scores(self) -> None:
-        """Test that scores present in only some traces are filtered out."""
+    def test_fetch_trace_scores_includes_partial_scores(self) -> None:
+        """Test that scores present in only some traces are still included."""
         mock_langfuse = MagicMock()
 
         # Mock dataset run
@@ -841,13 +841,13 @@ class TestFetchTraceScoresFromLangfuse:
         mock_score1a.comment = None
         mock_score1a.data_type = "NUMERIC"
         mock_score1b = MagicMock()
-        mock_score1b.name = "incomplete_score"
+        mock_score1b.name = "partial_score"
         mock_score1b.value = 0.8
         mock_score1b.comment = None
         mock_score1b.data_type = "NUMERIC"
         mock_trace1.scores = [mock_score1a, mock_score1b]
 
-        # Mock trace 2 with only one score (incomplete_score is missing)
+        # Mock trace 2 with only one score (partial_score is missing)
         mock_trace2 = MagicMock()
         mock_trace2.input = {"question": "Q2"}
         mock_trace2.output = {"answer": "A2"}
@@ -867,14 +867,28 @@ class TestFetchTraceScoresFromLangfuse:
             run_name="test_run",
         )
 
-        # Verify only complete_score is in results
-        assert len(result["summary_scores"]) == 1
-        assert result["summary_scores"][0]["name"] == "complete_score"
+        # Verify both scores are included in summary
+        assert len(result["summary_scores"]) == 2
+        summary_names = {s["name"] for s in result["summary_scores"]}
+        assert summary_names == {"complete_score", "partial_score"}
 
-        # Verify traces only have complete_score
-        for trace in result["traces"]:
-            assert len(trace["scores"]) == 1
-            assert trace["scores"][0]["name"] == "complete_score"
+        # Verify complete_score summary (present in both traces)
+        complete_summary = next(
+            s for s in result["summary_scores"] if s["name"] == "complete_score"
+        )
+        assert complete_summary["avg"] == 0.8  # (0.9 + 0.7) / 2
+        assert complete_summary["total_pairs"] == 2
+
+        # Verify partial_score summary (present in only one trace)
+        partial_summary = next(
+            s for s in result["summary_scores"] if s["name"] == "partial_score"
+        )
+        assert partial_summary["avg"] == 0.8
+        assert partial_summary["total_pairs"] == 1
+
+        # Verify trace 1 has both scores, trace 2 has only one
+        assert len(result["traces"][0]["scores"]) == 2
+        assert len(result["traces"][1]["scores"]) == 1
 
     def test_fetch_trace_scores_handles_string_input_output(self) -> None:
         """Test fetching traces with string (non-dict) input/output."""

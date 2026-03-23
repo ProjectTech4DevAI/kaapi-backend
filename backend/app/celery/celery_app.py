@@ -85,3 +85,5 @@ celery_app.conf.update(
     broker_pool_limit=settings.CELERY_BROKER_POOL_LIMIT,
 )
 
+# Auto-discover tasks
+# celery_app.autodiscover_tasks()
