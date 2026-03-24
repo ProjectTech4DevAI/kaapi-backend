@@ -27,7 +27,7 @@ from app.services.collections.helpers import (
     to_collection_public,
 )
 from app.services.collections.providers.registry import get_llm_provider
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_create_collection_job
 from app.utils import send_callback, APIResponse
 
 
@@ -49,8 +49,7 @@ def start_job(
         collection_job_id, CollectionJobUpdate(trace_id=trace_id)
     )
 
-    task_id = start_low_priority_job(
-        function_path="app.services.collections.create_collection.execute_job",
+    task_id = start_create_collection_job(
         project_id=project_id,
         job_id=str(collection_job_id),
         trace_id=trace_id,

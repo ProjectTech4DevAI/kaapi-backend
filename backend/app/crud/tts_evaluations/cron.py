@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_tts_result_processing
 from app.core.batch import GeminiBatchProvider
 from app.crud.evaluations.cron_utils import (
     get_batch_jobs_for_run,
@@ -32,11 +32,6 @@ from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 
 logger = logging.getLogger(__name__)
-
-# Function path for Celery task dispatch
-_TTS_RESULT_PROCESSING_PATH = (
-    "app.services.tts_evaluations.batch_result_processing.execute_tts_result_processing"
-)
 
 
 async def poll_all_pending_tts_evaluations(
@@ -77,8 +72,7 @@ def _dispatch_tts_result_processing(
     Returns:
         str: Celery task ID
     """
-    celery_task_id = start_low_priority_job(
-        function_path=_TTS_RESULT_PROCESSING_PATH,
+    celery_task_id = start_tts_result_processing(
         project_id=run.project_id,
         job_id=str(batch_job.id),
         organization_id=org_id,
