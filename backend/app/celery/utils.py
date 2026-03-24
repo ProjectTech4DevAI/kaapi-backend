@@ -4,6 +4,7 @@ Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
 from typing import Any, Dict
+
 from celery.result import AsyncResult
 
 from app.celery.celery_app import celery_app

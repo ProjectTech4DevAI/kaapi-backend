@@ -1,7 +1,7 @@
 import logging
-from celery import current_task
 
 from asgi_correlation_id import correlation_id
+from celery import current_task
 
 from app.celery.celery_app import celery_app
 
