@@ -9,7 +9,6 @@ from sqlmodel import Session
 
 from app.celery.utils import start_high_priority_job
 from app.core.db import engine
-from app.core.langfuse.langfuse import observe_llm_execution
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
@@ -432,6 +431,8 @@ def execute_llm_call(
             conversation_id = query.conversation.id
 
         # Apply Langfuse observability decorator to provider execute method
+        from app.core.langfuse.langfuse import observe_llm_execution
+
         decorated_execute = observe_llm_execution(
             credentials=langfuse_credentials,
             session_id=conversation_id,
