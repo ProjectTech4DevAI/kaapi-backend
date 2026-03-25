@@ -145,8 +145,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             if req.file_counts.completed != req.file_counts.total:
                 error_msg = f"OpenAI document processing error: {req.file_counts.completed}/{req.file_counts.total} files completed"
                 logger.error(
-                    f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}",
-                    exc_info=True,
+                    f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
                 )
                 raise InterruptedError(error_msg)
 
