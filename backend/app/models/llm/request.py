@@ -31,7 +31,7 @@ class TextLLMParams(SQLModel):
         description="Reasoning configuration or instructions",
     )
     temperature: float | None = Field(
-        default=0.1,
+        default=None,
         ge=0.0,
         le=2.0,
     )
