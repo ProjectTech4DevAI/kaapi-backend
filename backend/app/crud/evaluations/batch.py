@@ -106,11 +106,11 @@ def build_evaluation_jsonl(
         body: dict[str, Any] = {
             "model": config.model,
             "instructions": config.instructions,
-            "temperature": config.temperature
-            if config.temperature is not None
-            else 0.01,
             "input": question,  # Add input from dataset
         }
+
+        if config.temperature is not None:
+            body["temperature"] = config.temperature
 
         # Add reasoning only if provided
         if config.reasoning:
