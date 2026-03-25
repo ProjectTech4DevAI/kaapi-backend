@@ -3,8 +3,6 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from openai import OpenAI
-
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +20,7 @@ def raise_from_unknown(error: Exception, status_code=500):
     raise HTTPException(status_code=status_code, detail=str(error))
 
 
-def configure_openai(credentials: dict) -> tuple[OpenAI, bool]:
+def configure_openai(credentials: dict) -> tuple["OpenAI", bool]:
     """
     Configure OpenAI client with the provided credentials.
 
@@ -32,6 +30,8 @@ def configure_openai(credentials: dict) -> tuple[OpenAI, bool]:
     Returns:
         Tuple of (OpenAI client instance, success boolean)
     """
+    from openai import OpenAI
+
     if not credentials or "api_key" not in credentials:
         return None, False
 
