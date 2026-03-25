@@ -1,11 +1,28 @@
 """Abstract interface for LLM batch providers."""
+from pydantic import model_validator
+from sqlmodel import SQLModel
 
 from abc import ABC, abstractmethod
 from typing import Any
+from app.models.llm.request import TextContent, ImageContent, PDFContent
+
+ContentPart = TextContent | ImageContent | PDFContent
+
 
 # Unified key used across all batch providers to identify individual requests/responses.
 # OpenAI uses "custom_id" natively; Gemini uses "key" but we normalize to this constant.
 BATCH_KEY = "custom_id"
+
+class MultiModalInput(SQLModel):
+    """Resolved multimodal input containing a list of content parts."""
+
+    parts: list[ContentPart]
+
+    @model_validator(mode="after")
+    def validate_parts(self):
+        if not self.parts:
+            raise ValueError("MultiModalInput requires at least one content part")
+        return self
 
 
 class BatchProvider(ABC):

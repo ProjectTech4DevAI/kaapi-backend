@@ -113,7 +113,6 @@ class PDFContent(SQLModel):
         description="MIME type of the PDF (e.g., application/pdf)",
     )
 
-
 class TextInput(SQLModel):
     type: Literal["text"] = "text"
     content: TextContent
@@ -381,6 +380,18 @@ class LLMCallRequest(SQLModel):
             "Client-provided metadata passed through unchanged in the response. "
             "Use this to correlate responses with requests or track request state. "
             "The exact dictionary provided here will be returned in the response metadata field."
+        ),
+    )
+
+class BatchRequest(SQLModel):
+    batch_id: str
+    query: QueryParams = Field(..., description="Query-specific parameters")
+    config: LLMCallConfig = Field(
+        ...,
+        description=(
+            "Complete LLM call configuration, provided either by reference (id + version) "
+            "or as config blob. Use the blob only for testing/validation; "
+            "in production, always use the id + version."
         ),
     )
 

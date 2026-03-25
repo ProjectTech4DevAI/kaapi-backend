@@ -6,16 +6,18 @@ import os
 import tempfile
 import time
 from enum import Enum
-from typing import Any
+from typing import Any, List
 
 from google import genai
 from google.genai import types
-
+from app.core.batch.base import ContentPart
 from app.core.storage_utils import get_mime_from_url
-
+from app.services.llm.jobs import resolved_input_context
+from app.models.llm.request import BatchRequest
 from .base import BATCH_KEY, BatchProvider
 
 logger = logging.getLogger(__name__)
+
 
 
 def extract_text_from_response_dict(response: dict[str, Any]) -> str:
@@ -84,6 +86,15 @@ class GeminiBatchProvider(BatchProvider):
         """
         self._client = client
         self._model = model or self.DEFAULT_MODEL
+
+
+    @staticmethod
+    def transform_input(
+        data: BatchRequest
+    ):
+        # format input
+        query = data.query
+        print(query)
 
     def create_batch(
         self, jsonl_data: list[dict[str, Any]], config: dict[str, Any]

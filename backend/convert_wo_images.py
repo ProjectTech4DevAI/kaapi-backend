@@ -1,10 +1,10 @@
 
 import json, csv
 
-with open('./app/inquilab/output_multi/openai/gpt-4o-mini-wo-images/gpt-4o-mini-wo-images.json', 'r', encoding='utf-8') as f:
+with open('./app/inquilab/output_multiple_imagesv1/google/gemini-2.5-flash-wo-images/gemini-2.5-flash-wo-images.json', 'r', encoding='utf-8') as f:
     data = json.load(f)
 
-tsv_path = './app/inquilab/output_multi/openai/gpt-4o-mini-wo-images/gpt-4o-mini-wo-images.tsv'
+tsv_path = './app/inquilab/output_multiple_imagesv1/google/gemini-2.5-flash-wo-images/gemini-2.5-flash-wo-images.tsv'
 
 with open(tsv_path, 'w', newline='', encoding='utf-8') as f:
     writer = csv.writer(f, delimiter='\t')

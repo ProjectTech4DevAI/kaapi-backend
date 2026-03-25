@@ -20,6 +20,7 @@ from app.models.llm.request import (
     PDFContent,
     ImageInput,
     PDFInput,
+    BatchRequest
 )
 from app.models.llm.response import (
     LLMCallResponse,

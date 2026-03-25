@@ -111,7 +111,6 @@ class DocumentCrud:
                 )
                 raise
         document.updated_at = now()
-
         self.session.add(document)
         self.session.commit()
         self.session.refresh(document)
