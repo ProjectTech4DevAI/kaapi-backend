@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from app.crud import DocumentCrud, CollectionCrud
 from app.api.deps import SessionDep
-from app.models import DocumentCollection, Collection, CollectionPublic
+from app.models import DocumentCollection, Collection, CollectionPublic, Document
 
 
 logger = logging.getLogger(__name__)
