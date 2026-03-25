@@ -1,8 +1,6 @@
 from datetime import datetime
-from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import model_serializer
 from sqlmodel import Field, SQLModel
 
 from app.core.util import now
@@ -43,10 +41,10 @@ class Document(DocumentBase, table=True):
         default=False,
         sa_column_kwargs={"comment": "Soft delete flag"},
     )
-    file_size: int | None = Field(
+    file_size_kb: float | None = Field(
         default=None,
-        description="The size of the document in bytes",
-        sa_column_kwargs={"comment": "Size of the document in bytes"},
+        description="The size of the document in kilobytes",
+        sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
     )
 
     # Foreign keys

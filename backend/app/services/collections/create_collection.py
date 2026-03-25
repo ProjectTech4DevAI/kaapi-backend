@@ -169,6 +169,14 @@ def execute_job(
         job_uuid = UUID(job_id)
 
         with Session(engine) as session:
+            document_crud = DocumentCrud(session, project_id)
+            flat_docs = document_crud.read_each(creation_request.documents)
+
+        file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
+        total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
+        total_size_mb = total_size_kb / 1024
+
+        with Session(engine) as session:
             collection_job_crud = CollectionJobCrud(session, project_id)
             collection_job = collection_job_crud.read_one(job_uuid)
             collection_job = collection_job_crud.update(
@@ -176,11 +184,11 @@ def execute_job(
                 CollectionJobUpdate(
                     task_id=task_id,
                     status=CollectionJobStatus.PROCESSING,
+                    total_size_mb=total_size_mb,
                 ),
             )
 
             storage = get_cloud_storage(session=session, project_id=project_id)
-            document_crud = DocumentCrud(session, project_id)
 
             provider = get_llm_provider(
                 session=session,
@@ -192,19 +200,11 @@ def execute_job(
         result = provider.create(
             collection_request=creation_request,
             storage=storage,
-            document_crud=document_crud,
+            documents=flat_docs,
         )
 
         llm_service_id = result.llm_service_id
         llm_service_name = result.llm_service_name
-
-        with Session(engine) as session:
-            document_crud = DocumentCrud(session, project_id)
-            flat_docs = document_crud.read_each(creation_request.documents)
-
-        file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
-        total_size_bytes = collection_job.total_size or 0
-        total_size_mb = round(total_size_bytes / (1024 * 1024), 2)
 
         with Session(engine) as session:
             collection_crud = CollectionCrud(session, project_id)
@@ -239,12 +239,11 @@ def execute_job(
 
         elapsed = time.time() - start_time
         logger.info(
-            "[create_collection.execute_job] Collection created: %s | Time: %.2fs | Files: %d | Total Size: %s MB (%s bytes) | Types: %s",
+            "[create_collection.execute_job] Collection created: %s | Time: %.2fs | Files: %d | Total Size: %s MB | Types: %s",
             collection_id,
             elapsed,
             len(flat_docs),
-            total_size_mb,
-            total_size_bytes,
+            collection_job.total_size_mb,
             list(file_exts),
         )
 

@@ -130,7 +130,7 @@ async def upload_doc(
         transformer=transformer,
     )
 
-    file_size = await calculate_file_size(src)
+    file_size_kb = await calculate_file_size(src)
 
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
@@ -140,7 +140,7 @@ async def upload_doc(
     document = Document(
         id=document_id,
         fname=src.filename,
-        file_size=file_size,
+        file_size_kb=file_size_kb,
         object_store_url=str(object_store_url),
     )
     source_document = crud.update(document)

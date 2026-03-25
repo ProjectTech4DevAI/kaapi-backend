@@ -96,17 +96,6 @@ def create_collection(
     if request.name:
         ensure_unique_name(session, current_user.project_.id, request.name)
 
-    # Calculate total size of all documents
-    document_crud = DocumentCrud(session, current_user.project_.id)
-    total_size = 0
-    for doc_id in request.documents:
-        doc = document_crud.read_one(doc_id)
-        total_size += doc.file_size or 0
-
-    logger.info(
-        f"[create_collection] Calculated total size | {{'total_documents': {len(request.documents)}, 'total_size_bytes': {total_size}, 'total_size_mb': {round(total_size / (1024 * 1024), 2)}}}"
-    )
-
     collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.create(
         CollectionJobCreate(
@@ -114,7 +103,6 @@ def create_collection(
             project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
             docs_num=len(request.documents),
-            total_size=total_size,
         )
     )
 

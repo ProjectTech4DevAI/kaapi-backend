@@ -23,26 +23,24 @@ from app.models import (
 )
 
 
-async def calculate_file_size(file: UploadFile) -> int:
+async def calculate_file_size(file: UploadFile) -> float:
     """
-    Calculate the size of an uploaded file in bytes.
+    Calculate the size of an uploaded file in kilobytes.
 
     Args:
         file: The uploaded file from FastAPI
 
     Returns:
-        The size of the file in bytes
+        The size of the file in kilobytes (KB) as a whole number
     """
     if file.size:
-        return file.size
+        return round(file.size / 1024)
 
-    # If size is not available, calculate by reading the file
-    await file.seek(0)
-    content = await file.read()
-    size_bytes = len(content)
-    await file.seek(0)  # Reset to beginning for subsequent operations
+    file.file.seek(0, 2)
+    size_bytes = file.file.tell()
+    file.file.seek(0)
 
-    return size_bytes
+    return round(size_bytes / 1024)
 
 
 def pre_transform_validation(

@@ -60,11 +60,11 @@ class CollectionJob(SQLModel, table=True):
             "comment": "Total number of documents to be processed in this job"
         },
     )
-    total_size: int | None = Field(
+    total_size_mb: float | None = Field(
         default=None,
-        description="Total size of documents being uploaded to collection",
+        description="Total size of documents being uploaded to collection in MB",
         sa_column_kwargs={
-            "comment": "Total size of documents being uploaded to collection"
+            "comment": "Total size of documents being uploaded to collection in MB"
         },
     )
     error_message: str | None = Field(
@@ -121,7 +121,6 @@ class CollectionJobCreate(SQLModel):
     status: CollectionJobStatus
     action_type: CollectionActionType
     docs_num: int | None = None
-    total_size: int | None = None
     project_id: int
 
 
@@ -130,6 +129,7 @@ class CollectionJobUpdate(SQLModel):
     status: CollectionJobStatus | None = None
     error_message: str | None = None
     collection_id: UUID | None = None
+    total_size_mb: float | None = None
     trace_id: str | None = None
 
 

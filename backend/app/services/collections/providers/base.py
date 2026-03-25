@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, List
 
-from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
-from app.models import CreationRequest, Collection
+from app.models import CreationRequest, Collection, Document
 
 
 class BaseProvider(ABC):
@@ -32,21 +31,17 @@ class BaseProvider(ABC):
         self,
         collection_request: CreationRequest,
         storage: CloudStorage,
-        document_crud: DocumentCrud,
+        documents: List[Document],
     ) -> Collection:
         """Create collection with documents and optionally an assistant.
 
         Args:
             collection_request: Collection parameters (name, description, document list, etc.)
             storage: Cloud storage instance for file access
-            document_crud: DocumentCrud instance for fetching documents
-            batch_size: Number of documents to process per batch
-            with_assistant: Whether to create an assistant/agent
-            assistant_options: Options for assistant creation (provider-specific)
+            documents: Pre-fetched list of Document objects to add to the collection
 
         Returns:
-            llm_service_id: ID of the resource to delete
-            llm_service_name: Name of the service (determines resource type)
+            Collection object with llm_service_id and llm_service_name populated
         """
         raise NotImplementedError("Providers must implement execute method")
 

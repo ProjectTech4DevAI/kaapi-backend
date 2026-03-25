@@ -29,7 +29,7 @@ def upgrade():
     op.add_column(
         "collection_jobs",
         sa.Column(
-            "total_size",
+            "total_size_mb",
             sa.Integer(),
             nullable=True,
             comment="Total size of documents being uploaded to collection",
@@ -38,7 +38,7 @@ def upgrade():
     op.add_column(
         "document",
         sa.Column(
-            "file_size",
+            "file_size_kb",
             sa.Integer(),
             nullable=True,
             comment="Size of the document in bytes",
@@ -47,6 +47,6 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_column("document", "file_size")
-    op.drop_column("collection_jobs", "total_size")
+    op.drop_column("document", "file_size_kb")
+    op.drop_column("collection_jobs", "total_size_mb")
     op.drop_column("collection_jobs", "docs_num")

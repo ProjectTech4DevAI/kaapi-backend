@@ -8,12 +8,17 @@ from typing import List
 from fastapi import HTTPException
 from sqlmodel import select
 
-from app.crud import DocumentCrud, CollectionCrud
+from app.crud import CollectionCrud
 from app.api.deps import SessionDep
 from app.models import DocumentCollection, Collection, CollectionPublic, Document
 
 
 logger = logging.getLogger(__name__)
+
+# Necessary Constants -
+# for dynamic batching of documents to upload to openai vector store
+MAX_BATCH_SIZE_KB = 30 * 1024  # 30 MB in KB
+MAX_BATCH_COUNT = 200
 
 
 def get_service_name(provider: str) -> str:
@@ -55,47 +60,47 @@ def extract_error_message(err: Exception) -> str:
     return message.strip()[:1000]
 
 
-def batch_documents(
-    document_crud: DocumentCrud, documents: List[UUID]
-) -> List[List[Document]]:
+def batch_documents(documents: List[Document]) -> List[List[Document]]:
     """
     Batch documents dynamically based on size and count limits.
 
     Creates a new batch when either:
-    - Total size reaches 30 MB (31,457,280 bytes)
+    - Total size reaches 30 MB (30,720 KB)
     - Document count reaches 200
+
+    Args:
+        documents: List of Document objects to batch
 
     Returns:
         List of document batches
     """
 
-    MAX_BATCH_SIZE_BYTES = 30 * 1024 * 1024  # 30 MB in bytes
-    MAX_BATCH_COUNT = 200  # Maximum documents per batch
-
     docs_batches = []
     current_batch = []
-    current_batch_size = 0
+    current_batch_size_kb = 0
 
-    for doc_id in documents:
-        doc = document_crud.read_one(doc_id)
-        doc_size = doc.file_size or 0
+    for doc in documents:
+        doc_size_kb = doc.file_size_kb or 0
 
-        would_exceed_size = (current_batch_size + doc_size) > MAX_BATCH_SIZE_BYTES
+        would_exceed_size = (current_batch_size_kb + doc_size_kb) > MAX_BATCH_SIZE_KB
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT
 
         if current_batch and (would_exceed_size or would_exceed_count):
-            logger.info(
-                f"[batch_documents] Batch completed | {{'batch_num': {len(docs_batches) + 1}, 'doc_count': {len(current_batch)}, 'batch_size_bytes': {current_batch_size}, 'batch_size_mb': {round(current_batch_size / (1024 * 1024), 2)}}}"
-            )
             docs_batches.append(current_batch)
+            logger.info(
+                f"[batch_documents] Batch completed | {{'batch_num': {len(docs_batches)}, 'doc_count': {len(current_batch)}, 'batch_size_mb': {round(current_batch_size_kb / 1024)}}}"
+            )
             current_batch = []
-            current_batch_size = 0
+            current_batch_size_kb = 0
 
         current_batch.append(doc)
-        current_batch_size += doc_size
+        current_batch_size_kb += doc_size_kb
 
     if current_batch:
         docs_batches.append(current_batch)
+        logger.info(
+            f"[batch_documents] Final Batch completed | {{'batch_num': {len(docs_batches)}, 'doc_count': {len(current_batch)}, 'batch_size_mb': {round(current_batch_size_kb / 1024)}}}"
+        )
 
     logger.info(
         f"[batch_documents] Batching complete | {{'total_batches': {len(docs_batches)}, 'total_documents': {len(documents)}}}"
