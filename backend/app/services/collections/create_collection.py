@@ -203,8 +203,7 @@ def execute_job(
             flat_docs = document_crud.read_each(creation_request.documents)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
-        file_sizes_bytes = [doc.file_size or 0 for doc in flat_docs]
-        total_size_bytes = sum(file_sizes_bytes)
+        total_size_bytes = collection_job.total_size or 0
         total_size_mb = round(total_size_bytes / (1024 * 1024), 2)
 
         with Session(engine) as session:

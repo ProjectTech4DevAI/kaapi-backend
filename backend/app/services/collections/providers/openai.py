@@ -30,7 +30,6 @@ class OpenAIProvider(BaseProvider):
         Create OpenAI vector store with documents and optionally an assistant.
         """
         try:
-            # Use user-provided batch_size, default to 10 if not set
             docs_batches = batch_documents(document_crud, collection_request.documents)
 
             vector_store_crud = OpenAIVectorStoreCrud(self.client)

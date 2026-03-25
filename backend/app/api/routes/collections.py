@@ -113,7 +113,7 @@ def create_collection(
             action_type=CollectionActionType.CREATE,
             project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
-            num_docs=len(request.documents),
+            docs_num=len(request.documents),
             total_size=total_size,
         )
     )

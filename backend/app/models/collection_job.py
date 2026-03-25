@@ -54,12 +54,14 @@ class CollectionJob(SQLModel, table=True):
         sa_column_kwargs={"comment": "Tracing ID for correlating logs and traces"},
     )
     docs_num: int | None = Field(
+        default=None,
         description="Total number of documents to be processed in this job",
         sa_column_kwargs={
             "comment": "Total number of documents to be processed in this job"
         },
     )
     total_size: int | None = Field(
+        default=None,
         description="Total size of documents being uploaded to collection",
         sa_column_kwargs={
             "comment": "Total size of documents being uploaded to collection"
@@ -118,8 +120,7 @@ class CollectionJobCreate(SQLModel):
     collection_id: UUID | None = None
     status: CollectionJobStatus
     action_type: CollectionActionType
-    batch_size: int | None = None
-    num_docs: int | None = None
+    docs_num: int | None = None
     total_size: int | None = None
     project_id: int
 

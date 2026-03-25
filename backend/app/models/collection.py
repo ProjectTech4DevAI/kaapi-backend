@@ -105,6 +105,7 @@ class CollectionOptions(SQLModel):
     batch_size: int = Field(
         default=10,
         description=(
+            "**[Deprecated]**  "
             "Number of documents to send to OpenAI in a single "
             "transaction. See the `file_ids` parameter in the "
             "vector store [create batch](https://platform.openai.com/docs/api-reference/vector-stores-file-batches/createBatch)."

@@ -55,7 +55,9 @@ def extract_error_message(err: Exception) -> str:
     return message.strip()[:1000]
 
 
-def batch_documents(document_crud: DocumentCrud, documents: List[UUID]):
+def batch_documents(
+    document_crud: DocumentCrud, documents: List[UUID]
+) -> List[List[Document]]:
     """
     Batch documents dynamically based on size and count limits.
 
@@ -70,17 +72,13 @@ def batch_documents(document_crud: DocumentCrud, documents: List[UUID]):
     MAX_BATCH_SIZE_BYTES = 30 * 1024 * 1024  # 30 MB in bytes
     MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
-    logger.info(
-        f"[batch_documents] Starting dynamic batch iteration | {{'total_documents': {len(documents)}, 'max_batch_size': '30 MB', 'max_batch_count': {MAX_BATCH_COUNT}}}"
-    )
-
     docs_batches = []
     current_batch = []
     current_batch_size = 0
 
     for doc_id in documents:
         doc = document_crud.read_one(doc_id)
-        doc_size = doc.file_size or 0  # file_size is in bytes
+        doc_size = doc.file_size or 0
 
         would_exceed_size = (current_batch_size + doc_size) > MAX_BATCH_SIZE_BYTES
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT
@@ -97,9 +95,6 @@ def batch_documents(document_crud: DocumentCrud, documents: List[UUID]):
         current_batch_size += doc_size
 
     if current_batch:
-        logger.info(
-            f"[batch_documents] Final batch completed | {{'batch_num': {len(docs_batches) + 1}, 'doc_count': {len(current_batch)}, 'batch_size_bytes': {current_batch_size}, 'batch_size_mb': {round(current_batch_size / (1024 * 1024), 2)}}}"
-        )
         docs_batches.append(current_batch)
 
     logger.info(
