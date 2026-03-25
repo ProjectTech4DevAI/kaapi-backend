@@ -1,7 +1,6 @@
 """Tests for audio utility functions."""
 import subprocess
 import pytest
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
 
 
 def _is_ffmpeg_available() -> bool:
