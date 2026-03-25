@@ -27,7 +27,7 @@ dependencies = [
     "pytest>=7.4.4",
     "pre-commit>=3.8.0",
     "openai_responses",
-    "langfuse==2.60.3",
+    "langfuse>=2.60.3,<3.0.0",
     "asgi-correlation-id>=4.3.4",
     "py-zerox>=0.0.7,<1.0.0",
     "pandas>=2.3.2",
