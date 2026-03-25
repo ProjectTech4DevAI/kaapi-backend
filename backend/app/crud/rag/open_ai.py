@@ -143,24 +143,12 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 f"[OpenAIVectorStoreCrud.update] File upload completed | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
             )
             if req.file_counts.completed != req.file_counts.total:
-                view = {x.fname: x for x in docs}
-                for i in self.read(vector_store_id):
-                    if i.last_error is None:
-                        fname = self.client.files.retrieve(i.id)
-                        view.pop(fname)
-
-                error = {
-                    "error": "OpenAI document processing error",
-                    "documents": list(view.values()),
-                }
-                try:
-                    raise InterruptedError(json.dumps(error, cls=BaseModelEncoder))
-                except InterruptedError as err:
-                    logger.error(
-                        f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'error': '{error['error']}', 'failed_documents': {len(error['documents'])}}}",
-                        exc_info=True,
-                    )
-                    raise
+                error_msg = f"OpenAI document processing error: {req.file_counts.completed}/{req.file_counts.total} files completed"
+                logger.error(
+                    f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_msg)
 
             while files:
                 f_obj = files.pop()

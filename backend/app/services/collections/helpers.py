@@ -55,25 +55,57 @@ def extract_error_message(err: Exception) -> str:
     return message.strip()[:1000]
 
 
-def batch_documents(
-    document_crud: DocumentCrud, documents: List[UUID], batch_size: int
-):
-    """Batch document IDs into chunks of size `batch_size`, load each via `DocumentCrud.read_each`,
-    and return a list of document batches."""
+def batch_documents(document_crud: DocumentCrud, documents: List[UUID]):
+    """
+    Batch documents dynamically based on size and count limits.
+
+    Creates a new batch when either:
+    - Total size reaches 30 MB (31,457,280 bytes)
+    - Document count reaches 200
+
+    Returns:
+        List of document batches
+    """
+
+    MAX_BATCH_SIZE_BYTES = 30 * 1024 * 1024  # 30 MB in bytes
+    MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
     logger.info(
-        f"[batch_documents] Starting batch iteration for documents | {{'batch_size': {batch_size}, 'total_documents': {len(documents)}}}"
+        f"[batch_documents] Starting dynamic batch iteration | {{'total_documents': {len(documents)}, 'max_batch_size': '30 MB', 'max_batch_count': {MAX_BATCH_COUNT}}}"
     )
+
     docs_batches = []
-    start, stop = 0, batch_size
-    while True:
-        view = documents[start:stop]
-        if not view:
-            break
-        batch_docs = document_crud.read_each(view)
-        docs_batches.append(batch_docs)
-        start = stop
-        stop += batch_size
+    current_batch = []
+    current_batch_size = 0
+
+    for doc_id in documents:
+        doc = document_crud.read_one(doc_id)
+        doc_size = doc.file_size or 0  # file_size is in bytes
+
+        would_exceed_size = (current_batch_size + doc_size) > MAX_BATCH_SIZE_BYTES
+        would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT
+
+        if current_batch and (would_exceed_size or would_exceed_count):
+            logger.info(
+                f"[batch_documents] Batch completed | {{'batch_num': {len(docs_batches) + 1}, 'doc_count': {len(current_batch)}, 'batch_size_bytes': {current_batch_size}, 'batch_size_mb': {round(current_batch_size / (1024 * 1024), 2)}}}"
+            )
+            docs_batches.append(current_batch)
+            current_batch = []
+            current_batch_size = 0
+
+        current_batch.append(doc)
+        current_batch_size += doc_size
+
+    if current_batch:
+        logger.info(
+            f"[batch_documents] Final batch completed | {{'batch_num': {len(docs_batches) + 1}, 'doc_count': {len(current_batch)}, 'batch_size_bytes': {current_batch_size}, 'batch_size_mb': {round(current_batch_size / (1024 * 1024), 2)}}}"
+        )
+        docs_batches.append(current_batch)
+
+    logger.info(
+        f"[batch_documents] Batching complete | {{'total_batches': {len(docs_batches)}, 'total_documents': {len(documents)}}}"
+    )
+
     return docs_batches
 
 

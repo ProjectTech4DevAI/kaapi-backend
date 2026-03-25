@@ -29,6 +29,7 @@ from app.models import (
 from app.core.cloud import get_cloud_storage
 from app.services.collections.helpers import pick_service_for_documennt
 from app.services.documents.helpers import (
+    calculate_file_size,
     schedule_transformation,
     pre_transform_validation,
     build_document_schema,
@@ -129,6 +130,8 @@ async def upload_doc(
         transformer=transformer,
     )
 
+    file_size = await calculate_file_size(src)
+
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
     object_store_url = storage.put(src, Path(str(document_id)))
@@ -137,6 +140,7 @@ async def upload_doc(
     document = Document(
         id=document_id,
         fname=src.filename,
+        file_size=file_size,
         object_store_url=str(object_store_url),
     )
     source_document = crud.update(document)

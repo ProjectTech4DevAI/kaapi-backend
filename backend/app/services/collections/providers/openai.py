@@ -31,12 +31,7 @@ class OpenAIProvider(BaseProvider):
         """
         try:
             # Use user-provided batch_size, default to 10 if not set
-            batch_size = collection_request.batch_size or 10
-            docs_batches = batch_documents(
-                document_crud,
-                collection_request.documents,
-                batch_size,
-            )
+            docs_batches = batch_documents(document_crud, collection_request.documents)
 
             vector_store_crud = OpenAIVectorStoreCrud(self.client)
             vector_store = vector_store_crud.create()

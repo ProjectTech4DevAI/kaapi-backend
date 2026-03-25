@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import model_serializer
 from sqlmodel import Field, SQLModel
 
 from app.core.util import now
@@ -41,6 +43,11 @@ class Document(DocumentBase, table=True):
         default=False,
         sa_column_kwargs={"comment": "Soft delete flag"},
     )
+    file_size: int | None = Field(
+        default=None,
+        description="The size of the document in bytes",
+        sa_column_kwargs={"comment": "Size of the document in bytes"},
+    )
 
     # Foreign keys
     source_document_id: UUID | None = Field(
@@ -79,9 +86,6 @@ class DocumentPublic(DocumentBase):
     )
     updated_at: datetime = Field(
         description="The timestamp when the document was last updated"
-    )
-    signed_url: str | None = Field(
-        default=None, description="A signed URL for accessing the document"
     )
 
 

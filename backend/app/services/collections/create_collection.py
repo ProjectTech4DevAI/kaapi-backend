@@ -203,9 +203,9 @@ def execute_job(
             flat_docs = document_crud.read_each(creation_request.documents)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
-        file_sizes_kb = [
-            storage.get_file_size_kb(doc.object_store_url) for doc in flat_docs
-        ]
+        file_sizes_bytes = [doc.file_size or 0 for doc in flat_docs]
+        total_size_bytes = sum(file_sizes_bytes)
+        total_size_mb = round(total_size_bytes / (1024 * 1024), 2)
 
         with Session(engine) as session:
             collection_crud = CollectionCrud(session, project_id)
@@ -240,11 +240,12 @@ def execute_job(
 
         elapsed = time.time() - start_time
         logger.info(
-            "[create_collection.execute_job] Collection created: %s | Time: %.2fs | Files: %d | Sizes: %s KB | Types: %s",
+            "[create_collection.execute_job] Collection created: %s | Time: %.2fs | Files: %d | Total Size: %s MB (%s bytes) | Types: %s",
             collection_id,
             elapsed,
             len(flat_docs),
-            file_sizes_kb,
+            total_size_mb,
+            total_size_bytes,
             list(file_exts),
         )
 
