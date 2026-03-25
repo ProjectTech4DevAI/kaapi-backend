@@ -120,14 +120,15 @@ def create_collection(
         with_assistant=with_assistant,
     )
 
-    metadata = None
+    metadata = {}
+
     if not with_assistant:
-        metadata = {
-            "note": (
-                "This job will create a vector store only (no Assistant). "
-                "Assistant creation happens when both 'model' and 'instructions' are included."
-            )
-        }
+        metadata["assistant_note"] = (
+            "This job will create a vector store only (no Assistant). "
+            "Assistant creation happens when both 'model' and 'instructions' are included."
+        )
+
+    metadata = metadata if metadata else None
 
     return APIResponse.success_response(
         CollectionJobImmediatePublic.model_validate(collection_job), metadata=metadata
