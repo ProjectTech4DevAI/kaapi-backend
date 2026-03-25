@@ -12,12 +12,12 @@ from app.celery.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def start_llm_job(
-    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
-) -> str:
+def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs) -> str:
     from app.celery.tasks.job_execution import run_llm_job
 
-    task = run_llm_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
+    task = run_llm_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
     logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task.id}")
     return task.id
 
@@ -27,8 +27,12 @@ def start_llm_chain_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_llm_chain_job
 
-    task = run_llm_chain_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_llm_chain_job] Started job {job_id} with Celery task {task.id}")
+    task = run_llm_chain_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_llm_chain_job] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -37,7 +41,9 @@ def start_response_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_response_job
 
-    task = run_response_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
+    task = run_response_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
     logger.info(f"[start_response_job] Started job {job_id} with Celery task {task.id}")
     return task.id
 
@@ -47,8 +53,12 @@ def start_doctransform_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_doctransform_job
 
-    task = run_doctransform_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_doctransform_job] Started job {job_id} with Celery task {task.id}")
+    task = run_doctransform_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_doctransform_job] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -57,8 +67,12 @@ def start_create_collection_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_create_collection_job
 
-    task = run_create_collection_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_create_collection_job] Started job {job_id} with Celery task {task.id}")
+    task = run_create_collection_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_create_collection_job] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -67,8 +81,12 @@ def start_delete_collection_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_delete_collection_job
 
-    task = run_delete_collection_job.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_delete_collection_job] Started job {job_id} with Celery task {task.id}")
+    task = run_delete_collection_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_delete_collection_job] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -77,8 +95,12 @@ def start_stt_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_batch_submission
 
-    task = run_stt_batch_submission.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_stt_batch_submission] Started job {job_id} with Celery task {task.id}")
+    task = run_stt_batch_submission.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_stt_batch_submission] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -87,8 +109,12 @@ def start_stt_metric_computation(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_metric_computation
 
-    task = run_stt_metric_computation.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_stt_metric_computation] Started job {job_id} with Celery task {task.id}")
+    task = run_stt_metric_computation.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_stt_metric_computation] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -97,8 +123,12 @@ def start_tts_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_batch_submission
 
-    task = run_tts_batch_submission.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_tts_batch_submission] Started job {job_id} with Celery task {task.id}")
+    task = run_tts_batch_submission.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_tts_batch_submission] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
@@ -107,8 +137,12 @@ def start_tts_result_processing(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_result_processing
 
-    task = run_tts_result_processing.delay(project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs)
-    logger.info(f"[start_tts_result_processing] Started job {job_id} with Celery task {task.id}")
+    task = run_tts_result_processing.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_tts_result_processing] Started job {job_id} with Celery task {task.id}"
+    )
     return task.id
 
 
