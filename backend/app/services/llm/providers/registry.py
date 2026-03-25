@@ -2,11 +2,22 @@ import logging
 from sqlmodel import Session
 
 from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.oai import OpenAIProvider
-from app.services.llm.providers.gai import GoogleAIProvider
-from app.services.llm.providers.sai import SarvamAIProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _build_registry() -> dict[str, type[BaseProvider]]:
+    from app.services.llm.providers.oai import OpenAIProvider
+    from app.services.llm.providers.gai import GoogleAIProvider
+    from app.services.llm.providers.sai import SarvamAIProvider
+
+    return {
+        "openai-native": OpenAIProvider,
+        "openai": OpenAIProvider,
+        "google": GoogleAIProvider,
+        "google-native": GoogleAIProvider,
+        "sarvamai-native": SarvamAIProvider,
+    }
 
 
 class LLMProvider:
@@ -18,31 +29,30 @@ class LLMProvider:
     GOOGLE_NATIVE = "google-native"
     SARVAMAI_NATIVE = "sarvamai-native"
 
-    _registry: dict[str, type[BaseProvider]] = {
-        OPENAI_NATIVE: OpenAIProvider,
-        OPENAI: OpenAIProvider,
-        GOOGLE: GoogleAIProvider,
-        # Future native providers:
-        # CLAUDE_NATIVE: ClaudeProvider,
-        GOOGLE_NATIVE: GoogleAIProvider,
-        SARVAMAI_NATIVE: SarvamAIProvider,
-    }
+    _registry: dict[str, type[BaseProvider]] | None = None
+
+    @classmethod
+    def _get_registry(cls) -> dict[str, type[BaseProvider]]:
+        if cls._registry is None:
+            cls._registry = _build_registry()
+        return cls._registry
 
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         """Return the provider class for a given name."""
-        provider = cls._registry.get(provider_type)
+        registry = cls._get_registry()
+        provider = registry.get(provider_type)
         if not provider:
             raise ValueError(
                 f"Provider '{provider_type}' is not supported. "
-                f"Supported providers: {', '.join(cls._registry.keys())}"
+                f"Supported providers: {', '.join(registry.keys())}"
             )
         return provider
 
     @classmethod
     def supported_providers(cls) -> list[str]:
         """Return a list of supported provider names."""
-        return list(cls._registry.keys())
+        return list(cls._get_registry().keys())
 
 
 def get_llm_provider(

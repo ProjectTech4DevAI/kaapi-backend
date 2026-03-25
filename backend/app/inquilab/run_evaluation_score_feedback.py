@@ -17,7 +17,6 @@ import json
 import string
 import pandas as pd
 from pathlib import Path
-from pydantic import BaseModel, field_validator
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from logging import Logger
 import re
