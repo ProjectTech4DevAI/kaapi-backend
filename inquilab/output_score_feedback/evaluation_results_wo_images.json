@@ -1,0 +1,29 @@
+[
+  {
+    "CID": "3",
+    "Problem": "Project synopsis :- In many places, many goods are stolen from the grid like Copper plates, wires, aluminium and these goods are very expensive due to which there is a lot of loss. Dispute there has been a 24 hour security guard there, but theft happens because one security guard cannot Guard everywhere . Every item like Copper plates, wires etc are expensive and sometimes electricity is also stolen.",
+    "Solution": "We developed a system in which we will place mirrors in such a way that they can reflect the light and also place a laser light at one corner and also place a receiver in which there is an alarm which sounds when light is not received . \n \n Because one security guard cannot Guard everywhere so, when we plays this system automatically when someone come inside from some other ways the alarm will sound and guard been alert .(https://youtu.be/gKJiCGNaAwg?si=xMmwyxQNDkwS7kD5)",
+    "Novelty": {
+      "score": 5,
+      "reason": "The idea of using mirrors and lasers for security is a known concept, but the specific application and integration for theft detection shows some original thinking."
+    },
+    "Usefulness": {
+      "score": 6,
+      "reason": "The solution addresses the problem of theft effectively by alerting guards, but lacks detail on how it will function in various scenarios."
+    },
+    "Feasibility": {
+      "score": 5,
+      "reason": "While the concept is technically possible, practical implementation details such as installation and maintenance are not clearly addressed."
+    },
+    "Scalability": {
+      "score": 4,
+      "reason": "The system may work in specific locations, but scaling it to larger areas or different environments would require significant adaptation."
+    },
+    "Sustainability": {
+      "score": 6,
+      "reason": "The solution appears to be sustainable as it relies on simple mechanical components, but long-term durability and maintenance considerations are not discussed."
+    },
+    "Attachment Summary": "The submission includes a video link demonstrating the proposed system, showcasing how mirrors and lasers are arranged to create an alarm system for theft detection.",
+    "Idea Feedback": "ACKNOWLEDGEMENT:\n- Great job on your project titled \"Theft Detection System\"! It's clear that you've identified a significant problem regarding theft of valuable materials and proposed a creative solution.\n\nWHAT YOU DID WELL:\n- You effectively highlighted a real-world issue of theft that affects many areas, showing empathy towards the problem.\n- The use of mirrors and lasers in your solution demonstrates some original thinking and a unique approach to enhancing security.\n- The inclusion of an alarm system adds a practical element to your design, potentially alerting guards when theft occurs.\n- Your video link provides a visual representation of your idea, which helps in understanding how the system works.\n\nTHINGS TO THINK MORE ABOUT:\n- How will the system handle different lighting conditions, such as at night or during heavy rain?\n- What specific materials and technologies will you use to ensure the system is durable and reliable over time?\n- How can you ensure that the system is easily scalable to larger areas or different types of properties?\n- Have you considered potential false alarms and how to minimize them in your design?\n- What maintenance will be required to keep the system functioning effectively?\n\nLEVEL-UP NOTE:\n- It's fantastic to see your efforts in tackling a real-world issue with innovative thinking. Keep exploring the details of your design and consider how you can improve its practicality and effectiveness. This will strengthen your project even further. Keep problem-solving, tinkering, and innovating - all the best!"
+  }
+]

@@ -1,0 +1,34 @@
+[
+  {
+    "CID": "3",
+    "Problem": "Project synopsis :- In many places, many goods are stolen from the grid like Copper plates, wires, aluminium and these goods are very expensive due to which there is a lot of loss. Dispute there has been a 24 hour security guard there, but theft happens because one security guard cannot Guard everywhere . Every item like Copper plates, wires etc are expensive and sometimes electricity is also stolen.",
+    "Solution": "We developed a system in which we will place mirrors in such a way that they can reflect the light and also place a laser light at one corner and also place a receiver in which there is an alarm which sounds when light is not received . \n \n Because one security guard cannot Guard everywhere so, when we plays this system automatically when someone come inside from some other ways the alarm will sound and guard been alert .(https://youtu.be/gKJiCGNaAwg?si=xMmwyxQNDkwS7kD5)",
+    "Novelty": {
+      "score": 5,
+      "reason": "The idea of using mirrors and lasers for security is a known concept, but the application in this context shows some original thinking."
+    },
+    "Usefulness": {
+      "score": 6,
+      "reason": "The solution addresses a real problem of theft but lacks detail on how effective the alarm system would be in practice."
+    },
+    "Feasibility": {
+      "score": 6,
+      "reason": "The concept is technically feasible, but the execution details and reliability of the system are not fully addressed."
+    },
+    "Scalability": {
+      "score": 5,
+      "reason": "The solution could be implemented in various locations, but scalability may depend on the availability and installation of the system."
+    },
+    "Sustainability": {
+      "score": 4,
+      "reason": "The sustainability of the system is unclear, particularly regarding the maintenance and durability of the components used."
+    },
+    "Attachment Summary": "The images show a prototype setup with laser lights, mirrors, and an alarm system designed to detect intrusions, along with a model demonstrating the concept in a controlled environment.",
+    "Idea Feedback": "ACKNOWLEDGEMENT:\n- Great job on your project titled \"Security Alarm System Using Mirrors and Lasers.\" It's commendable that you've identified the issue of theft in your community and proposed a solution.\n\nWHAT YOU DID WELL:\n- The use of mirrors and lasers in your security system shows creative thinking and an understanding of basic physics principles.\n- Your prototype demonstrates a tangible representation of your idea, helping to visualize how the system would function in a real-world scenario.\n- You have identified a relevant problem that affects many people, showcasing empathy towards those who may suffer from theft.\n\nTHINGS TO THINK MORE ABOUT:\n- How will you ensure that the alarm system is reliable and minimizes false alarms?\n- What specific materials will you use for the mirrors and lasers, and how will they withstand outdoor conditions?\n- How do you plan to maintain the system over time to ensure its effectiveness?\n- Can you think of ways to enhance the system's functionality or make it more user-friendly?\n- What are the potential limitations of your system in different environments, and how might you address them?\n\nLEVEL-UP NOTE:\n- It's clear that you've put thought and effort into this project, and I encourage you to keep exploring and refining your idea. Your approach to solving a real-world problem is admirable, and with further development, it could lead to a practical solution. Keep problem-solving, tinkering, and innovating - all the best!",
+    "Image URL": [
+      "https://lh3.googleusercontent.com/d/1Xa-_KlHb9tyFLNcFXRKQ4KylVf5kGa4c",
+      "https://lh3.googleusercontent.com/d/1ndocF8Q-ihxx2rNgImubwU5dCFn8vurK",
+      "https://lh3.googleusercontent.com/d/16KKC36hx4wKecxxhOkfyXNwnsGLvTqG7"
+    ]
+  }
+]

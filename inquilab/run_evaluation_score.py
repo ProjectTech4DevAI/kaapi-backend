@@ -279,6 +279,9 @@ def run(
     total = len(df)
 
     for idx, row in df.iterrows():
+        if limit is not None and len(results) >= limit:
+            break
+
         if pd.isna(row.get("problem")) or pd.isna(row.get("solution")):
             continue
 

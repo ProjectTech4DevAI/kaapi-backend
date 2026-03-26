@@ -62,6 +62,9 @@ python run_evaluation_score_feedback.py --output my_results.xlsx
 # custom temperature
 python run_evaluation_score.py --temperature 0.2
 
+# limit to first N rows (useful for testing)
+python run_evaluation_score.py --limit 5
+
 # full example with all options
 python run_evaluation_score_feedback.py --provider google --model gemini-2.5-flash --input data.xlsx --output results.xlsx --temperature 0.3 --attachment
 ```
