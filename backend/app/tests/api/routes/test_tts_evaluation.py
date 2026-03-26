@@ -523,7 +523,7 @@ class TestTTSEvaluationRun:
             dataset_metadata={"sample_count": 3},
         )
 
-    @patch("app.api.routes.tts_evaluations.evaluation.start_low_priority_job")
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_success(
         self,
         mock_start_job: MagicMock,
@@ -565,14 +565,11 @@ class TestTTSEvaluationRun:
 
         mock_start_job.assert_called_once()
         call_kwargs = mock_start_job.call_args
-        assert call_kwargs.kwargs["function_path"] == (
-            "app.services.tts_evaluations.batch_job.execute_batch_submission"
-        )
         assert call_kwargs.kwargs["organization_id"] == user_api_key.organization_id
         assert call_kwargs.kwargs["dataset_id"] == dataset.id
         assert call_kwargs.kwargs["models"] == ["gemini-2.5-pro-preview-tts"]
 
-    @patch("app.api.routes.tts_evaluations.evaluation.start_low_priority_job")
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_multiple_models_total_items(
         self,
         mock_start_job: MagicMock,
@@ -606,7 +603,7 @@ class TestTTSEvaluationRun:
         # 5 samples × 1 model
         assert data["total_items"] == 5
 
-    @patch("app.api.routes.tts_evaluations.evaluation.start_low_priority_job")
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_celery_failure(
         self,
         mock_start_job: MagicMock,
