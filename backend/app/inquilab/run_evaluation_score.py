@@ -167,7 +167,8 @@ STEP 3: EVIDENCE-BASED SCORING
 STEP 4: OUTPUT GENERATION
 - Return ONLY valid JSON with exact structure specified
 - Each reason should be one clear sentence explaining the score
-- Ensure scores align with the detailed rubrics provided"""
+- Ensure scores align with the detailed rubrics provided
+- Language consistency: write all textual outputs (reasons, Image_contains_summary) in the same language(s) as the student's problem/solution text; if mixed, you may mix languages or use the dominant language (prefer the solution language)."""
 
 
 def get_scoring_criteria() -> list:

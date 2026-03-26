@@ -255,6 +255,7 @@ def get_feedback_instructions():
 FEEDBACK GENERATION RULES:
 After scoring, you must generate mentor-grade feedback for the student.
 Use the scores you just assigned to calibrate the depth and tone of feedback.
+Write the feedback in the same language(s) as the student's problem/solution text. If they are mixed, you may mix languages or use the dominant language (prefer the solution language).
 
 Score calibration guide:
 - Score 1-4 (LOW): Focus improvement questions strongly here.
@@ -815,4 +816,3 @@ if __name__ == "__main__":
         use_images=USE_IMAGES,
         temperature=TEMPERATURE,
     )
-

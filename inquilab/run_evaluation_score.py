@@ -294,8 +294,8 @@ def run(
             image_urls = [u.strip() for u in str(row["documents"]).split(",") if u.strip()]
             image_urls = [_to_direct_url(u) for u in image_urls]
 
-        if not image_urls:
-            continue
+        # if not image_urls:
+        #     continue
 
         print(f"  [{idx+1}/{total}] Processing CID: {cid}...", end=" ", flush=True)
 
