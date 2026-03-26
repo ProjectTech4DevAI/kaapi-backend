@@ -109,7 +109,7 @@ def build_evaluation_jsonl(
             "input": question,  # Add input from dataset
         }
 
-        if config.temperature is not None:
+        if "temperature" in config.model_fields_set:
             body["temperature"] = config.temperature
 
         # Add reasoning only if provided
@@ -189,7 +189,7 @@ def start_evaluation_batch(
             "description": f"Evaluation: {eval_run.run_name}",
             "completion_window": "24h",
             # Store complete config for reference
-            "evaluation_config": config.model_dump(exclude_none=True),
+            "evaluation_config": config.model_dump(exclude_unset=True),
         }
 
         # Step 5: Start batch job using generic infrastructure
