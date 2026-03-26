@@ -16,7 +16,7 @@ from app.models import (
 from app.models.collection import DeletionRequest
 from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_delete_collection_job
 from app.utils import send_callback, APIResponse
 
 
@@ -37,12 +37,11 @@ def start_job(
         collection_job_id, CollectionJobUpdate(trace_id=trace_id)
     )
 
-    task_id = start_low_priority_job(
-        function_path="app.services.collections.delete_collection.execute_job",
+    task_id = start_delete_collection_job(
         project_id=project_id,
         job_id=str(collection_job_id),
-        collection_id=str(request.collection_id),
         trace_id=trace_id,
+        collection_id=str(request.collection_id),
         request=request.model_dump(mode="json"),
         organization_id=organization_id,
     )

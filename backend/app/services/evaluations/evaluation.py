@@ -239,7 +239,10 @@ def get_evaluation_with_scores(
     if not get_trace_info:
         return eval_run, None
 
-    # Check if we already have cached traces
+    # Caching strategy: On the first request, trace scores are fetched from Langfuse
+    # and a copy is stored in S3. Subsequent requests serve from
+    # S3 instead of Langfuse, which is significantly faster. Use resync_score=true
+    # to bypass the cache and re-fetch from Langfuse and store to S3 again.
     has_cached_traces_s3 = eval_run.score_trace_url is not None
     has_cached_traces_db = eval_run.score is not None and "traces" in eval_run.score
     if not resync_score:
@@ -276,6 +279,7 @@ def get_evaluation_with_scores(
             )
             return eval_run, None
 
+    # Resync requested — fetch fresh scores from Langfuse
     langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
@@ -321,7 +325,7 @@ def get_evaluation_with_scores(
 
     merged_summary_scores = list(existing_scores_map.values())
 
-    # Build final score with merged summary_scores and traces
+    # Build final score and persist to S3/DB for future cached reads
     score = {
         "summary_scores": merged_summary_scores,
         "traces": langfuse_score.get("traces", []),
