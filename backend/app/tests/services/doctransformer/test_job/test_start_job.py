@@ -42,7 +42,7 @@ class TestStartJob(DocTransformTestBase):
         job = self._create_job(db, current_user.project.id, document.id)
 
         with patch(
-            "app.services.doctransform.job.start_low_priority_job"
+            "app.services.doctransform.job.start_doctransform_job"
         ) as mock_schedule:
             mock_schedule.return_value = "fake-task-id"
 
@@ -66,7 +66,6 @@ class TestStartJob(DocTransformTestBase):
 
         mock_schedule.assert_called_once()
         kwargs = mock_schedule.call_args.kwargs
-        assert kwargs["function_path"] == "app.services.doctransform.job.execute_job"
         assert kwargs["project_id"] == current_user.project.id
         assert kwargs["job_id"] == str(job.id)
         assert kwargs["source_document_id"] == str(job.source_document_id)
@@ -87,7 +86,7 @@ class TestStartJob(DocTransformTestBase):
 
         with pytest.raises(HTTPException):
             with patch(
-                "app.services.doctransform.job.start_low_priority_job"
+                "app.services.doctransform.job.start_doctransform_job"
             ) as mock_schedule:
                 mock_schedule.return_value = "fake-task-id"
                 start_job(
@@ -113,7 +112,7 @@ class TestStartJob(DocTransformTestBase):
         formats = ["markdown", "text", "html"]
 
         with patch(
-            "app.services.doctransform.job.start_low_priority_job"
+            "app.services.doctransform.job.start_doctransform_job"
         ) as mock_schedule:
             mock_schedule.return_value = "fake-task-id"
 
@@ -137,10 +136,6 @@ class TestStartJob(DocTransformTestBase):
                 # scheduler called with correct kwargs
                 kwargs = mock_schedule.call_args.kwargs
                 assert kwargs["target_format"] == target_format
-                assert (
-                    kwargs["function_path"]
-                    == "app.services.doctransform.job.execute_job"
-                )
                 assert kwargs["project_id"] == current_user.project.id
                 assert kwargs["job_id"] == str(job.id)
                 assert kwargs["source_document_id"] == str(job.source_document_id)
@@ -163,7 +158,7 @@ class TestStartJob(DocTransformTestBase):
         job = self._create_job(db, current_user.project.id, document.id)
 
         with patch(
-            "app.services.doctransform.job.start_low_priority_job"
+            "app.services.doctransform.job.start_doctransform_job"
         ) as mock_schedule:
             mock_schedule.return_value = "fake-task-id"
 
@@ -183,7 +178,6 @@ class TestStartJob(DocTransformTestBase):
         kwargs = mock_schedule.call_args.kwargs
         assert kwargs["transformer_name"] == transformer_name
         assert kwargs["target_format"] == "markdown"
-        assert kwargs["function_path"] == "app.services.doctransform.job.execute_job"
         assert kwargs["project_id"] == current_user.project.id
         assert kwargs["job_id"] == str(job.id)
         assert kwargs["source_document_id"] == str(job.source_document_id)

@@ -64,7 +64,7 @@ class TestStartJob:
         request = llm_call_request
         project = get_project(db)
 
-        with patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule:
+        with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.return_value = "fake-task-id-123"
 
             job_id = start_job(db, request, project.id, project.organization_id)
@@ -78,7 +78,6 @@ class TestStartJob:
 
             mock_schedule.assert_called_once()
             _, kwargs = mock_schedule.call_args
-            assert kwargs["function_path"] == "app.services.llm.jobs.execute_job"
             assert kwargs["project_id"] == project.id
             assert kwargs["organization_id"] == project.organization_id
             assert kwargs["job_id"] == str(job_id)
@@ -90,7 +89,7 @@ class TestStartJob:
         """Test start_job when Celery task scheduling fails."""
         project = get_project(db)
 
-        with patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule:
+        with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.side_effect = Exception("Celery connection failed")
 
             with pytest.raises(HTTPException) as exc_info:
@@ -1190,7 +1189,7 @@ class TestStartChainJob:
         project = get_project(db)
 
         with (
-            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.start_llm_chain_job") as mock_schedule,
             patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
         ):
             mock_schedule.return_value = "fake-task-id"
@@ -1206,14 +1205,12 @@ class TestStartChainJob:
 
             assert job_id == mock_job.id
             mock_schedule.assert_called_once()
-            _, kwargs = mock_schedule.call_args
-            assert kwargs["function_path"] == "app.services.llm.jobs.execute_chain_job"
 
     def test_start_chain_job_celery_failure(self, db: Session, chain_request):
         project = get_project(db)
 
         with (
-            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.start_llm_chain_job") as mock_schedule,
             patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
         ):
             mock_schedule.side_effect = Exception("Celery connection failed")

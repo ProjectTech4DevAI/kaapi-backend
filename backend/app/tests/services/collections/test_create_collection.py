@@ -52,7 +52,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     """
     start_job should:
       - update an existing CollectionJob (status=PENDING, action=CREATE)
-      - call start_low_priority_job with the correct kwargs
+      - call start_create_collection_job with the correct kwargs
       - return the job UUID (same one that was passed in)
     """
     project = get_project(db)
@@ -73,7 +73,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     )
 
     with patch(
-        "app.services.collections.create_collection.start_low_priority_job"
+        "app.services.collections.create_collection.start_create_collection_job"
     ) as mock_schedule:
         mock_schedule.return_value = "fake-task-id"
 
@@ -100,10 +100,6 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 
         mock_schedule.assert_called_once()
         kwargs = mock_schedule.call_args.kwargs
-        assert (
-            kwargs["function_path"]
-            == "app.services.collections.create_collection.execute_job"
-        )
         assert kwargs["project_id"] == project.id
         assert kwargs["organization_id"] == project.organization_id
         assert kwargs["job_id"] == str(job_id)

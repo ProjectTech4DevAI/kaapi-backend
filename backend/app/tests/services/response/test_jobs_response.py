@@ -18,7 +18,7 @@ def test_start_job(db: Session):
 
     project = get_project(db)
     # Patch Celery scheduling
-    with patch("app.services.response.jobs.start_high_priority_job") as mock_schedule:
+    with patch("app.services.response.jobs.start_response_job") as mock_schedule:
         mock_schedule.return_value = "fake-task-id"
 
         job_id = start_job(db, request, project.id, project.organization_id)
@@ -33,7 +33,6 @@ def test_start_job(db: Session):
         # Validate Celery was called correctly
         mock_schedule.assert_called_once()
         _, kwargs = mock_schedule.call_args
-        assert kwargs["function_path"] == "app.services.response.jobs.execute_job"
         assert kwargs["project_id"] == project.id
         assert kwargs["organization_id"] == project.organization_id
         assert kwargs["job_id"] == str(job_id)
@@ -48,7 +47,7 @@ def test_start_job_celery_exception(db: Session):
     )
     project = get_project(db)
 
-    with patch("app.services.response.jobs.start_high_priority_job") as mock_schedule:
+    with patch("app.services.response.jobs.start_response_job") as mock_schedule:
         mock_schedule.side_effect = Exception("Celery connection failed")
 
         with pytest.raises(HTTPException) as exc_info:

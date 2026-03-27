@@ -9,6 +9,19 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+@worker_process_init.connect
+def warm_llm_modules(**_) -> None:
+    """Import LLM service modules in each worker process right after fork.
+
+    This runs once per worker before any task arrives, so LLM calls
+    (the most latency-sensitive path) never pay a cold-import penalty.
+    The main process is unaffected, keeping overall memory low.
+    """
+    import app.services.llm.jobs  # noqa: F401
+
+    logger.info("[warm_llm_modules] LLM modules pre-loaded in worker process")
+
+
 # Create Celery instance
 celery_app = Celery(
     "ai_platform",
@@ -41,18 +54,10 @@ celery_app.conf.update(
         Queue("cron", exchange=default_exchange, routing_key="cron"),
         Queue("default", exchange=default_exchange, routing_key="default"),
     ),
-    # Task routing
+    # Task routing — queue is set per-task via @celery_app.task(queue=...).
+    # Only cron tasks need an explicit override here.
     task_routes={
-        "app.celery.tasks.job_execution.execute_high_priority_task": {
-            "queue": "high_priority",
-            "priority": 9,
-        },
-        "app.celery.tasks.job_execution.execute_low_priority_task": {
-            "queue": "low_priority",
-            "priority": 1,
-        },
         "app.celery.tasks.*_cron_*": {"queue": "cron"},
-        "app.celery.tasks.*": {"queue": "default"},
     },
     task_default_queue="default",
     # Enable priority support
@@ -92,6 +97,3 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_pool_limit=settings.CELERY_BROKER_POOL_LIMIT,
 )
-
-# Auto-discover tasks
-# celery_app.autodiscover_tasks()
