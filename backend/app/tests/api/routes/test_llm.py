@@ -15,8 +15,8 @@ from app.models.llm.request import (
 def test_llm_call_success(
     client: TestClient, user_api_key_header: dict[str, str]
 ) -> None:
-    """Test successful LLM call with mocked start_high_priority_job."""
-    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
+    """Test successful LLM call with mocked start_llm_job."""
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
 
         payload = LLMCallRequest(
@@ -55,7 +55,7 @@ def test_llm_call_with_kaapi_config(
     client: TestClient, user_api_key_header: dict[str, str]
 ) -> None:
     """Test LLM call with Kaapi abstracted config."""
-    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
 
         payload = LLMCallRequest(
@@ -91,7 +91,7 @@ def test_llm_call_with_native_config(
     client: TestClient, user_api_key_header: dict[str, str]
 ) -> None:
     """Test LLM call with native OpenAI config (pass-through mode)."""
-    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
 
         payload = LLMCallRequest(
@@ -173,7 +173,7 @@ def test_llm_call_success_with_guardrails(
 ) -> None:
     """Test successful LLM call when guardrails are enabled (no validators)."""
 
-    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
 
         payload = LLMCallRequest(
@@ -214,7 +214,7 @@ def test_llm_call_guardrails_bypassed_still_succeeds(
 ) -> None:
     """If guardrails service is unavailable (bypassed), request should still succeed."""
 
-    with patch("app.services.llm.jobs.start_high_priority_job") as mock_start_job:
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
         mock_start_job.return_value = "test-task-id"
 
         payload = LLMCallRequest(
