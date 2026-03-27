@@ -62,9 +62,10 @@ def list_configs(
     Ordered by updated_at in descending order.
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    configs = config_crud.read_all(query=query, skip=skip, limit=limit)
+    configs, has_more = config_crud.read_all(query=query, skip=skip, limit=limit)
     return APIResponse.success_response(
         data=configs,
+        metadata=dict(has_more=has_more)
     )
 
 

@@ -85,7 +85,7 @@ class ConfigCrud:
         )
         return self.session.exec(statement).one_or_none()
     
-    def read_all(self, query: str | None, skip: int = 0, limit: int = 100) -> list[Config]:
+    def read_all(self, query: str | None, skip: int = 0, limit: int = 100) -> tuple[list[Config], bool]:
         filters = [
             Config.project_id == self.project_id,
             Config.deleted_at.is_(None),
@@ -99,9 +99,15 @@ class ConfigCrud:
             .where(and_(*filters))
             .order_by(Config.updated_at.desc())
             .offset(skip)
-            .limit(limit)
+            .limit(limit + 1)
         )
-        return self.session.exec(statement).all()
+        configs =  self.session.exec(statement).all()
+        has_more = False
+        if limit is not None and len(configs) > limit:
+            has_more = True
+            configs = configs[:limit]
+
+        return configs, has_more
 
     def update_or_raise(self, config_id: UUID, config_update: ConfigUpdate) -> Config:
         config = self.exists_or_raise(config_id)
