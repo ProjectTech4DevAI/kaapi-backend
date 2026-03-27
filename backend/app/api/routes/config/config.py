@@ -53,7 +53,7 @@ def create_config(
 def list_configs(
     current_user: AuthContextDep,
     session: SessionDep,
-    query: str = Query(description='search query'),
+    query: str = Query(None, description='search query'),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
 ):
