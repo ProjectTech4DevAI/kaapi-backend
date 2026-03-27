@@ -23,7 +23,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     req = DeletionRequest(collection_id=created_collection.id)
 
     with patch(
-        "app.services.collections.delete_collection.start_low_priority_job"
+        "app.services.collections.delete_collection.start_delete_collection_job"
     ) as mock_schedule:
         mock_schedule.return_value = "fake-task-id"
 
@@ -58,10 +58,6 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 
         mock_schedule.assert_called_once()
         kwargs = mock_schedule.call_args.kwargs
-        assert (
-            kwargs["function_path"]
-            == "app.services.collections.delete_collection.execute_job"
-        )
         assert kwargs["project_id"] == project.id
         assert kwargs["organization_id"] == project.organization_id
         assert kwargs["job_id"] == str(job.id)

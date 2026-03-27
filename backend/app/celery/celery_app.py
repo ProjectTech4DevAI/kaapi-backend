@@ -9,6 +9,19 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+@worker_process_init.connect
+def warm_llm_modules(**_) -> None:
+    """Import LLM service modules in each worker process right after fork.
+
+    This runs once per worker before any task arrives, so LLM calls
+    (the most latency-sensitive path) never pay a cold-import penalty.
+    The main process is unaffected, keeping overall memory low.
+    """
+    import app.services.llm.jobs  # noqa: F401
+
+    logger.info("[warm_llm_modules] LLM modules pre-loaded in worker process")
+
+
 # Create Celery instance
 celery_app = Celery(
     "ai_platform",

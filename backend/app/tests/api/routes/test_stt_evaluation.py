@@ -807,7 +807,7 @@ class TestSTTEvaluationRun:
             )
         return dataset
 
-    @patch("app.api.routes.stt_evaluations.evaluation.start_low_priority_job")
+    @patch("app.api.routes.stt_evaluations.evaluation.start_stt_batch_submission")
     def test_start_stt_evaluation_success(
         self,
         mock_start_job: MagicMock,

@@ -279,6 +279,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             public_key=credentials["public_key"],
             secret_key=credentials["secret_key"],
             host=credentials["host"],
+            timeout=60,
         )
     except Exception as e:
         logger.error(
