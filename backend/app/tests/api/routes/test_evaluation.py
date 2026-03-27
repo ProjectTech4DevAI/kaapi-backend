@@ -731,6 +731,65 @@ class TestBatchEvaluationJSONLBuilding:
             assert request_dict["body"]["input"] == f"Question {i}"
             assert request_dict["body"]["model"] == "gpt-4o"
 
+    def test_build_batch_jsonl_temperature_included_when_explicitly_set(self) -> None:
+        """When temperature is explicitly set, it should appear in the JSONL body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        config = TextLLMParams(model="gpt-4o", temperature=0.5)
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" in jsonl_data[0]["body"]
+        assert jsonl_data[0]["body"]["temperature"] == 0.5
+
+    def test_build_batch_jsonl_temperature_excluded_when_not_set(self) -> None:
+        """When temperature is not explicitly set, it should NOT appear in the JSONL body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        # Only model provided — temperature not in model_fields_set
+        config = TextLLMParams(model="gpt-4o")
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" not in jsonl_data[0]["body"]
+
+    def test_build_batch_jsonl_temperature_zero_included_when_explicitly_set(
+        self,
+    ) -> None:
+        """When temperature is explicitly set to 0.0, it should still appear in the body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        config = TextLLMParams(model="gpt-4o", temperature=0.0)
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" in jsonl_data[0]["body"]
+        assert jsonl_data[0]["body"]["temperature"] == 0.0
+
 
 class TestGetEvaluationRunStatus:
     """Test GET /evaluations/{evaluation_id} endpoint."""
