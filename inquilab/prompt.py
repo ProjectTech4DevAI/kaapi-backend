@@ -226,7 +226,13 @@ def get_feedback_instructions():
 FEEDBACK GENERATION RULES:
 After scoring, you must generate mentor-grade feedback for the student.
 Use the scores you just assigned to calibrate the depth and tone of feedback.
-Write the feedback in the same language(s) as the student's problem/solution text. If they are mixed, you may mix languages or use the dominant language (prefer the solution language).
+CRITICAL LANGUAGE RULE: The Idea_Feedback MUST ALWAYS be written in the SAME language as the student's problem and solution text.
+- If the student wrote in Hindi, write ALL feedback in Hindi.
+- If the student wrote in Telugu, write ALL feedback in Telugu.
+- If the student wrote in English, write ALL feedback in English.
+- If the student used a mix of languages, use the dominant language of the solution text.
+- This applies to ALL sections: Acknowledgement, What You Did Well, Things to Think More About, and Level-Up Note.
+- NEVER default to English when the student's submission is in another language.
 
 Score calibration guide:
 - Score 1-4 (LOW): Focus improvement questions strongly here.
@@ -401,3 +407,41 @@ def get_few_shot_examples():
         },
         
     ]
+# import json
+# METRICS = ["Novelty", "Usefulness", "Feasibility", "Scalability", "Sustainability"]
+
+# def _build_system_instructions() -> str:
+#     schema = {
+#         "task": {
+#             "role": get_system_role(),
+#             "objective": get_evaluation_objective(),
+#             "method": get_evaluation_method(),
+#         },
+#         "schema": {
+#             "name": "Evaluation Schema",
+#             "parameters": get_scoring_criteria(),
+#         },
+#         "output_rules": {
+#             "format": "Return ONLY valid JSON object",
+#             "required_keys": METRICS,
+#             "structure": {
+#                 m: {"score": "1-10", "reason": "string (one line why this score)"}
+#                 for m in METRICS
+#             },
+#         },
+#     }
+
+#     examples = {"name": "Example Dataset", "list": get_few_shot_examples()}
+
+#     return (
+#         "# Evaluation System Schema\n"
+#         f"{json.dumps(schema, indent=2)}\n\n"
+#         "# Few-Shot Examples\n"
+#         f"{json.dumps(examples, indent=2, ensure_ascii=False)}\n\n"
+#         f"{get_feedback_instructions()}\n\n"
+#         "# You must output a single JSON object with scores for each metric (score + reason), "
+#         "an Attachment_Summary field (summarize what images/attachments show, or empty string if none), "
+#         "and an Idea_Feedback field containing the full feedback text following the format above."
+#     )
+# with open('file.json', 'w', encoding='utf-8') as f:
+#     f.write(_build_system_instructions())

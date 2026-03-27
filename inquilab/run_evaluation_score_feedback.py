@@ -34,6 +34,9 @@ def get_user_prompt(problem: str, solution: str) -> str:
         f"# Solution to the problem statement:\n{solution}\n\n"
         "First score this submission across Novelty, Usefulness, Feasibility, Scalability, and Sustainability. "
         "Then use those scores to calibrate and generate mentor feedback. "
+        "IMPORTANT: The Idea_Feedback MUST be written in the same language as the student's problem and solution text above. "
+        "If the student wrote in Hindi, write feedback in Hindi. If in Telugu, write in Telugu. If in English, write in English. "
+        "If mixed languages, use the dominant language of the solution text. "
         "If attachments are present, summarize what they show in Attachment_Summary. "
         "Respond in the required JSON format."
     )
