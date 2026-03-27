@@ -30,7 +30,7 @@ def upgrade():
         "collection_jobs",
         sa.Column(
             "total_size_mb",
-            sa.Integer(),
+            sa.Float(),
             nullable=True,
             comment="Total size of documents being uploaded to collection",
         ),
@@ -39,9 +39,18 @@ def upgrade():
         "document",
         sa.Column(
             "file_size_kb",
-            sa.Integer(),
+            sa.Float(),
             nullable=True,
             comment="Size of the document in bytes",
+        ),
+    )
+    op.add_column(
+        "collection_jobs",
+        sa.Column(
+            "documents",
+            sa.JSON(),
+            nullable=True,
+            comment="JSON array of document UUIDs included in this job",
         ),
     )
 
@@ -50,3 +59,4 @@ def downgrade():
     op.drop_column("document", "file_size_kb")
     op.drop_column("collection_jobs", "total_size_mb")
     op.drop_column("collection_jobs", "docs_num")
+    op.drop_column("collection_jobs", "documents")

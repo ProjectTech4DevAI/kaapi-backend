@@ -16,9 +16,13 @@ from app.models import DocumentCollection, Collection, CollectionPublic, Documen
 logger = logging.getLogger(__name__)
 
 # Necessary Constants -
-# for dynamic batching of documents to upload to openai vector store
-MAX_BATCH_SIZE_KB = 30 * 1024  # 30 MB in KB
-MAX_BATCH_COUNT = 200
+# Maximum individual document size (must be less than batch size)
+MAX_DOC_SIZE_MB = 25  # 25 MB maximum per document
+
+# Maximum batch size for uploading documents to vector store
+# Derived from MAX_DOC_SIZE + buffer to ensure single docs always fit
+MAX_BATCH_SIZE_KB = (MAX_DOC_SIZE_MB + 5) * 1024  # 30 MB in KB (25 + 5 MB buffer)
+MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
 
 def get_service_name(provider: str) -> str:

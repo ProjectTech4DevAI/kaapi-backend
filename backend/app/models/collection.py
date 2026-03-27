@@ -39,12 +39,10 @@ class Collection(SQLModel, table=True):
         description="Unique identifier for the collection",
         sa_column_kwargs={"comment": "Unique identifier for the collection"},
     )
-    provider: ProviderType = (
-        Field(
-            nullable=False,
-            description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
-            sa_column_kwargs={"comment": "LLM provider used for this collection"},
-        ),
+    provider: ProviderType = Field(
+        nullable=False,
+        description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
+        sa_column_kwargs={"comment": "LLM provider used for this collection"},
     )
     llm_service_id: str = Field(
         nullable=False,

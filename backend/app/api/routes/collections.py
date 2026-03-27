@@ -103,6 +103,7 @@ def create_collection(
             project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
             docs_num=len(request.documents),
+            documents=[str(doc_id) for doc_id in request.documents],
         )
     )
 

@@ -173,7 +173,7 @@ def execute_job(
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
         total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
-        total_size_mb = total_size_kb / 1024
+        total_size_mb = round(total_size_kb / 1024, 2)
 
         with Session(engine) as session:
             collection_job_crud = CollectionJobCrud(session, project_id)

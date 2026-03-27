@@ -12,6 +12,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi import Path as FastPath
+from fastapi import HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -27,7 +28,7 @@ from app.models import (
     DocTransformationJobPublic,
 )
 from app.core.cloud import get_cloud_storage
-from app.services.collections.helpers import pick_service_for_documennt
+from app.services.collections.helpers import pick_service_for_documennt, MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,
@@ -131,6 +132,18 @@ async def upload_doc(
     )
 
     file_size_kb = await calculate_file_size(src)
+    file_size_mb = file_size_kb / 1024
+
+    if file_size_mb > MAX_DOC_SIZE_MB:
+        logger.warning(
+            f"[upload_doc] Document size exceeds limit | "
+            f"{{'filename': '{src.filename}', 'size_mb': {round(file_size_mb, 2)}, 'max_size_mb': {MAX_DOC_SIZE_MB}}}"
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Document size ({round(file_size_mb, 2)} MB) exceeds the maximum allowed size of {MAX_DOC_SIZE_MB} MB. "
+            f"Please upload a smaller file.",
+        )
 
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
