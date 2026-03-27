@@ -53,6 +53,7 @@ def create_config(
 def list_configs(
     current_user: AuthContextDep,
     session: SessionDep,
+    query: str = Query(description='search query'),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
 ):
@@ -61,7 +62,7 @@ def list_configs(
     Ordered by updated_at in descending order.
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    configs = config_crud.read_all(skip=skip, limit=limit)
+    configs = config_crud.read_all(query=query, skip=skip, limit=limit)
     return APIResponse.success_response(
         data=configs,
     )

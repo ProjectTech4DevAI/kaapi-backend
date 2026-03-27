@@ -84,16 +84,19 @@ class ConfigCrud:
             )
         )
         return self.session.exec(statement).one_or_none()
+    
+    def read_all(self, query: str | None, skip: int = 0, limit: int = 100) -> list[Config]:
+        filters = [
+            Config.project_id == self.project_id,
+            Config.deleted_at.is_(None),
+        ]
 
-    def read_all(self, skip: int = 0, limit: int = 100) -> list[Config]:
+        if query:
+            filters.append(Config.name.ilike(f"{query}%"))
+
         statement = (
             select(Config)
-            .where(
-                and_(
-                    Config.project_id == self.project_id,
-                    Config.deleted_at.is_(None),
-                )
-            )
+            .where(and_(*filters))
             .order_by(Config.updated_at.desc())
             .offset(skip)
             .limit(limit)
