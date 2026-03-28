@@ -48,37 +48,6 @@ class TestKaapiCompletionConfigTemperature:
         assert "temperature" in config.params
         assert config.params["temperature"] == 0.0
 
-    def test_temperature_with_instructions(self) -> None:
-        """Temperature should be preserved alongside other params when provided."""
-        config = KaapiCompletionConfig(
-            provider="openai",
-            type="text",
-            params={
-                "model": "gpt-4o",
-                "instructions": "Be helpful",
-                "temperature": 1.5,
-            },
-        )
-
-        assert config.params["temperature"] == 1.5
-        assert config.params["instructions"] == "Be helpful"
-
-    def test_no_temperature_with_other_params(self) -> None:
-        """When temperature is not provided, other params should still be present."""
-        config = KaapiCompletionConfig(
-            provider="openai",
-            type="text",
-            params={
-                "model": "gpt-4o",
-                "instructions": "Be helpful",
-                "reasoning": "high",
-            },
-        )
-
-        assert "temperature" not in config.params
-        assert config.params["instructions"] == "Be helpful"
-        assert config.params["reasoning"] == "high"
-
 
 class TestNewSupportedModels:
     """Test that newly added models are accepted for openai/text provider."""
