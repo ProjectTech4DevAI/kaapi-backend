@@ -53,20 +53,17 @@ def create_config(
 def list_configs(
     current_user: AuthContextDep,
     session: SessionDep,
-    query: str | None = Query(None, description='search query'),
+    query: str | None = Query(None, description="search query"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-):
+) -> APIResponse[list[ConfigPublic]]:
     """
     List all configurations for the current project.
     Ordered by updated_at in descending order.
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
     configs, has_more = config_crud.read_all(query=query, skip=skip, limit=limit)
-    return APIResponse.success_response(
-        data=configs,
-        metadata=dict(has_more=has_more)
-    )
+    return APIResponse.success_response(data=configs, metadata=dict(has_more=has_more))
 
 
 @router.get(

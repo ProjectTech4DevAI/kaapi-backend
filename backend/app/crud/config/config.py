@@ -84,8 +84,10 @@ class ConfigCrud:
             )
         )
         return self.session.exec(statement).one_or_none()
-    
-    def read_all(self, query: str | None, skip: int = 0, limit: int = 100) -> tuple[list[Config], bool]:
+
+    def read_all(
+        self, query: str | None, skip: int = 0, limit: int = 100
+    ) -> tuple[list[Config], bool]:
         filters = [
             Config.project_id == self.project_id,
             Config.deleted_at.is_(None),
@@ -101,7 +103,7 @@ class ConfigCrud:
             .offset(skip)
             .limit(limit + 1)
         )
-        configs =  self.session.exec(statement).all()
+        configs = self.session.exec(statement).all()
         has_more = False
         if limit is not None and len(configs) > limit:
             has_more = True
