@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import select
 
@@ -27,14 +27,19 @@ router = APIRouter(prefix="/organizations", tags=["Organizations"])
     response_model=APIResponse[List[OrganizationPublic]],
     description=load_description("organization/list.md"),
 )
-def read_organizations(session: SessionDep, skip: int = 0, limit: int = 100):
+def read_organizations(
+    session: SessionDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
     count_statement = select(func.count()).select_from(Organization)
     count = session.exec(count_statement).one()
 
     statement = select(Organization).offset(skip).limit(limit)
     organizations = session.exec(statement).all()
 
-    return APIResponse.success_response(organizations)
+    has_more = (skip + limit) < count
+    return APIResponse.success_response(organizations, metadata={"has_more": has_more})
 
 
 # Create a new organization
