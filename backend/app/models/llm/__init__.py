@@ -20,6 +20,9 @@ from app.models.llm.request import (
     PDFContent,
     ImageInput,
     PDFInput,
+    LLMJobBasePublic,
+    LLMJobImmediatePublic,
+    LLMJobPublic,
 )
 from app.models.llm.response import (
     LLMCallResponse,
