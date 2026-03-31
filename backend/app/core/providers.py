@@ -16,9 +16,6 @@ class Provider(str, Enum):
     ELEVENLABS = "elevenlabs"
 
 
-# AWS = "aws"
-
-
 @dataclass
 class ProviderConfig:
     """Configuration for a provider including its required credential fields."""
@@ -35,9 +32,6 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.GOOGLE: ProviderConfig(required_fields=["api_key"]),
     Provider.SARVAMAI: ProviderConfig(required_fields=["api_key"]),
     Provider.ELEVENLABS: ProviderConfig(required_fields=["api_key"]),
-    # Provider.AWS: ProviderConfig(
-    #     required_fields=["access_key_id", "secret_access_key", "region"]
-    # ),
 }
 
 

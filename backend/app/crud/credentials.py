@@ -28,9 +28,7 @@ def set_creds_for_org(
         raise HTTPException(400, "No credentials provided")
 
     for provider, credentials in creds_add.credential.items():
-        # Validate provider and credentials
         try:
-            validate_provider(provider)
             validate_provider_credentials(provider, credentials)
         except ValueError as e:
             logger.error(
@@ -190,7 +188,6 @@ def update_creds_for_org(
         raise ValueError("Provider and credential must be provided")
 
     try:
-        validate_provider(creds_in.provider)
         validate_provider_credentials(creds_in.provider, creds_in.credential)
     except ValueError as e:
         logger.error(

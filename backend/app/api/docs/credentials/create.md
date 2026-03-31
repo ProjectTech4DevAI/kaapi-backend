@@ -1,6 +1,6 @@
 Persist new credentials for the current organization and project.
 
-Credentials are encrypted and stored securely for provider integrations (OpenAI, Langfuse, etc.). Only one credential per provider is allowed per organization-project combination.
+Credentials are encrypted and stored securely for provider integrations (OpenAI, Langfuse, etc.). Only one credential per provider is allowed per organization-project combination. You can send credentials for a single provider or multiple providers in one request. Refer to the examples below for the required input parameters for each provider.
 
 ### Supported Providers:
 - **LLM:** openai, sarvamai, google(gemini)
