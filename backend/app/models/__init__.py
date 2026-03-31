@@ -1,6 +1,13 @@
 from sqlmodel import SQLModel
 
-from .auth import AuthContext, Token, TokenPayload
+from .auth import (
+    AuthContext,
+    GoogleAuthRequest,
+    GoogleAuthResponse,
+    SelectProjectRequest,
+    Token,
+    TokenPayload,
+)
 
 from .api_key import (
     APIKey,
@@ -166,6 +173,8 @@ from .user import (
     NewPassword,
     User,
     UserCreate,
+    UserMeResponse,
+    UserProjectAccess,
     UserPublic,
     UserRegister,
     UserUpdate,

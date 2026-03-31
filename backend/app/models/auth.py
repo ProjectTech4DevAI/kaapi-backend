@@ -1,5 +1,5 @@
 from sqlmodel import Field, SQLModel
-from app.models.user import User
+from app.models.user import User, UserPublic
 from app.models.organization import Organization
 from app.models.project import Project
 from typing import TYPE_CHECKING
@@ -14,6 +14,27 @@ class Token(SQLModel):
 # Contents of JWT token
 class TokenPayload(SQLModel):
     sub: str | None = None
+    org_id: int | None = None
+    project_id: int | None = None
+    type: str = "access"
+
+
+# Google OAuth
+class GoogleAuthRequest(SQLModel):
+    token: str
+
+
+class GoogleAuthResponse(SQLModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+    google_profile: dict
+    requires_project_selection: bool = False
+    available_projects: list[dict] = []
+
+
+class SelectProjectRequest(SQLModel):
+    project_id: int
 
 
 class AuthContext(SQLModel):
