@@ -30,6 +30,7 @@ from app.api.routes import (
     model_config,
 )
 from app.api.routes import evaluations
+from app.assessment import routes as assessment_routes
 from app.core.config import settings
 
 api_router = APIRouter()
@@ -60,6 +61,7 @@ api_router.include_router(utils.router)
 api_router.include_router(fine_tuning.router)
 api_router.include_router(model_evaluation.router)
 api_router.include_router(model_config.router)
+api_router.include_router(assessment_routes.router)
 
 if settings.ENVIRONMENT in ["development", "testing"]:
     api_router.include_router(private.router)
