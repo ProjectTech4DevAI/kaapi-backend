@@ -123,7 +123,9 @@ def delete_project(session: SessionDep, project_id: int):
     response_model=APIResponse[List[ProjectPublic]],
     description=load_description("projects/list_by_org.md"),
 )
-def read_projects_by_organization(session: SessionDep, org_id: int):
+def read_projects_by_organization(
+    session: SessionDep, org_id: int
+) -> APIResponse[List[ProjectPublic]]:
     validate_organization(session=session, org_id=org_id)
     projects = get_projects_by_organization(session=session, org_id=org_id)
     return APIResponse.success_response(projects)
