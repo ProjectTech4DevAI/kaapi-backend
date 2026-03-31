@@ -75,12 +75,17 @@ def llm_call(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    message = "Your response is being generated and will be delivered via callback."
+
     job_response = LLMJobImmediatePublic(
         job_id=job.id,
         status=job.status.value,
+        message=message,
         job_inserted_at=job.created_at,
         job_updated_at=job.updated_at,
     )
+
+    # message = "Your response is being generated and will be delivered via callback." if request.callback_url else "Your response is being generated. Use the job_id to poll for results."
 
     return APIResponse.success_response(data=job_response)
 

@@ -20,9 +20,6 @@ from app.models.llm.request import (
     PDFContent,
     ImageInput,
     PDFInput,
-    LLMJobBasePublic,
-    LLMJobImmediatePublic,
-    LLMJobPublic,
 )
 from app.models.llm.response import (
     LLMCallResponse,
@@ -33,4 +30,7 @@ from app.models.llm.response import (
     AudioOutput,
     LLMChainResponse,
     IntermediateChainResponse,
+    LLMJobBasePublic,
+    LLMJobImmediatePublic,
+    LLMJobPublic,
 )

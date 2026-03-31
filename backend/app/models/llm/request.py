@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -8,9 +8,6 @@ from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
 from app.core.util import now
-
-if TYPE_CHECKING:
-    from app.models.llm.response import LLMCallResponse
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
@@ -811,21 +808,3 @@ class LlmChain(SQLModel, table=True):
             "comment": "Timestamp when the chain record was last updated"
         },
     )
-
-
-# Response models
-class LLMJobBasePublic(SQLModel):
-    job_id: UUID
-    status: str  # JobStatus from job.py
-
-
-class LLMJobImmediatePublic(LLMJobBasePublic):
-    job_inserted_at: datetime
-    job_updated_at: datetime
-
-
-class LLMJobPublic(LLMJobBasePublic):
-    llm_response: "LLMCallResponse | None" = None  # Forward reference
-    error_message: str | None = None
-    job_inserted_at: datetime
-    job_updated_at: datetime
