@@ -30,10 +30,29 @@ class TextLLMParams(SQLModel):
         default=None,
         description="Reasoning configuration or instructions",
     )
+    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = Field(
+        default=None,
+        description="Model-specific reasoning effort setting for reasoning-capable models",
+    )
+    summary: Literal["auto", "detailed", "concise", "null"] | None = Field(
+        default=None,
+        description="Model-specific reasoning summary preference",
+    )
     temperature: float | None = Field(
         default=0.1,
         ge=0.0,
         le=2.0,
+    )
+    top_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Nucleus sampling parameter",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum tokens to generate in the response",
     )
     max_num_results: int | None = Field(
         default=None,
