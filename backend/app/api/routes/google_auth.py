@@ -182,7 +182,7 @@ def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
         logger.info(f"[google_auth] No account found for email: {email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No account found for this Google email. Please sign up first.",
+            detail="No account found for this Google email. Please Contact Support to add your account.",
         )
 
     if not user.is_active:
