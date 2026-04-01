@@ -38,7 +38,8 @@ def read_projects(
     statement = select(Project).offset(skip).limit(limit)
     projects = session.exec(statement).all()
 
-    return APIResponse.success_response(projects)
+    has_more = (skip + limit) < count
+    return APIResponse.success_response(projects, metadata={"has_more": has_more})
 
 
 # Create a new project
