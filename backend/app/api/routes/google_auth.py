@@ -14,7 +14,6 @@ from app.core import security
 from app.core.config import settings
 from app.crud import get_user_by_email
 from app.models import (
-    APIKey,
     GoogleAuthRequest,
     GoogleAuthResponse,
     Organization,
@@ -23,6 +22,7 @@ from app.models import (
     Token,
     TokenPayload,
     User,
+    UserProject,
     UserPublic,
 )
 from app.utils import load_description
@@ -33,16 +33,15 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 def _get_user_projects(session: Session, user_id: int) -> list[dict]:
-    """Query distinct org/project pairs for a user from active API keys."""
+    """Query distinct org/project pairs for a user from the UserProject table."""
     statement = (
         select(Organization.id, Organization.name, Project.id, Project.name)
-        .select_from(APIKey)
-        .join(Organization, Organization.id == APIKey.organization_id)
-        .join(Project, Project.id == APIKey.project_id)
+        .select_from(UserProject)
+        .join(Organization, Organization.id == UserProject.organization_id)
+        .join(Project, Project.id == UserProject.project_id)
         .where(
             and_(
-                APIKey.user_id == user_id,
-                APIKey.is_deleted.is_(False),
+                UserProject.user_id == user_id,
                 Organization.is_active.is_(True),
                 Project.is_active.is_(True),
             )
@@ -185,11 +184,13 @@ def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
             detail="No account found for this Google email. Please Contact Support to add your account.",
         )
 
+    # Activate user on first Google login
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user account",
-        )
+        user.is_active = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        logger.info(f"[google_auth] User activated on first login | user_id: {user.id}")
 
     google_profile = {
         "email": idinfo.get("email"),

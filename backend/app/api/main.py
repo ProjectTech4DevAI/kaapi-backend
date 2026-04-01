@@ -18,6 +18,7 @@ from app.api.routes import (
     responses,
     private,
     threads,
+    user_project,
     users,
     utils,
     onboarding,
@@ -52,6 +53,7 @@ api_router.include_router(organization.router)
 api_router.include_router(project.router)
 api_router.include_router(responses.router)
 api_router.include_router(threads.router)
+api_router.include_router(user_project.router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
 api_router.include_router(fine_tuning.router)

@@ -80,17 +80,6 @@ class UserPublic(UserBase):
     id: int
 
 
-class UserProjectAccess(SQLModel):
-    organization_id: int
-    organization_name: str
-    project_id: int
-    project_name: str
-
-
-class UserMeResponse(UserPublic):
-    projects: list[UserProjectAccess] = []
-
-
 class UsersPublic(SQLModel):
     data: list[UserPublic]
     count: int
