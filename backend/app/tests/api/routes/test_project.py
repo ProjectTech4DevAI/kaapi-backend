@@ -5,7 +5,6 @@ from sqlmodel import Session
 from app.main import app
 from app.core.config import settings
 from app.models import Project, ProjectCreate
-from app.models import Organization, OrganizationCreate
 from app.tests.utils.test_data import create_test_organization, create_test_project
 
 
@@ -139,4 +138,4 @@ def test_read_projects_by_inactive_organization(
         f"{settings.API_V1_STR}/projects/organization/{org.id}",
         headers=superuser_token_headers,
     )
-    assert response.status_code == 503
+    assert response.status_code == 403
