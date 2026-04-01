@@ -89,13 +89,13 @@ class OnboardingRequest(SQLModel):
             return v
 
         if not isinstance(v, list):
-            raise ValueError(
+            raise TypeError(
                 "Credential must be a list of single-key dicts (e.g., {'openai': {...}})."
             )
 
         for item in v:
             if not isinstance(item, dict):
-                raise ValueError(
+                raise TypeError(
                     "Credential must be a dict with a single provider key like {'openai': {...}}."
                 )
             if len(item) != 1:
@@ -106,7 +106,6 @@ class OnboardingRequest(SQLModel):
             (provider_key,) = item.keys()
             values = item[provider_key]
 
-            # validate_provider will raise ValueError with clear message if invalid
             validate_provider(provider_key)
 
             if not isinstance(values, dict):
@@ -114,7 +113,6 @@ class OnboardingRequest(SQLModel):
                     f"Value for provider '{provider_key}' must be an object/dict."
                 )
 
-            # validate_provider_credentials will raise ValueError with clear message
             validate_provider_credentials(provider_key, values)
 
         return v

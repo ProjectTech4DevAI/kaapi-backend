@@ -152,9 +152,6 @@ def get_provider_credential(
     try:
         validate_provider(provider)
     except ValueError as e:
-        logger.error(
-            f"[get_provider_credential] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
-        )
         raise HTTPException(status_code=400, detail=str(e))
 
     statement = select(Credential).where(
@@ -232,14 +229,6 @@ def remove_provider_credential(
     Raises:
         HTTPException: If credentials not found or deletion fails
     """
-    try:
-        validate_provider(provider)
-    except ValueError as e:
-        logger.error(
-            f"[remove_provider_credential] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
-        )
-        raise HTTPException(status_code=400, detail=str(e))
-
     # Verify credentials exist before attempting delete
     creds = get_provider_credential(
         session=session,
