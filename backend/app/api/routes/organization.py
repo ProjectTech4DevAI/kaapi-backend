@@ -31,7 +31,7 @@ def read_organizations(
     session: SessionDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-)-> APIResponse[List[OrganizationPublic]]:
+) -> APIResponse[List[OrganizationPublic]]:
     count_statement = select(func.count()).select_from(Organization)
     count = session.exec(count_statement).one()
 
@@ -49,7 +49,9 @@ def read_organizations(
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/create.md"),
 )
-def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate) -> APIResponse[OrganizationPublic]:
+def create_new_organization(
+    *, session: SessionDep, org_in: OrganizationCreate
+) -> APIResponse[OrganizationPublic]:
     new_org = create_organization(session=session, org_create=org_in)
     return APIResponse.success_response(new_org)
 
@@ -60,7 +62,9 @@ def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate) 
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/get.md"),
 )
-def read_organization(*, session: SessionDep, org_id: int) -> APIResponse[OrganizationPublic]:
+def read_organization(
+    *, session: SessionDep, org_id: int
+) -> APIResponse[OrganizationPublic]:
     """
     Retrieve an organization by ID.
     """
