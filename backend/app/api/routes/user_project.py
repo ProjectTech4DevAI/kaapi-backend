@@ -24,60 +24,71 @@ router = APIRouter(prefix="/user-projects", tags=["User Projects"])
 
 @router.get(
     "/",
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     description=load_description("user_project/list.md"),
     response_model=APIResponse[list[UserProjectPublic]],
 )
 def list_project_users(
     session: SessionDep,
     auth_context: AuthContextDep,
+    project_id: int,
 ) -> Any:
-    """List all users in the current project."""
-    users = get_users_by_project(session=session, project_id=auth_context.project_.id)
+    """List all users in a project."""
+    users = get_users_by_project(session=session, project_id=project_id)
     return APIResponse.success_response(data=users)
 
 
 @router.post(
     "/",
-    dependencies=[
-        Depends(require_permission(Permission.SUPERUSER)),
-        Depends(require_permission(Permission.REQUIRE_PROJECT)),
-    ],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     description=load_description("user_project/add.md"),
     response_model=APIResponse[list[UserProjectPublic]],
     status_code=status.HTTP_201_CREATED,
 )
 def add_project_users(
     session: SessionDep,
-    auth_context: AuthContextDep,
     body: AddUsersToProjectRequest,
 ) -> Any:
-    """Add one or more users to the current project by email."""
-    results = []
+    """Add one or more users to a project by email."""
+    same_project_emails = []
+    different_project_emails = []
 
     for entry in body.users:
-        user, user_project, created = add_user_to_project(
+        _, add_status = add_user_to_project(
             session=session,
             email=str(entry.email),
-            organization_id=auth_context.organization_.id,
-            project_id=auth_context.project_.id,
+            organization_id=body.organization_id,
+            project_id=body.project_id,
             full_name=entry.full_name,
         )
-        results.append(
-            UserProjectPublic(
-                user_id=user.id,
-                email=user.email,
-                full_name=user.full_name,
-                is_active=user.is_active,
-                inserted_at=user_project.inserted_at,
+        if add_status == "same_project":
+            same_project_emails.append(str(entry.email))
+        elif add_status == "different_project":
+            different_project_emails.append(str(entry.email))
+
+    if same_project_emails or different_project_emails:
+        session.rollback()
+        errors = []
+        if same_project_emails:
+            errors.append(
+                f"Already added to this project: {', '.join(same_project_emails)}"
             )
+        if different_project_emails:
+            errors.append(
+                f"Already assigned to another project: {', '.join(different_project_emails)}"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="; ".join(errors),
         )
 
     session.commit()
 
+    # Re-fetch all users for this project to return the full list
+    results = get_users_by_project(session=session, project_id=body.project_id)
+
     logger.info(
         f"[add_project_users] Users added to project | "
-        f"project_id: {auth_context.project_.id}, count: {len(body.users)}"
+        f"project_id: {body.project_id}, count: {len(body.users)}"
     )
 
     return APIResponse.success_response(data=results)
@@ -85,10 +96,7 @@ def add_project_users(
 
 @router.delete(
     "/{user_id}",
-    dependencies=[
-        Depends(require_permission(Permission.SUPERUSER)),
-        Depends(require_permission(Permission.REQUIRE_PROJECT)),
-    ],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     description=load_description("user_project/delete.md"),
     response_model=APIResponse[Message],
 )
@@ -96,8 +104,9 @@ def delete_project_user(
     session: SessionDep,
     auth_context: AuthContextDep,
     user_id: int,
+    project_id: int,
 ) -> Any:
-    """Remove a user from the current project."""
+    """Remove a user from a project."""
     if user_id == auth_context.user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -107,7 +116,7 @@ def delete_project_user(
     removed = remove_user_from_project(
         session=session,
         user_id=user_id,
-        project_id=auth_context.project_.id,
+        project_id=project_id,
     )
 
     if not removed:
@@ -120,7 +129,7 @@ def delete_project_user(
 
     logger.info(
         f"[delete_project_user] User removed from project | "
-        f"user_id: {user_id}, project_id: {auth_context.project_.id}"
+        f"user_id: {user_id}, project_id: {project_id}"
     )
 
     return APIResponse.success_response(

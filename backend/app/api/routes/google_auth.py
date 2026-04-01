@@ -14,6 +14,7 @@ from app.core import security
 from app.core.config import settings
 from app.crud import get_user_by_email
 from app.models import (
+    APIKey,
     GoogleAuthRequest,
     GoogleAuthResponse,
     Organization,
@@ -33,8 +34,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 def _get_user_projects(session: Session, user_id: int) -> list[dict]:
-    """Query distinct org/project pairs for a user from the UserProject table."""
-    statement = (
+    """Query distinct org/project pairs for a user from both UserProject and APIKey tables."""
+    # Query from UserProject table
+    from_user_project = (
         select(Organization.id, Organization.name, Project.id, Project.name)
         .select_from(UserProject)
         .join(Organization, Organization.id == UserProject.organization_id)
@@ -46,9 +48,28 @@ def _get_user_projects(session: Session, user_id: int) -> list[dict]:
                 Project.is_active.is_(True),
             )
         )
-        .distinct()
     )
-    results = session.exec(statement).all()
+
+    # Query from APIKey table (backward compatibility)
+    from_api_key = (
+        select(Organization.id, Organization.name, Project.id, Project.name)
+        .select_from(APIKey)
+        .join(Organization, Organization.id == APIKey.organization_id)
+        .join(Project, Project.id == APIKey.project_id)
+        .where(
+            and_(
+                APIKey.user_id == user_id,
+                APIKey.is_deleted.is_(False),
+                Organization.is_active.is_(True),
+                Project.is_active.is_(True),
+            )
+        )
+    )
+
+    # Union both queries and deduplicate
+    combined = from_user_project.union(from_api_key)
+    results = session.exec(combined).all()
+
     return [
         {
             "organization_id": org_id,

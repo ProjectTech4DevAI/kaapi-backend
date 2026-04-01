@@ -46,12 +46,15 @@ def add_user_to_project(
     organization_id: int,
     project_id: int,
     full_name: str | None = None,
-) -> tuple[User, UserProject, bool]:
+) -> tuple[User, str]:
     """
     Add a user to a project. Creates the user if they don't exist (is_active=False).
 
     Returns:
-        Tuple of (user, user_project, created) where created indicates if a new user was created.
+        Tuple of (user, status) where status is one of:
+        - "added": User was successfully added to the project
+        - "same_project": User is already in this project
+        - "different_project": User is already assigned to another project
     """
     user = session.exec(select(User).where(User.email == email)).first()
     created = False
@@ -74,21 +77,16 @@ def add_user_to_project(
         session.add(user)
         session.flush()
 
-    # Check if mapping already exists
+    # Check if user is already assigned to any project
     existing = session.exec(
-        select(UserProject).where(
-            and_(
-                UserProject.user_id == user.id,
-                UserProject.project_id == project_id,
-            )
-        )
+        select(UserProject).where(UserProject.user_id == user.id)
     ).first()
 
     if existing:
-        logger.info(
-            f"[add_user_to_project] User already in project | user_id: {user.id}, project_id: {project_id}"
-        )
-        return user, existing, created
+        if existing.project_id == project_id:
+            return user, "same_project"
+        else:
+            return user, "different_project"
 
     user_project = UserProject(
         user_id=user.id,
@@ -101,7 +99,7 @@ def add_user_to_project(
     logger.info(
         f"[add_user_to_project] User added to project | user_id: {user.id}, project_id: {project_id}"
     )
-    return user, user_project, created
+    return user, "added"
 
 
 def remove_user_from_project(

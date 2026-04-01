@@ -59,6 +59,8 @@ class UserEntry(SQLModel):
 class AddUsersToProjectRequest(SQLModel):
     """Request to add one or more users to a project."""
 
+    organization_id: int
+    project_id: int
     users: list[UserEntry] = Field(min_length=1)
 
 
