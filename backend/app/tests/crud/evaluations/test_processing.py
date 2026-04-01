@@ -787,24 +787,15 @@ class TestCheckAndProcessEvaluation:
         db.refresh(eval_run)
         assert eval_run.status == "failed"
 
-    @pytest.mark.asyncio
-    @patch("app.crud.evaluations.processing.get_batch_job")
-    @patch("app.crud.evaluations.processing.poll_batch_status")
-    @patch("app.crud.evaluations.processing.OpenAIBatchProvider")
-    async def test_check_and_process_evaluation_completed_all_requests_failed(
-        self,
-        mock_provider_cls,
-        mock_poll,
-        mock_get_batch,
-        db: Session,
-        test_dataset,
-    ):
-        """Test batch completed but all requests failed — both batch_job and eval_run get error_message."""
+    @pytest.fixture
+    def all_requests_failed_setup(
+        self, db: Session, test_dataset
+    ) -> tuple[BatchJob, EvaluationRun]:
+        """Create a BatchJob (completed, no output file) and a processing EvaluationRun for the all-requests-failed scenario."""
         config = create_test_config(
             db, project_id=test_dataset.project_id, use_kaapi_schema=True
         )
 
-        # Create batch job: completed status but NO provider_output_file_id
         batch_job = BatchJob(
             provider="openai",
             provider_batch_id="batch_all_fail",
@@ -836,6 +827,23 @@ class TestCheckAndProcessEvaluation:
         db.add(eval_run)
         db.commit()
         db.refresh(eval_run)
+
+        return batch_job, eval_run
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.get_batch_job")
+    @patch("app.crud.evaluations.processing.poll_batch_status")
+    @patch("app.crud.evaluations.processing.OpenAIBatchProvider")
+    async def test_check_and_process_evaluation_completed_all_requests_failed(
+        self,
+        mock_provider_cls,
+        mock_poll,
+        mock_get_batch,
+        db: Session,
+        all_requests_failed_setup: tuple[BatchJob, EvaluationRun],
+    ):
+        """Test batch completed but all requests failed — both batch_job and eval_run get error_message."""
+        batch_job, eval_run = all_requests_failed_setup
 
         mock_get_batch.return_value = batch_job
         mock_poll.return_value = {
