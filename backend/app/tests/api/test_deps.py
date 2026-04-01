@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
@@ -14,6 +16,13 @@ from app.core.config import settings
 from app.tests.utils.test_data import create_test_api_key
 
 
+def _mock_request(cookies: dict | None = None) -> MagicMock:
+    """Create a mock Request object with optional cookies."""
+    request = MagicMock()
+    request.cookies = cookies or {}
+    return request
+
+
 class TestGetAuthContext:
     """Test suite for get_auth_context function"""
 
@@ -22,6 +31,7 @@ class TestGetAuthContext:
     ) -> None:
         """Test successful authentication with valid API key"""
         auth_context = get_auth_context(
+            request=_mock_request(),
             session=db,
             token=None,
             api_key=user_api_key.key,
@@ -33,18 +43,19 @@ class TestGetAuthContext:
         assert auth_context.organization == user_api_key.organization
 
     def test_get_auth_context_with_invalid_api_key(self, db: Session) -> None:
-        """Test authentication fails with invalid API key"""
+        """Test authentication fails with invalid API key when no other auth is provided"""
         invalid_api_key = "ApiKey InvalidKeyThatDoesNotExist123456789"
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=invalid_api_key,
             )
 
         assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "Invalid API Key"
+        assert exc_info.value.detail == "Invalid Authorization format"
 
     def test_get_auth_context_with_valid_token(
         self, db: Session, normal_user_token_headers: dict[str, str]
@@ -52,6 +63,7 @@ class TestGetAuthContext:
         """Test successful authentication with valid token"""
         token = normal_user_token_headers["Authorization"].replace("Bearer ", "")
         auth_context = get_auth_context(
+            request=_mock_request(),
             session=db,
             token=token,
             api_key=None,
@@ -67,6 +79,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=invalid_token,
                 api_key=None,
@@ -78,6 +91,7 @@ class TestGetAuthContext:
         """Test authentication fails when neither API key nor token is provided"""
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=None,
@@ -98,6 +112,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=api_key.key,
@@ -122,6 +137,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=token,
                 api_key=None,
@@ -142,6 +158,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=user_api_key.key,
@@ -162,6 +179,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=user_api_key.key,
