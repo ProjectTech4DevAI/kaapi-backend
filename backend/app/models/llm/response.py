@@ -111,12 +111,12 @@ class LLMJobBasePublic(SQLModel):
 
     job_id: UUID
     status: str  # JobStatus from job.py
-    message: str
 
 
 class LLMJobImmediatePublic(LLMJobBasePublic):
     """Immediate response after creating an LLM job."""
 
+    message: str
     job_inserted_at: datetime
     job_updated_at: datetime
 

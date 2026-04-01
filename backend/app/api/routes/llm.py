@@ -75,7 +75,10 @@ def llm_call(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    message = "Your response is being generated and will be delivered via callback."
+    if request.callback_url:
+        message = "Your response is being generated and will be delivered via callback."
+    else:
+        message = "Your response is being generated"
 
     job_response = LLMJobImmediatePublic(
         job_id=job.id,
@@ -84,8 +87,6 @@ def llm_call(
         job_inserted_at=job.created_at,
         job_updated_at=job.updated_at,
     )
-
-    # message = "Your response is being generated and will be delivered via callback." if request.callback_url else "Your response is being generated. Use the job_id to poll for results."
 
     return APIResponse.success_response(data=job_response)
 
@@ -116,7 +117,8 @@ def get_llm_call_status(
         llm_calls = get_llm_calls_by_job_id(session=session, job_id=job_id)
 
         if llm_calls:
-            # Get the first (latest) LLM call
+            # Get the first LLM call from the list which will be the only call for the job id
+            # since we initially won't be using this endpoint for llm chains
             llm_call = llm_calls[0]
 
             llm_response = LLMResponse(
