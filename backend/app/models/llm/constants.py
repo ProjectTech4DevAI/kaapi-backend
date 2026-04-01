@@ -22,6 +22,13 @@ SUPPORTED_MODELS = {
         "o1",
         "o1-preview",
         "o1-mini",
+        "gpt-5.4-pro",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
     ],
 }
 
