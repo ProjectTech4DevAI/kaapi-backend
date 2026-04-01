@@ -37,7 +37,7 @@ class TestGoogleAuth:
         mock_settings.GOOGLE_CLIENT_ID = ""
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
         assert resp.status_code == 500
-        assert "not configured" in resp.json()["detail"]
+        assert "not configured" in resp.json()["error"]
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
@@ -54,7 +54,7 @@ class TestGoogleAuth:
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "bad-token"})
         assert resp.status_code == 400
-        assert "Invalid or expired" in resp.json()["detail"]
+        assert "Invalid or expired" in resp.json()["error"]
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
@@ -69,7 +69,7 @@ class TestGoogleAuth:
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
         assert resp.status_code == 400
-        assert "not verified" in resp.json()["detail"]
+        assert "not verified" in resp.json()["error"]
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
@@ -82,14 +82,14 @@ class TestGoogleAuth:
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
         assert resp.status_code == 401
-        assert "No account found" in resp.json()["detail"]
+        assert "No account found" in resp.json()["error"]
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
-    def test_google_auth_activates_inactive_user(
+    def test_google_auth_inactive_user_rejected(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
-        """Test that inactive user is activated on first Google login."""
+        """Test returns 403 when user account is inactive."""
         user = create_random_user(db)
         user.is_active = False
         db.add(user)
@@ -97,18 +97,11 @@ class TestGoogleAuth:
         db.refresh(user)
 
         mock_settings.GOOGLE_CLIENT_ID = "test-client-id"
-        mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 1440
-        mock_settings.REFRESH_TOKEN_EXPIRE_MINUTES = 10080
-        mock_settings.ENVIRONMENT = "testing"
-        mock_settings.API_V1_STR = settings.API_V1_STR
-        mock_settings.SECRET_KEY = settings.SECRET_KEY
         mock_verify.return_value = _mock_idinfo(user.email)
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
-        assert resp.status_code == 200
-
-        db.refresh(user)
-        assert user.is_active is True
+        assert resp.status_code == 403
+        assert "Inactive" in resp.json()["error"]
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
@@ -180,7 +173,7 @@ class TestSelectProject:
             headers=normal_user_token_headers,
         )
         assert resp.status_code == 403
-        assert "do not have access" in resp.json()["detail"]
+        assert "do not have access" in resp.json()["error"]
 
     def test_select_project_success(
         self,
@@ -209,7 +202,7 @@ class TestRefreshToken:
         """Test returns 401 when no refresh token cookie is present."""
         resp = client.post(REFRESH_URL)
         assert resp.status_code == 401
-        assert "not found" in resp.json()["detail"]
+        assert "not found" in resp.json()["error"]
 
     def test_refresh_with_access_token_instead(self, db: Session, client: TestClient):
         """Test returns 401 when access token is used instead of refresh token."""
@@ -221,7 +214,7 @@ class TestRefreshToken:
 
         resp = client.post(REFRESH_URL)
         assert resp.status_code == 401
-        assert "Invalid token type" in resp.json()["detail"]
+        assert "Invalid token type" in resp.json()["error"]
 
     def test_refresh_with_expired_token(self, db: Session, client: TestClient):
         """Test returns 401 when refresh token is expired."""
@@ -233,7 +226,7 @@ class TestRefreshToken:
 
         resp = client.post(REFRESH_URL)
         assert resp.status_code == 401
-        assert "expired" in resp.json()["detail"]
+        assert "expired" in resp.json()["error"]
 
     def test_refresh_success(self, db: Session, client: TestClient):
         """Test successful refresh returns new tokens."""
