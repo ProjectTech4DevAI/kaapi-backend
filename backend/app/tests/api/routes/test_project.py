@@ -60,6 +60,32 @@ def test_read_projects(db: Session, superuser_token_headers: dict[str, str]) -> 
     assert isinstance(response_data["data"], list)
 
 
+# Test pagination has_more metadata for projects
+def test_read_projects_has_more(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
+    create_test_project(db)
+    create_test_project(db)
+
+    response = client.get(
+        f"{settings.API_V1_STR}/projects/?skip=0&limit=1",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert "metadata" in response_data
+    assert response_data["metadata"]["has_more"] is True
+
+    response = client.get(
+        f"{settings.API_V1_STR}/projects/?skip=0&limit=100",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert "metadata" in response_data
+    assert response_data["metadata"]["has_more"] is False
+
+
 # Test updating a project
 def test_update_project(
     db: Session, test_project: Project, superuser_token_headers: dict[str, str]
