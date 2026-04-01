@@ -5,6 +5,7 @@ from sqlmodel import Session
 from app.main import app
 from app.core.config import settings
 from app.models import Project, ProjectCreate
+from app.models import Organization, OrganizationCreate
 from app.tests.utils.test_data import create_test_organization, create_test_project
 
 
@@ -94,3 +95,48 @@ def test_delete_project(
         headers=superuser_token_headers,
     )
     assert response.status_code == 404
+
+
+# Test retrieving projects by organization
+def test_read_projects_by_organization(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
+    project = create_test_project(db)
+    response = client.get(
+        f"{settings.API_V1_STR}/projects/organization/{project.organization_id}",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert "data" in response_data
+    assert isinstance(response_data["data"], list)
+    assert len(response_data["data"]) >= 1
+    assert any(p["id"] == project.id for p in response_data["data"])
+
+
+# Test retrieving projects by non-existent organization
+def test_read_projects_by_organization_not_found(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/projects/organization/999999",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 404
+
+
+# Test retrieving projects by inactive organization
+def test_read_projects_by_inactive_organization(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
+    org = create_test_organization(db)
+    org.is_active = False
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+
+    response = client.get(
+        f"{settings.API_V1_STR}/projects/organization/{org.id}",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 503
