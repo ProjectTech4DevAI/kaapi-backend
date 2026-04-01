@@ -90,26 +90,27 @@ def _extract_batch_error_message(
         else:
             error_msg = "Batch completed with errors but could not parse error file"
 
-        # Update batch_job with extracted error message
-        batch_job_update = BatchJobUpdate(error_message=error_msg)
-        update_batch_job(
-            session=session, batch_job=batch_job, batch_job_update=batch_job_update
-        )
-
-        logger.info(
-            f"[_extract_batch_error_message] Extracted error | batch_job_id={batch_job.id} | {error_msg}"
-        )
-
-        return error_msg
-
     except Exception as e:
         logger.error(
             f"[_extract_batch_error_message] Failed to extract errors | batch_job_id={batch_job.id} | {e}",
             exc_info=True,
         )
-        return (
+        error_msg = (
             f"Batch completed with all requests failed (error_file_id: {error_file_id})"
         )
+
+    # Update batch_job with extracted error message (outside try/except
+    # so persistence failures propagate to the caller)
+    batch_job_update = BatchJobUpdate(error_message=error_msg)
+    update_batch_job(
+        session=session, batch_job=batch_job, batch_job_update=batch_job_update
+    )
+
+    logger.info(
+        f"[_extract_batch_error_message] Extracted error | batch_job_id={batch_job.id} | {error_msg}"
+    )
+
+    return error_msg
 
 
 def parse_evaluation_output(
@@ -640,9 +641,9 @@ async def check_and_process_evaluation(
         if provider_status == "completed":
             # Check if batch completed but all requests failed
             # (output_file_id is absent, error_file_id is present)
-            if not batch_job.provider_output_file_id and status_result.get(
-                "error_file_id"
-            ):
+            if not status_result.get(
+                "provider_output_file_id", batch_job.provider_output_file_id
+            ) and status_result.get("error_file_id"):
                 error_msg = _extract_batch_error_message(
                     provider=provider,
                     error_file_id=status_result["error_file_id"],
