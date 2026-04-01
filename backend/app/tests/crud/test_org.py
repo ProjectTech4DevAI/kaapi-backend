@@ -2,7 +2,11 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.crud.organization import create_organization, get_organization_by_id, validate_organization
+from app.crud.organization import (
+    create_organization,
+    get_organization_by_id,
+    validate_organization,
+)
 from app.models import Organization, OrganizationCreate
 from app.tests.utils.utils import random_lower_string, get_non_existent_id
 from app.tests.utils.test_data import create_test_organization
