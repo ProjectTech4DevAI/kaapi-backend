@@ -101,7 +101,7 @@ def get_llm_call_status(
     _current_user: AuthContextDep,
     session: SessionDep,
     job_id: UUID,
-):
+) -> APIResponse[LLMJobPublic]:
     """
     Poll for LLM call job status and results.
     Returns job information with nested LLM response when complete.
@@ -114,7 +114,9 @@ def get_llm_call_status(
 
     llm_call_response = None
     if job.status.value == "SUCCESS":
-        llm_calls = get_llm_calls_by_job_id(session=session, job_id=job_id)
+        llm_calls = get_llm_calls_by_job_id(
+            session=session, job_id=job_id, project_id=_current_user.project_.id
+        )
 
         if llm_calls:
             # Get the first LLM call from the list which will be the only call for the job id
@@ -129,11 +131,15 @@ def get_llm_call_status(
                 output=llm_call.content,
             )
 
-            usage = Usage(**llm_call.usage) if llm_call.usage else None
+            if not llm_call.usage:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Completed LLM job is missing usage data",
+                )
 
             llm_call_response = LLMCallResponse(
                 response=llm_response,
-                usage=usage,
+                usage=Usage(**llm_call.usage),
                 provider_raw_response=None,
             )
 
@@ -142,8 +148,6 @@ def get_llm_call_status(
         status=job.status.value,
         llm_response=llm_call_response,
         error_message=job.error_message,
-        job_inserted_at=job.created_at,
-        job_updated_at=job.updated_at,
     )
 
     return APIResponse.success_response(data=job_response)

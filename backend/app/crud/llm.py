@@ -234,13 +234,13 @@ def get_llm_call_by_id(
 
 
 def get_llm_calls_by_job_id(
-    session: Session,
-    job_id: UUID,
+    session: Session, job_id: UUID, project_id: int
 ) -> list[LlmCall]:
     statement = (
         select(LlmCall)
         .where(
             LlmCall.job_id == job_id,
+            LlmCall.project_id == project_id,
             LlmCall.deleted_at.is_(None),
         )
         .order_by(LlmCall.created_at.desc())
