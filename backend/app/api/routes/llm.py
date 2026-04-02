@@ -1,11 +1,10 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.core.exception_handlers import HTTPException
 from app.crud.jobs import JobCrud
 from app.crud.llm import get_llm_calls_by_job_id
 from app.models import (
@@ -13,6 +12,7 @@ from app.models import (
     LLMCallResponse,
     LLMJobImmediatePublic,
     LLMJobPublic,
+    JobStatus,
 )
 from app.models.llm.response import LLMResponse, Usage
 from app.services.llm.jobs import start_job
@@ -113,7 +113,7 @@ def get_llm_call_status(
         raise HTTPException(status_code=404, detail="Job not found")
 
     llm_call_response = None
-    if job.status.value == "SUCCESS":
+    if job.status.value == JobStatus.SUCCESS:
         llm_calls = get_llm_calls_by_job_id(
             session=session, job_id=job_id, project_id=_current_user.project_.id
         )
