@@ -5,9 +5,10 @@ This module contains structured response models for LLM API calls.
 """
 from datetime import datetime
 from uuid import UUID
+from typing import Literal, Annotated
 
 from sqlmodel import SQLModel, Field
-from typing import Literal, Annotated
+
 from app.models.llm.request import AudioContent, TextContent
 
 

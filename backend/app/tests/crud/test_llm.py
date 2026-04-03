@@ -1,49 +1,42 @@
+import base64
 from uuid import uuid4
 
 import pytest
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from app.crud import JobCrud
 from app.crud.llm import (
     create_llm_call,
     get_llm_call_by_id,
     get_llm_calls_by_job_id,
     update_llm_call_response,
 )
-from app.models import JobType, Project, Organization
+from app.models import Project, Organization
 from app.models.llm import (
     ConfigBlob,
     LLMCallRequest,
-    LlmCall,
     QueryParams,
 )
 from app.models.llm.request import (
     KaapiCompletionConfig,
     LLMCallConfig,
 )
+from app.tests.utils.utils import get_project, get_organization
+from app.tests.utils.llm import create_llm_job
 
 
 @pytest.fixture
 def test_project(db: Session) -> Project:
-    """Get the first available test project."""
-    project = db.exec(select(Project).limit(1)).first()
-    assert project is not None, "No test project found in seed data"
-    return project
+    return get_project(db)
 
 
 @pytest.fixture
 def test_organization(db: Session, test_project: Project) -> Organization:
-    """Get the organization for the test project."""
-    org = db.get(Organization, test_project.organization_id)
-    assert org is not None, "No organization found for test project"
-    return org
+    return get_organization(db)
 
 
 @pytest.fixture
 def test_job(db: Session):
-    """Create a test job for LLM call tests."""
-    crud = JobCrud(db)
-    return crud.create(job_type=JobType.LLM_API, trace_id="test-llm-trace")
+    return create_llm_job(db)
 
 
 @pytest.fixture
@@ -308,14 +301,15 @@ def test_get_llm_calls_by_job_id(
             original_provider="openai",
         )
 
-    llm_calls = get_llm_calls_by_job_id(db, test_job.id)
+    llm_calls = get_llm_calls_by_job_id(db, test_job.id, test_project.id)
     assert len(llm_calls) == 3
 
 
-def test_get_llm_calls_by_job_id_empty(db: Session) -> None:
+def test_get_llm_calls_by_job_id_empty(db: Session, test_project: Project) -> None:
     """Test fetching LLM calls for a job with no calls."""
     fake_job_id = uuid4()
-    llm_calls = get_llm_calls_by_job_id(db, fake_job_id)
+
+    llm_calls = get_llm_calls_by_job_id(db, fake_job_id, test_project.id)
     assert llm_calls == []
 
 
@@ -421,7 +415,6 @@ def test_update_llm_call_response_with_audio_content(
     tts_config_blob: ConfigBlob,
 ) -> None:
     """Test updating LLM call with audio content calculates size."""
-    import base64
 
     request = LLMCallRequest(
         query=QueryParams(input="Test input"),

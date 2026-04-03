@@ -6,62 +6,35 @@ from sqlmodel import Session
 from fastapi.testclient import TestClient
 
 from app.crud import JobCrud
-from app.crud.llm import create_llm_call, update_llm_call_response
-from app.models import JobType, LLMCallRequest, Job, JobStatus, JobUpdate
+from app.models import Job, JobStatus, JobUpdate
 from app.models.llm.response import LLMCallResponse
 from app.models.llm.request import (
-    QueryParams,
     LLMCallConfig,
     ConfigBlob,
-    KaapiCompletionConfig,
     NativeCompletionConfig,
+    KaapiCompletionConfig,
+    QueryParams,
 )
+from app.models.llm import LLMCallRequest
+from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.llm import create_llm_job, create_llm_call_with_response
 
 
 @pytest.fixture
 def llm_job(db: Session) -> Job:
-    crud = JobCrud(db)
-    return crud.create(job_type=JobType.LLM_API)
+    return create_llm_job(db)
 
 
 @pytest.fixture
-def llm_response_in_db(db: Session, llm_job, user_api_key) -> LLMCallResponse:
-    config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
-            provider="openai",
-            params={
-                "model": "gpt-4o",
-                "instructions": "You are helpful.",
-                "temperature": 0.7,
-            },
-            type="text",
-        )
-    )
-    llm_call = create_llm_call(
+def llm_response_in_db(
+    db: Session, llm_job: Job, user_api_key: TestAuthContext
+) -> LLMCallResponse:
+    return create_llm_call_with_response(
         db,
-        request=LLMCallRequest(
-            query=QueryParams(input="What is the capital of France?"),
-            config=LLMCallConfig(blob=config_blob),
-        ),
         job_id=llm_job.id,
         project_id=user_api_key.project_id,
         organization_id=user_api_key.organization_id,
-        resolved_config=config_blob,
-        original_provider="openai",
     )
-    update_llm_call_response(
-        db,
-        llm_call_id=llm_call.id,
-        provider_response_id="resp_abc123",
-        content={"type": "text", "content": {"format": "text", "value": "Paris"}},
-        usage={
-            "input_tokens": 10,
-            "output_tokens": 5,
-            "total_tokens": 15,
-            "reasoning_tokens": None,
-        },
-    )
-    return llm_call
 
 
 def test_llm_call_success(
@@ -324,15 +297,14 @@ def test_get_llm_call_success(
     client: TestClient,
     db: Session,
     user_api_key_header: dict[str, str],
-    llm_job,
-    llm_response_in_db,
+    llm_response_in_db: LLMCallResponse,
 ) -> None:
     """Job in SUCCESS state returns full llm_response with usage."""
 
-    JobCrud(db).update(llm_job.id, JobUpdate(status=JobStatus.SUCCESS))
+    JobCrud(db).update(llm_response_in_db.job_id, JobUpdate(status=JobStatus.SUCCESS))
 
     response = client.get(
-        f"/api/v1/llm/call/{llm_job.id}",
+        f"/api/v1/llm/call/{llm_response_in_db.job_id}",
         headers=user_api_key_header,
     )
 
