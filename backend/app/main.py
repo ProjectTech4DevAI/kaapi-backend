@@ -10,10 +10,13 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.middleware import http_request_logger
 
+from app.core.telemetry import setup_telemetry, instrument_app
 from app.load_env import load_environment
 
 # Load environment variables
 load_environment()
+
+setup_telemetry()
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -58,3 +61,5 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 register_exception_handlers(app)
+
+instrument_app(app)

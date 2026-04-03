@@ -10,19 +10,28 @@ os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 
 LOGGING_LEVEL = logging.INFO
+
+# Console format: human-readable. Structured attributes go to OpenObserve via OTEL.
 LOGGING_FORMAT = (
-    "%(asctime)s - [%(correlation_id)s] - %(levelname)s - %(name)s - %(message)s"
+    "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s | %(message)s"
 )
 
 
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.correlation_id = correlation_id.get() or "N/A"
+        record.correlation_id = correlation_id.get() or "-"
+        # Defaults for OTEL fields — populated by LoggingInstrumentor during requests
+        if not hasattr(record, "otelTraceID"):
+            record.otelTraceID = ""
+        if not hasattr(record, "otelSpanID"):
+            record.otelSpanID = ""
         return True
 
 
-# Suppress info logs from LiteLLM
+# Suppress noisy third-party loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("opentelemetry").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Create root logger
 logger = logging.getLogger()

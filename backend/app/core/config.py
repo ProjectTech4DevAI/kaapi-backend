@@ -107,6 +107,18 @@ class Settings(BaseSettings):
 
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 
+    # OpenTelemetry / OpenObserve
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "kaapi-backend"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:5080"
+    OTEL_EXPORTER_OTLP_AUTH_HEADER: str = ""  # Base64 encoded "user:password"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def OTEL_OTLP_BASE_ENDPOINT(self) -> str:
+        """OpenObserve OTLP base endpoint."""
+        return f"{self.OTEL_EXPORTER_OTLP_ENDPOINT}/api/default"
+
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
     CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 150
