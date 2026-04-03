@@ -30,7 +30,7 @@ def test_project(db: Session) -> Project:
 
 
 @pytest.fixture
-def test_organization(db: Session, test_project: Project) -> Organization:
+def test_organization(db: Session) -> Organization:
     return get_organization(db)
 
 
