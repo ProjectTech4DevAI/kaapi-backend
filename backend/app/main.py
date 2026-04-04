@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 import sentry_sdk
 
 from fastapi import FastAPI
@@ -8,9 +11,12 @@ from app.api.main import api_router
 from app.api.docs.openapi_config import tags_metadata, customize_openapi_schema
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
+from app.core.feature_flags import init_unleash, shutdown_unleash
 from app.core.middleware import http_request_logger
 
 from app.load_env import load_environment
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_environment()
@@ -23,11 +29,23 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 if settings.SENTRY_DSN and settings.ENVIRONMENT != "development":
     sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """App startup / shutdown lifecycle."""
+    init_unleash()
+    logger.info("[lifespan] Application started")
+    yield
+    shutdown_unleash()
+    logger.info("[lifespan] Application shut down")
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
     description="**Responsible AI for the development sector**",
+    lifespan=lifespan,
 )
 
 

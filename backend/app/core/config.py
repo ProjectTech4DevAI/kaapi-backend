@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     CELERY_ENABLE_UTC: bool = True
     CELERY_TIMEZONE: str = "UTC"
 
+    # Unleash feature flags
+    UNLEASH_URL: str = ""
+    UNLEASH_API_KEY: str = ""
+    UNLEASH_APP_NAME: str = "kaapi-backend"
+
     # callback timeouts and limits
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10

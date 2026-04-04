@@ -16,15 +16,15 @@ from app.assessment.crud import (
     update_assessment_run_status,
 )
 from app.assessment.models import (
+    Assessment,
     AssessmentAttachment,
     AssessmentConfigRef,
     AssessmentCreate,
     AssessmentResponse,
+    AssessmentRun,
     AssessmentRunSummary,
 )
 from app.crud.evaluations import get_dataset_by_id
-from app.assessment.models import Assessment
-from app.models.evaluation import EvaluationRun
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +33,20 @@ def _build_retry_request(
     *,
     experiment_name: str,
     dataset_id: int,
-    runs: list[EvaluationRun],
+    runs: list[AssessmentRun],
 ) -> AssessmentCreate:
     if not runs:
         raise HTTPException(status_code=400, detail="No assessment runs found to retry")
 
     first_run = runs[0]
-    assessment_config = (first_run.score or {}).get("assessment_config")
-    if not isinstance(assessment_config, dict):
+    assessment_input = first_run.input
+    if not isinstance(assessment_input, dict):
         raise HTTPException(
             status_code=400,
-            detail="Assessment configuration is missing for retry",
+            detail="Assessment input configuration is missing for retry",
         )
 
-    attachments = assessment_config.get("attachments") or []
+    attachments = assessment_input.get("attachments") or []
     configs: list[AssessmentConfigRef] = []
     for run in runs:
         if not run.config_id or run.config_version is None:
@@ -64,10 +64,10 @@ def _build_retry_request(
     return AssessmentCreate(
         experiment_name=experiment_name,
         dataset_id=dataset_id,
-        prompt_template=assessment_config.get("prompt_template"),
-        text_columns=list(assessment_config.get("text_columns") or []),
+        prompt_template=assessment_input.get("prompt_template"),
+        text_columns=list(assessment_input.get("text_columns") or []),
         attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
-        output_schema=assessment_config.get("output_schema"),
+        output_schema=assessment_input.get("output_schema"),
         configs=configs,
     )
 
@@ -80,20 +80,8 @@ def start_assessment(
 ) -> AssessmentResponse:
     """Start an assessment evaluation.
 
-    Validates the dataset, resolves each config, creates one EvaluationRun per config,
+    Validates the dataset, resolves each config, creates one AssessmentRun per config,
     and kicks off batch processing for each.
-
-    Args:
-        session: Database session
-        request: Validated request body
-        organization_id: Organization ID
-        project_id: Project ID
-
-    Returns:
-        AssessmentResponse with created run summaries
-
-    Raises:
-        HTTPException: If dataset not found or configs invalid
     """
     logger.info(
         f"[start_assessment] Starting | "
@@ -116,14 +104,14 @@ def start_assessment(
             detail=f"Dataset {request.dataset_id} not found or not accessible",
         )
 
-    # 2. Build assessment-specific config to store with each run
-    assessment_config: dict[str, Any] = {
+    # 2. Build assessment input to store with each run (flat structure)
+    assessment_input: dict[str, Any] = {
         "prompt_template": request.prompt_template,
         "text_columns": request.text_columns,
         "attachments": [a.model_dump() for a in request.attachments],
     }
     if request.output_schema:
-        assessment_config["output_schema"] = request.output_schema
+        assessment_input["output_schema"] = request.output_schema
 
     # 3. Validate all configs first before creating any runs
     resolved_configs = []
@@ -152,8 +140,8 @@ def start_assessment(
         total_runs=len(resolved_configs),
     )
 
-    # 5. Create one EvaluationRun per config and submit batches
-    runs: list[EvaluationRun] = []
+    # 5. Create one AssessmentRun per config and submit batches
+    runs: list[AssessmentRun] = []
     for cfg, config_blob in resolved_configs:
         run = create_assessment_run(
             session=session,
@@ -165,24 +153,24 @@ def start_assessment(
             config_version=cfg.config_version,
             organization_id=organization_id,
             project_id=project_id,
-            assessment_config=assessment_config,
+            assessment_input=assessment_input,
         )
 
         # Submit batch for this run
         try:
             batch_job = submit_assessment_batch(
                 session=session,
-                eval_run=run,
+                run=run,
                 dataset=dataset,
                 config_blob=config_blob,
-                assessment_config=assessment_config,
+                assessment_input=assessment_input,
                 organization_id=organization_id,
                 project_id=project_id,
             )
 
             run = update_assessment_run_status(
                 session=session,
-                eval_run=run,
+                run=run,
                 status="processing",
                 batch_job_id=batch_job.id,
                 total_items=batch_job.total_items,
@@ -196,9 +184,9 @@ def start_assessment(
             )
             run = update_assessment_run_status(
                 session=session,
-                eval_run=run,
+                run=run,
                 status="failed",
-                error_message=f"Batch submission failed: {str(e)}",
+                error_message="Batch submission failed. Please try again or contact support.",
             )
             recompute_assessment_status(session=session, assessment_id=assessment.id)
 
@@ -253,7 +241,7 @@ def retry_assessment(
 
 def retry_assessment_run(
     session: Session,
-    run: EvaluationRun,
+    run: AssessmentRun,
     organization_id: int,
     project_id: int,
 ) -> AssessmentResponse:

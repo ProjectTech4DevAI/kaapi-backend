@@ -18,14 +18,18 @@ from app.assessment.mappers import (
     map_kaapi_to_openai_params,
     normalize_llm_text,
 )
-from app.assessment.models import AssessmentAttachment, AssessmentTextLLMParams
+from app.assessment.models import (
+    AssessmentAttachment,
+    AssessmentRun,
+    AssessmentTextLLMParams,
+)
 from app.core.batch import BATCH_KEY, start_batch_job
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.version import ConfigVersionCrud
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.evaluation import EvaluationDataset, EvaluationRun
+from app.models.evaluation import EvaluationDataset
 from app.models.llm.request import ConfigBlob, KaapiCompletionConfig, LLMCallConfig
 from app.services.llm.jobs import resolve_config_blob
 
@@ -149,7 +153,11 @@ def _build_text_prompt(
         return prompt
 
     # No template: concatenate text columns
-    parts = [normalize_llm_text(row.get(col, "")) for col in text_columns if row.get(col, "").strip()]
+    parts = [
+        normalize_llm_text(row.get(col, ""))
+        for col in text_columns
+        if row.get(col, "").strip()
+    ]
     return "\n".join(parts)
 
 
@@ -389,9 +397,7 @@ def build_google_jsonl(
             "contents": [{"parts": parts, "role": "user"}],
         }
         if system_instruction:
-            request["systemInstruction"] = {
-                "parts": [{"text": system_instruction}]
-            }
+            request["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         generation_config: dict[str, Any] = {}
         temperature = google_params.get("temperature")
@@ -425,10 +431,10 @@ def build_google_jsonl(
 
 def submit_assessment_batch(
     session: Session,
-    eval_run: EvaluationRun,
+    run: AssessmentRun,
     dataset: EvaluationDataset,
     config_blob: ConfigBlob,
-    assessment_config: dict[str, Any],
+    assessment_input: dict[str, Any],
     organization_id: int,
     project_id: int,
 ) -> BatchJob:
@@ -436,20 +442,20 @@ def submit_assessment_batch(
 
     Args:
         session: Database session
-        eval_run: The EvaluationRun to process
+        run: The AssessmentRun to process
         dataset: The dataset to read rows from
         config_blob: Resolved configuration blob
-        assessment_config: Assessment-specific config (prompt_template, text_columns, etc.)
+        assessment_input: Assessment input config (prompt_template, text_columns, etc.)
         organization_id: Organization ID
         project_id: Project ID
 
     Returns:
         Created BatchJob record
     """
-    text_columns = assessment_config.get("text_columns", [])
-    prompt_template = assessment_config.get("prompt_template")
-    attachments_raw = assessment_config.get("attachments", [])
-    output_schema = assessment_config.get("output_schema")
+    text_columns = assessment_input.get("text_columns", [])
+    prompt_template = assessment_input.get("prompt_template")
+    attachments_raw = assessment_input.get("attachments", [])
+    output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
     # Load dataset rows
@@ -459,7 +465,7 @@ def submit_assessment_batch(
 
     logger.info(
         f"[submit_assessment_batch] Building JSONL | "
-        f"run_id={eval_run.id} | rows={len(rows)} | "
+        f"run_id={run.id} | rows={len(rows)} | "
         f"provider={config_blob.completion.provider}"
     )
 
@@ -499,7 +505,7 @@ def submit_assessment_batch(
 
         batch_config = {
             "endpoint": "/v1/responses",
-            "description": f"Assessment: {eval_run.run_name}",
+            "description": f"Assessment: {run.run_name}",
             "completion_window": "24h",
         }
 
@@ -542,7 +548,7 @@ def submit_assessment_batch(
         )
 
         batch_config = {
-            "display_name": f"assessment-{eval_run.run_name}",
+            "display_name": f"assessment-{run.run_name}",
             "model": f"models/{mapped_params.get('model', 'gemini-2.5-pro')}",
         }
 
@@ -564,7 +570,7 @@ def submit_assessment_batch(
 
     logger.info(
         f"[submit_assessment_batch] Submitted batch | "
-        f"run_id={eval_run.id} | batch_job_id={batch_job.id} | "
+        f"run_id={run.id} | batch_job_id={batch_job.id} | "
         f"provider={base_provider} | items={len(jsonl_data)}"
     )
 

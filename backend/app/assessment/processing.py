@@ -9,7 +9,6 @@ import json
 import logging
 from typing import Any
 
-from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.assessment.crud import (
@@ -17,6 +16,7 @@ from app.assessment.crud import (
     update_assessment_run_status,
 )
 from app.assessment.events import assessment_event_broker
+from app.assessment.models import AssessmentRun
 from app.core.batch import (
     BATCH_KEY,
     OpenAIBatchProvider,
@@ -29,7 +29,6 @@ from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.job import get_batch_job
-from app.models.evaluation import EvaluationRun
 from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
@@ -239,35 +238,35 @@ def parse_assessment_output(
 
 
 async def check_and_process_assessment(
-    eval_run: EvaluationRun,
+    run: AssessmentRun,
     session: Session,
 ) -> dict[str, Any]:
     """Check assessment batch status and process if completed.
 
     Args:
-        eval_run: EvaluationRun with type='assessment'
+        run: AssessmentRun to check
         session: Database session
 
     Returns:
         Dict with status information
     """
-    log_prefix = f"[assessment={eval_run.id}]"
-    previous_status = eval_run.status
+    log_prefix = f"[assessment_run={run.id}]"
+    previous_status = run.status
 
     try:
-        if not eval_run.batch_job_id:
-            raise ValueError(f"Assessment run {eval_run.id} has no batch_job_id")
+        if not run.batch_job_id:
+            raise ValueError(f"Assessment run {run.id} has no batch_job_id")
 
-        batch_job = get_batch_job(session=session, batch_job_id=eval_run.batch_job_id)
+        batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
         if not batch_job:
-            raise ValueError(f"BatchJob {eval_run.batch_job_id} not found")
+            raise ValueError(f"BatchJob {run.batch_job_id} not found")
 
         # Get provider and poll status
         provider = _get_batch_provider(
             session=session,
             provider_name=batch_job.provider,
-            organization_id=eval_run.organization_id,
-            project_id=eval_run.project_id,
+            organization_id=run.organization_id,
+            project_id=run.project_id,
         )
         status_result = poll_batch_status(
             session=session,
@@ -300,19 +299,19 @@ async def check_and_process_assessment(
 
                     update_assessment_run_status(
                         session=session,
-                        eval_run=eval_run,
+                        run=run,
                         status="failed",
                         error_message=error_msg,
                     )
-                    if eval_run.assessment_id is not None:
+                    if run.assessment_id is not None:
                         recompute_assessment_status(
-                            session=session, assessment_id=eval_run.assessment_id
+                            session=session, assessment_id=run.assessment_id
                         )
 
                     return {
-                        "run_id": eval_run.id,
-                        "assessment_id": eval_run.assessment_id,
-                        "run_name": eval_run.run_name,
+                        "run_id": run.id,
+                        "assessment_id": run.assessment_id,
+                        "run_name": run.run_name,
                         "previous_status": previous_status,
                         "current_status": "failed",
                         "provider_status": provider_status,
@@ -325,22 +324,24 @@ async def check_and_process_assessment(
                     f"batch_job_id={batch_job.id} | provider_status={provider_status}"
                 )
                 return {
-                    "run_id": eval_run.id,
-                    "assessment_id": eval_run.assessment_id,
-                    "run_name": eval_run.run_name,
+                    "run_id": run.id,
+                    "assessment_id": run.assessment_id,
+                    "run_name": run.run_name,
                     "previous_status": previous_status,
-                    "current_status": eval_run.status,
+                    "current_status": run.status,
                     "provider_status": provider_status,
                     "action": "no_change",
                 }
 
             # Emit SSE: results are being prepared
-            assessment_event_broker.publish({
-                "type": "assessment.results_preparing",
-                "assessment_id": eval_run.assessment_id,
-                "run_id": eval_run.id,
-                "message": "Results are being prepared",
-            })
+            assessment_event_broker.publish(
+                {
+                    "type": "assessment.results_preparing",
+                    "assessment_id": run.assessment_id,
+                    "run_id": run.id,
+                    "message": "Results are being prepared",
+                }
+            )
 
             # Download and process results
             raw_results = download_batch_results(provider=provider, batch_job=batch_job)
@@ -373,31 +374,33 @@ async def check_and_process_assessment(
 
             update_assessment_run_status(
                 session=session,
-                eval_run=eval_run,
+                run=run,
                 status=run_status,
                 error_message=error_msg,
                 object_store_url=object_store_url,
             )
-            if eval_run.assessment_id is not None:
+            if run.assessment_id is not None:
                 recompute_assessment_status(
-                    session=session, assessment_id=eval_run.assessment_id
+                    session=session, assessment_id=run.assessment_id
                 )
 
             # Emit SSE: results are ready
-            assessment_event_broker.publish({
-                "type": "assessment.results_ready",
-                "assessment_id": eval_run.assessment_id,
-                "run_id": eval_run.id,
-                "status": run_status,
-                "total_results": len(parsed),
-                "errors": error_count,
-                "message": "Results are ready",
-            })
+            assessment_event_broker.publish(
+                {
+                    "type": "assessment.results_ready",
+                    "assessment_id": run.assessment_id,
+                    "run_id": run.id,
+                    "status": run_status,
+                    "total_results": len(parsed),
+                    "errors": error_count,
+                    "message": "Results are ready",
+                }
+            )
 
             return {
-                "run_id": eval_run.id,
-                "assessment_id": eval_run.assessment_id,
-                "run_name": eval_run.run_name,
+                "run_id": run.id,
+                "assessment_id": run.assessment_id,
+                "run_name": run.run_name,
                 "previous_status": previous_status,
                 "current_status": run_status,
                 "provider_status": provider_status,
@@ -417,19 +420,19 @@ async def check_and_process_assessment(
             error_msg = batch_job.error_message or f"Batch {provider_status}"
             update_assessment_run_status(
                 session=session,
-                eval_run=eval_run,
+                run=run,
                 status="failed",
                 error_message=error_msg,
             )
-            if eval_run.assessment_id is not None:
+            if run.assessment_id is not None:
                 recompute_assessment_status(
-                    session=session, assessment_id=eval_run.assessment_id
+                    session=session, assessment_id=run.assessment_id
                 )
 
             return {
-                "run_id": eval_run.id,
-                "assessment_id": eval_run.assessment_id,
-                "run_name": eval_run.run_name,
+                "run_id": run.id,
+                "assessment_id": run.assessment_id,
+                "run_name": run.run_name,
                 "previous_status": previous_status,
                 "current_status": "failed",
                 "provider_status": provider_status,
@@ -440,11 +443,11 @@ async def check_and_process_assessment(
         else:
             # Still processing
             return {
-                "run_id": eval_run.id,
-                "assessment_id": eval_run.assessment_id,
-                "run_name": eval_run.run_name,
+                "run_id": run.id,
+                "assessment_id": run.assessment_id,
+                "run_name": run.run_name,
                 "previous_status": previous_status,
-                "current_status": eval_run.status,
+                "current_status": run.status,
                 "provider_status": provider_status,
                 "action": "no_change",
             }
@@ -456,23 +459,23 @@ async def check_and_process_assessment(
         )
         update_assessment_run_status(
             session=session,
-            eval_run=eval_run,
+            run=run,
             status="failed",
-            error_message=f"Check failed: {str(e)}",
+            error_message="Processing failed. Check server logs for details.",
         )
-        if eval_run.assessment_id is not None:
+        if run.assessment_id is not None:
             recompute_assessment_status(
-                session=session, assessment_id=eval_run.assessment_id
+                session=session, assessment_id=run.assessment_id
             )
         return {
-            "run_id": eval_run.id,
-            "assessment_id": eval_run.assessment_id,
-            "run_name": eval_run.run_name,
+            "run_id": run.id,
+            "assessment_id": run.assessment_id,
+            "run_name": run.run_name,
             "previous_status": previous_status,
             "current_status": "failed",
             "provider_status": "unknown",
             "action": "failed",
-            "error": str(e),
+            "error": "Processing failed",
         }
 
 

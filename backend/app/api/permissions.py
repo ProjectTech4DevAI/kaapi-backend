@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.models import AuthContext
 from app.api.deps import AuthContextDep, SessionDep
+from app.core.feature_flags import FeatureFlag
 
 
 class Permission(str, Enum):
@@ -68,3 +69,31 @@ def require_permission(permission: Permission):
             )
 
     return permission_checker
+
+
+def require_feature(flag: FeatureFlag):
+    """Dependency factory that gates a route behind an Unleash feature flag.
+
+    Returns 404 when the flag is disabled for the caller's org/project,
+    so the feature appears non-existent rather than forbidden.
+
+    Usage::
+
+        router = APIRouter(
+            dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))]
+        )
+    """
+    from app.core.feature_flags import is_enabled
+
+    def _check(auth_context: AuthContextDep):
+        org_id = auth_context.organization.id if auth_context.organization else None
+        project_id = auth_context.project.id if auth_context.project else None
+
+        if org_id is None or not is_enabled(
+            flag,
+            organization_id=org_id,
+            project_id=project_id,
+        ):
+            raise HTTPException(status_code=404)
+
+    return _check

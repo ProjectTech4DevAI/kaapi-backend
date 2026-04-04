@@ -21,3 +21,6 @@ ENV/
 
 #
 /backend/app/logs
+
+# OpenObserve local data
+/backend/data/

@@ -86,6 +86,8 @@ from .evaluation import (
     EvaluationRunPublic,
 )
 
+from app.assessment.models import Assessment, AssessmentRun  # noqa: F401
+
 from .file import File, FilePublic, FileType, AudioUploadResponse
 
 from .fine_tuning import (
