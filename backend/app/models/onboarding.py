@@ -90,39 +90,30 @@ class OnboardingRequest(SQLModel):
 
         if not isinstance(v, list):
             raise TypeError(
-                "credential must be a list of single-key dicts (e.g., {'openai': {...}})."
+                "Credential must be a list of single-key dicts (e.g., {'openai': {...}})."
             )
 
-        errors: list[str] = []
+        for item in v:
+            if not isinstance(item, dict):
+                raise TypeError(
+                    "Credential must be a dict with a single provider key like {'openai': {...}}."
+                )
+            if len(item) != 1:
+                raise ValueError(
+                    "Credential must have exactly one provider key like {'openai': {...}}."
+                )
 
-        for idx, item in enumerate(v):
-            try:
-                if not isinstance(item, dict):
-                    raise TypeError(
-                        "must be a dict with a single provider key like {'openai': {...}}."
-                    )
-                if len(item) != 1:
-                    raise ValueError(
-                        "must have exactly one provider key like {'openai': {...}}."
-                    )
+            (provider_key,) = item.keys()
+            values = item[provider_key]
 
-                (provider_key,) = item.keys()
-                values = item[provider_key]
+            validate_provider(provider_key)
 
-                validate_provider(provider_key)
+            if not isinstance(values, dict):
+                raise ValueError(
+                    f"Value for provider '{provider_key}' must be an object/dict."
+                )
 
-                if not isinstance(values, dict):
-                    raise TypeError(
-                        f"value for provider '{provider_key}' must be an object/dict."
-                    )
-
-                validate_provider_credentials(provider_key, values)
-
-            except (TypeError, ValueError) as e:
-                errors.append(f"[{idx}] {e}")
-
-        if errors:
-            raise ValueError("credential validation failed:\n" + "\n".join(errors))
+            validate_provider_credentials(provider_key, values)
 
         return v
 

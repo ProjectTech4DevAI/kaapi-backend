@@ -85,7 +85,11 @@ def read_provider_credential(
     provider: str,
     _current_user: AuthContextDep,
 ):
-    provider_enum = validate_provider(provider)
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     credential = get_provider_credential(
         session=session,
         org_id=_current_user.organization_.id,
@@ -143,7 +147,11 @@ def delete_provider_credential(
     provider: str,
     _current_user: AuthContextDep,
 ):
-    provider_enum = validate_provider(provider)
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     remove_provider_credential(
         session=session,
         org_id=_current_user.organization_.id,

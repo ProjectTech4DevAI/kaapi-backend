@@ -97,4 +97,3 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_pool_limit=settings.CELERY_BROKER_POOL_LIMIT,
 )
-

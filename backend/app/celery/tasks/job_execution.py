@@ -70,7 +70,9 @@ def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kw
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_create_collection_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+def run_create_collection_job(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
     from app.services.collections.create_collection import execute_job
 
     _set_trace(trace_id)
@@ -84,7 +86,9 @@ def run_create_collection_job(self, project_id: int, job_id: str, trace_id: str,
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_delete_collection_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+def run_delete_collection_job(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
     from app.services.collections.delete_collection import execute_job
 
     _set_trace(trace_id)
@@ -98,7 +102,9 @@ def run_delete_collection_job(self, project_id: int, job_id: str, trace_id: str,
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_stt_batch_submission(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+def run_stt_batch_submission(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
     from app.services.stt_evaluations.batch_job import execute_batch_submission
 
     _set_trace(trace_id)
@@ -112,7 +118,9 @@ def run_stt_batch_submission(self, project_id: int, job_id: str, trace_id: str, 
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_stt_metric_computation(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+def run_stt_metric_computation(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
     from app.services.stt_evaluations.metric_job import execute_metric_computation
 
     _set_trace(trace_id)
@@ -126,7 +134,9 @@ def run_stt_metric_computation(self, project_id: int, job_id: str, trace_id: str
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_tts_batch_submission(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+def run_tts_batch_submission(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
     from app.services.tts_evaluations.batch_job import execute_batch_submission
 
     _set_trace(trace_id)
@@ -140,8 +150,12 @@ def run_tts_batch_submission(self, project_id: int, job_id: str, trace_id: str, 
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-def run_tts_result_processing(self, project_id: int, job_id: str, trace_id: str, **kwargs):
-    from app.services.tts_evaluations.batch_result_processing import execute_tts_result_processing
+def run_tts_result_processing(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    from app.services.tts_evaluations.batch_result_processing import (
+        execute_tts_result_processing,
+    )
 
     _set_trace(trace_id)
     return execute_tts_result_processing(

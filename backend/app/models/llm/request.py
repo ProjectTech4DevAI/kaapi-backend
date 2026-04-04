@@ -270,6 +270,7 @@ class KaapiCompletionConfig(SQLModel):
             provider = self.provider
             provider_was_auto_assigned = True
 
+        user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
 
         if provider is not None:
@@ -307,6 +308,8 @@ class KaapiCompletionConfig(SQLModel):
                         )
 
         self.params = validated.model_dump(exclude_none=True)
+        if not user_provided_temperature:
+            self.params.pop("temperature", None)
         return self
 
 

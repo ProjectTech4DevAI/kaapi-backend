@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import select
 
@@ -27,14 +27,19 @@ router = APIRouter(prefix="/organizations", tags=["Organizations"])
     response_model=APIResponse[List[OrganizationPublic]],
     description=load_description("organization/list.md"),
 )
-def read_organizations(session: SessionDep, skip: int = 0, limit: int = 100):
+def read_organizations(
+    session: SessionDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+) -> APIResponse[List[OrganizationPublic]]:
     count_statement = select(func.count()).select_from(Organization)
     count = session.exec(count_statement).one()
 
     statement = select(Organization).offset(skip).limit(limit)
     organizations = session.exec(statement).all()
 
-    return APIResponse.success_response(organizations)
+    has_more = (skip + limit) < count
+    return APIResponse.success_response(organizations, metadata={"has_more": has_more})
 
 
 # Create a new organization
@@ -44,7 +49,9 @@ def read_organizations(session: SessionDep, skip: int = 0, limit: int = 100):
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/create.md"),
 )
-def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate):
+def create_new_organization(
+    *, session: SessionDep, org_in: OrganizationCreate
+) -> APIResponse[OrganizationPublic]:
     new_org = create_organization(session=session, org_create=org_in)
     return APIResponse.success_response(new_org)
 
@@ -55,7 +62,9 @@ def create_new_organization(*, session: SessionDep, org_in: OrganizationCreate):
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/get.md"),
 )
-def read_organization(*, session: SessionDep, org_id: int):
+def read_organization(
+    *, session: SessionDep, org_id: int
+) -> APIResponse[OrganizationPublic]:
     """
     Retrieve an organization by ID.
     """
@@ -75,7 +84,7 @@ def read_organization(*, session: SessionDep, org_id: int):
 )
 def update_organization(
     *, session: SessionDep, org_id: int, org_in: OrganizationUpdate
-):
+) -> APIResponse[OrganizationPublic]:
     org = get_organization_by_id(session=session, org_id=org_id)
     if org is None:
         logger.error(
@@ -103,7 +112,7 @@ def update_organization(
     include_in_schema=False,
     description=load_description("organization/delete.md"),
 )
-def delete_organization(session: SessionDep, org_id: int):
+def delete_organization(session: SessionDep, org_id: int) -> APIResponse[None]:
     org = get_organization_by_id(session=session, org_id=org_id)
     if org is None:
         logger.error(
