@@ -11,6 +11,7 @@ from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,9 +28,13 @@ def set_creds_for_org(
         raise HTTPException(400, "No credentials provided")
 
     for provider, credentials in creds_add.credential.items():
-        # Validate provider and credentials
-        validate_provider(provider)
-        validate_provider_credentials(provider, credentials)
+        try:
+            validate_provider_credentials(provider, credentials)
+        except ValueError as e:
+            logger.error(
+                f"[set_creds_for_org] Validation error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
+            )
+            raise HTTPException(status_code=400, detail=str(e))
 
         # Encrypt entire credentials object
         encrypted_credentials = encrypt_credentials(credentials)
@@ -144,7 +149,10 @@ def get_provider_credential(
     Raises:
         HTTPException: If credentials are not found
     """
-    validate_provider(provider)
+    try:
+        validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     statement = select(Credential).where(
         Credential.organization_id == org_id,
@@ -176,8 +184,13 @@ def update_creds_for_org(
     if not creds_in.provider or not creds_in.credential:
         raise ValueError("Provider and credential must be provided")
 
-    validate_provider(creds_in.provider)
-    validate_provider_credentials(creds_in.provider, creds_in.credential)
+    try:
+        validate_provider_credentials(creds_in.provider, creds_in.credential)
+    except ValueError as e:
+        logger.error(
+            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Encrypt the entire credentials object
     encrypted_credentials = encrypt_credentials(creds_in.credential)
@@ -216,8 +229,6 @@ def remove_provider_credential(
     Raises:
         HTTPException: If credentials not found or deletion fails
     """
-    validate_provider(provider)
-
     # Verify credentials exist before attempting delete
     creds = get_provider_credential(
         session=session,
