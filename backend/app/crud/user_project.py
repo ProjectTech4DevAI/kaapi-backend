@@ -57,7 +57,6 @@ def add_user_to_project(
         - "different_project": User is already assigned to another project
     """
     user = session.exec(select(User).where(User.email == email)).first()
-    created = False
 
     if not user:
         user = User(
@@ -68,10 +67,6 @@ def add_user_to_project(
         )
         session.add(user)
         session.flush()
-        created = True
-        logger.info(
-            f"[add_user_to_project] New user created | email: {email}, user_id: {user.id}"
-        )
     elif full_name and not user.full_name:
         user.full_name = full_name
         session.add(user)
@@ -96,9 +91,6 @@ def add_user_to_project(
     session.add(user_project)
     session.flush()
 
-    logger.info(
-        f"[add_user_to_project] User added to project | user_id: {user.id}, project_id: {project_id}"
-    )
     return user, "added"
 
 
@@ -126,10 +118,6 @@ def remove_user_from_project(
     session.delete(user_project)
     session.flush()
 
-    logger.info(
-        f"[remove_user_from_project] User removed from project | user_id: {user_id}, project_id: {project_id}"
-    )
-
     # Check if user has any remaining projects
     remaining = session.exec(
         select(UserProject.id).where(UserProject.user_id == user_id).limit(1)
@@ -140,9 +128,6 @@ def remove_user_from_project(
         if user and not user.is_superuser:
             session.delete(user)
             session.flush()
-            logger.info(
-                f"[remove_user_from_project] User deleted (no remaining projects) | user_id: {user_id}"
-            )
 
     return True
 
