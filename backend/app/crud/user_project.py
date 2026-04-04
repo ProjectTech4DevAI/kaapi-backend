@@ -105,7 +105,12 @@ def add_user_to_project(
 def remove_user_from_project(
     *, session: Session, user_id: int, project_id: int
 ) -> bool:
-    """Remove a user from a project. Returns True if removed, False if not found."""
+    """
+    Remove a user from a project. If this was their last project,
+    deactivate the user account.
+
+    Returns True if removed, False if not found.
+    """
     user_project = session.exec(
         select(UserProject).where(
             and_(
@@ -124,6 +129,21 @@ def remove_user_from_project(
     logger.info(
         f"[remove_user_from_project] User removed from project | user_id: {user_id}, project_id: {project_id}"
     )
+
+    # Check if user has any remaining projects
+    remaining = session.exec(
+        select(UserProject.id).where(UserProject.user_id == user_id).limit(1)
+    ).first()
+
+    if not remaining:
+        user = session.get(User, user_id)
+        if user and not user.is_superuser:
+            session.delete(user)
+            session.flush()
+            logger.info(
+                f"[remove_user_from_project] User deleted (no remaining projects) | user_id: {user_id}"
+            )
+
     return True
 
 
