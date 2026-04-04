@@ -86,10 +86,10 @@ class TestGoogleAuth:
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
-    def test_google_auth_inactive_user_rejected(
+    def test_google_auth_activates_inactive_user(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
-        """Test returns 403 when user account is inactive."""
+        """Test that inactive user is activated on first Google login."""
         user = create_random_user(db)
         user.is_active = False
         db.add(user)
@@ -97,11 +97,18 @@ class TestGoogleAuth:
         db.refresh(user)
 
         mock_settings.GOOGLE_CLIENT_ID = "test-client-id"
+        mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+        mock_settings.REFRESH_TOKEN_EXPIRE_MINUTES = 10080
+        mock_settings.ENVIRONMENT = "testing"
+        mock_settings.API_V1_STR = settings.API_V1_STR
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
         mock_verify.return_value = _mock_idinfo(user.email)
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
-        assert resp.status_code == 403
-        assert "Inactive" in resp.json()["error"]
+        assert resp.status_code == 200
+
+        db.refresh(user)
+        assert user.is_active is True
 
     @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.google_auth.settings")
@@ -122,7 +129,9 @@ class TestGoogleAuth:
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
         assert resp.status_code == 200
 
-        data = resp.json()
+        body = resp.json()
+        assert body["success"] is True
+        data = body["data"]
         assert "access_token" in data
         assert data["requires_project_selection"] is False
         assert data["available_projects"] == []
@@ -150,7 +159,7 @@ class TestGoogleAuth:
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
         assert resp.status_code == 200
 
-        data = resp.json()
+        data = resp.json()["data"]
         assert data["requires_project_selection"] is False
         assert len(data["available_projects"]) == 1
 
@@ -190,8 +199,9 @@ class TestSelectProject:
         )
         assert resp.status_code == 200
 
-        data = resp.json()
-        assert "access_token" in data
+        body = resp.json()
+        assert body["success"] is True
+        assert "access_token" in body["data"]
         assert "access_token" in resp.cookies
 
 
@@ -239,8 +249,9 @@ class TestRefreshToken:
         resp = client.post(REFRESH_URL)
         assert resp.status_code == 200
 
-        data = resp.json()
-        assert "access_token" in data
+        body = resp.json()
+        assert body["success"] is True
+        assert "access_token" in body["data"]
         assert "access_token" in resp.cookies
 
     def test_refresh_with_org_project(
@@ -257,7 +268,7 @@ class TestRefreshToken:
 
         resp = client.post(REFRESH_URL)
         assert resp.status_code == 200
-        assert "access_token" in resp.json()
+        assert "access_token" in resp.json()["data"]
 
     def test_refresh_inactive_user(self, db: Session, client: TestClient):
         """Test returns 403 when user is inactive."""
@@ -279,8 +290,11 @@ class TestRefreshToken:
 class TestLogout:
     """Test suite for POST /auth/logout endpoint."""
 
-    def test_logout_clears_cookies(self, client: TestClient):
-        """Test logout clears auth cookies."""
+    def test_logout_success(self, client: TestClient):
+        """Test logout returns success response and clears cookies."""
         resp = client.post(LOGOUT_URL)
         assert resp.status_code == 200
-        assert resp.json()["message"] == "Logged out successfully"
+
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"]["message"] == "Logged out successfully"
