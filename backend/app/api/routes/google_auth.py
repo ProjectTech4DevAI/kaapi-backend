@@ -17,6 +17,7 @@ from app.models import (
     APIKey,
     GoogleAuthRequest,
     GoogleAuthResponse,
+    Message,
     Organization,
     Project,
     SelectProjectRequest,
@@ -25,7 +26,7 @@ from app.models import (
     User,
     UserPublic,
 )
-from app.utils import load_description
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,8 @@ def _create_token_and_response(
         available_projects=available_projects,
     )
 
-    response = JSONResponse(content=response_data.model_dump())
+    api_response = APIResponse.success_response(data=response_data)
+    response = JSONResponse(content=api_response.model_dump())
     _set_auth_cookies(response, access_token, refresh_token)
     return response
 
@@ -141,7 +143,7 @@ def _create_token_and_response(
 @router.post(
     "/google",
     description=load_description("auth/google.md"),
-    response_model=GoogleAuthResponse,
+    response_model=APIResponse[GoogleAuthResponse],
 )
 def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
     """Authenticate a user via Google OAuth ID token."""
@@ -240,7 +242,7 @@ def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
 
 @router.post(
     "/select-project",
-    response_model=Token,
+    response_model=APIResponse[Token],
 )
 def select_project(
     session: SessionDep,
@@ -269,7 +271,8 @@ def select_project(
         project_id=proj["project_id"],
     )
 
-    response = JSONResponse(content=Token(access_token=access_token).model_dump())
+    api_response = APIResponse.success_response(data=Token(access_token=access_token))
+    response = JSONResponse(content=api_response.model_dump())
     _set_auth_cookies(response, access_token, refresh_token)
 
     logger.info(
@@ -280,7 +283,7 @@ def select_project(
 
 @router.post(
     "/refresh",
-    response_model=Token,
+    response_model=APIResponse[Token],
 )
 def refresh_access_token(request: Request, session: SessionDep) -> JSONResponse:
     """Use a refresh token to get a new access token without re-authenticating."""
@@ -330,17 +333,24 @@ def refresh_access_token(request: Request, session: SessionDep) -> JSONResponse:
         project_id=token_data.project_id,
     )
 
-    response = JSONResponse(content=Token(access_token=access_token).model_dump())
+    api_response = APIResponse.success_response(data=Token(access_token=access_token))
+    response = JSONResponse(content=api_response.model_dump())
     _set_auth_cookies(response, access_token, new_refresh_token)
 
     logger.info(f"[refresh_access_token] Token refreshed | user_id: {user.id}")
     return response
 
 
-@router.post("/logout")
+@router.post(
+    "/logout",
+    response_model=APIResponse[Message],
+)
 def logout() -> JSONResponse:
     """Clear auth cookies to log the user out."""
-    response = JSONResponse(content={"message": "Logged out successfully"})
+    api_response = APIResponse.success_response(
+        data=Message(message="Logged out successfully")
+    )
+    response = JSONResponse(content=api_response.model_dump())
 
     is_secure = settings.ENVIRONMENT in ("staging", "production")
 
