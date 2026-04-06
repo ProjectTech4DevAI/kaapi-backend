@@ -247,3 +247,7 @@ def get_llm_calls_by_job_id(
     )
 
     return list(session.exec(statement).all())
+
+
+def delete_llm_calls_p30d(session: Session) -> None:
+    pass
