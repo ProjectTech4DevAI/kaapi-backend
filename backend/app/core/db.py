@@ -18,7 +18,7 @@ def get_engine():
         pool_size = 20
         max_overflow = 30
     elif settings.ENVIRONMENT == "staging":
-        pool_size = 12
+        pool_size = 16
         # test it out
         max_overflow = 0
     return create_engine(
