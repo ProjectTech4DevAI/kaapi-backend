@@ -10,12 +10,16 @@ from app.models.llm.request import (
     LLMCallConfig,
     QueryParams,
 )
+from app.tests.utils.utils import get_project
 from app.models.llm import LLMCallRequest
 
 
 def create_llm_job(db: Session) -> Job:
     """Create a persisted LLM_API job for use in tests."""
-    return JobCrud(db).create(job_type=JobType.LLM_API, trace_id="test-llm-trace")
+    project = get_project(db, "Dalgo")
+    return JobCrud(db).create(
+        job_type=JobType.LLM_API, trace_id="test-llm-trace", project_id=project.id
+    )
 
 
 def create_llm_call_with_response(

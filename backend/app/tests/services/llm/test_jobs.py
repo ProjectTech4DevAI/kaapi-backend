@@ -1359,7 +1359,7 @@ class TestExecuteChainJob:
             mock_update_status.assert_called_once()
             _, kwargs = mock_update_status.call_args
             assert kwargs["chain_id"] == chain_id
-            assert kwargs["status"].value == "failed"
+            assert kwargs["status"].value == "FAILED"
 
 
 class TestResolveConfigBlob:
