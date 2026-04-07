@@ -11,9 +11,16 @@ def get_engine():
 
     # Configure connection pool settings
     # For testing, we need more connections since tests run in parallel
-    pool_size = 20 if settings.ENVIRONMENT == "development" else 5
-    max_overflow = 30 if settings.ENVIRONMENT == "development" else 10
+    pool_size = 5
+    max_overflow = 10
 
+    if settings.ENVIRONMENT == "development":
+        pool_size = 20
+        max_overflow = 30
+    elif settings.ENVIRONMENT == "staging":
+        pool_size = 12
+        # test it out
+        max_overflow = 0
     return create_engine(
         str(settings.SQLALCHEMY_DATABASE_URI),
         pool_size=pool_size,
