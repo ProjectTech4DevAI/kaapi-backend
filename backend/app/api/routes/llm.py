@@ -70,7 +70,7 @@ def llm_call(
 
     # Fetch job details to return immediate response
     job_crud = JobCrud(session=session)
-    job = job_crud.get(job_id=job_id)
+    job = job_crud.get(job_id=job_id, project_id=project_id)
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -106,8 +106,11 @@ def get_llm_call_status(
     Poll for LLM call job status and results.
     Returns job information with nested LLM response when complete.
     """
+
+    project_id = _current_user.project_.id
+
     job_crud = JobCrud(session=session)
-    job = job_crud.get(job_id=job_id)
+    job = job_crud.get(job_id=job_id, project_id=project_id)
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -115,7 +118,7 @@ def get_llm_call_status(
     llm_call_response = None
     if job.status.value == JobStatus.SUCCESS:
         llm_calls = get_llm_calls_by_job_id(
-            session=session, job_id=job_id, project_id=_current_user.project_.id
+            session=session, job_id=job_id, project_id=project_id
         )
 
         if llm_calls:

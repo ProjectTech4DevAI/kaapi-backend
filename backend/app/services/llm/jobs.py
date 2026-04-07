@@ -46,7 +46,9 @@ def start_job(
     """Create an LLM job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_API, trace_id=trace_id)
+    job = job_crud.create(
+        job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
+    )
 
     # Explicitly flush to ensure job is persisted before Celery task starts
     db.flush()
@@ -87,7 +89,9 @@ def start_chain_job(
     """Create an LLM Chain job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_CHAIN, trace_id=trace_id)
+    job = job_crud.create(
+        job_type=JobType.LLM_CHAIN, trace_id=trace_id, project_id=project_id
+    )
 
     # Explicitly flush to ensure job is persisted before Celery task starts
     db.flush()
