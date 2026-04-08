@@ -57,6 +57,27 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
 
+    # Frontend URL for magic links
+    FRONTEND_HOST: str = "http://localhost:3000"
+
+    # Invitation token expiry (default 7 days)
+    INVITE_TOKEN_EXPIRE_HOURS: int = 24 * 7
+
+    # SMTP / Email
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_TLS: bool = True
+    SMTP_SSL: bool = False
+    EMAILS_FROM_EMAIL: str = ""
+    EMAILS_FROM_NAME: str = ""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def emails_enabled(self) -> bool:
+        return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:

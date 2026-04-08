@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.config import settings
+from app.crud.organization import get_organization_by_id
+from app.crud.project import get_project_by_id
 from app.crud.user_project import (
     add_user_to_project,
     get_users_by_project,
@@ -15,7 +18,13 @@ from app.models import (
     Message,
     UserProjectPublic,
 )
-from app.utils import APIResponse, load_description
+from app.services.auth import generate_invite_token
+from app.utils import (
+    APIResponse,
+    generate_invite_email,
+    load_description,
+    send_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +91,37 @@ def add_project_users(
         )
 
     session.commit()
+
+    # Send invitation emails
+    organization = get_organization_by_id(session=session, org_id=body.organization_id)
+    project = get_project_by_id(session=session, project_id=body.project_id)
+
+    if settings.emails_enabled and organization and project:
+        for entry in body.users:
+            try:
+                invite_token = generate_invite_token(
+                    email=str(entry.email),
+                    organization_id=body.organization_id,
+                    project_id=body.project_id,
+                )
+                email_data = generate_invite_email(
+                    email_to=str(entry.email),
+                    project_name=project.name,
+                    organization_name=organization.name,
+                    invite_token=invite_token,
+                )
+                send_email(
+                    email_to=str(entry.email),
+                    subject=email_data.subject,
+                    html_content=email_data.html_content,
+                )
+                logger.info(
+                    f"[add_project_users] Invitation email sent | email: {entry.email}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[add_project_users] Failed to send invitation email | email: {entry.email}, error: {e}"
+                )
 
     # Re-fetch all users for this project to return the full list
     results = get_users_by_project(session=session, project_id=body.project_id)

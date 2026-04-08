@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt as pyjwt
 from fastapi import HTTPException, status
@@ -176,3 +176,44 @@ def validate_refresh_token(
         raise HTTPException(status_code=403, detail="Inactive user")
 
     return user, token_data
+
+
+def generate_invite_token(
+    email: str,
+    organization_id: int,
+    project_id: int,
+) -> str:
+    """Generate a JWT invitation token for a user."""
+    delta = timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS)
+    now = datetime.now(timezone.utc)
+    expires = now + delta
+    to_encode = {
+        "exp": expires.timestamp(),
+        "nbf": now,
+        "sub": email,
+        "org_id": organization_id,
+        "project_id": project_id,
+        "type": "invite",
+    }
+    return pyjwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
+
+
+def verify_invite_token(token: str) -> dict | None:
+    """
+    Verify an invitation token and return the payload.
+
+    Returns dict with email, org_id, project_id or None if invalid.
+    """
+    try:
+        payload = pyjwt.decode(
+            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
+        )
+        if payload.get("type") != "invite":
+            return None
+        return {
+            "email": payload["sub"],
+            "organization_id": payload["org_id"],
+            "project_id": payload["project_id"],
+        }
+    except (InvalidTokenError, KeyError):
+        return None

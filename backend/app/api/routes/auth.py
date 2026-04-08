@@ -21,6 +21,7 @@ from app.services.auth import (
     build_token_response,
     clear_auth_cookies,
     validate_refresh_token,
+    verify_invite_token,
 )
 from app.utils import APIResponse, load_description
 
@@ -197,4 +198,48 @@ def logout() -> JSONResponse:
     )
     response = JSONResponse(content=api_response.model_dump())
     clear_auth_cookies(response)
+    return response
+
+
+@router.get(
+    "/invite/verify",
+    description=load_description("auth/invite_verify.md"),
+    response_model=APIResponse[Token],
+)
+def verify_invitation(session: SessionDep, token: str) -> JSONResponse:
+    """Verify an invitation token, activate the user, and log them in."""
+
+    invite_data = verify_invite_token(token)
+    if not invite_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired invitation link",
+        )
+
+    user = get_user_by_email(session=session, email=invite_data["email"])
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User account not found. Please contact support.",
+        )
+
+    # Activate user if not already active
+    if not user.is_active:
+        user.is_active = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        logger.info(
+            f"[verify_invitation] User activated via invite | user_id: {user.id}"
+        )
+
+    response = build_token_response(
+        user_id=user.id,
+        organization_id=invite_data["organization_id"],
+        project_id=invite_data["project_id"],
+    )
+
+    logger.info(
+        f"[verify_invitation] Invitation verified | user_id: {user.id}, project_id: {invite_data['project_id']}"
+    )
     return response
