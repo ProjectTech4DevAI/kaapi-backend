@@ -7,7 +7,7 @@ from app.api.routes import (
     config,
     doc_transformation_job,
     documents,
-    google_auth,
+    auth,
     login,
     languages,
     llm,
@@ -41,7 +41,7 @@ api_router.include_router(credentials.router)
 api_router.include_router(cron.router)
 api_router.include_router(documents.router)
 api_router.include_router(doc_transformation_job.router)
-api_router.include_router(google_auth.router)
+api_router.include_router(auth.router)
 api_router.include_router(evaluations.router)
 api_router.include_router(languages.router)
 api_router.include_router(llm.router)
