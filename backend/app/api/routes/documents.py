@@ -83,7 +83,7 @@ def list_docs(
     ),
 ):
     crud = DocumentCrud(session, current_user.project_.id)
-    documents = crud.read_many(skip, limit)
+    documents, has_more = crud.read_many(skip, limit)
 
     storage = (
         get_cloud_storage(session=session, project_id=current_user.project_.id)
@@ -96,7 +96,7 @@ def list_docs(
         include_url=include_url,
         storage=storage,
     )
-    return APIResponse.success_response(results)
+    return APIResponse.success_response(results, metadata=dict(has_more=has_more))
 
 
 @router.post(

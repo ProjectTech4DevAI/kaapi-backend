@@ -52,6 +52,6 @@ def validate_organization(session: Session, org_id: int) -> Organization:
         logger.error(
             f"[validate_organization] Organization is not active | 'org_id': {org_id}"
         )
-        raise HTTPException("Organization is not active")
+        raise HTTPException(status_code=403, detail="Organization is not active")
 
     return organization

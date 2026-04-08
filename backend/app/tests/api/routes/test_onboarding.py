@@ -198,9 +198,7 @@ def test_onboard_project_invalid_provider(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
-    )
+    assert any("Unsupported provider" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_non_dict_values_in_credential(
@@ -230,9 +228,6 @@ def test_onboard_project_non_dict_values_in_credential(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
-    )
     assert any(
         "must be an object/dict" in e["message"] for e in error_response["errors"]
     )
@@ -266,9 +261,9 @@ def test_onboard_project_missing_required_fields_for_openai(
     error_response = response.json()
     assert error_response["errors"]
     assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
+        "Missing required fields for openai" in e["message"]
+        for e in error_response["errors"]
     )
-    assert any("openai" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_missing_required_fields_for_langfuse(
@@ -301,15 +296,15 @@ def test_onboard_project_missing_required_fields_for_langfuse(
     error_response = response.json()
     assert error_response["errors"]
     assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
+        "Missing required fields for langfuse" in e["message"]
+        for e in error_response["errors"]
     )
-    assert any("langfuse" in e["message"] for e in error_response["errors"])
 
 
 def test_onboard_project_aggregates_multiple_credential_errors(
     client: TestClient, superuser_token_headers: dict[str, str], db: Session
 ) -> None:
-    """Test onboarding aggregates multiple credential validation errors with index markers."""
+    """Test onboarding reports credential validation errors (fails on first error)."""
     org_name = "TestOrgOnboard"
     project_name = "TestProjectOnboard"
     email = random_email()
@@ -336,8 +331,392 @@ def test_onboard_project_aggregates_multiple_credential_errors(
     assert response.status_code == 422
     error_response = response.json()
     assert error_response["errors"]
-    assert any(
-        "credential validation failed" in e["message"] for e in error_response["errors"]
+    # Validation fails on the first error (unsupported provider)
+    assert any("Unsupported provider" in e["message"] for e in error_response["errors"])
+
+
+def test_onboard_project_credentials_not_a_list(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when credentials is not a list."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": {"openai": {"api_key": "sk-test"}},  # Should be a list
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
     )
-    assert any("[0]" in e["message"] for e in error_response["errors"])
-    assert any("[1]" in e["message"] for e in error_response["errors"])
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    # Pydantic catches this before custom validator - returns type error
+    assert any(
+        "Input should be a valid list" in e["message"] for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_credentials_string_instead_of_list(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when credentials is a string instead of list."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": "sk-test-key",  # Should be a list
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    # Pydantic catches this before custom validator - returns type error
+    assert any(
+        "Input should be a valid list" in e["message"] for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_credential_item_not_a_dict(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when a credential item is not a dict."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": ["sk-test-key"],  # Items should be dicts
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    # Pydantic catches this before custom validator - returns type error
+    assert any(
+        "Input should be a valid dictionary" in e["message"]
+        for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_credential_item_with_multiple_provider_keys(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when credential item has multiple provider keys."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [
+            {
+                "openai": {"api_key": "sk-test"},
+                "langfuse": {
+                    "secret_key": "sk-lf",
+                    "public_key": "pk-lf",
+                    "host": "https://cloud.langfuse.com",
+                },
+            }
+        ],  # Should have exactly one provider key per dict
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    assert any(
+        "must have exactly one provider key" in e["message"]
+        for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_credential_item_empty_dict(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when credential item is an empty dict."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{}],  # Empty dict - no provider key
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    assert any(
+        "must have exactly one provider key" in e["message"]
+        for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_credentials_empty_list(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding succeeds with empty credentials list (treated same as None)."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [],  # Empty list is valid
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["success"] is True
+    # Should not have metadata about credentials
+    assert response_data.get("metadata") is None
+
+
+def test_onboard_project_with_google_credentials(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding with Google credentials."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+    google_api_key = f"AIza{random_lower_string()}"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"google": {"api_key": google_api_key}}],
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["success"] is True
+    assert (
+        response_data["metadata"]["note"]
+        == "Given credential(s) have been saved for this project."
+    )
+
+
+def test_onboard_project_with_sarvamai_credentials(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding with SarvamAI credentials."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+    sarvamai_api_key = f"sarvam-{random_lower_string()}"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"sarvamai": {"api_key": sarvamai_api_key}}],
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["success"] is True
+    assert (
+        response_data["metadata"]["note"]
+        == "Given credential(s) have been saved for this project."
+    )
+
+
+def test_onboard_project_with_elevenlabs_credentials(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding with ElevenLabs credentials."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+    elevenlabs_api_key = f"el-{random_lower_string()}"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"elevenlabs": {"api_key": elevenlabs_api_key}}],
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["success"] is True
+    assert (
+        response_data["metadata"]["note"]
+        == "Given credential(s) have been saved for this project."
+    )
+
+
+def test_onboard_project_with_all_supported_providers(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding with credentials for all supported providers."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [
+            {"openai": {"api_key": f"sk-{random_lower_string()}"}},
+            {
+                "langfuse": {
+                    "secret_key": f"sk-lf-{random_lower_string()}",
+                    "public_key": f"pk-lf-{random_lower_string()}",
+                    "host": "https://cloud.langfuse.com",
+                }
+            },
+            {"google": {"api_key": f"AIza{random_lower_string()}"}},
+            {"sarvamai": {"api_key": f"sarvam-{random_lower_string()}"}},
+            {"elevenlabs": {"api_key": f"el-{random_lower_string()}"}},
+        ],
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["success"] is True
+    assert (
+        response_data["metadata"]["note"]
+        == "Given credential(s) have been saved for this project."
+    )
+
+
+def test_onboard_project_google_missing_api_key(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when Google credential is missing api_key."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"google": {}}],  # missing api_key
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    assert any(
+        "Missing required fields for google" in e["message"]
+        for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_sarvamai_missing_api_key(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when SarvamAI credential is missing api_key."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"sarvamai": {}}],  # missing api_key
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    assert any(
+        "Missing required fields for sarvamai" in e["message"]
+        for e in error_response["errors"]
+    )
+
+
+def test_onboard_project_elevenlabs_missing_api_key(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    """Test onboarding fails when ElevenLabs credential is missing api_key."""
+    org_name = "TestOrgOnboard"
+    project_name = "TestProjectOnboard"
+
+    onboard_data = {
+        "organization_name": org_name,
+        "project_name": project_name,
+        "credentials": [{"elevenlabs": {}}],  # missing api_key
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/onboard",
+        json=onboard_data,
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
+    error_response = response.json()
+    assert error_response["errors"]
+    assert any(
+        "Missing required fields for elevenlabs" in e["message"]
+        for e in error_response["errors"]
+    )

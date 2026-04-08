@@ -11,7 +11,9 @@ from app.api.permissions import Permission, require_permission
 from app.crud.project import (
     create_project,
     get_project_by_id,
+    get_projects_by_organization,
 )
+from app.crud.organization import validate_organization
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,8 @@ def read_projects(
     statement = select(Project).offset(skip).limit(limit)
     projects = session.exec(statement).all()
 
-    return APIResponse.success_response(projects)
+    has_more = (skip + limit) < count
+    return APIResponse.success_response(projects, metadata={"has_more": has_more})
 
 
 # Create a new project
@@ -112,3 +115,18 @@ def delete_project(session: SessionDep, project_id: int):
         f"[delete_project] Project deleted successfully | project_id={project_id}"
     )
     return APIResponse.success_response(None)
+
+
+# Get projects by organization
+@router.get(
+    "/organization/{org_id}",
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    response_model=APIResponse[List[ProjectPublic]],
+    description=load_description("projects/list_by_org.md"),
+)
+def read_projects_by_organization(
+    session: SessionDep, org_id: int
+) -> APIResponse[List[ProjectPublic]]:
+    validate_organization(session=session, org_id=org_id)
+    projects = get_projects_by_organization(session=session, org_id=org_id)
+    return APIResponse.success_response(projects)
