@@ -2,7 +2,8 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlmodel import Column, Field, SQLModel, Text
+from pydantic import field_validator
+from sqlmodel import JSON, Column, Field, SQLModel, Text
 
 from app.core.util import now
 from app.models.collection import CollectionIDPublic, CollectionPublic
@@ -73,6 +74,12 @@ class CollectionJob(SQLModel, table=True):
             Text, nullable=True, comment="Error message if the job failed"
         ),
     )
+    documents: list[str] | None = Field(
+        default=None,
+        sa_column=Column(
+            JSON, nullable=True, comment="List of documents given to make collection"
+        ),
+    )
 
     # Foreign keys
     collection_id: UUID | None = Field(
@@ -122,6 +129,7 @@ class CollectionJobCreate(SQLModel):
     action_type: CollectionActionType
     docs_num: int | None = None
     project_id: int
+    documents: list[str] | None = None
 
 
 class CollectionJobUpdate(SQLModel):

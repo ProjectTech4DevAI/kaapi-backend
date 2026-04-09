@@ -18,7 +18,6 @@ from app.models import (
     CollectionJob,
     Collection,
     CollectionJobUpdate,
-    CollectionPublic,
     CollectionJobPublic,
     CreationRequest,
 )

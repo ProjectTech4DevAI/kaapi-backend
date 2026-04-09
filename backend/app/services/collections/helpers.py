@@ -3,7 +3,6 @@ import json
 import ast
 import re
 from uuid import UUID
-from typing import List
 
 from fastapi import HTTPException
 from sqlmodel import select
@@ -64,7 +63,7 @@ def extract_error_message(err: Exception) -> str:
     return message.strip()[:1000]
 
 
-def batch_documents(documents: List[Document]) -> List[List[Document]]:
+def batch_documents(documents: list[Document]) -> list[list[Document]]:
     """
     Batch documents dynamically based on size and count limits.
 

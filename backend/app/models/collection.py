@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator, model_serializer
-from sqlalchemy import UniqueConstraint, Index, text
+from sqlalchemy import Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now

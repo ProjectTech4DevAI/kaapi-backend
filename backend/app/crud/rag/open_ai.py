@@ -8,7 +8,6 @@ from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
 from app.core.cloud import CloudStorage
-from app.core.config import settings
 from app.models import Document
 
 logger = logging.getLogger(__name__)

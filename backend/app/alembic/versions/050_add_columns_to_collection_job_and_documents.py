@@ -32,16 +32,7 @@ def upgrade():
             "total_size_mb",
             sa.Float(),
             nullable=True,
-            comment="Total size of documents being uploaded to collection",
-        ),
-    )
-    op.add_column(
-        "document",
-        sa.Column(
-            "file_size_kb",
-            sa.Float(),
-            nullable=True,
-            comment="Size of the document in bytes",
+            comment="Total size of documents being uploaded to collection in MB",
         ),
     )
     op.add_column(
@@ -50,7 +41,16 @@ def upgrade():
             "documents",
             sa.JSON(),
             nullable=True,
-            comment="JSON array of document UUIDs included in this job",
+            comment="List of documents given to make collection",
+        ),
+    )
+    op.add_column(
+        "document",
+        sa.Column(
+            "file_size_kb",
+            sa.Float(),
+            nullable=True,
+            comment="Size of the document in kilobytes (KB)",
         ),
     )
 

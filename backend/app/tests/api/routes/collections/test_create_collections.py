@@ -16,7 +16,7 @@ def _extract_metadata(body: dict) -> dict | None:
 
 
 def _create_test_document(
-    db: Session, project_id: int, file_size: int = 1024
+    db: Session, project_id: int, file_size: float = 1
 ) -> Document:
     """Helper to create a test document."""
     doc = Document(
@@ -24,7 +24,7 @@ def _create_test_document(
         fname="test_document.txt",
         object_store_url="s3://test-bucket/test_document.txt",
         project_id=project_id,
-        file_size=file_size,
+        file_size_kb=file_size,
     )
     db.add(doc)
     db.commit()
@@ -41,7 +41,7 @@ def test_collection_creation_with_assistant_calls_start_job_and_returns_job(
     db: Session,
 ) -> None:
     # Create a test document in the database
-    doc = _create_test_document(db, user_api_key.project_id, file_size=2048)
+    doc = _create_test_document(db, user_api_key.project_id, file_size=2)
 
     creation_data = CreationRequest(
         model="gpt-4o",
@@ -91,7 +91,7 @@ def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_f
     db: Session,
 ) -> None:
     # Create a test document in the database
-    doc = _create_test_document(db, user_api_key.project_id, file_size=5120)
+    doc = _create_test_document(db, user_api_key.project_id, file_size=5)
 
     creation_data = CreationRequest(
         temperature=0.000001,
