@@ -23,7 +23,7 @@ from app.models import (
 )
 
 
-async def calculate_file_size(file: UploadFile) -> float:
+def calculate_file_size(file: UploadFile) -> float:
     """
     Calculate the size of an uploaded file in kilobytes.
 

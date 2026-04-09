@@ -131,7 +131,7 @@ async def upload_doc(
         transformer=transformer,
     )
 
-    file_size_kb = await calculate_file_size(src)
+    file_size_kb = calculate_file_size(src)
     file_size_mb = file_size_kb / 1024
 
     if file_size_mb > MAX_DOC_SIZE_MB:
