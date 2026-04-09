@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
-from app.models import CreationRequest, Collection
+from app.models import CreationRequest, Collection, Document
 
 
 class BaseProvider(ABC):
@@ -32,17 +31,14 @@ class BaseProvider(ABC):
         self,
         collection_request: CreationRequest,
         storage: CloudStorage,
-        document_crud: DocumentCrud,
+        docs_batches: list[list[Document]],
     ) -> Collection:
         """Create collection with documents and optionally an assistant.
 
         Args:
             collection_request: Collection parameters (name, description, document list, etc.)
             storage: Cloud storage instance for file access
-            document_crud: DocumentCrud instance for fetching documents
-            batch_size: Number of documents to process per batch
-            with_assistant: Whether to create an assistant/agent
-            assistant_options: Options for assistant creation (provider-specific)
+            docs_batches: Pre-fetched document batches (DB reads must happen before this call)
 
         Returns:
             llm_service_id: ID of the resource to delete
