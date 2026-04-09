@@ -29,9 +29,15 @@ from app.core.batch.base import BATCH_KEY
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import update_evaluation_run, resolve_model_from_config
 from app.crud.evaluations.embeddings import (
+    EMBEDDING_MODEL,
     calculate_average_similarity,
     parse_embedding_results,
     start_embedding_batch,
+)
+from app.crud.evaluations.pricing import (
+    build_cost_dict,
+    build_embedding_cost_entry,
+    build_response_cost_entry,
 )
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
@@ -332,6 +338,18 @@ async def process_completed_evaluation(
         # Use model stored at creation time for cost tracking
         model = resolve_model_from_config(session=session, eval_run=eval_run)
 
+        # Aggregate response generation cost
+        try:
+            response_cost_entry = build_response_cost_entry(
+                model=model, results=results
+            )
+            cost = build_cost_dict(response_entry=response_cost_entry)
+            update_evaluation_run(session=session, eval_run=eval_run, cost=cost)
+        except Exception as cost_err:
+            logger.warning(
+                f"[process_completed_evaluation] {log_prefix} Failed to calculate response cost | {cost_err}"
+            )
+
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
             dataset_name=eval_run.dataset_name,
@@ -488,7 +506,23 @@ async def process_completed_embedding_batch(
                     exc_info=True,
                 )
 
-        # Step 7: Mark evaluation as completed
+        # Step 7: Accumulate embedding cost onto existing response cost
+        try:
+            embedding_cost_entry = build_embedding_cost_entry(
+                model=EMBEDDING_MODEL, raw_results=raw_results
+            )
+            existing_cost = eval_run.cost or {}
+            response_entry = existing_cost.get("response")
+            eval_run.cost = build_cost_dict(
+                response_entry=response_entry,
+                embedding_entry=embedding_cost_entry,
+            )
+        except Exception as cost_err:
+            logger.warning(
+                f"[process_completed_embedding_batch] {log_prefix} Failed to calculate embedding cost | {cost_err}"
+            )
+
+        # Step 8: Mark evaluation as completed
         eval_run = update_evaluation_run(
             session=session, eval_run=eval_run, status="completed", score=eval_run.score
         )

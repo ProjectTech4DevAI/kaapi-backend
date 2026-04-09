@@ -197,6 +197,7 @@ def update_evaluation_run(
     object_store_url: str | None = None,
     score_trace_url: str | None = None,
     score: dict | None = None,
+    cost: dict | None = None,
     embedding_batch_job_id: int | None = None,
 ) -> EvaluationRun:
     """
@@ -226,6 +227,8 @@ def update_evaluation_run(
         eval_run.object_store_url = object_store_url
     if score is not None:
         eval_run.score = score
+    if cost is not None:
+        eval_run.cost = cost
     if embedding_batch_job_id is not None:
         eval_run.embedding_batch_job_id = embedding_batch_job_id
     if score_trace_url is not None:

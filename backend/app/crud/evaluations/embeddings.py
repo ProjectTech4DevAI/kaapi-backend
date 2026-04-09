@@ -204,11 +204,15 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                 )
                 continue
 
+            # Extract usage for cost tracking
+            usage = response_body.get("usage")
+
             embedding_pairs.append(
                 {
                     "trace_id": trace_id,
                     "output_embedding": output_embedding,
                     "ground_truth_embedding": ground_truth_embedding,
+                    "usage": usage,
                 }
             )
 

@@ -313,6 +313,17 @@ class EvaluationRun(SQLModel, table=True):
         description="Evaluation scores (e.g., correctness, cosine_similarity, etc.)",
     )
 
+    # Cost tracking field
+    cost: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Cost tracking (response/embedding tokens and USD)",
+        ),
+        description="Cost breakdown by stage (response, embedding) with token counts and USD",
+    )
+
     # Error message field
     error_message: str | None = SQLField(
         default=None,
@@ -397,6 +408,7 @@ class EvaluationRunPublic(SQLModel):
     object_store_url: str | None
     total_items: int
     score: dict[str, Any] | None
+    cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int
     project_id: int
