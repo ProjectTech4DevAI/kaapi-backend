@@ -89,7 +89,7 @@ class TestGoogleAuth:
     def test_google_auth_inactive_user_rejected(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
-        """Test returns 403 when user account is inactive."""
+        """Test that inactive user is activated on first Google login."""
         user = create_random_user(db)
         user.is_active = False
         db.add(user)
@@ -97,11 +97,15 @@ class TestGoogleAuth:
         db.refresh(user)
 
         mock_settings.GOOGLE_CLIENT_ID = "test-client-id"
+        mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+        mock_settings.REFRESH_TOKEN_EXPIRE_MINUTES = 10080
+        mock_settings.ENVIRONMENT = "testing"
+        mock_settings.API_V1_STR = settings.API_V1_STR
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
         mock_verify.return_value = _mock_idinfo(user.email)
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
-        assert resp.status_code == 403
-        assert "Inactive" in resp.json()["error"]
+        assert resp.status_code == 200
 
     @patch("app.api.routes.auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.auth.settings")

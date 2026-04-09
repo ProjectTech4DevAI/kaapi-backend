@@ -145,7 +145,7 @@ class TestGetAuthContext:
             )
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Inactive user"
+        assert exc_info.value.detail == "User access has been revoked"
 
     def test_get_auth_context_with_inactive_organization(
         self, db: Session, user_api_key: TestAuthContext
