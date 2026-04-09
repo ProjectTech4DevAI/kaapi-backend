@@ -31,7 +31,7 @@ def _mock_idinfo(email: str, email_verified: bool = True) -> dict:
 class TestGoogleAuth:
     """Test suite for POST /auth/google endpoint."""
 
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_not_configured(self, mock_settings, client: TestClient):
         """Test returns 500 when GOOGLE_CLIENT_ID is not set."""
         mock_settings.GOOGLE_CLIENT_ID = ""
@@ -39,8 +39,8 @@ class TestGoogleAuth:
         assert resp.status_code == 500
         assert "not configured" in resp.json()["error"]
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_invalid_token(
         self, mock_settings, mock_verify, client: TestClient
     ):
@@ -56,8 +56,8 @@ class TestGoogleAuth:
         assert resp.status_code == 400
         assert "Invalid or expired" in resp.json()["error"]
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_unverified_email(
         self, mock_settings, mock_verify, client: TestClient
     ):
@@ -71,8 +71,8 @@ class TestGoogleAuth:
         assert resp.status_code == 400
         assert "not verified" in resp.json()["error"]
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_user_not_found(
         self, mock_settings, mock_verify, client: TestClient
     ):
@@ -84,8 +84,8 @@ class TestGoogleAuth:
         assert resp.status_code == 401
         assert "No account found" in resp.json()["error"]
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_inactive_user_rejected(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
@@ -103,8 +103,8 @@ class TestGoogleAuth:
         assert resp.status_code == 403
         assert "Inactive" in resp.json()["error"]
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_success_no_projects(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
@@ -130,8 +130,8 @@ class TestGoogleAuth:
         assert data["available_projects"] == []
         assert "access_token" in resp.cookies
 
-    @patch("app.api.routes.google_auth.id_token.verify_oauth2_token")
-    @patch("app.api.routes.google_auth.settings")
+    @patch("app.api.routes.auth.id_token.verify_oauth2_token")
+    @patch("app.api.routes.auth.settings")
     def test_google_auth_success_single_project_via_api_key(
         self,
         mock_settings,

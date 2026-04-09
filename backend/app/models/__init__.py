@@ -173,12 +173,17 @@ from .user import (
     NewPassword,
     User,
     UserCreate,
-    UserMeResponse,
-    UserProjectAccess,
     UserPublic,
     UserRegister,
     UserUpdate,
     UserUpdateMe,
     UsersPublic,
     UpdatePassword,
+)
+
+from .user_project import (
+    UserProject,
+    AddUsersToProjectRequest,
+    UserEntry,
+    UserProjectPublic,
 )

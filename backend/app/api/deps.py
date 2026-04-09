@@ -8,6 +8,8 @@ from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from pydantic import ValidationError
 from sqlmodel import Session
 
+from sqlmodel import and_, select
+
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
@@ -15,11 +17,13 @@ from app.core.security import api_key_manager
 from app.crud.organization import validate_organization
 from app.crud.project import validate_project
 from app.models import (
+    APIKey,
     AuthContext,
     Organization,
     Project,
     TokenPayload,
     User,
+    UserProject,
 )
 
 
@@ -64,10 +68,11 @@ def _authenticate_with_jwt(session: Session, token: str) -> AuthContext:
         )
 
     user = session.get(User, token_data.sub)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Inactive user")
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User access has been revoked",
+        )
 
     organization: Organization | None = None
     project: Project | None = None
@@ -76,6 +81,39 @@ def _authenticate_with_jwt(session: Session, token: str) -> AuthContext:
         organization = validate_organization(session=session, org_id=token_data.org_id)
     if token_data.project_id:
         project = validate_project(session=session, project_id=token_data.project_id)
+
+    # Verify user still has access to this project
+    if project:
+        has_access = session.exec(
+            select(UserProject.id)
+            .where(
+                and_(
+                    UserProject.user_id == user.id,
+                    UserProject.project_id == project.id,
+                )
+            )
+            .limit(1)
+        ).first()
+
+        if not has_access:
+            # Fallback: check APIKey table for backward compatibility
+            has_api_key = session.exec(
+                select(APIKey.id)
+                .where(
+                    and_(
+                        APIKey.user_id == user.id,
+                        APIKey.project_id == project.id,
+                        APIKey.is_deleted.is_(False),
+                    )
+                )
+                .limit(1)
+            ).first()
+
+            if not has_api_key:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User access to this project has been revoked",
+                )
 
     return AuthContext(user=user, organization=organization, project=project)
 
