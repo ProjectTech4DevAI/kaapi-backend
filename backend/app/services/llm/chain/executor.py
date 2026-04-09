@@ -63,21 +63,21 @@ class ChainExecutor:
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
-        with Session(engine) as session:
-            if result.success:
-                final = LLMChainResponse(
-                    response=result.response.response,
-                    usage=result.usage,
-                    provider_raw_response=result.response.provider_raw_response,
+        if result.success:
+            final = LLMChainResponse(
+                response=result.response.response,
+                usage=result.usage,
+                provider_raw_response=result.response.provider_raw_response,
+            )
+            callback_response = APIResponse.success_response(
+                data=final, metadata=self._request.request_metadata
+            )
+            if self._request.callback_url:
+                send_callback(
+                    callback_url=str(self._request.callback_url),
+                    data=callback_response.model_dump(),
                 )
-                callback_response = APIResponse.success_response(
-                    data=final, metadata=self._request.request_metadata
-                )
-                if self._request.callback_url:
-                    send_callback(
-                        callback_url=str(self._request.callback_url),
-                        data=callback_response.model_dump(),
-                    )
+            with Session(engine) as session:
                 JobCrud(session).update(
                     job_id=self._context.job_id,
                     job_update=JobUpdate(status=JobStatus.SUCCESS),
@@ -89,9 +89,9 @@ class ChainExecutor:
                     output=result.response.response.output.model_dump(),
                     total_usage=self._context.aggregated_usage.model_dump(),
                 )
-                return callback_response.model_dump()
-            else:
-                return self._handle_error(result.error)
+            return callback_response.model_dump()
+        else:
+            return self._handle_error(result.error)
 
     def _handle_error(self, error: str) -> dict:
         callback_response = APIResponse.failure_response(
@@ -103,13 +103,13 @@ class ChainExecutor:
             f"chain_id={self._context.chain_id}, job_id={self._context.job_id}, error={error}"
         )
 
-        with Session(engine) as session:
-            if self._request.callback_url:
-                send_callback(
-                    callback_url=str(self._request.callback_url),
-                    data=callback_response.model_dump(),
-                )
+        if self._request.callback_url:
+            send_callback(
+                callback_url=str(self._request.callback_url),
+                data=callback_response.model_dump(),
+            )
 
+        with Session(engine) as session:
             update_llm_chain_status(
                 session,
                 chain_id=self._context.chain_id,
