@@ -15,13 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Batch API pricing in USD per token
 MODEL_PRICING: dict[str, dict[str, Any]] = {
-    # Chat models (batch pricing)
+    # GPT-4o (batch pricing)
     "gpt-4o": {
-        "mode": "chat",
-        "input_cost_per_token": 1.25e-06,
-        "output_cost_per_token": 5e-06,
-    },
-    "gpt-4o-2024-08-06": {
         "mode": "chat",
         "input_cost_per_token": 1.25e-06,
         "output_cost_per_token": 5e-06,
@@ -31,23 +26,53 @@ MODEL_PRICING: dict[str, dict[str, Any]] = {
         "input_cost_per_token": 7.5e-08,
         "output_cost_per_token": 3e-07,
     },
-    "gpt-4o-mini-2024-07-18": {
+    # GPT-4.1 (batch pricing)
+    "gpt-4.1": {
         "mode": "chat",
-        "input_cost_per_token": 7.5e-08,
-        "output_cost_per_token": 3e-07,
+        "input_cost_per_token": 1e-06,
+        "output_cost_per_token": 4e-06,
+    },
+    # GPT-5 (batch pricing)
+    "gpt-5": {
+        "mode": "chat",
+        "input_cost_per_token": 6.25e-07,
+        "output_cost_per_token": 5e-06,
+    },
+    "gpt-5-mini": {
+        "mode": "chat",
+        "input_cost_per_token": 1.25e-07,
+        "output_cost_per_token": 1e-06,
+    },
+    "gpt-5-nano": {
+        "mode": "chat",
+        "input_cost_per_token": 2.5e-08,
+        "output_cost_per_token": 2e-07,
+    },
+    # GPT-5.4 (batch pricing)
+    "gpt-5.4": {
+        "mode": "chat",
+        "input_cost_per_token": 1.25e-06,
+        "output_cost_per_token": 7.5e-06,
+    },
+    "gpt-5.4-pro": {
+        "mode": "chat",
+        "input_cost_per_token": 1.5e-05,
+        "output_cost_per_token": 9e-05,
+    },
+    "gpt-5.4-mini": {
+        "mode": "chat",
+        "input_cost_per_token": 3.75e-07,
+        "output_cost_per_token": 2.25e-06,
+    },
+    "gpt-5.4-nano": {
+        "mode": "chat",
+        "input_cost_per_token": 1e-07,
+        "output_cost_per_token": 6.25e-07,
     },
     # Embedding models (batch pricing)
     "text-embedding-3-large": {
         "mode": "embedding",
         "input_cost_per_token": 6.5e-08,
-    },
-    "text-embedding-3-small": {
-        "mode": "embedding",
-        "input_cost_per_token": 1e-08,
-    },
-    "text-embedding-ada-002": {
-        "mode": "embedding",
-        "input_cost_per_token": 1e-07,
     },
 }
 
