@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -12,6 +13,7 @@ from app.crud.auth import get_user_accessible_projects
 from app.models import (
     GoogleAuthRequest,
     GoogleAuthResponse,
+    MagicLinkRequest,
     Message,
     SelectProjectRequest,
     Token,
@@ -20,10 +22,17 @@ from app.services.auth import (
     build_google_auth_response,
     build_token_response,
     clear_auth_cookies,
+    generate_magic_link_token,
     validate_refresh_token,
     verify_invite_token,
+    verify_magic_link_token,
 )
-from app.utils import APIResponse, load_description
+from app.utils import (
+    APIResponse,
+    generate_magic_link_email,
+    load_description,
+    send_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -241,5 +250,116 @@ def verify_invitation(session: SessionDep, token: str) -> JSONResponse:
 
     logger.info(
         f"[verify_invitation] Invitation verified | user_id: {user.id}, project_id: {invite_data['project_id']}"
+    )
+    return response
+
+
+@router.post(
+    "/magic-link",
+    description=load_description("auth/magic_link.md"),
+    response_model=APIResponse[Message],
+)
+def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
+    """Send a magic link login email to the user."""
+
+    user = get_user_by_email(session=session, email=body.email)
+    if not user:
+        # Return success even if user not found to prevent email enumeration
+        logger.info(
+            f"[request_magic_link] Magic link requested for non-existent email: {body.email}"
+        )
+        return APIResponse.success_response(
+            data=Message(message="If an account exists, a login link has been sent.")
+        )
+
+    if not user.is_active:
+        logger.info(
+            f"[request_magic_link] Magic link requested for inactive user | user_id: {user.id}"
+        )
+        return APIResponse.success_response(
+            data=Message(message="If an account exists, a login link has been sent.")
+        )
+
+    token = generate_magic_link_token(email=body.email)
+
+    if settings.emails_enabled:
+        try:
+            email_data = generate_magic_link_email(
+                email_to=body.email,
+                magic_link_token=token,
+            )
+            send_email(
+                email_to=body.email,
+                subject=email_data.subject,
+                html_content=email_data.html_content,
+            )
+            logger.info(
+                f"[request_magic_link] Magic link email sent | email: {body.email}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[request_magic_link] Failed to send magic link email | email: {body.email}, error: {e}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send login email. Please try again later.",
+            )
+    else:
+        logger.warning("[request_magic_link] Email sending is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email service is not configured",
+        )
+
+    return APIResponse.success_response(
+        data=Message(message="If an account exists, a login link has been sent.")
+    )
+
+
+@router.get(
+    "/magic-link/verify",
+    description=load_description("auth/magic_link_verify.md"),
+    response_model=APIResponse[Token],
+)
+def verify_magic_link(session: SessionDep, token: str) -> JSONResponse:
+    """Verify a magic link token and log the user in."""
+
+    email = verify_magic_link_token(token)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired login link. Please request a new one.",
+        )
+
+    user = get_user_by_email(session=session, email=email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User account not found",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive",
+        )
+
+    # Get user's projects to embed in token
+    available_projects = get_user_accessible_projects(session=session, user_id=user.id)
+
+    organization_id = None
+    project_id = None
+    if len(available_projects) == 1:
+        organization_id = available_projects[0]["organization_id"]
+        project_id = available_projects[0]["project_id"]
+
+    response = build_token_response(
+        user_id=user.id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+
+    logger.info(
+        f"[verify_magic_link] User logged in via magic link | user_id: {user.id}"
     )
     return response

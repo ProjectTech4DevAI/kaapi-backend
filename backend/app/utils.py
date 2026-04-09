@@ -207,6 +207,22 @@ def generate_invite_email(
     return EmailData(html_content=html_content, subject=subject)
 
 
+def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    subject = f"{app_name} - Sign in to your account"
+    link = f"{settings.FRONTEND_HOST}/verify?token={magic_link_token}"
+    html_content = render_email_template(
+        template_name="magic_link_login.html",
+        context={
+            "app_name": app_name,
+            "email": email_to,
+            "link": link,
+            "valid_minutes": settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
 def generate_password_reset_token(email: str) -> str:
     delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
     now = datetime.now(timezone.utc)

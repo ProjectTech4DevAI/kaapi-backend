@@ -178,42 +178,89 @@ def validate_refresh_token(
     return user, token_data
 
 
-def generate_invite_token(
+def generate_email_token(
     email: str,
-    organization_id: int,
-    project_id: int,
+    token_type: str,
+    expires_delta: timedelta,
+    organization_id: int | None = None,
+    project_id: int | None = None,
 ) -> str:
-    """Generate a JWT invitation token for a user."""
-    delta = timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS)
+    """
+    Generate a JWT email token (invite or magic_link).
+
+    Args:
+        email: User's email address (stored as 'sub' claim)
+        token_type: Token type identifier (e.g. "invite", "magic_link")
+        expires_delta: Token expiration duration
+        organization_id: Optional org ID to embed (for invite tokens)
+        project_id: Optional project ID to embed (for invite tokens)
+    """
     now = datetime.now(timezone.utc)
-    expires = now + delta
-    to_encode = {
-        "exp": expires.timestamp(),
+    to_encode: dict = {
+        "exp": (now + expires_delta).timestamp(),
         "nbf": now,
         "sub": email,
-        "org_id": organization_id,
-        "project_id": project_id,
-        "type": "invite",
+        "type": token_type,
     }
+    if organization_id is not None:
+        to_encode["org_id"] = organization_id
+    if project_id is not None:
+        to_encode["project_id"] = project_id
     return pyjwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
 
 
-def verify_invite_token(token: str) -> dict | None:
+def verify_email_token(token: str, expected_type: str) -> dict | None:
     """
-    Verify an invitation token and return the payload.
+    Verify a JWT email token and return the payload.
 
-    Returns dict with email, org_id, project_id or None if invalid.
+    Args:
+        token: The JWT token string
+        expected_type: Expected token type (e.g. "invite", "magic_link")
+
+    Returns:
+        Dict with token claims or None if invalid/expired/wrong type.
     """
     try:
         payload = pyjwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
         )
-        if payload.get("type") != "invite":
+        if payload.get("type") != expected_type:
             return None
         return {
             "email": payload["sub"],
-            "organization_id": payload["org_id"],
-            "project_id": payload["project_id"],
+            "organization_id": payload.get("org_id"),
+            "project_id": payload.get("project_id"),
         }
     except (InvalidTokenError, KeyError):
         return None
+
+
+def generate_invite_token(email: str, organization_id: int, project_id: int) -> str:
+    """Generate a JWT invitation token for a user (expires in INVITE_TOKEN_EXPIRE_HOURS)."""
+    return generate_email_token(
+        email=email,
+        token_type="invite",
+        expires_delta=timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS),
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+
+
+def verify_invite_token(token: str) -> dict | None:
+    """Verify an invitation token. Returns dict with email, org_id, project_id or None."""
+    return verify_email_token(token, expected_type="invite")
+
+
+def generate_magic_link_token(email: str) -> str:
+    """Generate a short-lived magic link login token (expires in MAGIC_LINK_TOKEN_EXPIRE_MINUTES)."""
+    return generate_email_token(
+        email=email,
+        token_type="magic_link",
+        expires_delta=timedelta(minutes=settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES),
+    )
+
+
+def verify_magic_link_token(token: str) -> str | None:
+    """Verify a magic link token. Returns email string or None."""
+    result = verify_email_token(token, expected_type="magic_link")
+    return result["email"] if result else None
