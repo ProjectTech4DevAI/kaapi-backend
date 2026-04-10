@@ -43,6 +43,7 @@ dependencies = [
     "indic-nlp-library>=0.92",
     "whisper-normalizer>=0.1.12",
     "elevenlabs>=2.38.1",
+    "google-auth>=2.49.1",
     "gevent>=25.9.1",
 ]
 

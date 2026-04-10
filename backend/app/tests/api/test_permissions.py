@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi import HTTPException
 from sqlmodel import Session
@@ -6,6 +8,13 @@ from app.models import User
 from app.api.permissions import Permission, has_permission, require_permission
 from app.api.deps import get_auth_context
 from app.tests.utils.test_data import create_test_api_key
+
+
+def _mock_request() -> MagicMock:
+    """Create a mock Request object with empty cookies."""
+    request = MagicMock()
+    request.cookies = {}
+    return request
 
 
 class TestHasPermission:
@@ -21,7 +30,10 @@ class TestHasPermission:
         db.refresh(user)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         result = has_permission(auth_context, Permission.SUPERUSER, db)
@@ -33,7 +45,10 @@ class TestHasPermission:
         api_key_response = create_test_api_key(db)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         result = has_permission(auth_context, Permission.SUPERUSER, db)
@@ -47,7 +62,10 @@ class TestHasPermission:
         api_key_response = create_test_api_key(db)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         result = has_permission(auth_context, Permission.REQUIRE_ORGANIZATION, db)
@@ -61,7 +79,10 @@ class TestHasPermission:
         api_key_response = create_test_api_key(db)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         auth_context.organization = None
@@ -75,7 +96,10 @@ class TestHasPermission:
         api_key_response = create_test_api_key(db)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         result = has_permission(auth_context, Permission.REQUIRE_PROJECT, db)
@@ -87,7 +111,10 @@ class TestHasPermission:
         api_key_response = create_test_api_key(db)
 
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         auth_context.project = None
@@ -115,7 +142,10 @@ class TestRequirePermission:
         db.commit()
         db.refresh(user)
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         permission_checker = require_permission(Permission.SUPERUSER)
@@ -127,7 +157,10 @@ class TestRequirePermission:
         """Test that permission checker raises HTTPException with 403 when user lacks permission"""
         api_key_response = create_test_api_key(db)
         auth_context = get_auth_context(
-            session=db, token=None, api_key=api_key_response.key
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
         )
 
         permission_checker = require_permission(Permission.SUPERUSER)
