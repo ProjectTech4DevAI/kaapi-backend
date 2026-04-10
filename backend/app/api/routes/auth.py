@@ -264,20 +264,12 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
 
     user = get_user_by_email(session=session, email=body.email)
     if not user:
-        # Return success even if user not found to prevent email enumeration
         logger.info(
             f"[request_magic_link] Magic link requested for non-existent email: {body.email}"
         )
-        return APIResponse.success_response(
-            data=Message(message="If an account exists, a login link has been sent.")
-        )
-
-    if not user.is_active:
-        logger.info(
-            f"[request_magic_link] Magic link requested for inactive user | user_id: {user.id}"
-        )
-        return APIResponse.success_response(
-            data=Message(message="If an account exists, a login link has been sent.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found for this email.",
         )
 
     token = generate_magic_link_token(email=body.email)
@@ -338,10 +330,14 @@ def verify_magic_link(session: SessionDep, token: str) -> JSONResponse:
             detail="User account not found",
         )
 
+    # Activate user if not already active
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+        user.is_active = True
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        logger.info(
+            f"[verify_magic_link] User activated via magic link | user_id: {user.id}"
         )
 
     # Get user's projects to embed in token

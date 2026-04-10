@@ -317,21 +317,31 @@ class TestMagicLink:
         assert resp.status_code == 500
 
     def test_magic_link_nonexistent_user(self, client: TestClient):
-        """Test returns success even for non-existent user (no enumeration)."""
+        """Test returns 404 for non-existent user."""
         resp = client.post(MAGIC_LINK_URL, json={"email": "nonexistent@example.com"})
-        assert resp.status_code == 200
-        assert "login link has been sent" in resp.json()["data"]["message"]
+        assert resp.status_code == 404
+        assert "No account found" in resp.json()["error"]
 
-    def test_magic_link_inactive_user(self, db: Session, client: TestClient):
-        """Test returns success for inactive user (no enumeration)."""
+    @patch("app.api.routes.auth.send_email")
+    @patch("app.api.routes.auth.settings")
+    def test_magic_link_inactive_user_allowed(
+        self, mock_settings, mock_send, db: Session, client: TestClient
+    ):
+        """Test inactive user can still request magic link to reactivate."""
         user = create_random_user(db)
         user.is_active = False
         db.add(user)
         db.commit()
 
+        mock_settings.emails_enabled = True
+        mock_settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES = 15
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
         resp = client.post(MAGIC_LINK_URL, json={"email": user.email})
         assert resp.status_code == 200
-        assert "login link has been sent" in resp.json()["data"]["message"]
+        mock_send.assert_called_once()
 
     @patch("app.api.routes.auth.send_email")
     @patch("app.api.routes.auth.settings")
@@ -377,16 +387,20 @@ class TestMagicLinkVerify:
         resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
         assert resp.status_code == 404
 
-    def test_verify_inactive_user(self, db: Session, client: TestClient):
-        """Test returns 403 for inactive user."""
+    def test_verify_activates_inactive_user(self, db: Session, client: TestClient):
+        """Test magic link verify activates inactive user."""
         user = create_random_user(db)
         user.is_active = False
         db.add(user)
         db.commit()
+        db.refresh(user)
 
         token = generate_magic_link_token(email=user.email)
         resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
-        assert resp.status_code == 403
+        assert resp.status_code == 200
+
+        db.refresh(user)
+        assert user.is_active is True
 
     def test_verify_success(self, db: Session, client: TestClient):
         """Test successful magic link verification logs user in."""
