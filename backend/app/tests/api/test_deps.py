@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
@@ -11,7 +13,15 @@ from app.models import (
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.user import authentication_token_from_email, create_random_user
 from app.core.config import settings
+from app.core.security import create_access_token, create_refresh_token
 from app.tests.utils.test_data import create_test_api_key
+
+
+def _mock_request(cookies: dict | None = None) -> MagicMock:
+    """Create a mock Request object with optional cookies."""
+    request = MagicMock()
+    request.cookies = cookies or {}
+    return request
 
 
 class TestGetAuthContext:
@@ -22,6 +32,7 @@ class TestGetAuthContext:
     ) -> None:
         """Test successful authentication with valid API key"""
         auth_context = get_auth_context(
+            request=_mock_request(),
             session=db,
             token=None,
             api_key=user_api_key.key,
@@ -33,18 +44,19 @@ class TestGetAuthContext:
         assert auth_context.organization == user_api_key.organization
 
     def test_get_auth_context_with_invalid_api_key(self, db: Session) -> None:
-        """Test authentication fails with invalid API key"""
+        """Test authentication fails with invalid API key when no other auth is provided"""
         invalid_api_key = "ApiKey InvalidKeyThatDoesNotExist123456789"
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=invalid_api_key,
             )
 
         assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "Invalid API Key"
+        assert exc_info.value.detail == "Invalid Authorization format"
 
     def test_get_auth_context_with_valid_token(
         self, db: Session, normal_user_token_headers: dict[str, str]
@@ -52,6 +64,7 @@ class TestGetAuthContext:
         """Test successful authentication with valid token"""
         token = normal_user_token_headers["Authorization"].replace("Bearer ", "")
         auth_context = get_auth_context(
+            request=_mock_request(),
             session=db,
             token=token,
             api_key=None,
@@ -67,6 +80,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=invalid_token,
                 api_key=None,
@@ -78,6 +92,7 @@ class TestGetAuthContext:
         """Test authentication fails when neither API key nor token is provided"""
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=None,
@@ -98,6 +113,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=api_key.key,
@@ -122,13 +138,14 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=token,
                 api_key=None,
             )
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Inactive user"
+        assert exc_info.value.detail == "User access has been revoked"
 
     def test_get_auth_context_with_inactive_organization(
         self, db: Session, user_api_key: TestAuthContext
@@ -142,6 +159,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=user_api_key.key,
@@ -162,6 +180,7 @@ class TestGetAuthContext:
 
         with pytest.raises(HTTPException) as exc_info:
             get_auth_context(
+                request=_mock_request(),
                 session=db,
                 token=None,
                 api_key=user_api_key.key,
@@ -169,3 +188,83 @@ class TestGetAuthContext:
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail == "Inactive Project"
+
+    def test_get_auth_context_with_cookie_token(
+        self, db: Session, normal_user_token_headers: dict[str, str]
+    ) -> None:
+        """Test successful authentication via access_token cookie"""
+        token = normal_user_token_headers["Authorization"].replace("Bearer ", "")
+        auth_context = get_auth_context(
+            request=_mock_request(cookies={"access_token": token}),
+            session=db,
+            token=None,
+            api_key=None,
+        )
+
+        assert isinstance(auth_context, AuthContext)
+        assert auth_context.user.email == settings.EMAIL_TEST_USER
+
+    def test_get_auth_context_with_expired_token(self, db: Session) -> None:
+        """Test authentication fails with expired token"""
+        from datetime import timedelta
+
+        expired_token = create_access_token(
+            subject="1", expires_delta=timedelta(minutes=-1)
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_auth_context(
+                request=_mock_request(),
+                session=db,
+                token=expired_token,
+                api_key=None,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Token has expired"
+
+    def test_get_auth_context_rejects_refresh_token(self, db: Session) -> None:
+        """Test that refresh tokens are rejected for API access"""
+        from datetime import timedelta
+
+        refresh_token = create_refresh_token(
+            subject="1", expires_delta=timedelta(minutes=60)
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_auth_context(
+                request=_mock_request(),
+                session=db,
+                token=refresh_token,
+                api_key=None,
+            )
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Refresh tokens cannot be used for API access"
+
+    def test_get_auth_context_jwt_with_org_and_project(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """Test JWT token with org_id and project_id populates AuthContext"""
+        from datetime import timedelta
+
+        token = create_access_token(
+            subject=str(user_api_key.user.id),
+            expires_delta=timedelta(minutes=60),
+            organization_id=user_api_key.organization.id,
+            project_id=user_api_key.project.id,
+        )
+
+        auth_context = get_auth_context(
+            request=_mock_request(),
+            session=db,
+            token=token,
+            api_key=None,
+        )
+
+        assert isinstance(auth_context, AuthContext)
+        assert auth_context.user.id == user_api_key.user.id
+        assert auth_context.organization is not None
+        assert auth_context.organization.id == user_api_key.organization.id
+        assert auth_context.project is not None
+        assert auth_context.project.id == user_api_key.project.id

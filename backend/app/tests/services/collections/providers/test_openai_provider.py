@@ -24,15 +24,10 @@ def test_create_openai_vector_store_only() -> None:
     )
 
     storage = MagicMock()
-    document_crud = MagicMock()
-
-    fake_batches = [["doc1"], ["doc2"]]
+    docs_batches = [["doc1"], ["doc2"]]
     vector_store_id = generate_openai_id("vs_")
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        return_value=fake_batches,
-    ), patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls:
         vector_store_crud = vector_store_crud_cls.return_value
@@ -42,7 +37,7 @@ def test_create_openai_vector_store_only() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            document_crud,
+            docs_batches,
         )
 
     assert isinstance(collection, Collection)
@@ -62,16 +57,11 @@ def test_create_openai_with_assistant() -> None:
     )
 
     storage = MagicMock()
-    document_crud = MagicMock()
-
-    fake_batches = [["doc1"]]
+    docs_batches = [["doc1"]]
     vector_store_id = generate_openai_id("vs_")
     assistant_id = generate_openai_id("asst_")
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        return_value=fake_batches,
-    ), patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls, patch(
         "app.services.collections.providers.openai.OpenAIAssistantCrud"
@@ -86,7 +76,7 @@ def test_create_openai_with_assistant() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            document_crud,
+            docs_batches,
         )
 
     assert collection.llm_service_id == assistant_id
@@ -142,12 +132,13 @@ def test_create_propagates_exception() -> None:
     )
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        side_effect=RuntimeError("boom"),
-    ):
+        "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
+    ) as vector_store_crud_cls:
+        vector_store_crud_cls.return_value.create.side_effect = RuntimeError("boom")
+
         with pytest.raises(RuntimeError):
             provider.create(
                 collection_request,
                 MagicMock(),
-                MagicMock(),
+                [["doc1"]],
             )

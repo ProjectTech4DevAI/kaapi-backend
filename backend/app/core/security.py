@@ -67,19 +67,57 @@ def get_fernet() -> Fernet:
     return _fernet
 
 
-def create_access_token(subject: str | Any, expires_delta: timedelta) -> str:
+def create_access_token(
+    subject: str | Any,
+    expires_delta: timedelta,
+    organization_id: int | None = None,
+    project_id: int | None = None,
+) -> str:
     """
     Create a JWT access token.
 
     Args:
         subject: The subject of the token (typically user ID)
         expires_delta: Token expiration time delta
+        organization_id: Optional organization ID to embed in the token
+        project_id: Optional project ID to embed in the token
 
     Returns:
         str: Encoded JWT token
     """
     expire = datetime.now(timezone.utc) + expires_delta
-    to_encode = {"exp": expire, "sub": str(subject)}
+    to_encode: dict[str, Any] = {"exp": expire, "sub": str(subject), "type": "access"}
+    if organization_id is not None:
+        to_encode["org_id"] = organization_id
+    if project_id is not None:
+        to_encode["project_id"] = project_id
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token(
+    subject: str | Any,
+    expires_delta: timedelta,
+    organization_id: int | None = None,
+    project_id: int | None = None,
+) -> str:
+    """
+    Create a JWT refresh token.
+
+    Args:
+        subject: The subject of the token (typically user ID)
+        expires_delta: Token expiration time delta
+        organization_id: Optional organization ID to embed in the token
+        project_id: Optional project ID to embed in the token
+
+    Returns:
+        str: Encoded JWT refresh token
+    """
+    expire = datetime.now(timezone.utc) + expires_delta
+    to_encode: dict[str, Any] = {"exp": expire, "sub": str(subject), "type": "refresh"}
+    if organization_id is not None:
+        to_encode["org_id"] = organization_id
+    if project_id is not None:
+        to_encode["project_id"] = project_id
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 

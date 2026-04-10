@@ -6,7 +6,7 @@ from openai import OpenAI
 from app.services.collections.providers import BaseProvider
 from app.core.cloud.storage import CloudStorage
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import batch_documents, get_service_name
+from app.services.collections.helpers import get_service_name
 from app.models import CreationRequest, Collection, Document
 
 
@@ -28,10 +28,10 @@ class OpenAIProvider(BaseProvider):
     ) -> Collection:
         """
         Create OpenAI vector store with documents and optionally an assistant.
+        docs_batches must be pre-fetched inside a DB session before this call.
         """
         try:
             docs_batches = batch_documents(documents)
-
             vector_store_crud = OpenAIVectorStoreCrud(self.client)
             vector_store = vector_store_crud.create()
 
