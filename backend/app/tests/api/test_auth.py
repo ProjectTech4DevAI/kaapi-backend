@@ -95,7 +95,7 @@ class TestGoogleAuth:
 
     @patch("app.api.routes.auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.auth.settings")
-    def test_google_auth_inactive_user_rejected(
+    def test_google_auth_activates_inactive_user(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
         """Test that inactive user is activated on first Google login."""
@@ -505,3 +505,7 @@ class TestTokenGeneration:
         """Test both verify functions return None for garbage tokens."""
         assert verify_invite_token("garbage") is None
         assert verify_magic_link_token("garbage") is None
+
+    def test_verify_invite_token_invalid(self):
+        """Test invite verify returns None for garbage tokens."""
+        assert verify_invite_token("garbage") is None
