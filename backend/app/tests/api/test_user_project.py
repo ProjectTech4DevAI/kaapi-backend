@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -100,6 +102,38 @@ class TestAddProjectUsers:
         assert len(data) >= 1
         emails = [u["email"] for u in data]
         assert email in emails
+
+    @patch("app.api.routes.user_project.send_email")
+    @patch("app.api.routes.user_project.settings")
+    def test_add_user_sends_invite_email(
+        self,
+        mock_settings,
+        mock_send_email,
+        db: Session,
+        client: TestClient,
+        superuser_token_headers: dict[str, str],
+    ):
+        """Test adding a user sends an invitation email when emails are enabled."""
+        project = create_test_project(db)
+        email = random_email()
+
+        mock_settings.emails_enabled = True
+        mock_settings.INVITE_TOKEN_EXPIRE_HOURS = 168
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
+        resp = client.post(
+            f"{USER_PROJECTS_URL}/",
+            json={
+                "organization_id": project.organization_id,
+                "project_id": project.id,
+                "users": [{"email": email}],
+            },
+            headers=superuser_token_headers,
+        )
+        assert resp.status_code == 201
+        mock_send_email.assert_called_once()
 
     def test_add_duplicate_user_same_project(
         self,
