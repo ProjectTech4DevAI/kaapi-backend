@@ -17,5 +17,4 @@ Verify a magic link login token and log the user in.
 ## Error Responses
 
 - **400**: Invalid or expired login link.
-- **403**: User account is inactive.
 - **404**: User account not found.
