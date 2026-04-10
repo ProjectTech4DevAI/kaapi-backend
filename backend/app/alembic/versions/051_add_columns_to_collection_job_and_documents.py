@@ -1,7 +1,7 @@
 """add columns to collection job and documents table
 
-Revision ID: 050
-Revises: 049
+Revision ID: 051
+Revises: 050
 Create Date: 2026-03-25 10:09:47.318575
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "050"
-down_revision = "049"
+revision = "051"
+down_revision = "050"
 branch_labels = None
 depends_on = None
 
