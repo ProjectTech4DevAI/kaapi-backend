@@ -6,7 +6,7 @@ from openai import OpenAI
 from app.services.collections.providers import BaseProvider
 from app.core.cloud.storage import CloudStorage
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import get_service_name
+from app.services.collections.helpers import get_service_name, batch_documents
 from app.models import CreationRequest, Collection, Document
 
 
