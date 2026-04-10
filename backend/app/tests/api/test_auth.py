@@ -8,9 +8,7 @@ from app.core.config import settings
 from app.core.security import create_access_token, create_refresh_token
 from app.services.auth import (
     generate_invite_token,
-    generate_magic_link_token,
     verify_invite_token,
-    verify_magic_link_token,
 )
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.user import create_random_user
@@ -19,8 +17,6 @@ GOOGLE_AUTH_URL = f"{settings.API_V1_STR}/auth/google"
 SELECT_PROJECT_URL = f"{settings.API_V1_STR}/auth/select-project"
 REFRESH_URL = f"{settings.API_V1_STR}/auth/refresh"
 LOGOUT_URL = f"{settings.API_V1_STR}/auth/logout"
-MAGIC_LINK_URL = f"{settings.API_V1_STR}/auth/magic-link"
-MAGIC_LINK_VERIFY_URL = f"{settings.API_V1_STR}/auth/magic-link/verify"
 INVITE_VERIFY_URL = f"{settings.API_V1_STR}/auth/invite/verify"
 
 MOCK_GOOGLE_PROFILE = {
@@ -95,7 +91,7 @@ class TestGoogleAuth:
 
     @patch("app.api.routes.auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.auth.settings")
-    def test_google_auth_inactive_user_rejected(
+    def test_google_auth_activates_inactive_user(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
         """Test that inactive user is activated on first Google login."""
@@ -306,100 +302,6 @@ class TestLogout:
         assert body["data"]["message"] == "Logged out successfully"
 
 
-class TestMagicLink:
-    """Test suite for POST /auth/magic-link endpoint."""
-
-    @patch("app.api.routes.auth.settings")
-    def test_magic_link_email_not_configured(self, mock_settings, client: TestClient):
-        """Test returns 500 when email is not configured."""
-        mock_settings.emails_enabled = False
-        resp = client.post(MAGIC_LINK_URL, json={"email": "test@example.com"})
-        assert resp.status_code == 500
-
-    def test_magic_link_nonexistent_user(self, client: TestClient):
-        """Test returns success even for non-existent user (no enumeration)."""
-        resp = client.post(MAGIC_LINK_URL, json={"email": "nonexistent@example.com"})
-        assert resp.status_code == 200
-        assert "login link has been sent" in resp.json()["data"]["message"]
-
-    def test_magic_link_inactive_user(self, db: Session, client: TestClient):
-        """Test returns success for inactive user (no enumeration)."""
-        user = create_random_user(db)
-        user.is_active = False
-        db.add(user)
-        db.commit()
-
-        resp = client.post(MAGIC_LINK_URL, json={"email": user.email})
-        assert resp.status_code == 200
-        assert "login link has been sent" in resp.json()["data"]["message"]
-
-    @patch("app.api.routes.auth.send_email")
-    @patch("app.api.routes.auth.settings")
-    def test_magic_link_success(
-        self, mock_settings, mock_send, db: Session, client: TestClient
-    ):
-        """Test sends email for valid active user."""
-        user = create_random_user(db)
-
-        mock_settings.emails_enabled = True
-        mock_settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES = 15
-        mock_settings.SECRET_KEY = settings.SECRET_KEY
-        mock_settings.FRONTEND_HOST = "http://localhost:3000"
-        mock_settings.PROJECT_NAME = "Kaapi"
-
-        resp = client.post(MAGIC_LINK_URL, json={"email": user.email})
-        assert resp.status_code == 200
-        assert "login link has been sent" in resp.json()["data"]["message"]
-        mock_send.assert_called_once()
-
-
-class TestMagicLinkVerify:
-    """Test suite for GET /auth/magic-link/verify endpoint."""
-
-    def test_verify_invalid_token(self, client: TestClient):
-        """Test returns 400 for invalid token."""
-        resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token=invalid.token.here")
-        assert resp.status_code == 400
-        assert "expired" in resp.json()["error"] or "Invalid" in resp.json()["error"]
-
-    def test_verify_expired_token(self, db: Session, client: TestClient):
-        """Test returns 400 for expired magic link token."""
-        user = create_random_user(db)
-        with patch("app.services.auth.settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES", -1):
-            token = generate_magic_link_token(email=user.email)
-
-        resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
-        assert resp.status_code == 400
-
-    def test_verify_user_not_found(self, client: TestClient):
-        """Test returns 404 when user doesn't exist."""
-        token = generate_magic_link_token(email="ghost@example.com")
-        resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
-        assert resp.status_code == 404
-
-    def test_verify_inactive_user(self, db: Session, client: TestClient):
-        """Test returns 403 for inactive user."""
-        user = create_random_user(db)
-        user.is_active = False
-        db.add(user)
-        db.commit()
-
-        token = generate_magic_link_token(email=user.email)
-        resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
-        assert resp.status_code == 403
-
-    def test_verify_success(self, db: Session, client: TestClient):
-        """Test successful magic link verification logs user in."""
-        user = create_random_user(db)
-        token = generate_magic_link_token(email=user.email)
-
-        resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert "access_token" in resp.json()["data"]
-        assert "access_token" in resp.cookies
-
-
 class TestInviteVerify:
     """Test suite for GET /auth/invite/verify endpoint."""
 
@@ -467,27 +369,6 @@ class TestTokenGeneration:
         assert result["organization_id"] == 1
         assert result["project_id"] == 2
 
-    def test_verify_invite_token_wrong_type(self):
-        """Test invite verify rejects magic_link tokens."""
-        token = generate_magic_link_token(email="test@example.com")
-        result = verify_invite_token(token)
-        assert result is None
-
-    def test_generate_and_verify_magic_link_token(self):
-        """Test magic link token roundtrip."""
-        token = generate_magic_link_token(email="test@example.com")
-        result = verify_magic_link_token(token)
-        assert result == "test@example.com"
-
-    def test_verify_magic_link_token_wrong_type(self):
-        """Test magic link verify rejects invite tokens."""
-        token = generate_invite_token(
-            email="test@example.com", organization_id=1, project_id=1
-        )
-        result = verify_magic_link_token(token)
-        assert result is None
-
-    def test_verify_invalid_token_returns_none(self):
-        """Test both verify functions return None for garbage tokens."""
+    def test_verify_invite_token_invalid(self):
+        """Test invite verify returns None for garbage tokens."""
         assert verify_invite_token("garbage") is None
-        assert verify_magic_link_token("garbage") is None
