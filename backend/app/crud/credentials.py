@@ -203,12 +203,23 @@ def update_creds_for_org(
     )
     creds = session.exec(statement).one_or_none()
     if creds is None:
-        logger.error(
-            f"[update_creds_for_org] Credentials not found | organization {org_id}, provider {creds_in.provider}, project_id {project_id}"
+        # Create new credential if it doesn't exist
+        creds = Credential(
+            organization_id=org_id,
+            project_id=project_id,
+            is_active=creds_in.is_active if creds_in.is_active is not None else True,
+            provider=creds_in.provider,
+            credential=encrypted_credentials,
+            inserted_at=now(),
+            updated_at=now(),
         )
-        raise HTTPException(
-            status_code=404, detail="Credentials not found for this provider"
+        session.add(creds)
+        session.commit()
+        session.refresh(creds)
+        logger.info(
+            f"[update_creds_for_org] Created new credentials | organization_id {org_id}, provider {creds_in.provider}, project_id {project_id}"
         )
+        return [creds]
 
     creds.credential = encrypted_credentials
     creds.updated_at = now()
