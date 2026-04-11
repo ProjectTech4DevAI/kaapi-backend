@@ -67,15 +67,13 @@ def read_credential(
         org_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
-    if not creds:
-        raise HTTPException(status_code=404, detail="Credentials not found")
 
     return APIResponse.success_response([cred.to_public() for cred in creds])
 
 
 @router.get(
     "/provider/{provider}",
-    response_model=APIResponse[dict],
+    response_model=APIResponse[dict | None],
     description=load_description("credentials/get_provider.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -97,7 +95,7 @@ def read_provider_credential(
         project_id=_current_user.project_.id,
     )
     if credential is None:
-        raise HTTPException(status_code=404, detail="Provider credentials not found")
+        return APIResponse.success_response(None)
 
     return APIResponse.success_response(
         mask_credential_fields(provider_enum, credential)
@@ -209,15 +207,13 @@ def read_credentials_by_org_project(
         org_id=org_id,
         project_id=project_id,
     )
-    if not creds:
-        raise HTTPException(status_code=404, detail="Credentials not found")
 
     return APIResponse.success_response([cred.to_public() for cred in creds])
 
 
 @router.get(
     "/{org_id}/{project_id}/provider/{provider}",
-    response_model=APIResponse[dict],
+    response_model=APIResponse[dict | None],
     description=load_description("credentials/get_provider_by_org_project.md"),
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
@@ -241,7 +237,7 @@ def read_provider_credential_by_org_project(
         project_id=project_id,
     )
     if credential is None:
-        raise HTTPException(status_code=404, detail="Provider credentials not found")
+        return APIResponse.success_response(None)
 
     return APIResponse.success_response(
         mask_credential_fields(provider_enum, credential)

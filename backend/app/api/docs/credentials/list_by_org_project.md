@@ -1,6 +1,6 @@
 Get all credentials for a specific organization and project.
 
-Retrieves all provider credentials associated with the specified organization and project IDs. Requires superuser access.
+Retrieves all provider credentials associated with the specified organization and project IDs. Sensitive fields (e.g., `api_key`, `secret_key`) are masked in the response. If no credentials are configured, an empty list is returned. Requires superuser access.
 
 ### Path Parameters:
 - **org_id**: Organization ID
