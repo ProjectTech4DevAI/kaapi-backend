@@ -9,82 +9,82 @@ Source: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_wi
 """
 
 import logging
+from collections.abc import Callable, Iterable
 from typing import Any
+
+from app.crud.evaluations.embeddings import EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 
-# Batch API pricing in USD per token
-MODEL_PRICING: dict[str, dict[str, Any]] = {
+# Number of decimals to round USD cost values to.
+COST_USD_DECIMALS = 6
+
+# Batch API pricing in USD per token.
+MODEL_PRICING: dict[str, dict[str, float]] = {
     # GPT-4o (batch pricing)
     "gpt-4o": {
-        "mode": "chat",
         "input_cost_per_token": 1.25e-06,
         "output_cost_per_token": 5e-06,
     },
     "gpt-4o-mini": {
-        "mode": "chat",
         "input_cost_per_token": 7.5e-08,
         "output_cost_per_token": 3e-07,
     },
     # GPT-4.1 (batch pricing)
     "gpt-4.1": {
-        "mode": "chat",
         "input_cost_per_token": 1e-06,
         "output_cost_per_token": 4e-06,
     },
     # GPT-5 (batch pricing)
     "gpt-5": {
-        "mode": "chat",
         "input_cost_per_token": 6.25e-07,
         "output_cost_per_token": 5e-06,
     },
     "gpt-5-mini": {
-        "mode": "chat",
         "input_cost_per_token": 1.25e-07,
         "output_cost_per_token": 1e-06,
     },
     "gpt-5-nano": {
-        "mode": "chat",
         "input_cost_per_token": 2.5e-08,
         "output_cost_per_token": 2e-07,
     },
     # GPT-5.4 (batch pricing)
     "gpt-5.4": {
-        "mode": "chat",
         "input_cost_per_token": 1.25e-06,
         "output_cost_per_token": 7.5e-06,
     },
     "gpt-5.4-pro": {
-        "mode": "chat",
         "input_cost_per_token": 1.5e-05,
         "output_cost_per_token": 9e-05,
     },
     "gpt-5.4-mini": {
-        "mode": "chat",
         "input_cost_per_token": 3.75e-07,
         "output_cost_per_token": 2.25e-06,
     },
     "gpt-5.4-nano": {
-        "mode": "chat",
         "input_cost_per_token": 1e-07,
         "output_cost_per_token": 6.25e-07,
     },
     # Embedding models (batch pricing)
-    "text-embedding-3-large": {
-        "mode": "embedding",
+    EMBEDDING_MODEL: {
         "input_cost_per_token": 6.5e-08,
     },
 }
 
 
-def calculate_response_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def calculate_token_cost(
+    model: str, input_tokens: int, output_tokens: int = 0
+) -> float:
     """
-    Calculate USD cost for response generation.
+    Calculate USD cost for a model call given input and output token counts.
+
+    Used for both response generation (input + output tokens) and embeddings
+    (input tokens only — pass output_tokens=0 or omit).
 
     Args:
-        model: OpenAI model name (e.g., "gpt-4o")
-        input_tokens: Number of input tokens
-        output_tokens: Number of output tokens
+        model: OpenAI model name (e.g., "gpt-4o", "text-embedding-3-large")
+        input_tokens: Number of input/prompt tokens
+        output_tokens: Number of output tokens (default 0 for embeddings)
 
     Returns:
         Cost in USD. Returns 0.0 if model is unknown.
@@ -92,7 +92,7 @@ def calculate_response_cost(model: str, input_tokens: int, output_tokens: int) -
     pricing = MODEL_PRICING.get(model)
     if not pricing:
         logger.warning(
-            f"[calculate_response_cost] Unknown model '{model}', returning cost 0.0"
+            f"[calculate_token_cost] Unknown model '{model}', returning cost 0.0"
         )
         return 0.0
 
@@ -101,25 +101,31 @@ def calculate_response_cost(model: str, input_tokens: int, output_tokens: int) -
     return input_cost + output_cost
 
 
-def calculate_embedding_cost(model: str, prompt_tokens: int) -> float:
+def _sum_usage(
+    items: Iterable[dict[str, Any]],
+    usage_extractor: Callable[[dict[str, Any]], dict[str, Any] | None],
+    fields: tuple[str, ...],
+) -> dict[str, int]:
     """
-    Calculate USD cost for embeddings.
+    Sum named token fields across items, using a caller-supplied extractor
+    to locate the per-item usage dict.
 
     Args:
-        model: OpenAI embedding model name (e.g., "text-embedding-3-large")
-        prompt_tokens: Number of prompt tokens
+        items: Iterable of items to aggregate
+        usage_extractor: Function returning the usage dict for an item, or None
+        fields: Token field names to sum (e.g., "input_tokens", "total_tokens")
 
     Returns:
-        Cost in USD. Returns 0.0 if model is unknown.
+        Mapping of field name to summed value
     """
-    pricing = MODEL_PRICING.get(model)
-    if not pricing:
-        logger.warning(
-            f"[calculate_embedding_cost] Unknown model '{model}', returning cost 0.0"
-        )
-        return 0.0
-
-    return prompt_tokens * pricing.get("input_cost_per_token", 0)
+    totals: dict[str, int] = {field: 0 for field in fields}
+    for item in items:
+        usage = usage_extractor(item)
+        if not usage:
+            continue
+        for field in fields:
+            totals[field] += usage.get(field, 0)
+    return totals
 
 
 def build_response_cost_entry(
@@ -136,26 +142,24 @@ def build_response_cost_entry(
     Returns:
         Response cost entry for the cost JSONB field
     """
-    total_input_tokens = 0
-    total_output_tokens = 0
-    total_tokens = 0
+    totals = _sum_usage(
+        items=results,
+        usage_extractor=lambda r: r.get("usage"),
+        fields=("input_tokens", "output_tokens", "total_tokens"),
+    )
 
-    for result in results:
-        usage = result.get("usage")
-        if not usage:
-            continue
-        total_input_tokens += usage.get("input_tokens", 0)
-        total_output_tokens += usage.get("output_tokens", 0)
-        total_tokens += usage.get("total_tokens", 0)
-
-    cost_usd = calculate_response_cost(model, total_input_tokens, total_output_tokens)
+    cost_usd = calculate_token_cost(
+        model=model,
+        input_tokens=totals["input_tokens"],
+        output_tokens=totals["output_tokens"],
+    )
 
     return {
         "model": model,
-        "input_tokens": total_input_tokens,
-        "output_tokens": total_output_tokens,
-        "total_tokens": total_tokens,
-        "cost_usd": round(cost_usd, 6),
+        "input_tokens": totals["input_tokens"],
+        "output_tokens": totals["output_tokens"],
+        "total_tokens": totals["total_tokens"],
+        "cost_usd": round(cost_usd, COST_USD_DECIMALS),
     }
 
 
@@ -173,23 +177,19 @@ def build_embedding_cost_entry(
     Returns:
         Embedding cost entry for the cost JSONB field
     """
-    total_prompt_tokens = 0
-    total_tokens = 0
+    totals = _sum_usage(
+        items=raw_results,
+        usage_extractor=lambda r: r.get("response", {}).get("body", {}).get("usage"),
+        fields=("prompt_tokens", "total_tokens"),
+    )
 
-    for response in raw_results:
-        usage = response.get("response", {}).get("body", {}).get("usage")
-        if not usage:
-            continue
-        total_prompt_tokens += usage.get("prompt_tokens", 0)
-        total_tokens += usage.get("total_tokens", 0)
-
-    cost_usd = calculate_embedding_cost(model, total_prompt_tokens)
+    cost_usd = calculate_token_cost(model=model, input_tokens=totals["prompt_tokens"])
 
     return {
         "model": model,
-        "prompt_tokens": total_prompt_tokens,
-        "total_tokens": total_tokens,
-        "cost_usd": round(cost_usd, 6),
+        "prompt_tokens": totals["prompt_tokens"],
+        "total_tokens": totals["total_tokens"],
+        "cost_usd": round(cost_usd, COST_USD_DECIMALS),
     }
 
 
@@ -220,6 +220,6 @@ def build_cost_dict(
         cost["embedding"] = embedding_entry
         embedding_cost = embedding_entry.get("cost_usd", 0.0)
 
-    cost["total_cost_usd"] = round(response_cost + embedding_cost, 6)
+    cost["total_cost_usd"] = round(response_cost + embedding_cost, COST_USD_DECIMALS)
 
     return cost

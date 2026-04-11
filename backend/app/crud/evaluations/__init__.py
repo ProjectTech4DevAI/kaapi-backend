@@ -35,8 +35,7 @@ from app.crud.evaluations.pricing import (
     build_cost_dict,
     build_embedding_cost_entry,
     build_response_cost_entry,
-    calculate_embedding_cost,
-    calculate_response_cost,
+    calculate_token_cost,
 )
 from app.crud.evaluations.processing import (
     check_and_process_evaluation,
@@ -85,8 +84,7 @@ __all__ = [
     "build_cost_dict",
     "build_embedding_cost_entry",
     "build_response_cost_entry",
-    "calculate_embedding_cost",
-    "calculate_response_cost",
+    "calculate_token_cost",
     # Langfuse
     "create_langfuse_dataset_run",
     "fetch_trace_scores_from_langfuse",

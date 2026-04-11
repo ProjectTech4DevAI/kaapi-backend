@@ -51,6 +51,58 @@ from app.utils import get_langfuse_client, get_openai_client
 logger = logging.getLogger(__name__)
 
 
+def _safe_attach_cost(
+    eval_run: EvaluationRun,
+    log_prefix: str,
+    *,
+    response_model: str | None = None,
+    response_results: list[dict[str, Any]] | None = None,
+    embedding_model: str | None = None,
+    embedding_raw_results: list[dict[str, Any]] | None = None,
+) -> None:
+    """
+    Compute and attach a cost dict to eval_run.cost without raising.
+
+    Cost-tracking failures must never block evaluation completion, so any
+    exception is logged and swallowed. The caller is responsible for
+    persisting eval_run via update_evaluation_run.
+
+    When called for the embedding stage only, any previously-computed
+    response entry on eval_run.cost is preserved.
+
+    Args:
+        eval_run: EvaluationRun whose cost field will be set
+        log_prefix: Caller-provided log prefix (org/project/eval ids)
+        response_model: Model name for response cost (response stage only)
+        response_results: Parsed evaluation results (response stage only)
+        embedding_model: Model name for embedding cost (embedding stage only)
+        embedding_raw_results: Raw embedding batch results (embedding stage only)
+    """
+    try:
+        if response_model is not None and response_results is not None:
+            response_entry = build_response_cost_entry(
+                model=response_model, results=response_results
+            )
+        else:
+            # Preserve any response entry computed during an earlier stage.
+            response_entry = (eval_run.cost or {}).get("response")
+
+        embedding_entry: dict[str, Any] | None = None
+        if embedding_model is not None and embedding_raw_results is not None:
+            embedding_entry = build_embedding_cost_entry(
+                model=embedding_model, raw_results=embedding_raw_results
+            )
+
+        eval_run.cost = build_cost_dict(
+            response_entry=response_entry,
+            embedding_entry=embedding_entry,
+        )
+    except Exception as cost_err:
+        logger.warning(
+            f"[_safe_attach_cost] {log_prefix} Failed to compute cost | {cost_err}"
+        )
+
+
 def _extract_batch_error_message(
     provider: OpenAIBatchProvider,
     error_file_id: str,
@@ -339,16 +391,13 @@ async def process_completed_evaluation(
         model = resolve_model_from_config(session=session, eval_run=eval_run)
 
         # Aggregate response generation cost
-        try:
-            response_cost_entry = build_response_cost_entry(
-                model=model, results=results
-            )
-            cost = build_cost_dict(response_entry=response_cost_entry)
-            update_evaluation_run(session=session, eval_run=eval_run, cost=cost)
-        except Exception as cost_err:
-            logger.warning(
-                f"[process_completed_evaluation] {log_prefix} Failed to calculate response cost | {cost_err}"
-            )
+        _safe_attach_cost(
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            response_model=model,
+            response_results=results,
+        )
+        update_evaluation_run(session=session, eval_run=eval_run, cost=eval_run.cost)
 
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
@@ -507,24 +556,20 @@ async def process_completed_embedding_batch(
                 )
 
         # Step 7: Accumulate embedding cost onto existing response cost
-        try:
-            embedding_cost_entry = build_embedding_cost_entry(
-                model=EMBEDDING_MODEL, raw_results=raw_results
-            )
-            existing_cost = eval_run.cost or {}
-            response_entry = existing_cost.get("response")
-            eval_run.cost = build_cost_dict(
-                response_entry=response_entry,
-                embedding_entry=embedding_cost_entry,
-            )
-        except Exception as cost_err:
-            logger.warning(
-                f"[process_completed_embedding_batch] {log_prefix} Failed to calculate embedding cost | {cost_err}"
-            )
+        _safe_attach_cost(
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_raw_results=raw_results,
+        )
 
         # Step 8: Mark evaluation as completed
         eval_run = update_evaluation_run(
-            session=session, eval_run=eval_run, status="completed", score=eval_run.score
+            session=session,
+            eval_run=eval_run,
+            status="completed",
+            score=eval_run.score,
+            cost=eval_run.cost,
         )
 
         logger.info(

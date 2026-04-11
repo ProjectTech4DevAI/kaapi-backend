@@ -212,7 +212,9 @@ def update_evaluation_run(
         status: New status value (optional)
         error_message: New error message (optional)
         object_store_url: New object store URL (optional)
+        score_trace_url: New per-trace score S3 URL (optional)
         score: New score dict (optional)
+        cost: New cost dict (optional)
         embedding_batch_job_id: New embedding batch job ID (optional)
 
     Returns:
