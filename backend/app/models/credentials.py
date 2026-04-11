@@ -113,9 +113,18 @@ class Credential(CredsBase, table=True):
     organization: Organization | None = Relationship(back_populates="creds")
     project: Project | None = Relationship(back_populates="creds")
 
-    def to_public(self) -> "CredsPublic":
-        """Convert the database model to a public model with decrypted credentials."""
+    def to_public(self, mask: bool = True) -> "CredsPublic":
+        """Convert the database model to a public model with decrypted credentials.
+
+        By default, sensitive fields (e.g., api_key, secret_key) are masked so
+        the response is safe to return via the API.
+        """
+        from app.core.providers import mask_credential_fields
         from app.core.security import decrypt_credentials
+
+        decrypted = decrypt_credentials(self.credential) if self.credential else None
+        if mask and decrypted:
+            decrypted = mask_credential_fields(self.provider, decrypted)
 
         return CredsPublic(
             id=self.id,
@@ -123,9 +132,7 @@ class Credential(CredsBase, table=True):
             project_id=self.project_id,
             is_active=self.is_active,
             provider=self.provider,
-            credential=decrypt_credentials(self.credential)
-            if self.credential
-            else None,
+            credential=decrypted,
             inserted_at=self.inserted_at,
             updated_at=self.updated_at,
         )

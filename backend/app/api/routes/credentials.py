@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider
+from app.core.providers import mask_credential_fields, validate_provider
 from app.crud.credentials import (
     get_creds_by_org,
     get_provider_credential,
@@ -99,7 +99,9 @@ def read_provider_credential(
     if credential is None:
         raise HTTPException(status_code=404, detail="Provider credentials not found")
 
-    return APIResponse.success_response(credential)
+    return APIResponse.success_response(
+        mask_credential_fields(provider_enum, credential)
+    )
 
 
 @router.patch(
@@ -241,7 +243,9 @@ def read_provider_credential_by_org_project(
     if credential is None:
         raise HTTPException(status_code=404, detail="Provider credentials not found")
 
-    return APIResponse.success_response(credential)
+    return APIResponse.success_response(
+        mask_credential_fields(provider_enum, credential)
+    )
 
 
 @router.patch(
