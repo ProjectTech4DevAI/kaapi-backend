@@ -30,7 +30,6 @@ from app.models.llm.response import (
     AudioOutput,
     LLMChainResponse,
     IntermediateChainResponse,
-    LLMJobBasePublic,
     LLMJobImmediatePublic,
     LLMJobPublic,
 )
