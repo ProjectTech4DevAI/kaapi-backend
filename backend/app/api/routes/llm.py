@@ -75,9 +75,8 @@ def llm_call(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if request.callback_url:
-        message = "Your response is being generated and will be delivered via callback."
-    else:
+    message = "Your response is being generated and will be delivered via callback."
+    if not request.callback_url:
         message = "Your response is being generated"
 
     job_response = LLMJobImmediatePublic(
@@ -135,9 +134,8 @@ def get_llm_call_status(
             )
 
             if not llm_call.usage:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Completed LLM job is missing usage data",
+                logger.warning(
+                    f"[get_llm_call] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
                 )
 
             llm_call_response = LLMCallResponse(

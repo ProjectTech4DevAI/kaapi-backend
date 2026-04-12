@@ -1,7 +1,7 @@
 """add project id to job table
 
-Revision ID: 050
-Revises: 049
+Revision ID: 051
+Revises: 050
 Create Date: 2026-04-07 14:23:00.938901
 
 """
@@ -11,8 +11,8 @@ import sqlmodel.sql.sqltypes
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "050"
-down_revision = "049"
+revision = "051"
+down_revision = "050"
 branch_labels = None
 depends_on = None
 

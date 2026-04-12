@@ -40,14 +40,10 @@ class JobCrud:
 
         return job
 
-    def get(self, job_id: UUID, project_id: int | None = None) -> Job | None:
+    def get(self, job_id: UUID, project_id: int) -> Job | None:
         job = self.session.get(Job, job_id)
         if job is None:
             return None
-        if (
-            project_id is not None
-            and job.project_id is not None
-            and job.project_id != project_id
-        ):
+        if job.project_id not in (None, project_id):
             return None
         return job

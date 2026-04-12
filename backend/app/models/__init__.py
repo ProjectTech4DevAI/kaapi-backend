@@ -122,7 +122,6 @@ from .llm import (
     LLMChainRequest,
     LLMChainResponse,
     LlmChain,
-    LLMJobBasePublic,
     LLMJobImmediatePublic,
     LLMJobPublic,
 )
