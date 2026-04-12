@@ -186,9 +186,6 @@ def delete_all_credentials(
     )
 
 
-# --- Endpoints with explicit org_id and project_id path parameters ---
-
-
 @router.get(
     "/{org_id}/{project_id}",
     response_model=APIResponse[list[CredsPublic]],
