@@ -32,6 +32,9 @@ SUPPORTED_MODELS = {
     ],
 }
 
+# OpenAI models that support reasoning (effort parameter)
+OPENAI_REASONING_MODELS: set[str] = {"o1", "o1-preview", "o1-mini"}
+
 SUPPORTED_VOICES = {
     ("google", "tts"): ["Kore", "Orus", "Leda", "Charon"],
     ("sarvamai", "tts"): ["simran", "shubh", "roopa"],
