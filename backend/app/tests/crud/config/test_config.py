@@ -177,7 +177,7 @@ def test_read_all_configs(db: Session) -> None:
     config3 = create_test_config(db, project_id=project.id, name="config-3")
 
     config_crud = ConfigCrud(session=db, project_id=project.id)
-    configs = config_crud.read_all()
+    configs, has_more = config_crud.read_all(query=None)
 
     config_ids = [c.id for c in configs]
     assert config1.id in config_ids
@@ -196,10 +196,11 @@ def test_read_all_configs_pagination(db: Session) -> None:
     config_crud = ConfigCrud(session=db, project_id=project.id)
 
     # Test skip and limit
-    configs_page1 = config_crud.read_all(skip=0, limit=2)
-    configs_page2 = config_crud.read_all(skip=2, limit=2)
+    configs_page1, has_more = config_crud.read_all(query=None, skip=0, limit=2)
+    configs_page2, _ = config_crud.read_all(query=None, skip=2, limit=2)
 
     assert len(configs_page1) == 2
+    assert has_more is True
     assert len(configs_page2) == 2
     assert configs_page1[0].id != configs_page2[0].id
 
@@ -219,7 +220,7 @@ def test_read_all_configs_ordered_by_updated_at(db: Session) -> None:
         config1.id, ConfigUpdate(description="Updated description")
     )
 
-    configs = config_crud.read_all()
+    configs, _ = config_crud.read_all(query=None)
 
     # config1 should be first because it was most recently updated
     assert configs[0].id == config1.id
@@ -237,7 +238,7 @@ def test_read_all_configs_excludes_deleted(db: Session) -> None:
     # Delete config1
     config_crud.delete_or_raise(config1.id)
 
-    configs = config_crud.read_all()
+    configs, _ = config_crud.read_all(query=None)
 
     config_ids = [c.id for c in configs]
     assert config1.id not in config_ids
@@ -253,11 +254,35 @@ def test_read_all_configs_different_projects(db: Session) -> None:
     config2 = create_test_config(db, project_id=project2.id, name="config-2")
 
     config_crud = ConfigCrud(session=db, project_id=project1.id)
-    configs = config_crud.read_all()
+    configs, _ = config_crud.read_all(query=None)
 
     config_ids = [c.id for c in configs]
     assert config1.id in config_ids
     assert config2.id not in config_ids
+
+
+def test_read_all_configs_query_filter(db: Session) -> None:
+    """Test that query param filters configs by name prefix."""
+    project = create_test_project(db)
+    create_test_config(db, project_id=project.id, name="alpha-config")
+    create_test_config(db, project_id=project.id, name="beta-config")
+
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+    configs, _ = config_crud.read_all(query="alpha")
+
+    assert len(configs) == 1
+    assert configs[0].name == "alpha-config"
+
+
+def test_read_all_configs_has_more_false(db: Session) -> None:
+    """Test has_more is False when results fit within limit."""
+    project = create_test_project(db)
+    create_test_config(db, project_id=project.id, name="only-config")
+
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+    _, has_more = config_crud.read_all(query=None, limit=10)
+
+    assert has_more is False
 
 
 def test_update_config_name(db: Session) -> None:

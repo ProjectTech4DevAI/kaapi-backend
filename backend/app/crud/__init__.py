@@ -81,6 +81,13 @@ from .model_evaluation import (
 
 from .onboarding import onboard_project
 
+from .user_project import (
+    add_user_to_project,
+    get_user_projects,
+    get_users_by_project,
+    remove_user_from_project,
+)
+
 from .file import (
     create_file,
     get_file_by_id,

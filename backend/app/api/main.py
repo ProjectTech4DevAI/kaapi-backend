@@ -7,6 +7,7 @@ from app.api.routes import (
     config,
     doc_transformation_job,
     documents,
+    auth,
     login,
     languages,
     llm,
@@ -17,6 +18,7 @@ from app.api.routes import (
     responses,
     private,
     threads,
+    user_project,
     users,
     utils,
     onboarding,
@@ -39,6 +41,7 @@ api_router.include_router(credentials.router)
 api_router.include_router(cron.router)
 api_router.include_router(documents.router)
 api_router.include_router(doc_transformation_job.router)
+api_router.include_router(auth.router)
 api_router.include_router(evaluations.router)
 api_router.include_router(languages.router)
 api_router.include_router(llm.router)
@@ -50,6 +53,7 @@ api_router.include_router(organization.router)
 api_router.include_router(project.router)
 api_router.include_router(responses.router)
 api_router.include_router(threads.router)
+api_router.include_router(user_project.router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
 api_router.include_router(fine_tuning.router)
