@@ -34,9 +34,7 @@ def test_list_models_filter_by_provider(
     assert all(m["provider"] == "openai" for m in data)
 
 
-def test_get_model(
-    client: TestClient, superuser_token_headers: dict[str, str]
-) -> None:
+def test_get_model(client: TestClient, superuser_token_headers: dict[str, str]) -> None:
     response = client.get(
         f"{settings.API_V1_STR}/models/openai/gpt-4o",
         headers=superuser_token_headers,
