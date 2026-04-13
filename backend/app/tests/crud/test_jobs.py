@@ -34,7 +34,7 @@ def test_get_job(db: Session, dummy_jobs) -> None:
     crud = JobCrud(db)
     job = dummy_jobs[0]
 
-    fetched = crud.get(job.id)
+    fetched = crud.get(job_id=job.id, project_id=1)
     assert fetched is not None
     assert fetched.id == job.id
     assert fetched.trace_id == "trace-1"
