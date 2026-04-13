@@ -2,10 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud import get_cloud_storage
 from app.crud.tts_evaluations import (
     get_tts_result_by_id,
     update_tts_human_feedback,
@@ -69,6 +70,8 @@ def update_result_feedback(
         update_kwargs["is_correct"] = feedback.is_correct
     if "comment" in feedback.model_fields_set:
         update_kwargs["comment"] = feedback.comment
+    if "score" in feedback.model_fields_set:
+        update_kwargs["score"] = feedback.score
 
     result = update_tts_human_feedback(
         session=session,
@@ -92,6 +95,9 @@ def get_result(
     session: SessionDep,
     auth_context: AuthContextDep,
     result_id: int,
+    include_signed_url: bool = Query(
+        False, description="Include signed URL for generated audio file"
+    ),
 ) -> APIResponse[TTSResultPublic]:
     """Get a TTS result by ID."""
     result = get_tts_result_by_id(
@@ -104,4 +110,13 @@ def get_result(
     if not result:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    return APIResponse.success_response(data=TTSResultPublic.from_model(result))
+    signed_url = None
+    if include_signed_url and result.object_store_url is not None:
+        storage = get_cloud_storage(
+            session=session, project_id=auth_context.project_.id
+        )
+        signed_url = storage.get_signed_url(result.object_store_url)
+
+    return APIResponse.success_response(
+        data=TTSResultPublic.from_model(result, signed_url=signed_url)
+    )

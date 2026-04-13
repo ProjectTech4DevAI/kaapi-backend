@@ -268,6 +268,13 @@ class STTResultWithSample(STTResultPublic):
     sample: STTSamplePublic
 
 
+class STTSampleUpdate(BaseModel):
+    """Request model for updating an STT sample's language and ground truth."""
+
+    language_id: int | None = Field(None, description="Language ID for this sample")
+    ground_truth: str | None = Field(None, description="Reference transcription")
+
+
 class STTFeedbackUpdate(BaseModel):
     """Request model for updating human feedback on a result."""
 

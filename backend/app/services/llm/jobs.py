@@ -7,7 +7,7 @@ from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.celery.utils import start_high_priority_job
+from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.crud.config import ConfigVersionCrud
@@ -48,17 +48,12 @@ def start_job(
     job_crud = JobCrud(session=db)
     job = job_crud.create(job_type=JobType.LLM_API, trace_id=trace_id)
 
-    # Explicitly flush to ensure job is persisted before Celery task starts
-    db.flush()
-    db.commit()
-
     logger.info(
         f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
     )
 
     try:
-        task_id = start_high_priority_job(
-            function_path="app.services.llm.jobs.execute_job",
+        task_id = start_llm_job(
             project_id=project_id,
             job_id=str(job.id),
             trace_id=trace_id,
@@ -90,17 +85,12 @@ def start_chain_job(
     job_crud = JobCrud(session=db)
     job = job_crud.create(job_type=JobType.LLM_CHAIN, trace_id=trace_id)
 
-    # Explicitly flush to ensure job is persisted before Celery task starts
-    db.flush()
-    db.commit()
-
     logger.info(
         f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
     )
 
     try:
-        task_id = start_high_priority_job(
-            function_path="app.services.llm.jobs.execute_chain_job",
+        task_id = start_llm_chain_job(
             project_id=project_id,
             job_id=str(job.id),
             trace_id=trace_id,
@@ -131,16 +121,14 @@ def handle_job_error(
     callback_response: APIResponse,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
+    if callback_url:
+        send_callback(
+            callback_url=callback_url,
+            data=callback_response.model_dump(),
+        )
+
     with Session(engine) as session:
-        job_crud = JobCrud(session=session)
-
-        if callback_url:
-            send_callback(
-                callback_url=callback_url,
-                data=callback_response.model_dump(),
-            )
-
-        job_crud.update(
+        JobCrud(session=session).update(
             job_id=job_id,
             job_update=JobUpdate(
                 status=JobStatus.FAILED,
@@ -351,6 +339,7 @@ def execute_llm_call(
                     session=session, project_id=project_id, config_id=config.id
                 )
                 config_blob, error = resolve_config_blob(config_crud, config)
+                logger.info(f"----the resolved config blob is {config_blob}")
                 if error:
                     return BlockResult(error=error)
             else:
@@ -520,7 +509,7 @@ def execute_job(
     callback_url_str = str(request.callback_url) if request.callback_url else None
 
     logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}"
+        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, callback_url {callback_url_str}"
     )
 
     try:
@@ -546,6 +535,10 @@ def execute_job(
             request_metadata=request.request_metadata,
             langfuse_credentials=langfuse_credentials,
             include_provider_raw_response=request.include_provider_raw_response,
+        )
+
+        logger.info(
+            f"[execute_job] Error if any during execution of job: {result.error}"
         )
 
         if result.success:

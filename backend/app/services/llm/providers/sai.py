@@ -1,10 +1,8 @@
 import logging
 import os
+import uuid
 from typing import Any
-
 from sarvamai import SarvamAI
-
-
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -75,12 +73,9 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI STT"
-
+        model = params.get("model") or "saaras:v3"
         language_code = params.get("language_code")
-        mode = params.get("mode")
+        mode = params.get("mode") or "transcribe"
 
         # Parse and validate input
         parsed_input_path = self._parse_input(
@@ -90,14 +85,23 @@ class SarvamAIProvider(BaseProvider):
         )
 
         try:
+            # Build kwargs for API call, only including non-None parameters
+            stt_kwargs = {
+                "file": None,  # Will be set below
+                "model": model,
+            }
+
+            if language_code:
+                stt_kwargs["language_code"] = language_code
+
+            # mode only applies to saaras:v3 model
+            if mode:
+                stt_kwargs["mode"] = mode
+
             with open(parsed_input_path, "rb") as audio_file:
-                # Call SarvamAI transcribe with all mapped parameters
-                sarvam_response = self.client.speech_to_text.transcribe(
-                    file=audio_file,
-                    model=model,
-                    language_code=language_code,
-                    mode=mode,
-                )
+                # Call SarvamAI transcribe with mapped parameters
+                stt_kwargs["file"] = audio_file
+                sarvam_response = self.client.speech_to_text.transcribe(**stt_kwargs)
 
             # Estimate token usage (not directly provided by SarvamAI STT)
             input_tokens_estimate = 0
@@ -106,7 +110,8 @@ class SarvamAIProvider(BaseProvider):
 
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=sarvam_response.request_id or "unknown",
+                    provider_response_id=sarvam_response.request_id
+                    or str(uuid.uuid4()),
                     conversation_id=None,
                     provider=provider_name,
                     model=model,
@@ -127,13 +132,16 @@ class SarvamAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_stt] Successfully transcribed audio | "
-                f"request_id={sarvam_response.request_id}, model={model}, mode={mode}"
+                f"request_id={sarvam_response.request_id}, provider={provider_name} model={model}, mode={mode}"
             )
             return llm_response, None
 
         except Exception as e:
             error_message = f"SarvamAI STT transcription failed: {str(e)}"
-            logger.error(f"[_execute_stt] {error_message}", exc_info=True)
+            logger.error(
+                f"[_execute_stt] {error_message} | provider={provider_name}",
+                exc_info=True,
+            )
             return None, error_message
 
     def _execute_tts(
@@ -156,10 +164,7 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params for SarvamAI TTS"
-
+        model = params.get("model") or "bulbul:v3"
         target_language_code = params.get("target_language_code")
         if not target_language_code:
             return (
@@ -167,8 +172,9 @@ class SarvamAIProvider(BaseProvider):
                 "Missing 'target_language_code' in native params for SarvamAI TTS",
             )
 
-        speaker = params.get("speaker")
-        output_audio_codec = params.get("output_audio_codec")
+        # Optional parameters (have API defaults)
+        speaker = params.get("speaker")  # Defaults: Shubh (v3) / Anushka (v2)
+        output_audio_codec = params.get("output_audio_codec")  # Has API default
 
         # Parse and validate input
         parsed_text = self._parse_input(
@@ -178,14 +184,21 @@ class SarvamAIProvider(BaseProvider):
         )
 
         try:
-            # Call SarvamAI TTS with all mapped parameters
-            sarvam_response = self.client.text_to_speech.convert(
-                text=parsed_text,
-                target_language_code=target_language_code,
-                model=model,
-                speaker=speaker,
-                output_audio_codec=output_audio_codec,
-            )
+            # Build kwargs for API call, only including non-None parameters
+            tts_kwargs = {
+                "text": parsed_text,
+                "target_language_code": target_language_code,
+                "model": model,
+            }
+
+            if speaker:
+                tts_kwargs["speaker"] = speaker
+
+            if output_audio_codec:
+                tts_kwargs["output_audio_codec"] = output_audio_codec
+
+            # Call SarvamAI TTS with mapped parameters
+            sarvam_response = self.client.text_to_speech.convert(**tts_kwargs)
 
             # SarvamAI returns a list of base64-encoded audio strings
             # For single text input, take the first audio
@@ -201,7 +214,8 @@ class SarvamAIProvider(BaseProvider):
 
             llm_response = LLMCallResponse(
                 response=LLMResponse(
-                    provider_response_id=sarvam_response.request_id or "unknown",
+                    provider_response_id=sarvam_response.request_id
+                    or str(uuid.uuid4()),
                     conversation_id=None,
                     provider=provider_name,
                     model=model,
@@ -226,13 +240,16 @@ class SarvamAIProvider(BaseProvider):
 
             logger.info(
                 f"[_execute_tts] Successfully converted text to speech | "
-                f"request_id={sarvam_response.request_id}, model={model}, speaker={speaker}"
+                f"request_id={sarvam_response.request_id}, provider={provider_name}, model={model}, speaker={speaker}"
             )
             return llm_response, None
 
         except Exception as e:
             error_message = f"SarvamAI TTS conversion failed: {str(e)}"
-            logger.error(f"[_execute_tts] {error_message}", exc_info=True)
+            logger.error(
+                f"[_execute_tts] {error_message} | provider={provider_name}",
+                exc_info=True,
+            )
             return None, error_message
 
     def execute(
@@ -242,6 +259,7 @@ class SarvamAIProvider(BaseProvider):
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
+        provider_name = completion_config.provider
         try:
             completion_type = completion_config.type
 
@@ -265,11 +283,15 @@ class SarvamAIProvider(BaseProvider):
 
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
-            logger.error(f"[SarvamAIProvider.execute] {error_message}", exc_info=True)
+            logger.error(
+                f"[SarvamAIProvider.execute] {error_message} | provider={provider_name}",
+                exc_info=True,
+            )
             return None, error_message
         except Exception as e:
             error_message = "Unexpected error occurred during SarvamAI execution"
             logger.error(
-                f"[SarvamAIProvider.execute] {error_message}: {str(e)}", exc_info=True
+                f"[SarvamAIProvider.execute] {error_message}: {str(e)} | provider={provider_name}",
+                exc_info=True,
             )
             return None, error_message

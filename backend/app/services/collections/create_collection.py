@@ -23,11 +23,12 @@ from app.models import (
     CreationRequest,
 )
 from app.services.collections.helpers import (
+    batch_documents,
     extract_error_message,
     to_collection_public,
 )
 from app.services.collections.providers.registry import get_llm_provider
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_create_collection_job
 from app.utils import send_callback, APIResponse
 
 
@@ -49,8 +50,7 @@ def start_job(
         collection_job_id, CollectionJobUpdate(trace_id=trace_id)
     )
 
-    task_id = start_low_priority_job(
-        function_path="app.services.collections.create_collection.execute_job",
+    task_id = start_create_collection_job(
         project_id=project_id,
         job_id=str(collection_job_id),
         trace_id=trace_id,
@@ -180,7 +180,13 @@ def execute_job(
             )
 
             storage = get_cloud_storage(session=session, project_id=project_id)
-            document_crud = DocumentCrud(session, project_id)
+
+            batch_size = creation_request.batch_size or 10
+            docs_batches = batch_documents(
+                DocumentCrud(session, project_id),
+                creation_request.documents,
+                batch_size,
+            )
 
             provider = get_llm_provider(
                 session=session,
@@ -192,15 +198,14 @@ def execute_job(
         result = provider.create(
             collection_request=creation_request,
             storage=storage,
-            document_crud=document_crud,
+            docs_batches=docs_batches,
         )
 
         llm_service_id = result.llm_service_id
         llm_service_name = result.llm_service_name
 
-        with Session(engine) as session:
-            document_crud = DocumentCrud(session, project_id)
-            flat_docs = document_crud.read_each(creation_request.documents)
+        # Flatten the already-loaded batches — no need for a second DB read
+        flat_docs = [doc for batch in docs_batches for doc in batch]
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
         file_sizes_kb = [

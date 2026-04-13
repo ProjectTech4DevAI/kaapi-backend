@@ -10,7 +10,6 @@ from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models import EvaluationDataset
 from app.models.stt_evaluation import EvaluationType
-from app.models.tts_evaluation import TTSDatasetPublic
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +120,7 @@ def list_tts_datasets(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
-) -> tuple[list[TTSDatasetPublic], int]:
+) -> tuple[list[EvaluationDataset], int]:
     """List TTS datasets for a project.
 
     Args:
@@ -132,7 +131,7 @@ def list_tts_datasets(
         offset: Number of results to skip
 
     Returns:
-        tuple[list[TTSDatasetPublic], int]: Datasets and total count
+        tuple[list[EvaluationDataset], int]: Datasets and total count
     """
     base_filter = (
         EvaluationDataset.organization_id == org_id,
@@ -151,8 +150,6 @@ def list_tts_datasets(
         .limit(limit)
     )
 
-    datasets = session.exec(statement).all()
+    datasets = list(session.exec(statement).all())
 
-    result = [TTSDatasetPublic.from_model(dataset) for dataset in datasets]
-
-    return result, total
+    return datasets, total

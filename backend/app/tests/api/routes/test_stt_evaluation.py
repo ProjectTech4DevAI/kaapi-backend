@@ -1,14 +1,14 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.models import EvaluationDataset, EvaluationRun, File, FileType
-from app.models.stt_evaluation import STTSample, STTResult, EvaluationType
-from app.crud.language import get_language_by_locale
-from app.tests.utils.auth import TestAuthContext
 from app.core.util import now
+from app.crud.language import get_language_by_locale
+from app.models import EvaluationDataset, EvaluationRun, File, FileType
+from app.models.stt_evaluation import EvaluationType, STTResult, STTSample
+from app.tests.utils.auth import TestAuthContext
 
 
 # Helper functions
@@ -741,9 +741,7 @@ class TestSTTDatasetGet:
         """Test getting an STT dataset when signed URL generation fails."""
         # Mock cloud storage to raise an exception
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.side_effect = Exception(
-            "Failed to generate signed URL"
-        )
+        mock_storage.get_signed_url.return_value = None
         mock_get_cloud_storage.return_value = mock_storage
 
         dataset = create_test_stt_dataset(
@@ -809,7 +807,7 @@ class TestSTTEvaluationRun:
             )
         return dataset
 
-    @patch("app.api.routes.stt_evaluations.evaluation.start_low_priority_job")
+    @patch("app.api.routes.stt_evaluations.evaluation.start_stt_batch_submission")
     def test_start_stt_evaluation_success(
         self,
         mock_start_job: MagicMock,
@@ -1076,9 +1074,7 @@ class TestSTTEvaluationRun:
         """Test getting an STT run when signed URL generation fails."""
         # Mock cloud storage to raise an exception
         mock_storage = MagicMock()
-        mock_storage.get_signed_url.side_effect = Exception(
-            "Failed to generate signed URL"
-        )
+        mock_storage.get_signed_url.return_value = None
         mock_get_cloud_storage.return_value = mock_storage
 
         # Create dataset, sample, run, and result
@@ -1278,7 +1274,7 @@ class TestListAudioFiles:
         mock_get_cloud_storage.return_value = mock_storage
 
         # Create test file
-        file = create_test_file(
+        _file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
@@ -1314,7 +1310,7 @@ class TestListAudioFiles:
     ) -> None:
         """Test listing audio files without signed URLs."""
         # Create test file
-        file = create_test_file(
+        _file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
@@ -1345,7 +1341,7 @@ class TestListAudioFiles:
     ) -> None:
         """Test that audio files are isolated by project."""
         # Create file in user's project
-        user_file = create_test_file(
+        _user_file = create_test_file(
             db=db,
             organization_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,

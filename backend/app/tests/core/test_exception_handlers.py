@@ -1,18 +1,18 @@
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.core.exception_handlers import _filter_union_branch_errors
+from app.core.exception_handlers import _sanitize_validation_errors
 from app.tests.utils.auth import TestAuthContext
 
 
-class TestFilterUnionBranchErrors:
-    """Unit tests for _filter_union_branch_errors."""
+class TestSanitizeValidationErrors:
+    """Unit tests for _sanitize_validation_errors."""
 
     def test_non_union_errors_pass_through(self) -> None:
         errors = [
             {"type": "missing", "loc": ("body", "name"), "msg": "Field required"},
         ]
-        assert _filter_union_branch_errors(errors) == errors
+        assert _sanitize_validation_errors(errors) == errors
 
     def test_picks_branch_with_fewer_literal_errors(self) -> None:
         errors = [
@@ -37,7 +37,7 @@ class TestFilterUnionBranchErrors:
                 "msg": "Field required",
             },
         ]
-        result = _filter_union_branch_errors(errors)
+        result = _sanitize_validation_errors(errors)
         assert len(result) == 2
         for err in result:
             assert "NativeConfig" not in err["loc"]
@@ -56,7 +56,7 @@ class TestFilterUnionBranchErrors:
                 "msg": "Field required",
             },
         ]
-        result = _filter_union_branch_errors(errors)
+        result = _sanitize_validation_errors(errors)
         assert len(result) == 1
         assert result[0]["loc"] == ("body", "c", "x")
 
@@ -74,7 +74,7 @@ class TestFilterUnionBranchErrors:
                 "msg": "Field required",
             }
         ]
-        result = _filter_union_branch_errors(errors)
+        result = _sanitize_validation_errors(errors)
         assert result[0]["loc"] == ("body", "cfg", "completion", "params")
 
     def test_non_union_preserved_with_union(self) -> None:
@@ -91,17 +91,17 @@ class TestFilterUnionBranchErrors:
                 "msg": "Field required",
             },
         ]
-        result = _filter_union_branch_errors(errors)
+        result = _sanitize_validation_errors(errors)
         assert len(result) == 2
         locs = [r["loc"] for r in result]
         assert ("body", "name") in locs
 
     def test_empty_list(self) -> None:
-        assert _filter_union_branch_errors([]) == []
+        assert _sanitize_validation_errors([]) == []
 
     def test_fallback_on_malformed_input(self) -> None:
         malformed = [None, 42]  # type: ignore[list-item]
-        result = _filter_union_branch_errors(malformed)
+        result = _sanitize_validation_errors(malformed)
         assert result == malformed
 
 

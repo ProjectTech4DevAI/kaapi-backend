@@ -52,7 +52,7 @@ class TestStartJob:
                     completion=NativeCompletionConfig(
                         provider="openai-native",
                         type="text",
-                        params={"model": "gpt-4"},
+                        params={"model": "gpt-4o"},
                     )
                 )
             ),
@@ -64,7 +64,7 @@ class TestStartJob:
         request = llm_call_request
         project = get_project(db)
 
-        with patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule:
+        with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.return_value = "fake-task-id-123"
 
             job_id = start_job(db, request, project.id, project.organization_id)
@@ -78,7 +78,6 @@ class TestStartJob:
 
             mock_schedule.assert_called_once()
             _, kwargs = mock_schedule.call_args
-            assert kwargs["function_path"] == "app.services.llm.jobs.execute_job"
             assert kwargs["project_id"] == project.id
             assert kwargs["organization_id"] == project.organization_id
             assert kwargs["job_id"] == str(job_id)
@@ -90,7 +89,7 @@ class TestStartJob:
         """Test start_job when Celery task scheduling fails."""
         project = get_project(db)
 
-        with patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule:
+        with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.side_effect = Exception("Celery connection failed")
 
             with pytest.raises(HTTPException) as exc_info:
@@ -250,7 +249,7 @@ class TestExecuteJob:
                     "completion": {
                         "type": "text",
                         "provider": "openai-native",
-                        "params": {"model": "gpt-4"},
+                        "params": {"model": "gpt-4o"},
                     }
                 }
             },
@@ -264,7 +263,7 @@ class TestExecuteJob:
             response=LLMResponse(
                 provider_response_id="resp-123",
                 conversation_id=None,
-                model="gpt-4",
+                model="gpt-4o",
                 provider="openai",
                 output=TextOutput(content=TextContent(value="Test response")),
             ),
@@ -425,7 +424,7 @@ class TestExecuteJob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4", "temperature": 0.7},
+                params={"model": "gpt-4o", "temperature": 0.7},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -475,7 +474,7 @@ class TestExecuteJob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-3.5-turbo", "temperature": 0.5},
+                params={"model": "gpt-4o", "temperature": 0.5},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -524,7 +523,7 @@ class TestExecuteJob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4"},
+                params={"model": "gpt-4o"},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -561,7 +560,7 @@ class TestExecuteJob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                     "instructions": "You are a helpful assistant",
                 },
@@ -608,7 +607,7 @@ class TestExecuteJob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "gpt-3.5-turbo",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                     "instructions": "You are a helpful assistant",
                 },
@@ -710,7 +709,7 @@ class TestExecuteJob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "gpt-4",  # Non-reasoning model
+                    "model": "gpt-4o",  # Non-reasoning model
                     "reasoning": "high",  # This will be suppressed with warning
                 },
             )
@@ -791,7 +790,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -841,7 +840,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -888,7 +887,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [],
                         "output_guardrails": [
@@ -930,7 +929,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [],
                         "output_guardrails": [
@@ -979,7 +978,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -1018,7 +1017,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -1063,7 +1062,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -1097,7 +1096,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -1146,7 +1145,7 @@ class TestExecuteJob:
                         "completion": {
                             "provider": "openai-native",
                             "type": "text",
-                            "params": {"model": "gpt-4"},
+                            "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [
                             {"validator_config_id": VALIDATOR_CONFIG_ID_1}
@@ -1178,7 +1177,7 @@ class TestStartChainJob:
                             completion=NativeCompletionConfig(
                                 provider="openai-native",
                                 type="text",
-                                params={"model": "gpt-4"},
+                                params={"model": "gpt-4o"},
                             )
                         )
                     )
@@ -1190,7 +1189,7 @@ class TestStartChainJob:
         project = get_project(db)
 
         with (
-            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.start_llm_chain_job") as mock_schedule,
             patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
         ):
             mock_schedule.return_value = "fake-task-id"
@@ -1206,14 +1205,12 @@ class TestStartChainJob:
 
             assert job_id == mock_job.id
             mock_schedule.assert_called_once()
-            _, kwargs = mock_schedule.call_args
-            assert kwargs["function_path"] == "app.services.llm.jobs.execute_chain_job"
 
     def test_start_chain_job_celery_failure(self, db: Session, chain_request):
         project = get_project(db)
 
         with (
-            patch("app.services.llm.jobs.start_high_priority_job") as mock_schedule,
+            patch("app.services.llm.jobs.start_llm_chain_job") as mock_schedule,
             patch("app.services.llm.jobs.JobCrud") as mock_job_crud_class,
         ):
             mock_schedule.side_effect = Exception("Celery connection failed")
@@ -1244,7 +1241,7 @@ class TestExecuteChainJob:
                             "completion": {
                                 "provider": "openai-native",
                                 "type": "text",
-                                "params": {"model": "gpt-4"},
+                                "params": {"model": "gpt-4o"},
                             }
                         }
                     },
@@ -1258,7 +1255,7 @@ class TestExecuteChainJob:
             response=LLMResponse(
                 provider_response_id="resp-123",
                 conversation_id=None,
-                model="gpt-4",
+                model="gpt-4o",
                 provider="openai",
                 output=TextOutput(content=TextContent(value="Test response")),
             ),
@@ -1376,7 +1373,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4", "temperature": 0.8},
+                params={"model": "gpt-4o", "temperature": 0.8},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -1392,7 +1389,7 @@ class TestResolveConfigBlob:
         assert error is None
         assert resolved_blob is not None
         assert resolved_blob.completion.provider == "openai-native"
-        assert resolved_blob.completion.params["model"] == "gpt-4"
+        assert resolved_blob.completion.params["model"] == "gpt-4o"
         assert resolved_blob.completion.params["temperature"] == 0.8
 
     def test_resolve_config_blob_keeps_validator_refs(self, db: Session):
@@ -1401,7 +1398,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4"},
+                params={"model": "gpt-4o"},
             ),
             input_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_1}],
             output_guardrails=[{"validator_config_id": VALIDATOR_CONFIG_ID_2}],
@@ -1433,7 +1430,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4"},
+                params={"model": "gpt-4o"},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -1459,7 +1456,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4"},
+                params={"model": "gpt-4o"},
             )
         )
         config = create_test_config(db, project_id=project.id, config_blob=config_blob)
@@ -1497,7 +1494,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-3.5-turbo", "temperature": 0.5},
+                params={"model": "gpt-4o", "temperature": 0.5},
             )
         )
         config = create_test_config(
@@ -1513,7 +1510,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-4", "temperature": 0.9},
+                params={"model": "gpt-4o", "temperature": 0.9},
             )
         )
         version_update = ConfigVersionUpdate(
@@ -1531,7 +1528,7 @@ class TestResolveConfigBlob:
 
         assert error_v1 is None
         assert resolved_blob_v1 is not None
-        assert resolved_blob_v1.completion.params["model"] == "gpt-3.5-turbo"
+        assert resolved_blob_v1.completion.params["model"] == "gpt-4o"
         assert resolved_blob_v1.completion.params["temperature"] == 0.5
 
         # Test resolving version 2
@@ -1542,7 +1539,7 @@ class TestResolveConfigBlob:
 
         assert error_v2 is None
         assert resolved_blob_v2 is not None
-        assert resolved_blob_v2.completion.params["model"] == "gpt-4"
+        assert resolved_blob_v2.completion.params["model"] == "gpt-4o"
         assert resolved_blob_v2.completion.params["temperature"] == 0.9
 
     def test_resolve_kaapi_config_blob_success(self, db: Session):
@@ -1554,7 +1551,7 @@ class TestResolveConfigBlob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.8,
                     "instructions": "You are a helpful assistant",
                 },
@@ -1574,7 +1571,7 @@ class TestResolveConfigBlob:
         assert resolved_blob is not None
         assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
         assert resolved_blob.completion.provider == "openai"
-        assert resolved_blob.completion.params["model"] == "gpt-4"
+        assert resolved_blob.completion.params["model"] == "gpt-4o"
         assert resolved_blob.completion.params["temperature"] == 0.8
         assert (
             resolved_blob.completion.params["instructions"]
@@ -1590,7 +1587,7 @@ class TestResolveConfigBlob:
             completion=NativeCompletionConfig(
                 provider="openai-native",
                 type="text",
-                params={"model": "gpt-3.5-turbo", "temperature": 0.5},
+                params={"model": "gpt-4o", "temperature": 0.5},
             )
         )
         native_config = create_test_config(
@@ -1603,7 +1600,7 @@ class TestResolveConfigBlob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.7,
                 },
             )

@@ -1,7 +1,84 @@
+import logging
+
 from celery import Celery
+from celery.signals import task_failure, task_postrun, task_prerun, worker_process_init
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+@task_prerun.connect
+def log_pool_status(task: "celery.Task", **_: object) -> None:  # type: ignore[name-defined]
+    """Log DB connection pool state before each task to detect connection leaks.
+
+    If checked_out equals pool size right when a task starts, connections
+    are being held across tasks (likely across LLM API calls) and leaking.
+    """
+    from app.core.db import engine
+    from sqlalchemy.pool import QueuePool
+
+    pool = engine.pool
+    if isinstance(pool, QueuePool):
+        logger.info(
+            f"[pool] task={task.name} checked_out={pool.checkedout()} "
+            f"size={pool.size()} overflow={pool.overflow()}"
+        )
+
+
+@task_postrun.connect
+def log_pool_status_post(task: "celery.Task", **_: object) -> None:  # type: ignore[name-defined]
+    """Log DB connection pool state after each task completes (success or failure).
+
+    Compare with task_prerun log — if checked_out is the same or higher after
+    the task, connections were not returned and are leaking.
+    """
+    from app.core.db import engine
+    from sqlalchemy.pool import QueuePool
+
+    pool = engine.pool
+    if isinstance(pool, QueuePool):
+        logger.info(
+            f"[pool] POST task={task.name} checked_out={pool.checkedout()} "
+            f"size={pool.size()} overflow={pool.overflow()}"
+        )
+
+
+@task_failure.connect
+def log_pool_status_failure(
+    task_id: str, exception: Exception, sender: "celery.Task", **_: object  # type: ignore[name-defined]
+) -> None:
+    """Log DB connection pool state on task failure.
+
+    Failures are the most likely path for sessions to leak — exceptions can
+    bypass session cleanup if not guarded by a context manager.
+    """
+    from app.core.db import engine
+    from sqlalchemy.pool import QueuePool
+
+    pool = engine.pool
+    if isinstance(pool, QueuePool):
+        logger.warning(
+            f"[pool] FAILED task={sender.name} task_id={task_id} "
+            f"exc={type(exception).__name__} "
+            f"checked_out={pool.checkedout()} "
+            f"size={pool.size()} overflow={pool.overflow()}"
+        )
+
+
+@worker_process_init.connect
+def warm_llm_modules(**_) -> None:
+    """Import LLM service modules in each worker process right after fork.
+
+    This runs once per worker before any task arrives, so LLM calls
+    (the most latency-sensitive path) never pay a cold-import penalty.
+    The main process is unaffected, keeping overall memory low.
+    """
+    import app.services.llm.jobs  # noqa: F401
+
+    logger.info("[warm_llm_modules] LLM modules pre-loaded in worker process")
+
 
 # Create Celery instance
 celery_app = Celery(
@@ -35,18 +112,10 @@ celery_app.conf.update(
         Queue("cron", exchange=default_exchange, routing_key="cron"),
         Queue("default", exchange=default_exchange, routing_key="default"),
     ),
-    # Task routing
+    # Task routing — queue is set per-task via @celery_app.task(queue=...).
+    # Only cron tasks need an explicit override here.
     task_routes={
-        "app.celery.tasks.job_execution.execute_high_priority_task": {
-            "queue": "high_priority",
-            "priority": 9,
-        },
-        "app.celery.tasks.job_execution.execute_low_priority_task": {
-            "queue": "low_priority",
-            "priority": 1,
-        },
         "app.celery.tasks.*_cron_*": {"queue": "cron"},
-        "app.celery.tasks.*": {"queue": "default"},
     },
     task_default_queue="default",
     # Enable priority support
@@ -86,6 +155,3 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_pool_limit=settings.CELERY_BROKER_POOL_LIMIT,
 )
-
-# Auto-discover tasks
-celery_app.autodiscover_tasks()

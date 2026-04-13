@@ -1,6 +1,13 @@
+from datetime import timedelta
+
+import jwt
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.core.security import (
+    ALGORITHM,
+    create_access_token,
+    create_refresh_token,
     get_encryption_key,
     APIKeyManager,
 )
@@ -190,3 +197,72 @@ class TestAPIKeyManager:
 
         assert auth_context is not None
         assert auth_context.user.id == api_key_response.user_id
+
+
+class TestCreateAccessToken:
+    """Test suite for create_access_token function."""
+
+    def test_creates_valid_jwt(self):
+        """Test that a valid JWT is created."""
+        token = create_access_token(subject="42", expires_delta=timedelta(minutes=30))
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["sub"] == "42"
+        assert payload["type"] == "access"
+        assert "exp" in payload
+
+    def test_includes_org_and_project(self):
+        """Test that org_id and project_id are embedded in the token."""
+        token = create_access_token(
+            subject="1",
+            expires_delta=timedelta(minutes=30),
+            organization_id=10,
+            project_id=20,
+        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["org_id"] == 10
+        assert payload["project_id"] == 20
+
+    def test_omits_org_and_project_when_none(self):
+        """Test that org_id and project_id are omitted when not provided."""
+        token = create_access_token(subject="1", expires_delta=timedelta(minutes=30))
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert "org_id" not in payload
+        assert "project_id" not in payload
+
+
+class TestCreateRefreshToken:
+    """Test suite for create_refresh_token function."""
+
+    def test_creates_valid_refresh_jwt(self):
+        """Test that a valid refresh JWT is created."""
+        token = create_refresh_token(subject="42", expires_delta=timedelta(days=7))
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["sub"] == "42"
+        assert payload["type"] == "refresh"
+        assert "exp" in payload
+
+    def test_includes_org_and_project(self):
+        """Test that org_id and project_id are embedded in the refresh token."""
+        token = create_refresh_token(
+            subject="1",
+            expires_delta=timedelta(days=7),
+            organization_id=10,
+            project_id=20,
+        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert payload["org_id"] == 10
+        assert payload["project_id"] == 20
+        assert payload["type"] == "refresh"
+
+    def test_omits_org_and_project_when_none(self):
+        """Test that org_id and project_id are omitted when not provided."""
+        token = create_refresh_token(subject="1", expires_delta=timedelta(days=7))
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+        assert "org_id" not in payload
+        assert "project_id" not in payload

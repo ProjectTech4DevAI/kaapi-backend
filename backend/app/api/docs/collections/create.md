@@ -3,6 +3,9 @@ pipeline:
 
 * Create a vector store from the document IDs you received after uploading your
   documents through the Documents module.
+* The `batch_size` parameter controls how many documents are sent to OpenAI in a
+  single transaction when creating the vector store. This helps optimize the upload
+  process for large document sets. If not specified, the default value is **10**.
 * [Deprecated] Attach the Vector Store to an OpenAI
   [Assistant](https://platform.openai.com/docs/api-reference/assistants). Use
   parameters in the request body relevant to an Assistant to flesh out

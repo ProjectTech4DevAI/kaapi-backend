@@ -37,10 +37,11 @@ class DocumentCrud:
         self,
         skip: int | None = None,
         limit: int | None = None,
-    ) -> list[Document]:
+    ) -> tuple[list[Document], bool]:
         statement = select(Document).where(
             and_(Document.project_id == self.project_id, Document.is_deleted.is_(False))
         )
+        statement = statement.order_by(Document.inserted_at.desc())
 
         if skip is not None:
             if skip < 0:
@@ -64,10 +65,16 @@ class DocumentCrud:
                         exc_info=True,
                     )
                     raise
-            statement = statement.limit(limit)
+            statement = statement.limit(limit + 1)
 
         documents = self.session.exec(statement).all()
-        return documents
+
+        has_more = False
+        if limit is not None and len(documents) > limit:
+            has_more = True
+            documents = documents[:limit]
+
+        return documents, has_more
 
     def read_each(self, doc_ids: list[UUID]):
         statement = select(Document).where(

@@ -75,10 +75,17 @@ class APIResponse(BaseModel, Generic[T]):
                 loc = err.get("loc", ())
                 parts = [str(p) for p in loc if p != "body"]
                 field = ".".join(parts) if parts else "unknown"
+
+                # Strip Pydantic error type prefixes to get better error message
+                msg = str(err.get("msg", ""))
+                prefixes = ["Value error, ", "Type error, ", "Assertion error, "]
+                for prefix in prefixes:
+                    if msg.startswith(prefix):
+                        msg = msg[len(prefix) :]
+                        break
+
                 structured_errors.append(
-                    ValidationErrorDetail(
-                        field=str(field), message=str(err.get("msg", ""))
-                    )
+                    ValidationErrorDetail(field=str(field), message=msg)
                 )
 
             return cls(
@@ -272,6 +279,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             public_key=credentials["public_key"],
             secret_key=credentials["secret_key"],
             host=credentials["host"],
+            timeout=60,
         )
     except Exception as e:
         logger.error(
@@ -417,7 +425,7 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
 
             response.raise_for_status()
 
-            logger.info("[send_callback] Callback sent successfully")
+            logger.info(f"[send_callback] Callback sent successfully to {callback_url}")
             return True
 
     except requests.RequestException as e:

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_stt_batch_submission
 from app.core.cloud import get_cloud_storage
 from app.crud.stt_evaluations import (
     create_stt_run,
@@ -83,8 +83,7 @@ def start_stt_evaluation(
     # Offload batch submission (signed URLs, JSONL, Gemini upload) to Celery worker
     trace_id = correlation_id.get() or "N/A"
     try:
-        celery_task_id = start_low_priority_job(
-            function_path="app.services.stt_evaluations.batch_job.execute_batch_submission",
+        celery_task_id = start_stt_batch_submission(
             project_id=auth_context.project_.id,
             job_id=str(run.id),
             trace_id=trace_id,

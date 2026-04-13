@@ -26,7 +26,7 @@ def test_collection_creation_with_assistant_calls_start_job_and_returns_job(
         instructions="string",
         temperature=0.000001,
         documents=[UUID("f3e86a17-1e6f-41ec-b020-5b08eebef928")],
-        batch_size=1,
+        batch_size=10,
         callback_url=None,
     )
 
@@ -71,7 +71,7 @@ def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_f
     creation_data = CreationRequest(
         temperature=0.000001,
         documents=[str(uuid4())],
-        batch_size=1,
+        batch_size=10,
         callback_url=None,
     )
 
@@ -109,7 +109,7 @@ def test_collection_creation_vector_only_request_validation_error(
         "model": "gpt-4o",
         "temperature": 0.000001,
         "documents": [str(uuid4())],
-        "batch_size": 1,
+        "batch_size": 10,
         "callback_url": None,
     }
 

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 1 days = 1 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 1
+    # 60 minutes * 24 hours * 7 days = 7 days
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ENVIRONMENT: Literal[
         "development", "testing", "staging", "production"
     ] = "development"
@@ -51,6 +53,9 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = ""
     KAAPI_GUARDRAILS_AUTH: str = ""
     KAAPI_GUARDRAILS_URL: str = ""
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -109,8 +114,8 @@ class Settings(BaseSettings):
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
-    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 1000
-    CELERY_WORKER_MAX_MEMORY_PER_CHILD: int = 200000
+    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 150
+    CELERY_WORKER_MAX_MEMORY_PER_CHILD: int = 300000
     CELERY_TASK_SOFT_TIME_LIMIT: int = 300
     CELERY_TASK_TIME_LIMIT: int = 600
     CELERY_TASK_MAX_RETRIES: int = 3

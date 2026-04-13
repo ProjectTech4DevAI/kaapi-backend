@@ -18,9 +18,9 @@ class TestDatabaseUpdate:
     def test_update_adds_one(self, db: Session, documents: DocumentMaker) -> None:
         crud = DocumentCrud(db, documents.project_id)
 
-        before = crud.read_many()
+        before, _ = crud.read_many()
         crud.update(next(documents))
-        after = crud.read_many()
+        after, _ = crud.read_many()
 
         assert len(before) + 1 == len(after)
 

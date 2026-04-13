@@ -7,12 +7,13 @@ Follows the same pattern as text evaluations: single query to fetch all
 processing runs, grouped by project_id for credential management.
 """
 
+import asyncio
 import logging
 from typing import Any
 
 from sqlmodel import Session
 
-from app.celery.utils import start_low_priority_job
+from app.celery.utils import start_stt_metric_computation
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
@@ -128,7 +129,31 @@ async def poll_stt_run(
             action="no_change",
         )
 
-    # All batch jobs are done - finalize the run
+    # All batch jobs are done - clean up Gemini audio files once
+    gemini_file_names: list[str] = []
+    for bj in batch_jobs:
+        names = bj.config.get("gemini_audio_files", [])
+        if names:
+            gemini_file_names = names
+            break
+
+    if gemini_file_names:
+        try:
+            deleted, failed = await asyncio.to_thread(
+                batch_provider.delete_files, gemini_file_names
+            )
+            logger.info(
+                f"[poll_stt_run] Gemini file cleanup | "
+                f"run_id={run.id}, deleted={deleted}, failed={failed}"
+            )
+        except Exception as e:
+            # Non-critical; Gemini files auto-expire after 48h
+            logger.warning(
+                f"[poll_stt_run] Gemini file cleanup failed | "
+                f"run_id={run.id}, error={str(e)}"
+            )
+
+    # Finalize the run
     status_counts = count_results_by_status(session=session, run_id=run.id)
     failed_count = status_counts.get(JobStatus.FAILED.value, 0)
 
@@ -149,8 +174,7 @@ async def poll_stt_run(
     # Trigger automated metric computation (WER, CER, lenient WER, WIP)
     if result.any_succeeded:
         try:
-            celery_task_id = start_low_priority_job(
-                function_path="app.services.stt_evaluations.metric_job.execute_metric_computation",
+            celery_task_id = start_stt_metric_computation(
                 project_id=run.project_id,
                 job_id=str(run.id),
                 organization_id=run.organization_id,
