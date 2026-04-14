@@ -1,7 +1,7 @@
 """create model_config table
 
-Revision ID: 051
-Revises: 050
+Revision ID: 052
+Revises: 051
 Create Date: 2026-03-12 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "051"
-down_revision = "050"
+revision = "052"
+down_revision = "051"
 branch_labels = None
 depends_on = None
 
