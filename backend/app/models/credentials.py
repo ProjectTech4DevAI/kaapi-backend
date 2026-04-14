@@ -4,6 +4,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.core.providers import mask_credential_fields
 from app.core.util import now
 from app.models.organization import Organization
 from app.models.project import Project
@@ -119,7 +120,7 @@ class Credential(CredsBase, table=True):
         By default, sensitive fields (e.g., api_key, secret_key) are masked so
         the response is safe to return via the API.
         """
-        from app.core.providers import mask_credential_fields
+        # Local import to avoid circular dependency (security imports app.models)
         from app.core.security import decrypt_credentials
 
         decrypted = decrypt_credentials(self.credential) if self.credential else None
