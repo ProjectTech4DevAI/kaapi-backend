@@ -1,4 +1,3 @@
-import litellm
 import logging
 
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
@@ -7,6 +6,7 @@ from app.models.llm.constants import (
     BCP47_TO_ELEVENLABS_LANG,
     ELEVENLABS_VOICE_TO_ID,
     DEFAULT_TTS_VOICE,
+    OPENAI_REASONING_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
     max_num_results = kaapi_params.get("max_num_results")
 
-    support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
+    support_reasoning = model in OPENAI_REASONING_MODELS
 
     # Handle reasoning vs temperature mutual exclusivity
     if support_reasoning:
