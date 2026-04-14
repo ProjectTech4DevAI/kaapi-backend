@@ -24,7 +24,7 @@ def test_start_job(db: Session):
         job_id = start_job(db, request, project.id, project.organization_id)
 
         job_crud = JobCrud(session=db)
-        job = job_crud.get(job_id)
+        job = job_crud.get(job_id=job_id, project_id=project.id)
         assert job is not None
         assert job.job_type == JobType.RESPONSE
         assert job.status == JobStatus.PENDING

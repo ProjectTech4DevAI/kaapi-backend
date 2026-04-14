@@ -46,7 +46,9 @@ def start_job(
     """Create an LLM job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_API, trace_id=trace_id)
+    job = job_crud.create(
+        job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
+    )
 
     logger.info(
         f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
@@ -83,7 +85,9 @@ def start_chain_job(
     """Create an LLM Chain job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_CHAIN, trace_id=trace_id)
+    job = job_crud.create(
+        job_type=JobType.LLM_CHAIN, trace_id=trace_id, project_id=project_id
+    )
 
     logger.info(
         f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
