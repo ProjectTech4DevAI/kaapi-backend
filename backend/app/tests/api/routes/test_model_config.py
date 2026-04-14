@@ -1,8 +1,6 @@
 from fastapi.testclient import TestClient
-from sqlmodel import Session
 
 from app.core.config import settings
-from app.crud.model_config import get_default_model_for_type
 
 
 def test_list_models(
@@ -58,9 +56,41 @@ def test_get_model_not_found(
     assert response.json()["error"] == "Model not found"
 
 
-def test_get_default_model_for_type(db: Session) -> None:
-    model = get_default_model_for_type(session=db, completion_type="text")
+def test_list_models_grouped(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/grouped",
+        headers=superuser_token_headers,
+    )
 
-    assert model is not None
-    assert model.default_for == "text"
-    assert model.is_active is True
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+
+    grouped_models = body["data"]
+    assert grouped_models
+    for provider, models in grouped_models.items():
+        assert isinstance(provider, str)
+        assert isinstance(models, list)
+        assert all(model["provider"] == provider for model in models)
+        assert all(model["is_active"] for model in models)
+
+
+def test_list_providers(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/providers",
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+
+    providers = body["data"]
+    assert isinstance(providers, list)
+    assert providers == sorted(providers)
+    assert len(providers) == len(set(providers))
+    assert "openai" in providers

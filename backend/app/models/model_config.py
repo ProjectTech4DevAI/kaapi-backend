@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import sqlalchemy as sa
 from app.core.util import now
@@ -35,7 +35,7 @@ class ModelConfigBase(SQLModel):
             ARRAY(sa.String),
             nullable=False,
             server_default="{}",
-            comment="supported input modalities: TEXT, IMAGE, PDF, AUDIO",
+            comment="supported input modalities: TEXT, IMAGE, FILES, AUDIO",
         ),
     )
 
@@ -49,17 +49,15 @@ class ModelConfigBase(SQLModel):
         ),
     )
 
-    # NOTE: can we use this default_for column to help in routing?
-    default_for: Literal["text", "stt", "tts"] | None = Field(
+    pricing: Optional[dict[str, Any]] = Field(
         default=None,
         sa_column=sa.Column(
-            sa.String,
+            JSONB,
             nullable=True,
             comment=(
-                "completion types this model is the default for. "
-                "e.g. [text, stt, tts]. "
-                "NULL means not a default. "
-                "Supported: text, stt, tts"
+                "pricing per 1M tokens in USD. "
+                "Structure: {response: {input_token_cost, output_token_cost}, "
+                "batch: {input_token_cost, output_token_cost}}"
             ),
         ),
     )
@@ -122,3 +120,38 @@ class ModelConfigPublic(ModelConfigBase):
 class ModelConfigListPublic(SQLModel):
     data: list[ModelConfigPublic]
     count: int
+
+
+# if __name__ == "__main__":
+#     import os
+
+#     from sqlmodel import Session, create_engine
+
+#     from app.crud.model_config import estimate_model_cost
+
+#     database_url = "postgresql+psycopg://postgres:postgres@localhost:5432/kaapi"
+#     engine = create_engine(database_url)
+
+#     with Session(engine) as session:
+#         input_tokens = 5000
+#         output_tokens = 10000
+
+#         response_cost_info = estimate_model_cost(
+#             session=session,
+#             provider="openai",
+#             model_name="gpt-4o",
+#             input_tokens=input_tokens,
+#             output_tokens=output_tokens,
+#             tag="response",
+#         )
+#         print(response_cost_info)
+
+#         batch_cost_info = estimate_model_cost(
+#             session=session,
+#             provider="openai",
+#             model_name="gpt-4o",
+#             input_tokens=input_tokens,
+#             output_tokens=output_tokens,
+#             tag="batch",
+#         )
+#         print(batch_cost_info)

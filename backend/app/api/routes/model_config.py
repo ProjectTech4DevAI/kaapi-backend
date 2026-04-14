@@ -1,9 +1,15 @@
 import logging
+from typing import Literal
+from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
-from app.crud.model_config import get_active_models, get_model_config
+from app.crud.model_config import (
+    estimate_model_cost,
+    get_active_models,
+    get_model_config,
+)
 from app.models import ModelConfigPublic, ModelConfigListPublic
 from app.utils import APIResponse, load_description
 
@@ -32,7 +38,38 @@ def list_models(
 
 
 @router.get(
-    "/{provider}/{model_name:path}",
+    "/grouped",
+    response_model=APIResponse[dict[str, list[ModelConfigPublic]]],
+    description=load_description("model_config/list_models_grouped.md"),
+)
+def list_models_grouped(
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[dict[str, list[ModelConfigPublic]]]:
+    models = get_active_models(session=session, skip=0, limit=1000)
+    grouped: dict[str, list[ModelConfigPublic]] = defaultdict(list)
+    for model in models:
+        grouped[model.provider].append(model)
+
+    return APIResponse.success_response(dict(grouped))
+
+
+@router.get(
+    "/providers",
+    response_model=APIResponse[list[str]],
+    description=load_description("model_config/list_providers.md"),
+)
+def list_providers(
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[list[str]]:
+    models = get_active_models(session=session, skip=0, limit=1000)
+    providers = sorted({model.provider for model in models})
+    return APIResponse.success_response(providers)
+
+
+@router.get(
+    "/{provider}/{model_name}",
     response_model=APIResponse[ModelConfigPublic],
     description=load_description("model_config/get_model.md"),
 )
