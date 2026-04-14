@@ -53,6 +53,8 @@ override-dependencies = [
     "cryptography>=46.0.5",
     "werkzeu>=3.1.6",
     "pypdf>=3.9.0",
+    # Pinned: avoid supply chain attack in litellm 1.82.7/1.82.8 (Mar 2026)
+    "litellm==1.82.1",
 ]
 dev-dependencies = [
     "pytest<8.0.0,>=7.4.3",

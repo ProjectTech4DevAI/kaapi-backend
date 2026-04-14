@@ -122,6 +122,8 @@ from .llm import (
     LLMChainRequest,
     LLMChainResponse,
     LlmChain,
+    LLMJobImmediatePublic,
+    LLMJobPublic,
 )
 
 from .message import Message

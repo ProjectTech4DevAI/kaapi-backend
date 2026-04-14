@@ -40,6 +40,11 @@ class Job(SQLModel, table=True):
         description="Tracing ID for correlating logs and traces.",
         sa_column_kwargs={"comment": "Tracing ID for correlating logs and traces"},
     )
+    project_id: int | None = Field(
+        default=None,
+        description="Project ID of the project the job belongs to.",
+        sa_column_kwargs={"comment": "Project ID of the job's project"},
+    )
     error_message: str | None = Field(
         default=None,
         description="Error details if the job fails.",
