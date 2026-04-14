@@ -1,11 +1,12 @@
 import logging
-from typing import Any, Literal
-
-from uuid import UUID
-from sqlmodel import Session, select
-from app.core.util import now
 import base64
 import json
+from uuid import UUID
+from typing import Any, Literal
+
+from sqlmodel import Session, select
+
+from app.core.util import now
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
 from app.models.llm.request import (
     TextInput,
@@ -234,13 +235,13 @@ def get_llm_call_by_id(
 
 
 def get_llm_calls_by_job_id(
-    session: Session,
-    job_id: UUID,
+    session: Session, job_id: UUID, project_id: int
 ) -> list[LlmCall]:
     statement = (
         select(LlmCall)
         .where(
             LlmCall.job_id == job_id,
+            LlmCall.project_id == project_id,
             LlmCall.deleted_at.is_(None),
         )
         .order_by(LlmCall.created_at.desc())
