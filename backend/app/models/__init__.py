@@ -128,6 +128,14 @@ from .llm import (
 )
 
 from .message import Message
+
+from .model_config import (
+    ModelConfig,
+    ModelConfigBase,
+    ModelConfigListPublic,
+    ModelConfigPublic,
+)
+
 from .model_evaluation import (
     ModelEvaluation,
     ModelEvaluationBase,
