@@ -1,16 +1,11 @@
 import logging
-from typing import Literal
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.deps import AuthContextDep, SessionDep
-from app.crud.model_config import (
-    estimate_model_cost,
-    get_active_models,
-    get_model_config,
-)
-from app.models import ModelConfigPublic, ModelConfigListPublic
+from app.api.deps import SessionDep
+from app.crud.model_config import get_model_config, list_active_model_configs
+from app.models import ModelConfigListPublic, ModelConfigPublic
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -24,12 +19,11 @@ router = APIRouter(prefix="/models", tags=["Model Config"])
 )
 def list_models(
     session: SessionDep,
-    auth_context: AuthContextDep,
     provider: str | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> APIResponse[ModelConfigListPublic]:
-    models = get_active_models(
+    models = list_active_model_configs(
         session=session, provider=provider, skip=skip, limit=limit
     )
     return APIResponse.success_response(
@@ -44,9 +38,8 @@ def list_models(
 )
 def list_models_grouped(
     session: SessionDep,
-    auth_context: AuthContextDep,
 ) -> APIResponse[dict[str, list[ModelConfigPublic]]]:
-    models = get_active_models(session=session, skip=0, limit=1000)
+    models = list_active_model_configs(session=session, skip=0, limit=1000)
     grouped: dict[str, list[ModelConfigPublic]] = defaultdict(list)
     for model in models:
         grouped[model.provider].append(model)
@@ -61,9 +54,8 @@ def list_models_grouped(
 )
 def list_providers(
     session: SessionDep,
-    auth_context: AuthContextDep,
 ) -> APIResponse[list[str]]:
-    models = get_active_models(session=session, skip=0, limit=1000)
+    models = list_active_model_configs(session=session, skip=0, limit=1000)
     providers = sorted({model.provider for model in models})
     return APIResponse.success_response(providers)
 
@@ -74,7 +66,7 @@ def list_providers(
     description=load_description("model_config/get_model.md"),
 )
 def get_model(
-    session: SessionDep, auth_context: AuthContextDep, provider: str, model_name: str
+    session: SessionDep, provider: str, model_name: str
 ) -> APIResponse[ModelConfigPublic]:
     model = get_model_config(session=session, provider=provider, model_name=model_name)
 

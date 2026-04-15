@@ -4,7 +4,7 @@
 
 Retrieve a list of all active model configurations.
 
-Returns model details including provider, model name, supported config parameters, input/output modalities, and default assignment.
+Returns model details including provider, model name, supported config parameters, input/output modalities, pricing, and active status.
 
 Optionally filter by provider (e.g. openai, google).
 
@@ -50,7 +50,16 @@ Optionally filter by provider (e.g. openai, google).
         },
         "input_modalities": ["TEXT", "IMAGE"],
         "output_modalities": ["TEXT"],
-        "default_for": null,
+        "pricing": {
+          "response": {
+            "input_token_cost": 0.15,
+            "output_token_cost": 0.6
+          },
+          "batch": {
+            "input_token_cost": 0.075,
+            "output_token_cost": 0.3
+          }
+        },
         "is_active": true,
         "inserted_at": "2026-03-12T00:00:00",
         "updated_at": "2026-03-12T00:00:00"

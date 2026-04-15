@@ -4,7 +4,7 @@ from typing import Any, Literal, Optional
 import sqlalchemy as sa
 from app.core.util import now
 from sqlmodel import Field, SQLModel
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 
 class ModelConfigBase(SQLModel):
@@ -120,38 +120,3 @@ class ModelConfigPublic(ModelConfigBase):
 class ModelConfigListPublic(SQLModel):
     data: list[ModelConfigPublic]
     count: int
-
-
-# if __name__ == "__main__":
-#     import os
-
-#     from sqlmodel import Session, create_engine
-
-#     from app.crud.model_config import estimate_model_cost
-
-#     database_url = "postgresql+psycopg://postgres:postgres@localhost:5432/kaapi"
-#     engine = create_engine(database_url)
-
-#     with Session(engine) as session:
-#         input_tokens = 5000
-#         output_tokens = 10000
-
-#         response_cost_info = estimate_model_cost(
-#             session=session,
-#             provider="openai",
-#             model_name="gpt-4o",
-#             input_tokens=input_tokens,
-#             output_tokens=output_tokens,
-#             tag="response",
-#         )
-#         print(response_cost_info)
-
-#         batch_cost_info = estimate_model_cost(
-#             session=session,
-#             provider="openai",
-#             model_name="gpt-4o",
-#             input_tokens=input_tokens,
-#             output_tokens=output_tokens,
-#             tag="batch",
-#         )
-#         print(batch_cost_info)

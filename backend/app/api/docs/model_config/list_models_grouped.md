@@ -4,7 +4,7 @@
 
 Retrieve all active models grouped by provider.
 
-Returns a dictionary where each key is a provider and each value is a list of active model configurations for that provider.
+Returns a dictionary where each key is a provider present in active records, and each value is a list of active model configurations for that provider.
 
 ### Example Response
 
@@ -38,8 +38,7 @@ Returns a dictionary where each key is a provider and each value is a list of ac
         "inserted_at": "2026-03-12T00:00:00",
         "updated_at": "2026-03-12T00:00:00"
       }
-    ],
-    "google": []
+    ]
   }
 }
 ```

@@ -4,7 +4,7 @@
 
 Retrieve a specific model configuration by provider and model name.
 
-Returns model details including supported config parameters, input/output modalities, and default assignment.
+Returns model details including supported config parameters, input/output modalities, pricing, and active status.
 
 ### Path Parameters
 
@@ -45,10 +45,23 @@ Returns model details including supported config parameters, input/output modali
     },
     "input_modalities": ["TEXT", "IMAGE"],
     "output_modalities": ["TEXT"],
-    "default_for": "text",
+    "pricing": {
+      "response": {
+        "input_token_cost": 2.5,
+        "output_token_cost": 10
+      },
+      "batch": {
+        "input_token_cost": 1.25,
+        "output_token_cost": 5
+      }
+    },
     "is_active": true,
     "inserted_at": "2026-03-12T00:00:00",
     "updated_at": "2026-03-12T00:00:00"
   }
 }
 ```
+
+### Error Response
+
+- `404 Not Found` — Model not found for the given `provider` and `model_name`.
