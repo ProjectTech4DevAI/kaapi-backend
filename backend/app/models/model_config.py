@@ -1,17 +1,20 @@
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import sqlalchemy as sa
-from app.core.util import now
-from sqlmodel import Field, SQLModel
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlmodel import Field, SQLModel
+
+from app.core.util import now
 
 
 class ModelConfigBase(SQLModel):
     provider: Literal["openai", "google"] = Field(
         default="openai",
         sa_column=sa.Column(
-            sa.String, nullable=False, comment="provider name (e.g. openai, google)"
+            sa.String,
+            nullable=False,
+            comment="provider name (e.g. openai, google)",
         ),
     )
 
@@ -49,7 +52,7 @@ class ModelConfigBase(SQLModel):
         ),
     )
 
-    pricing: Optional[dict[str, Any]] = Field(
+    pricing: dict[str, Any] | None = Field(
         default=None,
         sa_column=sa.Column(
             JSONB,

@@ -71,9 +71,6 @@ def get_model(
     model = get_model_config(session=session, provider=provider, model_name=model_name)
 
     if model is None:
-        logger.error(
-            f"[get_model] Model not found | provider={provider}, model_name={model_name}"
-        )
         raise HTTPException(status_code=404, detail="Model not found")
 
     return APIResponse.success_response(model)
