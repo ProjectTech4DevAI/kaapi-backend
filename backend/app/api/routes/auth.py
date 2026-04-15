@@ -10,6 +10,8 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.core.config import settings
 from app.crud import get_user_by_email
 from app.crud.auth import get_user_accessible_projects
+from app.crud.organization import validate_organization
+from app.crud.project import validate_project
 from app.models import (
     GoogleAuthRequest,
     GoogleAuthResponse,
@@ -218,14 +220,19 @@ def logout() -> JSONResponse:
 def verify_invitation(session: SessionDep, token: str) -> JSONResponse:
     """Verify an invitation token, activate the user, and log them in."""
 
-    invite_data = verify_invite_token(token)
-    if not invite_data:
+    invite_payload = verify_invite_token(token)
+    if not invite_payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired invitation link",
         )
 
-    user = get_user_by_email(session=session, email=invite_data["email"])
+    # Verify the org/project referenced by the invite still exist and are active.
+    # Raises 404 from validate_* if missing.
+    validate_organization(session=session, org_id=invite_payload.organization_id)
+    validate_project(session=session, project_id=invite_payload.project_id)
+
+    user = get_user_by_email(session=session, email=invite_payload.email)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -244,12 +251,12 @@ def verify_invitation(session: SessionDep, token: str) -> JSONResponse:
 
     response = build_token_response(
         user_id=user.id,
-        organization_id=invite_data["organization_id"],
-        project_id=invite_data["project_id"],
+        organization_id=invite_payload.organization_id,
+        project_id=invite_payload.project_id,
     )
 
     logger.info(
-        f"[verify_invitation] Invitation verified | user_id: {user.id}, project_id: {invite_data['project_id']}"
+        f"[verify_invitation] Invitation verified | user_id: {user.id}, project_id: {invite_payload.project_id}"
     )
     return response
 

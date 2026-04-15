@@ -6,7 +6,7 @@ import ipaddress
 import logging
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 import requests
 import socket
@@ -14,10 +14,8 @@ import socket
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
-import jwt
 import emails
 from jinja2 import Template
-from jwt.exceptions import InvalidTokenError
 from fastapi import HTTPException
 from langfuse import Langfuse
 import openai
@@ -224,26 +222,16 @@ def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailD
 
 
 def generate_password_reset_token(email: str) -> str:
-    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
-    now = datetime.now(timezone.utc)
-    expires = now + delta
-    exp = expires.timestamp()
-    encoded_jwt = jwt.encode(
-        {"exp": exp, "nbf": now, "sub": email},
-        settings.SECRET_KEY,
-        algorithm=security.ALGORITHM,
+    return security.encode_jwt_token(
+        subject=email,
+        token_type="password_reset",
+        expires_delta=timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS),
     )
-    return encoded_jwt
 
 
 def verify_password_reset_token(token: str) -> str | None:
-    try:
-        decoded_token = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
-        )
-        return str(decoded_token["sub"])
-    except InvalidTokenError:
-        return None
+    payload = security.decode_jwt_token(token, expected_type="password_reset")
+    return str(payload["sub"]) if payload and "sub" in payload else None
 
 
 def mask_string(value: str, mask_char: str = "*") -> str:

@@ -24,7 +24,6 @@ dependencies = [
     "boto3>=1.37.20",
     "moto[s3]>=5.1.1",
     "openai>=1.100.1",
-    "pytest>=7.4.4",
     "pre-commit>=3.8.0",
     "openai_responses",
     "langfuse==2.60.3",
@@ -57,13 +56,13 @@ override-dependencies = [
     "litellm==1.82.1",
 ]
 dev-dependencies = [
-    "pytest<8.0.0,>=7.4.3",
+    "pytest>=9.0.3",
     "mypy<2.0.0,>=1.8.0",
     "ruff<1.0.0,>=0.2.2",
     "pre-commit<4.0.0,>=3.6.2",
     "types-passlib<2.0.0.0,>=1.7.7.20240106",
     "coverage<8.0.0,>=7.4.3",
-    "pytest-asyncio>=0.23.8",
+    "pytest-asyncio>=1.0.0",
 ]
 
 [build-system]

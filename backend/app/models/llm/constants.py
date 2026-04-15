@@ -3,7 +3,12 @@ DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"
 
 SUPPORTED_MODELS = {
-    ("google", "stt"): [DEFAULT_STT_MODEL],
+    ("google", "stt"): [
+        DEFAULT_STT_MODEL,
+        "gemini-3.1-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+    ],
     ("google", "tts"): [DEFAULT_TTS_MODEL, "gemini-2.5-pro-preview-tts"],
     ("sarvamai", "stt"): ["saaras:v3"],
     ("sarvamai", "tts"): ["bulbul:v3"],

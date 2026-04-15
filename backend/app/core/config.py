@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     # Frontend URL for magic links
     FRONTEND_HOST: str = "http://localhost:3000"
 
-    # Invitation token expiry (default 7 days)
-    INVITE_TOKEN_EXPIRE_HOURS: int = 24 * 7
+    # Invitation token expiry (default 24 hours)
+    INVITE_TOKEN_EXPIRE_HOURS: int = 24
 
     # Magic link login token expiry (default 15 minutes)
     MAGIC_LINK_TOKEN_EXPIRE_MINUTES: int = 15
