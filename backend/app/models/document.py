@@ -46,6 +46,13 @@ class Document(DocumentBase, table=True):
         description="The size of the document in kilobytes",
         sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
     )
+    provider_file_id: str | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "File ID assigned by the LLM provider (e.g. OpenAI file ID) to avoid re-uploading"
+        },
+    )
 
     # Foreign keys
     source_document_id: UUID | None = Field(

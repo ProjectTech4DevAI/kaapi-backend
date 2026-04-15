@@ -76,6 +76,20 @@ def start_create_collection_job(
     return task.id
 
 
+def start_collection_batch_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_collection_batch_job
+
+    task = run_collection_batch_job.delay(
+        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(
+        f"[start_collection_batch_job] Started batch job {job_id} with Celery task {task.id}"
+    )
+    return task.id
+
+
 def start_delete_collection_job(
     project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:

@@ -28,7 +28,8 @@ class OpenAIProvider(BaseProvider):
     ) -> Collection:
         """
         Create OpenAI vector store with documents and optionally an assistant.
-        docs_batches must be pre-fetched inside a DB session before this call.
+        Batching and checkpointing are handled by the Celery task layer.
+        This method is kept for direct (non-batched) use cases.
         """
         try:
             docs_batches = batch_documents(documents)
@@ -42,7 +43,6 @@ class OpenAIProvider(BaseProvider):
                 f"vector_store_id={vector_store.id}, batches={len(docs_batches)}"
             )
 
-            # Check if we need to create an assistant (based on assistant options in request)
             with_assistant = (
                 collection_request.model is not None
                 and collection_request.instructions is not None
