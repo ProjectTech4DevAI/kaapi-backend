@@ -3,6 +3,7 @@ app.egg-info
 *.pyc
 .mypy_cache
 .coverage
+coverage.xml
 htmlcov
 .cache
 .venv
