@@ -14,8 +14,24 @@ def test_list_models(
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
+    assert "has_more" in body["metadata"]
     assert body["data"]["count"] > 0
     assert all(m["is_active"] for m in body["data"]["data"])
+
+
+def test_list_models_has_more(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/?skip=0&limit=1",
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["count"] == 1
+    assert body["metadata"]["has_more"] is True
 
 
 def test_list_models_filter_by_provider(
@@ -30,6 +46,16 @@ def test_list_models_filter_by_provider(
     data = response.json()["data"]["data"]
     assert len(data) <= 5
     assert all(m["provider"] == "openai" for m in data)
+
+
+def test_list_models_invalid_limit(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/?skip=0&limit=0",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 422
 
 
 def test_get_model(client: TestClient, superuser_token_headers: dict[str, str]) -> None:
@@ -67,6 +93,7 @@ def test_list_models_grouped(
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
+    assert "has_more" in body["metadata"]
 
     grouped_models = body["data"]
     assert grouped_models
@@ -75,6 +102,31 @@ def test_list_models_grouped(
         assert isinstance(models, list)
         assert all(model["provider"] == provider for model in models)
         assert all(model["is_active"] for model in models)
+
+
+def test_list_models_grouped_has_more(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/grouped?skip=0&limit=1",
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["metadata"]["has_more"] is True
+
+
+def test_list_models_grouped_invalid_limit(
+    client: TestClient, superuser_token_headers: dict[str, str]
+) -> None:
+    response = client.get(
+        f"{settings.API_V1_STR}/models/grouped?skip=0&limit=0",
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 422
 
 
 def test_list_providers(

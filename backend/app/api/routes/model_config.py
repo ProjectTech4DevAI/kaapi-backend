@@ -1,10 +1,14 @@
 import logging
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import SessionDep
-from app.crud.model_config import get_model_config, list_active_model_configs
+from app.crud.model_config import (
+    get_model_config,
+    list_active_model_configs,
+    list_all_active_model_configs,
+)
 from app.models import ModelConfigListPublic, ModelConfigPublic
 from app.utils import APIResponse, load_description
 
@@ -20,14 +24,15 @@ router = APIRouter(prefix="/models", tags=["Model Config"])
 def list_models(
     session: SessionDep,
     provider: str | None = None,
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
 ) -> APIResponse[ModelConfigListPublic]:
-    models = list_active_model_configs(
+    models, has_more = list_active_model_configs(
         session=session, provider=provider, skip=skip, limit=limit
     )
     return APIResponse.success_response(
-        ModelConfigListPublic(data=models, count=len(models))
+        ModelConfigListPublic(data=models, count=len(models)),
+        metadata={"has_more": has_more},
     )
 
 
@@ -38,13 +43,19 @@ def list_models(
 )
 def list_models_grouped(
     session: SessionDep,
+    skip: int = Query(0, ge=0, description="Number of model records to skip"),
+    limit: int = Query(
+        100, ge=1, le=100, description="Maximum model records to return before grouping"
+    ),
 ) -> APIResponse[dict[str, list[ModelConfigPublic]]]:
-    models = list_active_model_configs(session=session, skip=0, limit=1000)
+    models, has_more = list_active_model_configs(
+        session=session, skip=skip, limit=limit
+    )
     grouped: dict[str, list[ModelConfigPublic]] = defaultdict(list)
     for model in models:
         grouped[model.provider].append(model)
 
-    return APIResponse.success_response(dict(grouped))
+    return APIResponse.success_response(dict(grouped), metadata={"has_more": has_more})
 
 
 @router.get(
@@ -55,7 +66,7 @@ def list_models_grouped(
 def list_providers(
     session: SessionDep,
 ) -> APIResponse[list[str]]:
-    models = list_active_model_configs(session=session, skip=0, limit=1000)
+    models = list_all_active_model_configs(session=session)
     providers = sorted({model.provider for model in models})
     return APIResponse.success_response(providers)
 

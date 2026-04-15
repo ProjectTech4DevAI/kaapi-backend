@@ -12,13 +12,16 @@ Optionally filter by provider (e.g. openai, google).
 
 - **`provider`** (optional) — Filter by provider name (e.g. `openai`, `google`)
 - **`skip`** (optional, default 0) — Number of records to skip for pagination
-- **`limit`** (optional, default 100) — Maximum number of records to return
+- **`limit`** (optional, default 100, max 100) — Maximum number of records to return
 
 ### Example Response
 
 ```json
 {
   "success": true,
+  "metadata": {
+    "has_more": true
+  },
   "data": {
     "data": [
       {

@@ -10,6 +10,27 @@ def list_active_model_configs(
     provider: Literal["openai", "google"] | None = None,
     skip: int = 0,
     limit: int = 100,
+) -> tuple[list[ModelConfig], bool]:
+    statement = select(ModelConfig).where(ModelConfig.is_active)
+
+    if provider:
+        statement = statement.where(ModelConfig.provider == provider)
+
+    statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
+    statement = statement.offset(skip).limit(limit + 1)
+    models = list(session.exec(statement).all())
+
+    has_more = False
+    if len(models) > limit:
+        has_more = True
+        models = models[:limit]
+
+    return models, has_more
+
+
+def list_all_active_model_configs(
+    session: Session,
+    provider: Literal["openai", "google"] | None = None,
 ) -> list[ModelConfig]:
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
@@ -17,7 +38,6 @@ def list_active_model_configs(
         statement = statement.where(ModelConfig.provider == provider)
 
     statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
-    statement = statement.offset(skip).limit(limit)
     return list(session.exec(statement).all())
 
 

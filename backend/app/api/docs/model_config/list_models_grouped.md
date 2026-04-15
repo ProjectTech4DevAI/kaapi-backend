@@ -2,15 +2,23 @@
 
 **GET** `/api/v1/models/grouped`
 
-Retrieve all active models grouped by provider.
+Retrieve active models grouped by provider.
 
-Returns a dictionary where each key is a provider present in active records, and each value is a list of active model configurations for that provider.
+Supports pagination of model rows before grouping:
+- `skip` (default `0`)
+- `limit` (default `100`, max `100`)
+
+Returns a dictionary where each key is a provider present in the paginated slice, and each value is a list of active model configurations for that provider.
+Includes `metadata.has_more` when additional model rows exist.
 
 ### Example Response
 
 ```json
 {
   "success": true,
+  "metadata": {
+    "has_more": true
+  },
   "data": {
     "openai": [
       {
