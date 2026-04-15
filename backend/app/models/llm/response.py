@@ -3,8 +3,12 @@ LLM response models.
 
 This module contains structured response models for LLM API calls.
 """
-from sqlmodel import SQLModel, Field
+from datetime import datetime
+from uuid import UUID
 from typing import Literal, Annotated
+
+from sqlmodel import SQLModel, Field
+
 from app.models.llm.request import AudioContent, TextContent
 
 
@@ -100,3 +104,23 @@ class IntermediateChainResponse(SQLModel):
         default=None,
         description="Unmodified raw response from the LLM provider from the current block",
     )
+
+
+# Job response models
+class LLMJobImmediatePublic(SQLModel):
+    """Immediate response after creating an LLM job."""
+
+    job_id: UUID
+    status: str
+    message: str
+    job_inserted_at: datetime
+    job_updated_at: datetime
+
+
+class LLMJobPublic(SQLModel):
+    """Full job response with nested LLM response when complete."""
+
+    job_id: UUID
+    status: str
+    llm_response: LLMCallResponse | None = None
+    error_message: str | None = None
