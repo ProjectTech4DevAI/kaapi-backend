@@ -3,7 +3,12 @@ DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"
 
 SUPPORTED_MODELS = {
-    ("google", "stt"): [DEFAULT_STT_MODEL],
+    ("google", "stt"): [
+        DEFAULT_STT_MODEL,
+        "gemini-3.1-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+    ],
     ("google", "tts"): [DEFAULT_TTS_MODEL, "gemini-2.5-pro-preview-tts"],
     ("sarvamai", "stt"): ["saaras:v3"],
     ("sarvamai", "tts"): ["bulbul:v3"],
@@ -31,6 +36,9 @@ SUPPORTED_MODELS = {
         "gpt-3.5-turbo",
     ],
 }
+
+# OpenAI models that support reasoning (effort parameter)
+OPENAI_REASONING_MODELS: set[str] = {"o1", "o1-preview", "o1-mini"}
 
 SUPPORTED_VOICES = {
     ("google", "tts"): ["Kore", "Orus", "Leda", "Charon"],

@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
-from app.crud.organization import get_organization_by_id
-from app.crud.project import get_project_by_id
+from app.crud.organization import get_organization_by_id, validate_organization
+from app.crud.project import get_project_by_id, validate_project
 from app.crud.user_project import (
     add_user_to_project,
     get_users_by_project,
@@ -58,6 +58,10 @@ def add_project_users(
     body: AddUsersToProjectRequest,
 ) -> Any:
     """Add one or more users to a project by email."""
+    # Validate org and project exist and are active before issuing any invites.
+    validate_organization(session=session, org_id=body.organization_id)
+    validate_project(session=session, project_id=body.project_id)
+
     same_project_emails = []
     different_project_emails = []
 

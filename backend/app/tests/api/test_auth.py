@@ -422,10 +422,14 @@ class TestInviteVerify:
         resp = client.get(f"{INVITE_VERIFY_URL}?token=invalid.token")
         assert resp.status_code == 400
 
-    def test_verify_user_not_found(self, client: TestClient):
+    def test_verify_user_not_found(
+        self, client: TestClient, user_api_key: TestAuthContext
+    ):
         """Test returns 404 when invited user doesn't exist."""
         token = generate_invite_token(
-            email="ghost@example.com", organization_id=1, project_id=1
+            email="ghost@example.com",
+            organization_id=user_api_key.organization.id,
+            project_id=user_api_key.project.id,
         )
         resp = client.get(f"{INVITE_VERIFY_URL}?token={token}")
         assert resp.status_code == 404
@@ -477,9 +481,9 @@ class TestTokenGeneration:
         )
         result = verify_invite_token(token)
         assert result is not None
-        assert result["email"] == "test@example.com"
-        assert result["organization_id"] == 1
-        assert result["project_id"] == 2
+        assert result.email == "test@example.com"
+        assert result.organization_id == 1
+        assert result.project_id == 2
 
     def test_verify_invite_token_wrong_type(self):
         """Test invite verify rejects magic_link tokens."""
