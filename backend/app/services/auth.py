@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import jwt as pyjwt
 from fastapi import HTTPException, status
@@ -11,6 +11,7 @@ from app.core import security
 from app.core.config import settings
 from app.models import (
     GoogleAuthResponse,
+    InviteTokenPayload,
     Token,
     TokenPayload,
     User,
@@ -184,36 +185,24 @@ def generate_invite_token(
     project_id: int,
 ) -> str:
     """Generate a JWT invitation token for a user."""
-    delta = timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS)
-    now = datetime.now(timezone.utc)
-    expires = now + delta
-    to_encode = {
-        "exp": expires.timestamp(),
-        "nbf": now,
-        "sub": email,
-        "org_id": organization_id,
-        "project_id": project_id,
-        "type": "invite",
-    }
-    return pyjwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
+    return security.encode_jwt_token(
+        subject=email,
+        token_type="invite",
+        expires_delta=timedelta(hours=settings.INVITE_TOKEN_EXPIRE_HOURS),
+        extra_claims={"org_id": organization_id, "project_id": project_id},
+    )
 
 
-def verify_invite_token(token: str) -> dict | None:
-    """
-    Verify an invitation token and return the payload.
-
-    Returns dict with email, org_id, project_id or None if invalid.
-    """
+def verify_invite_token(token: str) -> InviteTokenPayload | None:
+    """Verify an invitation token and return its payload, or None if invalid."""
+    payload = security.decode_jwt_token(token, expected_type="invite")
+    if not payload:
+        return None
     try:
-        payload = pyjwt.decode(
-            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
+        return InviteTokenPayload(
+            email=payload["sub"],
+            organization_id=payload["org_id"],
+            project_id=payload["project_id"],
         )
-        if payload.get("type") != "invite":
-            return None
-        return {
-            "email": payload["sub"],
-            "organization_id": payload["org_id"],
-            "project_id": payload["project_id"],
-        }
-    except (InvalidTokenError, KeyError):
+    except KeyError:
         return None
