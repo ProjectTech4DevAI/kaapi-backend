@@ -27,6 +27,7 @@ from app.api.routes import (
     fine_tuning,
     model_evaluation,
     collection_job,
+    model_config,
 )
 from app.api.routes import evaluations
 from app.core.config import settings
@@ -58,7 +59,7 @@ api_router.include_router(users.router)
 api_router.include_router(utils.router)
 api_router.include_router(fine_tuning.router)
 api_router.include_router(model_evaluation.router)
-
+api_router.include_router(model_config.router)
 
 if settings.ENVIRONMENT in ["development", "testing"]:
     api_router.include_router(private.router)
