@@ -1,23 +1,22 @@
-from typing import Any
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, select
 
+from app.core.util import now
+from app.crud.evaluations.core import create_evaluation_run
 from app.crud.evaluations.processing import (
     _extract_batch_error_message,
     check_and_process_evaluation,
     parse_evaluation_output,
+    poll_all_pending_evaluations,
     process_completed_embedding_batch,
     process_completed_evaluation,
-    poll_all_pending_evaluations,
 )
-from app.models import BatchJob, Organization, Project, EvaluationDataset, EvaluationRun
+from app.models import BatchJob, EvaluationDataset, EvaluationRun, Organization, Project
 from app.models.batch_job import BatchJobType
-from app.tests.utils.test_data import create_test_evaluation_dataset, create_test_config
-from app.crud.evaluations.core import create_evaluation_run
-from app.core.util import now
+from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
 
 class TestParseEvaluationOutput:
@@ -581,7 +580,7 @@ class TestProcessCompletedEmbeddingBatch:
         db.commit()
         db.refresh(eval_run_with_embedding_batch)
 
-        # Raw results carry the usage payload that build_embedding_cost_entry reads.
+        # Raw results carry the usage payload that _build_embedding_cost_entry reads.
         mock_download.return_value = [
             {
                 "custom_id": "trace_123",

@@ -31,12 +31,6 @@ from app.crud.evaluations.langfuse import (
     update_traces_with_cosine_scores,
     upload_dataset_to_langfuse,
 )
-from app.crud.evaluations.pricing import (
-    build_cost_dict,
-    build_embedding_cost_entry,
-    build_response_cost_entry,
-    calculate_token_cost,
-)
 from app.crud.evaluations.processing import (
     check_and_process_evaluation,
     poll_all_pending_evaluations,
@@ -80,11 +74,6 @@ __all__ = [
     "calculate_average_similarity",
     "calculate_cosine_similarity",
     "start_embedding_batch",
-    # Pricing
-    "build_cost_dict",
-    "build_embedding_cost_entry",
-    "build_response_cost_entry",
-    "calculate_token_cost",
     # Langfuse
     "create_langfuse_dataset_run",
     "fetch_trace_scores_from_langfuse",
