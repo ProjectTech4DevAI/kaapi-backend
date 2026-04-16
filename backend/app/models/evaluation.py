@@ -422,6 +422,7 @@ class EvaluationRunPublic(SQLModel):
     embedding_batch_job_id: int | None
     status: str
     object_store_url: str | None
+    score_trace_url: str | None
     total_items: int
     score: dict[str, Any] | None
     cost: dict[str, Any] | None

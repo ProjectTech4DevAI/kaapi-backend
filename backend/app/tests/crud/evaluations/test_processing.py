@@ -580,7 +580,7 @@ class TestProcessCompletedEmbeddingBatch:
         db.commit()
         db.refresh(eval_run_with_embedding_batch)
 
-        # Raw results carry the usage payload that build_embedding_cost_entry reads.
+        # Raw results carry the usage payload that _build_embedding_cost_entry reads.
         mock_download.return_value = [
             {
                 "custom_id": "trace_123",

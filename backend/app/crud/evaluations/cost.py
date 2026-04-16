@@ -88,7 +88,7 @@ def _build_cost_entry(
     }
 
 
-def build_response_cost_entry(
+def _build_response_cost_entry(
     session: Session, model: str, results: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Build a response-stage cost entry from parsed evaluation results."""
@@ -100,7 +100,7 @@ def build_response_cost_entry(
     return _build_cost_entry(session=session, model=model, totals=totals)
 
 
-def build_embedding_cost_entry(
+def _build_embedding_cost_entry(
     session: Session, model: str, raw_results: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Build an embedding-stage cost entry from raw embedding batch output."""
@@ -112,7 +112,7 @@ def build_embedding_cost_entry(
     return _build_cost_entry(session=session, model=model, totals=totals)
 
 
-def build_cost_dict(
+def _build_cost_dict(
     response_entry: dict[str, Any] | None,
     embedding_entry: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -150,7 +150,7 @@ def attach_cost(
     """
     try:
         if response_model is not None and response_results is not None:
-            response_entry = build_response_cost_entry(
+            response_entry = _build_response_cost_entry(
                 session=session, model=response_model, results=response_results
             )
         else:
@@ -158,13 +158,13 @@ def attach_cost(
 
         embedding_entry: dict[str, Any] | None = None
         if embedding_model is not None and embedding_raw_results is not None:
-            embedding_entry = build_embedding_cost_entry(
+            embedding_entry = _build_embedding_cost_entry(
                 session=session,
                 model=embedding_model,
                 raw_results=embedding_raw_results,
             )
 
-        eval_run.cost = build_cost_dict(
+        eval_run.cost = _build_cost_dict(
             response_entry=response_entry,
             embedding_entry=embedding_entry,
         )
