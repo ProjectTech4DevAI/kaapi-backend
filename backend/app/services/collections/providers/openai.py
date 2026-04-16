@@ -3,11 +3,10 @@ import logging
 from openai import OpenAI
 
 from app.services.collections.providers import BaseProvider
-from app.crud import DocumentCrud
 from app.core.cloud.storage import CloudStorage
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import batch_documents, get_service_name
-from app.models import CreationRequest, Collection
+from app.services.collections.helpers import get_service_name
+from app.models import CreationRequest, Collection, Document
 
 
 logger = logging.getLogger(__name__)
@@ -24,20 +23,13 @@ class OpenAIProvider(BaseProvider):
         self,
         collection_request: CreationRequest,
         storage: CloudStorage,
-        document_crud: DocumentCrud,
+        docs_batches: list[list[Document]],
     ) -> Collection:
         """
         Create OpenAI vector store with documents and optionally an assistant.
+        docs_batches must be pre-fetched inside a DB session before this call.
         """
         try:
-            # Use user-provided batch_size, default to 10 if not set
-            batch_size = collection_request.batch_size or 10
-            docs_batches = batch_documents(
-                document_crud,
-                collection_request.documents,
-                batch_size,
-            )
-
             vector_store_crud = OpenAIVectorStoreCrud(self.client)
             vector_store = vector_store_crud.create()
 

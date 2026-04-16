@@ -46,11 +46,9 @@ def start_job(
     """Create an LLM job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_API, trace_id=trace_id)
-
-    # Explicitly flush to ensure job is persisted before Celery task starts
-    db.flush()
-    db.commit()
+    job = job_crud.create(
+        job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
+    )
 
     logger.info(
         f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
@@ -87,11 +85,9 @@ def start_chain_job(
     """Create an LLM Chain job and schedule Celery task."""
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
-    job = job_crud.create(job_type=JobType.LLM_CHAIN, trace_id=trace_id)
-
-    # Explicitly flush to ensure job is persisted before Celery task starts
-    db.flush()
-    db.commit()
+    job = job_crud.create(
+        job_type=JobType.LLM_CHAIN, trace_id=trace_id, project_id=project_id
+    )
 
     logger.info(
         f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
@@ -129,16 +125,14 @@ def handle_job_error(
     callback_response: APIResponse,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
+    if callback_url:
+        send_callback(
+            callback_url=callback_url,
+            data=callback_response.model_dump(),
+        )
+
     with Session(engine) as session:
-        job_crud = JobCrud(session=session)
-
-        if callback_url:
-            send_callback(
-                callback_url=callback_url,
-                data=callback_response.model_dump(),
-            )
-
-        job_crud.update(
+        JobCrud(session=session).update(
             job_id=job_id,
             job_update=JobUpdate(
                 status=JobStatus.FAILED,

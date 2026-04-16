@@ -7,6 +7,7 @@ import sqlalchemy as sa
 from pydantic import HttpUrl, model_validator
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
+
 from app.core.util import now
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
@@ -450,6 +451,11 @@ class LlmCall(SQLModel, table=True):
             "conversation_id",
             postgresql_where=text("conversation_id IS NOT NULL AND deleted_at IS NULL"),
         ),
+        Index(
+            "idx_llm_call_chain_id",
+            "chain_id",
+            postgresql_where=text("chain_id IS NOT NULL"),
+        ),
     )
 
     id: UUID = Field(
@@ -666,10 +672,10 @@ class LLMChainRequest(SQLModel):
 class ChainStatus(str, Enum):
     """Status of an LLM chain execution."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    FAILED = "failed"
-    COMPLETED = "completed"
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    COMPLETED = "COMPLETED"
 
 
 class LlmChain(SQLModel, table=True):
