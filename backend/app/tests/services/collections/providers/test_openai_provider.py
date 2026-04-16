@@ -18,14 +18,16 @@ def test_create_openai_vector_store_only() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1", "doc2"],
-        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
     )
 
     storage = MagicMock()
-    docs_batches = [["doc1"], ["doc2"]]
+    documents = [
+        SimpleNamespace(file_size_kb=10),
+        SimpleNamespace(file_size_kb=20),
+    ]
     vector_store_id = generate_openai_id("vs_")
 
     with patch(
@@ -38,7 +40,7 @@ def test_create_openai_vector_store_only() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            docs_batches,
+            documents,
         )
 
     assert isinstance(collection, Collection)
@@ -52,14 +54,13 @@ def test_create_openai_with_assistant() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=10,
         model="gpt-4o",
         instructions="You are helpful",
         temperature=0.7,
     )
 
     storage = MagicMock()
-    docs_batches = [["doc1"]]
+    documents = [SimpleNamespace(file_size_kb=10)]
     vector_store_id = generate_openai_id("vs_")
     assistant_id = generate_openai_id("asst_")
 
@@ -78,7 +79,7 @@ def test_create_openai_with_assistant() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            docs_batches,
+            documents,
         )
 
     assert collection.llm_service_id == assistant_id
@@ -128,7 +129,6 @@ def test_create_propagates_exception() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
@@ -143,5 +143,5 @@ def test_create_propagates_exception() -> None:
             provider.create(
                 collection_request,
                 MagicMock(),
-                [["doc1"]],
+                [SimpleNamespace(file_size_kb=10)],
             )

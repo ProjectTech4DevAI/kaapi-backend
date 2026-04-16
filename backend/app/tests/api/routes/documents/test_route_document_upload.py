@@ -4,7 +4,7 @@ from typing import Any
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 from moto import mock_aws
@@ -300,6 +300,50 @@ class TestDocumentRouteUpload:
 
         # Check that start_job was called with the right arguments
         assert "transformer_name" in kwargs or len(args) >= 4
+
+    def test_upload_file_within_size_limit(
+        self,
+        db: Session,
+        route: Route,
+        scratch: Path,
+        uploader: WebUploader,
+    ) -> None:
+        """Test that a file within the size limit uploads successfully."""
+        aws = AmazonCloudStorageClient()
+        aws.create()
+
+        # Mock calculate_file_size to return a value just under the 25 MB limit (in KB)
+        with patch(
+            "app.api.routes.documents.calculate_file_size",
+            return_value=25 * 1024 - 1,  # 25 MB - 1 KB
+        ):
+            response = uploader.put(route, scratch)
+
+        assert response.status_code == 200
+
+    def test_upload_file_exceeds_size_limit(
+        self,
+        db: Session,
+        route: Route,
+        scratch: Path,
+        uploader: WebUploader,
+    ) -> None:
+        """Test that a file exceeding 25 MB returns a 413 error."""
+        aws = AmazonCloudStorageClient()
+        aws.create()
+
+        # Mock calculate_file_size to return a value over the 25 MB limit (in KB)
+        with patch(
+            "app.api.routes.documents.calculate_file_size",
+            return_value=25 * 1024 + 1,  # 25 MB + 1 KB
+        ):
+            response = uploader.put(route, scratch)
+
+        assert response.status_code == 413
+        print("response =", response.json())
+        error_detail = response.json()["error"]
+        assert "exceeds the maximum allowed size" in error_detail
+        assert "25" in error_detail
 
     def test_upload_response_structure_without_transformation(
         self,
