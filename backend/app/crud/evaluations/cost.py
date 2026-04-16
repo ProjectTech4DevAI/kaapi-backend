@@ -144,25 +144,28 @@ def attach_cost(
 ) -> None:
     """Compute cost for the given stage(s) and attach to `eval_run.cost`, never raising.
 
-    Caller is responsible for persisting `eval_run` afterwards. When only the
-    embedding stage is provided, a previously-computed response entry on
-    `eval_run.cost` is preserved.
+    Caller is responsible for persisting `eval_run` afterwards. Either stage's
+    previously-computed entry on `eval_run.cost` is preserved when that stage's
+    inputs are not supplied, so partial updates never clobber prior data.
     """
     try:
+        existing_cost = eval_run.cost or {}
+
         if response_model is not None and response_results is not None:
             response_entry = _build_response_cost_entry(
                 session=session, model=response_model, results=response_results
             )
         else:
-            response_entry = (eval_run.cost or {}).get("response")
+            response_entry = existing_cost.get("response")
 
-        embedding_entry: dict[str, Any] | None = None
         if embedding_model is not None and embedding_raw_results is not None:
             embedding_entry = _build_embedding_cost_entry(
                 session=session,
                 model=embedding_model,
                 raw_results=embedding_raw_results,
             )
+        else:
+            embedding_entry = existing_cost.get("embedding")
 
         eval_run.cost = _build_cost_dict(
             response_entry=response_entry,

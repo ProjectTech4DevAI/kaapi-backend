@@ -200,8 +200,8 @@ def update_evaluation_run(
     semantics), so callers don't accidentally clear unrelated columns.
     `updated_at` is always bumped.
     """
-    for key, value in update.model_dump(exclude_unset=True).items():
-        setattr(eval_run, key, value)
+    for field_name, new_value in update.model_dump(exclude_unset=True).items():
+        setattr(eval_run, field_name, new_value)
 
     eval_run.updated_at = now()
 
