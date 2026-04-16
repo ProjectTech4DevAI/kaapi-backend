@@ -31,18 +31,17 @@ class BaseProvider(ABC):
         self,
         collection_request: CreationRequest,
         storage: CloudStorage,
-        docs_batches: list[list[Document]],
+        documents: list[Document],
     ) -> Collection:
         """Create collection with documents and optionally an assistant.
 
         Args:
             collection_request: Collection parameters (name, description, document list, etc.)
             storage: Cloud storage instance for file access
-            docs_batches: Pre-fetched document batches (DB reads must happen before this call)
+            documents: Pre-fetched list of Document objects to add to the collection
 
         Returns:
-            llm_service_id: ID of the resource to delete
-            llm_service_name: Name of the service (determines resource type)
+            Collection object with llm_service_id and llm_service_name populated
         """
         raise NotImplementedError("Providers must implement execute method")
 

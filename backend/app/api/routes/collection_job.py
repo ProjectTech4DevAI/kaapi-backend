@@ -17,7 +17,6 @@ from app.models import (
     CollectionActionType,
     CollectionJobPublic,
 )
-from app.models.collection import CollectionPublic
 from app.utils import APIResponse, load_description
 from app.services.collections.helpers import extract_error_message, to_collection_public
 
