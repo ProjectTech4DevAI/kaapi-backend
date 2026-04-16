@@ -393,6 +393,22 @@ class EvaluationRunCreate(SQLModel):
     )
 
 
+class EvaluationRunUpdate(SQLModel):
+    """Partial update payload for an evaluation run.
+
+    Any field left unset is untouched. Used by `update_evaluation_run` with
+    `model_dump(exclude_unset=True)` semantics.
+    """
+
+    status: str | None = None
+    error_message: str | None = None
+    object_store_url: str | None = None
+    score_trace_url: str | None = None
+    score: dict[str, Any] | None = None
+    cost: dict[str, Any] | None = None
+    embedding_batch_job_id: int | None = None
+
+
 class EvaluationRunPublic(SQLModel):
     """Public model for evaluation runs."""
 

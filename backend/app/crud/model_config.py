@@ -97,7 +97,6 @@ def estimate_model_cost(
 
     input_cost = (input_tokens / 1_000_000) * float(input_price)
     output_cost = (output_tokens / 1_000_000) * float(output_price)
-    total_cost = round(input_cost + output_cost, 4)
 
     return {
         "provider": provider,
@@ -107,6 +106,6 @@ def estimate_model_cost(
         "output_tokens": output_tokens,
         "input_cost": input_cost,
         "output_cost": output_cost,
-        "total_cost": total_cost,
+        "total_cost": input_cost + output_cost,
         "currency": "USD",
     }

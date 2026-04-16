@@ -5,18 +5,17 @@ from uuid import UUID
 from langfuse import Langfuse
 from sqlmodel import Session, select
 
+from app.core.cloud.storage import get_cloud_storage
+from app.core.db import engine
+from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
-from app.models import EvaluationRun
+from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
-
-from app.core.db import engine
-from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import upload_jsonl_to_object_store
 
 logger = logging.getLogger(__name__)
 
@@ -192,51 +191,18 @@ def get_evaluation_run_by_id(
 def update_evaluation_run(
     session: Session,
     eval_run: EvaluationRun,
-    status: str | None = None,
-    error_message: str | None = None,
-    object_store_url: str | None = None,
-    score_trace_url: str | None = None,
-    score: dict | None = None,
-    cost: dict | None = None,
-    embedding_batch_job_id: int | None = None,
+    update: EvaluationRunUpdate,
 ) -> EvaluationRun:
     """
-    Update an evaluation run with new values and persist to database.
+    Apply a partial update to an evaluation run and persist it.
 
-    This helper function ensures consistency when updating evaluation runs
-    by always updating the timestamp and properly committing changes.
-
-    Args:
-        session: Database session
-        eval_run: EvaluationRun instance to update
-        status: New status value (optional)
-        error_message: New error message (optional)
-        object_store_url: New object store URL (optional)
-        score_trace_url: New per-trace score S3 URL (optional)
-        score: New score dict (optional)
-        cost: New cost dict (optional)
-        embedding_batch_job_id: New embedding batch job ID (optional)
-
-    Returns:
-        Updated and refreshed EvaluationRun instance
+    Only fields explicitly set on `update` are applied (`exclude_unset=True`
+    semantics), so callers don't accidentally clear unrelated columns.
+    `updated_at` is always bumped.
     """
-    # Update provided fields
-    if status is not None:
-        eval_run.status = status
-    if error_message is not None:
-        eval_run.error_message = error_message
-    if object_store_url is not None:
-        eval_run.object_store_url = object_store_url
-    if score is not None:
-        eval_run.score = score
-    if cost is not None:
-        eval_run.cost = cost
-    if embedding_batch_job_id is not None:
-        eval_run.embedding_batch_job_id = embedding_batch_job_id
-    if score_trace_url is not None:
-        eval_run.score_trace_url = score_trace_url or None
+    for key, value in update.model_dump(exclude_unset=True).items():
+        setattr(eval_run, key, value)
 
-    # Always update timestamp
     eval_run.updated_at = now()
 
     # Persist to database
@@ -319,7 +285,11 @@ def get_or_fetch_score(
     }
 
     # Update score column using existing helper
-    update_evaluation_run(session=session, eval_run=eval_run, score=score)
+    update_evaluation_run(
+        session=session,
+        eval_run=eval_run,
+        update=EvaluationRunUpdate(score=score),
+    )
 
     total_traces = len(score.get("traces", []))
     logger.info(
@@ -405,8 +375,10 @@ def save_score(
         update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            score=db_score,
-            score_trace_url=score_trace_url,
+            update=EvaluationRunUpdate(
+                score=db_score,
+                score_trace_url=score_trace_url or None,
+            ),
         )
 
         logger.info(

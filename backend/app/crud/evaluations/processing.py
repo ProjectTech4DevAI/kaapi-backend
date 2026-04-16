@@ -28,6 +28,7 @@ from app.core.batch import (
 from app.core.batch.base import BATCH_KEY
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
+from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
     calculate_average_similarity,
@@ -39,158 +40,11 @@ from app.crud.evaluations.langfuse import (
     update_traces_with_cosine_scores,
 )
 from app.crud.job import get_batch_job, update_batch_job
-from app.crud.model_config import estimate_model_cost
-from app.models import EvaluationRun
+from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
-
-# Number of decimals to round USD cost values to.
-COST_USD_DECIMALS = 6
-
-
-def _cost_usd_from_estimate(estimate: dict[str, Any] | None) -> float:
-    """Sum the unrounded per-direction costs and round to our USD precision.
-
-    `estimate_model_cost` returns `total_cost` already rounded to 4 decimals,
-    which drops sub-cent precision we want to retain here.
-    """
-    if not estimate:
-        return 0.0
-    total = float(estimate.get("input_cost", 0.0)) + float(
-        estimate.get("output_cost", 0.0)
-    )
-    return round(total, COST_USD_DECIMALS)
-
-
-def _build_response_cost_entry(
-    session: Session, model: str, results: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Aggregate token usage from parsed results and compute batch-pricing cost."""
-    totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for item in results:
-        usage = item.get("usage")
-        if not usage:
-            continue
-        for field in totals:
-            totals[field] += usage.get(field, 0)
-
-    estimate = estimate_model_cost(
-        session=session,
-        provider="openai",
-        model_name=model,
-        input_tokens=totals["input_tokens"],
-        output_tokens=totals["output_tokens"],
-        usage_type="batch",
-    )
-
-    return {
-        "model": model,
-        "input_tokens": totals["input_tokens"],
-        "output_tokens": totals["output_tokens"],
-        "total_tokens": totals["total_tokens"],
-        "cost_usd": _cost_usd_from_estimate(estimate),
-    }
-
-
-def _build_embedding_cost_entry(
-    session: Session, model: str, raw_results: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Aggregate token usage from raw embedding results and compute batch-pricing cost."""
-    totals = {"prompt_tokens": 0, "total_tokens": 0}
-    for item in raw_results:
-        usage = item.get("response", {}).get("body", {}).get("usage")
-        if not usage:
-            continue
-        for field in totals:
-            totals[field] += usage.get(field, 0)
-
-    estimate = estimate_model_cost(
-        session=session,
-        provider="openai",
-        model_name=model,
-        input_tokens=totals["prompt_tokens"],
-        output_tokens=0,
-        usage_type="batch",
-    )
-
-    return {
-        "model": model,
-        "prompt_tokens": totals["prompt_tokens"],
-        "total_tokens": totals["total_tokens"],
-        "cost_usd": _cost_usd_from_estimate(estimate),
-    }
-
-
-def _build_cost_dict(
-    response_entry: dict[str, Any] | None,
-    embedding_entry: dict[str, Any] | None,
-) -> dict[str, Any]:
-    cost: dict[str, Any] = {}
-    response_cost = 0.0
-    embedding_cost = 0.0
-
-    if response_entry:
-        cost["response"] = response_entry
-        response_cost = response_entry.get("cost_usd", 0.0)
-
-    if embedding_entry:
-        cost["embedding"] = embedding_entry
-        embedding_cost = embedding_entry.get("cost_usd", 0.0)
-
-    cost["total_cost_usd"] = round(response_cost + embedding_cost, COST_USD_DECIMALS)
-    return cost
-
-
-def _safe_attach_cost(
-    session: Session,
-    eval_run: EvaluationRun,
-    log_prefix: str,
-    *,
-    response_model: str | None = None,
-    response_results: list[dict[str, Any]] | None = None,
-    embedding_model: str | None = None,
-    embedding_raw_results: list[dict[str, Any]] | None = None,
-) -> None:
-    """
-    Compute and attach a cost dict to eval_run.cost without raising.
-
-    Cost-tracking failures must never block evaluation completion, so any
-    exception is logged and swallowed. The caller is responsible for
-    persisting eval_run via update_evaluation_run.
-
-    Pricing is sourced from the `global.model_config` table using the batch
-    usage type (evaluations run through the OpenAI Batch API).
-
-    When called for the embedding stage only, any previously-computed
-    response entry on eval_run.cost is preserved.
-    """
-    try:
-        if response_model is not None and response_results is not None:
-            response_entry = _build_response_cost_entry(
-                session=session, model=response_model, results=response_results
-            )
-        else:
-            # Preserve any response entry computed during an earlier stage.
-            response_entry = (eval_run.cost or {}).get("response")
-
-        embedding_entry: dict[str, Any] | None = None
-        if embedding_model is not None and embedding_raw_results is not None:
-            embedding_entry = _build_embedding_cost_entry(
-                session=session,
-                model=embedding_model,
-                raw_results=embedding_raw_results,
-            )
-
-        eval_run.cost = _build_cost_dict(
-            response_entry=response_entry,
-            embedding_entry=embedding_entry,
-        )
-    except Exception as cost_err:
-        logger.warning(
-            f"[_safe_attach_cost] {log_prefix} Failed to compute cost | {cost_err}"
-        )
 
 
 def _extract_batch_error_message(
@@ -481,14 +335,18 @@ async def process_completed_evaluation(
         model = resolve_model_from_config(session=session, eval_run=eval_run)
 
         # Aggregate response generation cost
-        _safe_attach_cost(
+        attach_cost(
             session=session,
             eval_run=eval_run,
             log_prefix=log_prefix,
             response_model=model,
             response_results=results,
         )
-        update_evaluation_run(session=session, eval_run=eval_run, cost=eval_run.cost)
+        update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(cost=eval_run.cost),
+        )
 
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
@@ -525,8 +383,10 @@ async def process_completed_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="completed",
-                error_message=f"Embeddings failed: {str(e)}",
+                update=EvaluationRunUpdate(
+                    status="completed",
+                    error_message=f"Embeddings failed: {str(e)}",
+                ),
             )
 
         logger.info(
@@ -544,8 +404,10 @@ async def process_completed_evaluation(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Processing failed: {str(e)}",
+            ),
         )
 
 
@@ -647,7 +509,7 @@ async def process_completed_embedding_batch(
                 )
 
         # Step 7: Accumulate embedding cost onto existing response cost
-        _safe_attach_cost(
+        attach_cost(
             session=session,
             eval_run=eval_run,
             log_prefix=log_prefix,
@@ -659,9 +521,11 @@ async def process_completed_embedding_batch(
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="completed",
-            score=eval_run.score,
-            cost=eval_run.cost,
+            update=EvaluationRunUpdate(
+                status="completed",
+                score=eval_run.score,
+                cost=eval_run.cost,
+            ),
         )
 
         logger.info(
@@ -679,8 +543,10 @@ async def process_completed_embedding_batch(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="completed",
-            error_message=f"Embedding processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="completed",
+                error_message=f"Embedding processing failed: {str(e)}",
+            ),
         )
 
 
@@ -764,8 +630,10 @@ async def check_and_process_evaluation(
                     eval_run = update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="completed",
-                        error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        update=EvaluationRunUpdate(
+                            status="completed",
+                            error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        ),
                     )
 
                     return {
@@ -825,8 +693,10 @@ async def check_and_process_evaluation(
                 eval_run = update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
-                    status="failed",
-                    error_message=error_msg,
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=error_msg,
+                    ),
                 )
 
                 logger.error(
@@ -867,8 +737,10 @@ async def check_and_process_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="failed",
-                error_message=error_msg,
+                update=EvaluationRunUpdate(
+                    status="failed",
+                    error_message=error_msg,
+                ),
             )
 
             logger.error(
@@ -906,8 +778,10 @@ async def check_and_process_evaluation(
         update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Checking failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Checking failed: {str(e)}",
+            ),
         )
 
         return {
@@ -999,8 +873,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=http_exc.detail,
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=http_exc.detail,
+                        ),
                     )
 
                     all_results.append(
@@ -1040,8 +916,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=f"Check failed: {str(e)}",
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=f"Check failed: {str(e)}",
+                        ),
                     )
 
                     all_results.append(
@@ -1063,8 +941,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                 update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
-                    status="failed",
-                    error_message=f"Project processing failed: {str(e)}",
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=f"Project processing failed: {str(e)}",
+                    ),
                 )
 
                 all_results.append(

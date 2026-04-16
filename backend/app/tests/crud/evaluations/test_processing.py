@@ -580,7 +580,7 @@ class TestProcessCompletedEmbeddingBatch:
         db.commit()
         db.refresh(eval_run_with_embedding_batch)
 
-        # Raw results carry the usage payload that _build_embedding_cost_entry reads.
+        # Raw results carry the usage payload that build_embedding_cost_entry reads.
         mock_download.return_value = [
             {
                 "custom_id": "trace_123",
@@ -635,7 +635,8 @@ class TestProcessCompletedEmbeddingBatch:
         assert result.cost["response"]["cost_usd"] == 0.000375
         embedding_cost = result.cost["embedding"]
         assert embedding_cost["model"] == "text-embedding-3-large"
-        assert embedding_cost["prompt_tokens"] == 200
+        assert embedding_cost["input_tokens"] == 200
+        assert embedding_cost["output_tokens"] == 0
         assert embedding_cost["total_tokens"] == 200
         assert embedding_cost["cost_usd"] > 0
         assert result.cost["total_cost_usd"] == pytest.approx(
