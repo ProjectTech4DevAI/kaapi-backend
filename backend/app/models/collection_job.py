@@ -2,7 +2,8 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlmodel import Column, Field, SQLModel, Text
+from pydantic import field_validator
+from sqlmodel import JSON, Column, Field, SQLModel, Text
 
 from app.core.util import now
 from app.models.collection import CollectionIDPublic, CollectionPublic
@@ -53,10 +54,30 @@ class CollectionJob(SQLModel, table=True):
         description="Tracing ID for correlating logs and traces.",
         sa_column_kwargs={"comment": "Tracing ID for correlating logs and traces"},
     )
+    docs_num: int | None = Field(
+        default=None,
+        description="Total number of documents to be processed in this job",
+        sa_column_kwargs={
+            "comment": "Total number of documents to be processed in this job"
+        },
+    )
+    total_size_mb: float | None = Field(
+        default=None,
+        description="Total size of documents being uploaded to collection in MB",
+        sa_column_kwargs={
+            "comment": "Total size of documents being uploaded to collection in MB"
+        },
+    )
     error_message: str | None = Field(
         default=None,
         sa_column=Column(
             Text, nullable=True, comment="Error message if the job failed"
+        ),
+    )
+    documents: list[str] | None = Field(
+        default=None,
+        sa_column=Column(
+            JSON, nullable=True, comment="List of documents given to make collection"
         ),
     )
 
@@ -106,7 +127,9 @@ class CollectionJobCreate(SQLModel):
     collection_id: UUID | None = None
     status: CollectionJobStatus
     action_type: CollectionActionType
+    docs_num: int | None = None
     project_id: int
+    documents: list[str] | None = None
 
 
 class CollectionJobUpdate(SQLModel):
@@ -114,6 +137,7 @@ class CollectionJobUpdate(SQLModel):
     status: CollectionJobStatus | None = None
     error_message: str | None = None
     collection_id: UUID | None = None
+    total_size_mb: float | None = None
     trace_id: str | None = None
 
 
