@@ -200,7 +200,7 @@ def execute_job(
                 CollectionJobUpdate(
                     task_id=task_id,
                     status=CollectionJobStatus.PROCESSING,
-                    total_size_mb=total_size_mb,
+                    total_size_mb=round(total_size_mb, 2),
                 ),
             )
 

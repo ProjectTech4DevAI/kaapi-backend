@@ -122,14 +122,12 @@ def test_batch_documents_mixed_size_batching() -> None:
     assert len(batches[2]) == 1  # 15 MB total
 
 
-def test_batch_documents_with_none_file_size() -> None:
-    """Test that documents with None file_size are treated as 0 bytes."""
+def test_batch_documents_with_none_file_size_raises() -> None:
+    """Test that documents with None file_size raise TypeError — sizes must be backfilled before batching."""
     docs = create_fake_documents(10, file_size_kb=None)
-    batches = helpers.batch_documents(docs)
 
-    # All files with None/0 size should fit in one batch (under both limits)
-    assert len(batches) == 1
-    assert len(batches[0]) == 10
+    with pytest.raises(TypeError):
+        helpers.batch_documents(docs)
 
 
 def test_batch_documents_empty_input() -> None:
