@@ -14,6 +14,7 @@ from app.crud import (
     CollectionJobCrud,
 )
 from app.models import (
+    Document,
     CollectionJobStatus,
     CollectionJob,
     Collection,
@@ -21,6 +22,7 @@ from app.models import (
     CollectionJobPublic,
     CreationRequest,
 )
+from app.core.cloud.storage import CloudStorage
 from app.services.collections.helpers import (
     extract_error_message,
     to_collection_public,
@@ -135,9 +137,7 @@ def _mark_job_failed(
         return None
 
 
-def calculate_total_size_kb(
-    documents: list[Document], storage: "CloudStorage"
-) -> float:
+def calculate_total_size_kb(documents: list[Document], storage: CloudStorage) -> float:
     """
     Sum document sizes in KB. Uses the stored file_size_kb if available.
     """
