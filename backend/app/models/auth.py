@@ -19,6 +19,13 @@ class TokenPayload(SQLModel):
     type: str = "access"
 
 
+# Payload returned after verifying an invite JWT
+class InviteTokenPayload(SQLModel):
+    email: str
+    organization_id: int
+    project_id: int
+
+
 # Google OAuth
 class GoogleAuthRequest(SQLModel):
     token: str
@@ -35,6 +42,10 @@ class GoogleAuthResponse(SQLModel):
 
 class SelectProjectRequest(SQLModel):
     project_id: int
+
+
+class MagicLinkRequest(SQLModel):
+    email: str
 
 
 class AuthContext(SQLModel):
