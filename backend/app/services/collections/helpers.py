@@ -2,7 +2,6 @@ import logging
 import json
 import ast
 import re
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -11,9 +10,6 @@ from sqlmodel import select
 from app.crud import CollectionCrud
 from app.api.deps import SessionDep
 from app.models import DocumentCollection, Collection, CollectionPublic, Document
-
-if TYPE_CHECKING:
-    from app.core.cloud.storage import CloudStorage
 
 
 logger = logging.getLogger(__name__)
@@ -66,22 +62,6 @@ def extract_error_message(err: Exception) -> str:
     return message.strip()[:1000]
 
 
-def calculate_total_size_kb(documents: list[Document], storage: CloudStorage) -> float:
-    """
-    Sum document sizes in KB. Uses the stored file_size_kb if available.
-    """
-    total: float = 0
-    for doc in documents:
-        if doc.file_size_kb is not None:
-            total += doc.file_size_kb
-        else:
-            logger.info(
-                f"[calculate_total_size_kb] file_size_kb missing, fetching from storage | {{'doc_id': '{doc.id}', 'fname': '{doc.fname}'}}"
-            )
-            total += storage.get_file_size_kb(doc.object_store_url)
-    return total
-
-
 def batch_documents(documents: list[Document]) -> list[list[Document]]:
     """
     Batch documents dynamically based on size and count limits.
@@ -102,7 +82,7 @@ def batch_documents(documents: list[Document]) -> list[list[Document]]:
     current_batch_size_kb = 0
 
     for doc in documents:
-        doc_size_kb = doc.file_size_kb or 15 * 1024
+        doc_size_kb = doc.file_size_kb if doc.file_size_kb is not None else 15 * 1024
 
         would_exceed_size = (current_batch_size_kb + doc_size_kb) > MAX_BATCH_SIZE_KB
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT

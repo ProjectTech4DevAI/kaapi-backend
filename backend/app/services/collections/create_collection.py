@@ -22,7 +22,6 @@ from app.models import (
     CreationRequest,
 )
 from app.services.collections.helpers import (
-    calculate_total_size_kb,
     extract_error_message,
     to_collection_public,
 )
@@ -134,6 +133,24 @@ def _mark_job_failed(
     except Exception:
         logger.warning("[create_collection.execute_job] Failed to mark job as FAILED")
         return None
+
+
+def calculate_total_size_kb(
+    documents: list[Document], storage: "CloudStorage"
+) -> float:
+    """
+    Sum document sizes in KB. Uses the stored file_size_kb if available.
+    """
+    total: float = 0
+    for doc in documents:
+        if doc.file_size_kb is not None:
+            total += doc.file_size_kb
+        else:
+            logger.info(
+                f"[calculate_total_size_kb] file_size_kb missing, fetching from storage | {{'doc_id': '{doc.id}', 'fname': '{doc.fname}'}}"
+            )
+            total += storage.get_file_size_kb(doc.object_store_url)
+    return total
 
 
 def execute_job(
