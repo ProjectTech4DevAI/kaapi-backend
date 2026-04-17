@@ -1,6 +1,5 @@
 import logging
 from contextlib import contextmanager
-from typing import Any
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -369,7 +368,7 @@ def execute_llm_call(
 
             if isinstance(completion_config, KaapiCompletionConfig):
                 completion_config, warnings = transform_kaapi_config_to_native(
-                    completion_config
+                    session=session, kaapi_config=completion_config
                 )
                 if request_metadata is None:
                     request_metadata = {}

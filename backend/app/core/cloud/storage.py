@@ -126,6 +126,11 @@ class CloudStorage(ABC):
         pass
 
     @abstractmethod
+    def get(self, url: str) -> bytes:
+        """Get file contents as bytes (for files that fit in memory)"""
+        pass
+
+    @abstractmethod
     def get_file_size_kb(self, url: str) -> float:
         """Return the file size in KB"""
         pass
@@ -188,6 +193,25 @@ class AmazonCloudStorage(CloudStorage):
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.stream] AWS stream error | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+
+    def get(self, url: str) -> bytes:
+        name = SimpleStorageName.from_url(url)
+        kwargs = asdict(name)
+        try:
+            body = self.aws.client.get_object(**kwargs).get("Body")
+            content = body.read()
+            logger.info(
+                f"[AmazonCloudStorage.get] File retrieved successfully | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'size_bytes': {len(content)}}}"
+            )
+            return content
+        except ClientError as err:
+            logger.error(
+                f"[AmazonCloudStorage.get] AWS get error | "
                 f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )

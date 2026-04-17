@@ -41,6 +41,11 @@ class Document(DocumentBase, table=True):
         default=False,
         sa_column_kwargs={"comment": "Soft delete flag"},
     )
+    file_size_kb: float | None = Field(
+        default=None,
+        description="The size of the document in kilobytes",
+        sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
+    )
 
     # Foreign keys
     source_document_id: UUID | None = Field(
@@ -79,9 +84,6 @@ class DocumentPublic(DocumentBase):
     )
     updated_at: datetime = Field(
         description="The timestamp when the document was last updated"
-    )
-    signed_url: str | None = Field(
-        default=None, description="A signed URL for accessing the document"
     )
 
 
