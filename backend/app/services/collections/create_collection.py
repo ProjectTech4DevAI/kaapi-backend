@@ -14,7 +14,6 @@ from app.crud import (
     CollectionJobCrud,
 )
 from app.models import (
-    Document,
     CollectionJobStatus,
     CollectionJob,
     Collection,
@@ -22,7 +21,6 @@ from app.models import (
     CollectionJobPublic,
     CreationRequest,
 )
-from app.core.cloud.storage import CloudStorage
 from app.services.collections.helpers import (
     extract_error_message,
     to_collection_public,
@@ -137,22 +135,6 @@ def _mark_job_failed(
         return None
 
 
-def calculate_total_size_kb(documents: list[Document], storage: CloudStorage) -> float:
-    """
-    Sum document sizes in KB. Uses the stored file_size_kb if available.
-    """
-    total: float = 0
-    for doc in documents:
-        if doc.file_size_kb is not None:
-            total += doc.file_size_kb
-        else:
-            logger.info(
-                f"[calculate_total_size_kb] file_size_kb missing, fetching from storage | {{'doc_id': '{doc.id}', 'fname': '{doc.fname}'}}"
-            )
-            total += storage.get_file_size_kb(doc.object_store_url)
-    return total
-
-
 def execute_job(
     request: dict,
     with_assistant: bool,
@@ -190,10 +172,27 @@ def execute_job(
             storage = get_cloud_storage(session=session, project_id=project_id)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
-        total_size_kb = calculate_total_size_kb(flat_docs, storage)
-        total_size_mb = round(total_size_kb / 1024, 2)
+
+        backfill: list[tuple[UUID, float]] = []
+        for doc in flat_docs:
+            if doc.file_size_kb is None:
+                size_kb = round(storage.get_file_size_kb(doc.object_store_url))
+                doc.file_size_kb = size_kb
+                backfill.append((doc.id, size_kb))
+
+        total_size_kb = sum(
+            doc.file_size_kb for doc in flat_docs if doc.file_size_kb is not None
+        )
+        total_size_mb = total_size_kb / 1024
 
         with Session(engine) as session:
+            if backfill:
+                document_crud = DocumentCrud(session, project_id)
+                for doc_id, size_kb in backfill:
+                    doc = document_crud.read_one(doc_id)
+                    doc.file_size_kb = size_kb
+                    document_crud.update(doc)
+
             collection_job_crud = CollectionJobCrud(session, project_id)
             collection_job = collection_job_crud.read_one(job_uuid)
             collection_job = collection_job_crud.update(
