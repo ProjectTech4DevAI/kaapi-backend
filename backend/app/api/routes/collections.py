@@ -95,12 +95,16 @@ def create_collection(
     if request.name:
         ensure_unique_name(session, current_user.project_.id, request.name)
 
+    unique_documents = list(dict.fromkeys(request.documents))
+
     collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.create(
         CollectionJobCreate(
             action_type=CollectionActionType.CREATE,
             project_id=current_user.project_.id,
             status=CollectionJobStatus.PENDING,
+            docs_num=len(unique_documents),
+            documents=[str(doc_id) for doc_id in unique_documents],
         )
     )
 

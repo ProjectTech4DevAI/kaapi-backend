@@ -1,13 +1,13 @@
 import json
 import logging
 import functools as ft
+from io import BytesIO
 from typing import Iterable
 
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
 from app.core.cloud import CloudStorage
-from app.core.config import settings
 from app.models import Document
 
 logger = logging.getLogger(__name__)
@@ -121,15 +121,13 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         storage: CloudStorage,
         documents: Iterable[Document],
     ):
-        files = []
         for docs in documents:
+            files = []
             for d in docs:
-                f_obj = storage.stream(d.object_store_url)
-
-                # monkey patch botocore.response.StreamingBody to make
-                # OpenAI happy
+                # Get file bytes and wrap in BytesIO for OpenAI API
+                content = storage.get(d.object_store_url)
+                f_obj = BytesIO(content)
                 f_obj.name = d.fname
-
                 files.append(f_obj)
 
             logger.info(
@@ -143,31 +141,11 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 f"[OpenAIVectorStoreCrud.update] File upload completed | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
             )
             if req.file_counts.completed != req.file_counts.total:
-                view = {x.fname: x for x in docs}
-                for i in self.read(vector_store_id):
-                    if i.last_error is None:
-                        fname = self.client.files.retrieve(i.id)
-                        view.pop(fname)
-
-                error = {
-                    "error": "OpenAI document processing error",
-                    "documents": list(view.values()),
-                }
-                try:
-                    raise InterruptedError(json.dumps(error, cls=BaseModelEncoder))
-                except InterruptedError as err:
-                    logger.error(
-                        f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'error': '{error['error']}', 'failed_documents': {len(error['documents'])}}}",
-                        exc_info=True,
-                    )
-                    raise
-
-            while files:
-                f_obj = files.pop()
-                f_obj.close()
-                logger.info(
-                    f"[OpenAIVectorStoreCrud.update] Closed file stream | {{'vector_store_id': '{vector_store_id}', 'filename': '{f_obj.name}'}}"
+                error_msg = f"OpenAI document processing error: {req.file_counts.completed}/{req.file_counts.total} files completed"
+                logger.error(
+                    f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
                 )
+                raise InterruptedError(error_msg)
 
             yield from docs
 

@@ -659,7 +659,7 @@ class TestExecuteJob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "o1",  # Reasoning model
+                    "model": "gpt-5",  # Reasoning model
                     "temperature": 0.7,  # This will be suppressed with warning
                 },
             )
