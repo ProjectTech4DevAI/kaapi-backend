@@ -152,7 +152,6 @@ def execute_job(
     """
     start_time = time.time()
 
-    # Keeping the references for potential backout/cleanup on failure
     collection_job = None
     result = None
     creation_request = None
