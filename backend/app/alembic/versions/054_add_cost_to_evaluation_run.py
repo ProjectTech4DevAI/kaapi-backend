@@ -1,7 +1,7 @@
 """add cost tracking to evaluation_run
 
-Revision ID: 053
-Revises: 052
+Revision ID: 054
+Revises: 053
 Create Date: 2026-04-09 12:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "053"
-down_revision = "052"
+revision = "054"
+down_revision = "053"
 branch_labels = None
 depends_on = None
 
