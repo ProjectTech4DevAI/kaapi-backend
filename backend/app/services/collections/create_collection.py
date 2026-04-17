@@ -22,6 +22,7 @@ from app.models import (
     CreationRequest,
 )
 from app.services.collections.helpers import (
+    calculate_total_size_kb,
     extract_error_message,
     to_collection_public,
 )
@@ -156,6 +157,7 @@ def execute_job(
     result = None
     creation_request = None
     provider = None
+    storage = None
 
     try:
         creation_request = CreationRequest(**request)
@@ -169,9 +171,10 @@ def execute_job(
         with Session(engine) as session:
             document_crud = DocumentCrud(session, project_id)
             flat_docs = document_crud.read_each(creation_request.documents)
+            storage = get_cloud_storage(session=session, project_id=project_id)
 
         file_exts = {doc.fname.split(".")[-1] for doc in flat_docs if "." in doc.fname}
-        total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
+        total_size_kb = calculate_total_size_kb(flat_docs, storage)
         total_size_mb = round(total_size_kb / 1024, 2)
 
         with Session(engine) as session:
@@ -185,8 +188,6 @@ def execute_job(
                     total_size_mb=total_size_mb,
                 ),
             )
-
-            storage = get_cloud_storage(session=session, project_id=project_id)
 
             provider = get_llm_provider(
                 session=session,
