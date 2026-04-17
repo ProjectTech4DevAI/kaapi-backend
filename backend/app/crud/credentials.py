@@ -184,8 +184,18 @@ def update_creds_for_org(
     if not creds_in.provider or not creds_in.credential:
         raise ValueError("Provider and credential must be provided")
 
+    # Auto-unwrap nested format: {"google": {"api_key": "..."}} -> {"api_key": "..."}
+    # so the same payload shape works for both create and update.
+    credential_data = creds_in.credential
+    if (
+        isinstance(credential_data, dict)
+        and creds_in.provider in credential_data
+        and isinstance(credential_data[creds_in.provider], dict)
+    ):
+        credential_data = credential_data[creds_in.provider]
+
     try:
-        validate_provider_credentials(creds_in.provider, creds_in.credential)
+        validate_provider_credentials(creds_in.provider, credential_data)
     except ValueError as e:
         logger.error(
             f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
@@ -193,7 +203,7 @@ def update_creds_for_org(
         raise HTTPException(status_code=400, detail=str(e))
 
     # Encrypt the entire credentials object
-    encrypted_credentials = encrypt_credentials(creds_in.credential)
+    encrypted_credentials = encrypt_credentials(credential_data)
 
     statement = select(Credential).where(
         Credential.organization_id == org_id,
@@ -203,12 +213,23 @@ def update_creds_for_org(
     )
     creds = session.exec(statement).one_or_none()
     if creds is None:
-        logger.error(
-            f"[update_creds_for_org] Credentials not found | organization {org_id}, provider {creds_in.provider}, project_id {project_id}"
+        # Create new credential if it doesn't exist
+        creds = Credential(
+            organization_id=org_id,
+            project_id=project_id,
+            is_active=creds_in.is_active if creds_in.is_active is not None else True,
+            provider=creds_in.provider,
+            credential=encrypted_credentials,
+            inserted_at=now(),
+            updated_at=now(),
         )
-        raise HTTPException(
-            status_code=404, detail="Credentials not found for this provider"
+        session.add(creds)
+        session.commit()
+        session.refresh(creds)
+        logger.info(
+            f"[update_creds_for_org] Created new credentials | organization_id {org_id}, provider {creds_in.provider}, project_id {project_id}"
         )
+        return [creds]
 
     creds.credential = encrypted_credentials
     creds.updated_at = now()

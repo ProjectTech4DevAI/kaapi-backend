@@ -13,6 +13,7 @@ from .auth import (
     GoogleAuthRequest,
     GoogleAuthResponse,
     InviteTokenPayload,
+    MagicLinkRequest,
     SelectProjectRequest,
     Token,
     TokenPayload,

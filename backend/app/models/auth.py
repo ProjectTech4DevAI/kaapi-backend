@@ -44,6 +44,10 @@ class SelectProjectRequest(SQLModel):
     project_id: int
 
 
+class MagicLinkRequest(SQLModel):
+    email: str
+
+
 class AuthContext(SQLModel):
     user: User
     organization: Organization | None = None

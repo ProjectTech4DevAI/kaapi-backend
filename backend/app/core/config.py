@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Invitation token expiry (default 24 hours)
     INVITE_TOKEN_EXPIRE_HOURS: int = 24
 
+    # Magic link login token expiry (default 15 minutes)
+    MAGIC_LINK_TOKEN_EXPIRE_MINUTES: int = 15
+
     # SMTP / Email
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

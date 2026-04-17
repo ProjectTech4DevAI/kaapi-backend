@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>You're invited to {{ project_name }}</title>
+  <title>Sign in to {{ app_name }}</title>
 </head>
 <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
@@ -16,7 +16,7 @@
                 {{ app_name }}
               </h1>
               <p style="margin: 0 0 20px; font-size: 14px; color: #a1a1aa;">
-                {{ organization_name }}
+                Sign in to your account
               </p>
               <table role="presentation" width="40" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto 20px;">
                 <tr>
@@ -24,23 +24,23 @@
                 </tr>
               </table>
               <p style="margin: 0 0 5px; font-size: 15px; line-height: 1.7; color: #3f3f46;">
-                You have been invited to join the <strong>{{ project_name }}</strong> project on {{ app_name }}.
+                We received a sign-in request for <strong>{{ email }}</strong>.
               </p>
               <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.7; color: #3f3f46;">
-                Click the button below to accept the invitation and get started.
+                Click the button below to sign in.
               </p>
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
                 <tr>
                   <td align="center" style="background-color: #2563eb; border-radius: 10px;">
                     <a href="{{ link }}" target="_blank" style="display: inline-block; padding: 10px 30px; font-size: 15px; font-weight: 600; color: #ffffff; text-decoration: none;">
-                      Accept Invitation
+                      Sign In Now
                     </a>
                   </td>
                 </tr>
               </table>
               <p style="margin: 20px 0 0; font-size: 12px; color: #a1a1aa; line-height: 1.6;">
-                This invitation expires in {{ valid_days }} days.<br>
-                If you did not expect this invitation, you can safely ignore this email.
+                This link expires in {{ valid_minutes }} minutes.<br>
+                If you did not request this, you can safely ignore this email.
               </p>
             </td>
           </tr>
