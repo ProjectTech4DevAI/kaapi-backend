@@ -27,8 +27,10 @@ from app.core.batch import (
 )
 from app.core.batch.base import BATCH_KEY
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import update_evaluation_run, resolve_model_from_config
+from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
+from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
+    EMBEDDING_MODEL,
     calculate_average_similarity,
     parse_embedding_results,
     start_embedding_batch,
@@ -38,7 +40,7 @@ from app.crud.evaluations.langfuse import (
     update_traces_with_cosine_scores,
 )
 from app.crud.job import get_batch_job, update_batch_job
-from app.models import EvaluationRun
+from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.utils import get_langfuse_client, get_openai_client
 
@@ -332,6 +334,20 @@ async def process_completed_evaluation(
         # Use model stored at creation time for cost tracking
         model = resolve_model_from_config(session=session, eval_run=eval_run)
 
+        # Aggregate response generation cost
+        attach_cost(
+            session=session,
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            response_model=model,
+            response_results=results,
+        )
+        update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(cost=eval_run.cost),
+        )
+
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
             dataset_name=eval_run.dataset_name,
@@ -367,8 +383,10 @@ async def process_completed_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="completed",
-                error_message=f"Embeddings failed: {str(e)}",
+                update=EvaluationRunUpdate(
+                    status="completed",
+                    error_message=f"Embeddings failed: {str(e)}",
+                ),
             )
 
         logger.info(
@@ -386,8 +404,10 @@ async def process_completed_evaluation(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Processing failed: {str(e)}",
+            ),
         )
 
 
@@ -488,9 +508,24 @@ async def process_completed_embedding_batch(
                     exc_info=True,
                 )
 
-        # Step 7: Mark evaluation as completed
+        # Step 7: Accumulate embedding cost onto existing response cost
+        attach_cost(
+            session=session,
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_raw_results=raw_results,
+        )
+
+        # Step 8: Mark evaluation as completed
         eval_run = update_evaluation_run(
-            session=session, eval_run=eval_run, status="completed", score=eval_run.score
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(
+                status="completed",
+                score=eval_run.score,
+                cost=eval_run.cost,
+            ),
         )
 
         logger.info(
@@ -508,8 +543,10 @@ async def process_completed_embedding_batch(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="completed",
-            error_message=f"Embedding processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="completed",
+                error_message=f"Embedding processing failed: {str(e)}",
+            ),
         )
 
 
@@ -593,8 +630,10 @@ async def check_and_process_evaluation(
                     eval_run = update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="completed",
-                        error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        update=EvaluationRunUpdate(
+                            status="completed",
+                            error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        ),
                     )
 
                     return {
@@ -654,8 +693,10 @@ async def check_and_process_evaluation(
                 eval_run = update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
-                    status="failed",
-                    error_message=error_msg,
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=error_msg,
+                    ),
                 )
 
                 logger.error(
@@ -696,8 +737,10 @@ async def check_and_process_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="failed",
-                error_message=error_msg,
+                update=EvaluationRunUpdate(
+                    status="failed",
+                    error_message=error_msg,
+                ),
             )
 
             logger.error(
@@ -735,8 +778,10 @@ async def check_and_process_evaluation(
         update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Checking failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Checking failed: {str(e)}",
+            ),
         )
 
         return {
@@ -828,8 +873,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=http_exc.detail,
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=http_exc.detail,
+                        ),
                     )
 
                     all_results.append(
@@ -869,8 +916,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=f"Check failed: {str(e)}",
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=f"Check failed: {str(e)}",
+                        ),
                     )
 
                     all_results.append(
@@ -892,8 +941,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                 update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
-                    status="failed",
-                    error_message=f"Project processing failed: {str(e)}",
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=f"Project processing failed: {str(e)}",
+                    ),
                 )
 
                 all_results.append(
