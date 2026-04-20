@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Iterator
 import sentry_sdk
 from opentelemetry import context as otel_context
 from opentelemetry import trace
-from opentelemetry.instrumentation.celery import CeleryInstrumentor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
@@ -177,9 +176,15 @@ def setup_telemetry(service_name: str | None = None) -> None:
 
     # Auto-instrumentation — generates OTel spans the SentrySpanProcessor forwards
     LoggingInstrumentor().instrument(set_logging_format=False)
-    CeleryInstrumentor().instrument()
     HTTPXClientInstrumentor().instrument()
     RequestsInstrumentor().instrument()
+    try:
+        # Circular import fix
+        from opentelemetry.instrumentation.celery import CeleryInstrumentor
+
+        CeleryInstrumentor().instrument()
+    except Exception:
+        logger.exception("[setup_telemetry] Failed to instrument Celery")
 
     logger.debug(
         "[setup_telemetry] OpenTelemetry initialized (service=%s, sink=Sentry)",
