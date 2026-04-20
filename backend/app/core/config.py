@@ -135,6 +135,8 @@ class Settings(BaseSettings):
         return f"{self.AWS_S3_BUCKET_PREFIX}-{self.ENVIRONMENT}"
 
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "kaapi-backend"
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None

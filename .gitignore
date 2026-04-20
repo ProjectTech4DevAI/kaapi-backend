@@ -21,3 +21,5 @@ ENV/
 
 #
 /backend/app/logs
+
+/observability/

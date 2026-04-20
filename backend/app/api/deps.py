@@ -5,6 +5,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
+from opentelemetry import trace
 from pydantic import ValidationError
 from sqlmodel import Session
 
@@ -40,6 +41,22 @@ def get_db() -> Generator[Session, None, None]:
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
+
+
+def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
+    """Tag the active OTel span with tenant context so traces in Sentry can be
+    filtered by user / org / project."""
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    span.set_attribute("user.id", str(auth_context.user.id))
+    span.set_attribute("user.email", auth_context.user.email)
+    if auth_context.organization:
+        span.set_attribute("tenant.org_id", auth_context.organization.id)
+        span.set_attribute("tenant.org_name", auth_context.organization.name)
+    if auth_context.project:
+        span.set_attribute("tenant.project_id", auth_context.project.id)
+        span.set_attribute("tenant.project_name", auth_context.project.name)
 
 
 def _authenticate_with_jwt(session: Session, token: str) -> AuthContext:
@@ -147,16 +164,21 @@ def get_auth_context(
             if not auth_context.project.is_active:
                 raise HTTPException(status_code=403, detail="Inactive Project")
 
+            _set_tenant_span_attributes(auth_context)
             return auth_context
 
     # 2. Try Authorization: Bearer <token> header
     if token:
-        return _authenticate_with_jwt(session, token)
+        auth_context = _authenticate_with_jwt(session, token)
+        _set_tenant_span_attributes(auth_context)
+        return auth_context
 
     # 3. Try access_token cookie
     cookie_token = request.cookies.get("access_token")
     if cookie_token:
-        return _authenticate_with_jwt(session, cookie_token)
+        auth_context = _authenticate_with_jwt(session, cookie_token)
+        _set_tenant_span_attributes(auth_context)
+        return auth_context
 
     raise HTTPException(status_code=401, detail="Invalid Authorization format")
 
