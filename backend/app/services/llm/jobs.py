@@ -597,9 +597,6 @@ def execute_llm_call(
                     trace.Status(trace.StatusCode.ERROR, error or "Unknown error")
                 )
 
-        # Push the just-finished LLM span promptly instead of waiting for task teardown.
-        flush_telemetry(timeout_millis=10000)
-
         if response:
             with Session(engine) as session:
                 if llm_call_id:
@@ -903,9 +900,9 @@ def execute_chain_job(
                             status=ChainStatus.FAILED,
                             error=str(e),
                         )
-                except Exception:
+                except Exception as update_err:
                     logger.error(
-                        f"[execute_chain_job] Failed to update chain status: {e} | "
+                        f"[execute_chain_job] Failed to update chain status: {update_err} | "
                         f"chain_id={chain_uuid}",
                         exc_info=True,
                     )

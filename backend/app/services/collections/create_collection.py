@@ -304,3 +304,4 @@ def execute_job(
             if creation_request and creation_request.callback_url and collection_job:
                 failure_payload = build_failure_payload(collection_job, str(err))
                 send_callback(creation_request.callback_url, failure_payload)
+            raise

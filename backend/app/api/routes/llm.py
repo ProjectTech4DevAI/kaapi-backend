@@ -159,14 +159,20 @@ def get_llm_call_status(
                     output=llm_call.content,
                 )
 
-                if not llm_call.usage:
+                usage_payload = llm_call.usage
+                if not usage_payload:
                     logger.warning(
                         f"[get_llm_call] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
                     )
+                    usage_payload = {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                    }
 
                 llm_call_response = LLMCallResponse(
                     response=llm_response,
-                    usage=Usage(**llm_call.usage),
+                    usage=Usage(**usage_payload),
                     provider_raw_response=None,
                 )
 

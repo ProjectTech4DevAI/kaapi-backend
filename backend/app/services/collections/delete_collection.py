@@ -243,3 +243,4 @@ def execute_job(
                 err=err,
                 callback_url=deletion_request.callback_url,
             )
+            raise
