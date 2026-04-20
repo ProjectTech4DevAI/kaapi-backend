@@ -50,7 +50,7 @@ def test_read_provider_credential_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test reading credentials for non-existent provider returns 404."""
+    """Test reading credentials for non-existent provider returns null."""
     client.delete(
         f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
         headers={"X-API-KEY": user_api_key.key},
@@ -61,8 +61,8 @@ def test_read_provider_credential_not_found(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 404
-    assert "Provider credentials not found" in response.json()["error"]
+    assert response.status_code == 200
+    assert response.json()["data"] is None
 
 
 def test_update_credentials(
@@ -100,7 +100,11 @@ def test_update_credentials(
     )
     assert verify_response.status_code == 200
     verify_data = verify_response.json().get("data", verify_response.json())
-    assert verify_data["api_key"] == new_api_key
+    # Sensitive fields are masked in GET responses
+    assert verify_data["api_key"] != new_api_key
+    assert "*" in verify_data["api_key"]
+    assert verify_data["api_key"].startswith("sk-")
+    assert verify_data["api_key"].endswith(new_api_key[-4:])
 
 
 def test_create_credential(
@@ -138,7 +142,11 @@ def test_create_credential(
     data = create_response.json()["data"]
     assert len(data) == 1
     assert data[0]["provider"] == Provider.OPENAI.value
-    assert data[0]["credential"]["api_key"] == api_key
+    # Sensitive fields are masked in API responses
+    assert data[0]["credential"]["api_key"] != api_key
+    assert "*" in data[0]["credential"]["api_key"]
+    assert data[0]["credential"]["api_key"].startswith("sk-")
+    assert data[0]["credential"]["api_key"].endswith(api_key[-4:])
 
 
 def test_credential_encryption(
@@ -163,12 +171,12 @@ def test_credential_encryption(
     assert decrypted_creds["api_key"].startswith("sk-")
 
 
-def test_update_nonexistent_provider_returns_404(
+def test_update_nonexistent_provider_upserts(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test updating credentials for non-existent provider."""
-    # Delete OpenAI first
+    """Test that updating a non-existent provider creates it (upsert behavior)."""
+    # Delete OpenAI first so no credential exists for the provider
     client.delete(
         f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
         headers={"X-API-KEY": user_api_key.key},
@@ -188,8 +196,10 @@ def test_update_nonexistent_provider_returns_404(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 404
-    assert "Credentials not found" in response.json()["error"]
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    assert data[0]["provider"] == Provider.OPENAI.value
 
 
 def test_create_ignores_mismatched_ids(
@@ -269,7 +279,8 @@ def test_delete_all_credentials(
         f"{settings.API_V1_STR}/credentials/",
         headers={"X-API-KEY": user_api_key.key},
     )
-    assert get_response.status_code == 404
+    assert get_response.status_code == 200
+    assert get_response.json()["data"] == []
 
 
 def test_delete_all_when_none_exist_returns_404(
@@ -314,12 +325,13 @@ def test_delete_provider_credential(
         response_data["data"]["message"] == "Provider credentials removed successfully"
     )
 
-    # Verify it's deleted
+    # Verify it's deleted (endpoint returns null when provider credential is missing)
     verify_response = client.get(
         f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
         headers={"X-API-KEY": user_api_key.key},
     )
-    assert verify_response.status_code == 404
+    assert verify_response.status_code == 200
+    assert verify_response.json()["data"] is None
 
 
 def test_delete_provider_credential_not_found(
@@ -474,11 +486,11 @@ def test_update_credential_empty_credential(
     assert response.status_code in [200, 400]  # Depends on implementation
 
 
-def test_read_credentials_not_found(
+def test_read_credentials_when_none_exist(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test reading credentials when none exist."""
+    """Test reading credentials when none exist returns an empty list."""
     # Delete all credentials first
     client.delete(
         f"{settings.API_V1_STR}/credentials/",
@@ -490,8 +502,8 @@ def test_read_credentials_not_found(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 404
-    assert "Credentials not found" in response.json()["error"]
+    assert response.status_code == 200
+    assert response.json()["data"] == []
 
 
 def test_create_multiple_providers_at_once(
