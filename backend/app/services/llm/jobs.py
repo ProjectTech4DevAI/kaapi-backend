@@ -1,14 +1,26 @@
 import logging
+import time
 from contextlib import contextmanager
+from typing import Any
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
+from opentelemetry import trace
 from sqlmodel import Session
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.langfuse.langfuse import observe_llm_execution
+from app.core.telemetry import (
+    set_gen_ai_request_attributes,
+    set_gen_ai_response_attributes,
+    flush_telemetry,
+    log_context,
+    record_llm_call_finished,
+    record_llm_call_started,
+    suppress_http_instrumentation,
+)
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
@@ -37,45 +49,81 @@ from app.services.llm.providers.registry import get_llm_provider
 from app.utils import APIResponse, cleanup_temp_file, resolve_input, send_callback
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+
+def _execute_provider_call(
+    *,
+    func,
+    completion_config: Any,
+    query: QueryParams,
+    credentials: dict | None,
+    session_id: str | None,
+    **kwargs: Any,
+) -> tuple[Any, Any]:
+    kwargs.pop("organization_id", None)
+    kwargs.pop("project_id", None)
+    kwargs.pop("telemetry_span", None)
+
+    decorated = observe_llm_execution(
+        session_id=session_id,
+        credentials=credentials,
+    )(func)
+
+    with suppress_http_instrumentation():
+        return decorated(completion_config, query, **kwargs)
 
 
 def start_job(
     db: Session, request: LLMCallRequest, project_id: int, organization_id: int
 ) -> UUID:
     """Create an LLM job and schedule Celery task."""
-    trace_id = correlation_id.get() or "N/A"
-    job_crud = JobCrud(session=db)
-    job = job_crud.create(
-        job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
-    )
+    with log_context(
+        tag="llm-call",
+        lifecycle="llm.call.start_job",
+        project_id=project_id,
+        organization_id=organization_id,
+    ), tracer.start_as_current_span("llm.start_job") as span:
+        span.set_attribute("kaapi.project_id", project_id)
+        span.set_attribute("kaapi.organization_id", organization_id)
 
-    logger.info(
-        f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
-    )
+        trace_id = correlation_id.get() or "N/A"
+        job_crud = JobCrud(session=db)
+        job = job_crud.create(
+            job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
+        )
+        span.set_attribute("llm.job_id", str(job.id))
 
-    try:
-        task_id = start_llm_job(
-            project_id=project_id,
-            job_id=str(job.id),
-            trace_id=trace_id,
-            request_data=request.model_dump(mode="json"),
-            organization_id=organization_id,
-        )
-    except Exception as e:
-        logger.error(
-            f"[start_job] Error starting Celery task: {str(e)} | job_id={job.id}, project_id={project_id}",
-            exc_info=True,
-        )
-        job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
-        job_crud.update(job_id=job.id, job_update=job_update)
-        raise HTTPException(
-            status_code=500, detail="Internal server error while executing LLM call"
+        logger.info(
+            f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
         )
 
-    logger.info(
-        f"[start_job] Job scheduled for LLM call | job_id={job.id}, project_id={project_id}, task_id={task_id}"
-    )
-    return job.id
+        try:
+            task_id = start_llm_job(
+                project_id=project_id,
+                job_id=str(job.id),
+                trace_id=trace_id,
+                request_data=request.model_dump(mode="json"),
+                organization_id=organization_id,
+            )
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            logger.error(
+                f"[start_job] Error starting Celery task: {str(e)} | job_id={job.id}, project_id={project_id}",
+                exc_info=True,
+            )
+            job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
+            job_crud.update(job_id=job.id, job_update=job_update)
+            raise HTTPException(
+                status_code=500, detail="Internal server error while executing LLM call"
+            )
+
+        span.set_attribute("celery.task_id", str(task_id))
+        logger.info(
+            f"[start_job] Job scheduled for LLM call | job_id={job.id}, project_id={project_id}, task_id={task_id}"
+        )
+        return job.id
 
 
 def start_chain_job(
@@ -88,34 +136,41 @@ def start_chain_job(
         job_type=JobType.LLM_CHAIN, trace_id=trace_id, project_id=project_id
     )
 
-    logger.info(
-        f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
-    )
-
-    try:
-        task_id = start_llm_chain_job(
-            project_id=project_id,
-            job_id=str(job.id),
-            trace_id=trace_id,
-            request_data=request.model_dump(mode="json"),
-            organization_id=organization_id,
-        )
-    except Exception as e:
-        logger.error(
-            f"[start_chain_job] Error starting Celery task: {str(e)} | job_id={job.id}, project_id={project_id}",
-            exc_info=True,
-        )
-        job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
-        job_crud.update(job_id=job.id, job_update=job_update)
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error while executing LLM chain job",
+    with log_context(
+        tag="llm-chain",
+        lifecycle="llm.chain.start_job",
+        job_id=job.id,
+        project_id=project_id,
+        organization_id=organization_id,
+    ):
+        logger.info(
+            f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
         )
 
-    logger.info(
-        f"[start_chain_job] Job scheduled for LLM chain job | job_id={job.id}, project_id={project_id}, task_id={task_id}"
-    )
-    return job.id
+        try:
+            task_id = start_llm_chain_job(
+                project_id=project_id,
+                job_id=str(job.id),
+                trace_id=trace_id,
+                request_data=request.model_dump(mode="json"),
+                organization_id=organization_id,
+            )
+        except Exception as e:
+            logger.error(
+                f"[start_chain_job] Error starting Celery task: {str(e)} | job_id={job.id}, project_id={project_id}",
+                exc_info=True,
+            )
+            job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
+            job_crud.update(job_id=job.id, job_update=job_update)
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error while executing LLM chain job",
+            )
+
+        logger.info(
+            f"[start_chain_job] Job scheduled for LLM chain job | job_id={job.id}, project_id={project_id}, task_id={task_id}"
+        )
+        return job.id
 
 
 def handle_job_error(
@@ -144,6 +199,13 @@ def handle_job_error(
             data=callback_response.model_dump(),
             webhook_secret=webhook_secret,
         )
+        with tracer.start_as_current_span("llm.send_callback") as cb_span:
+            cb_span.set_attribute("callback.url", callback_url)
+            cb_span.set_attribute("callback.status", "failure")
+            send_callback(
+                callback_url=callback_url,
+                data=callback_response.model_dump(),
+            )
 
     with Session(engine) as session:
         JobCrud(session=session).update(
@@ -352,31 +414,41 @@ def execute_llm_call(
 
     try:
         with Session(engine) as session:
-            if config.is_stored_config:
-                config_crud = ConfigVersionCrud(
-                    session=session, project_id=project_id, config_id=config.id
-                )
-                config_blob, error = resolve_config_blob(config_crud, config)
-                logger.info(f"----the resolved config blob is {config_blob}")
-                if error:
-                    return BlockResult(error=error)
-            else:
-                config_blob = config.blob
+            with tracer.start_as_current_span("llm.resolve_config") as cfg_span:
+                cfg_span.set_attribute("llm.job_id", str(job_id))
+                cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
+                if config.is_stored_config:
+                    cfg_span.set_attribute("llm.config.id", str(config.id))
+                    cfg_span.set_attribute("llm.config.version", str(config.version))
+                    config_crud = ConfigVersionCrud(
+                        session=session, project_id=project_id, config_id=config.id
+                    )
+                    config_blob, error = resolve_config_blob(config_crud, config)
+                    if error:
+                        cfg_span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+                        return BlockResult(error=error)
+                else:
+                    config_blob = config.blob
 
             if config_blob.prompt_template and isinstance(query.input, TextInput):
                 template = config_blob.prompt_template.template
                 interpolated = template.replace("{{input}}", query.input.content.value)
                 query.input.content.value = interpolated
 
-            query, input_error = apply_input_guardrails(
-                config_blob=config_blob,
-                query=query,
-                job_id=job_id,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
-            if input_error:
-                return BlockResult(error=input_error)
+            with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
+                guard_span.set_attribute("llm.job_id", str(job_id))
+                query, input_error = apply_input_guardrails(
+                    config_blob=config_blob,
+                    query=query,
+                    job_id=job_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
+                if input_error:
+                    guard_span.set_status(
+                        trace.Status(trace.StatusCode.ERROR, input_error)
+                    )
+                    return BlockResult(error=input_error)
 
             completion_config = config_blob.completion
             original_provider = completion_config.provider
@@ -389,6 +461,8 @@ def execute_llm_call(
                     request_metadata = {}
                 request_metadata.setdefault("warnings", []).extend(warnings)
 
+            model_name = str(completion_config.params.get("model") or "")
+
             resolved_config_blob = ConfigBlob(
                 completion=completion_config,
                 prompt_template=config_blob.prompt_template,
@@ -396,33 +470,45 @@ def execute_llm_call(
                 output_guardrails=config_blob.output_guardrails,
             )
 
-            try:
-                llm_call_request = LLMCallRequest(
-                    query=query,
-                    config=config,
-                    request_metadata=request_metadata,
+            with tracer.start_as_current_span("llm.create_call_record") as create_span:
+                create_span.set_attribute("llm.job_id", str(job_id))
+                create_span.set_attribute(
+                    "llm.provider", str(completion_config.provider)
                 )
-                llm_call = create_llm_call(
-                    session,
-                    request=llm_call_request,
-                    job_id=job_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                    resolved_config=resolved_config_blob,
-                    original_provider=original_provider,
-                    chain_id=chain_id,
-                )
-                llm_call_id = llm_call.id
-                logger.info(
-                    f"[execute_llm_call] Created LLM call record | "
-                    f"llm_call_id={llm_call_id}, job_id={job_id}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"[execute_llm_call] Failed to create LLM call record: {e} | job_id={job_id}",
-                    exc_info=True,
-                )
-                return BlockResult(error=f"Failed to create LLM call record: {str(e)}")
+                if model_name:
+                    create_span.set_attribute("llm.request.model", model_name)
+                try:
+                    llm_call_request = LLMCallRequest(
+                        query=query,
+                        config=config,
+                        request_metadata=request_metadata,
+                    )
+                    llm_call = create_llm_call(
+                        session,
+                        request=llm_call_request,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        resolved_config=resolved_config_blob,
+                        original_provider=original_provider,
+                        chain_id=chain_id,
+                    )
+                    llm_call_id = llm_call.id
+                    create_span.set_attribute("llm.call_id", str(llm_call_id))
+                    logger.info(
+                        f"[execute_llm_call] Created LLM call record | "
+                        f"llm_call_id={llm_call_id}, job_id={job_id}"
+                    )
+                except Exception as e:
+                    create_span.record_exception(e)
+                    create_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                    logger.error(
+                        f"[execute_llm_call] Failed to create LLM call record: {e} | job_id={job_id}",
+                        exc_info=True,
+                    )
+                    return BlockResult(
+                        error=f"Failed to create LLM call record: {str(e)}"
+                    )
 
             try:
                 provider_instance = get_llm_provider(
@@ -438,42 +524,130 @@ def execute_llm_call(
         if query.conversation and query.conversation.id:
             conversation_id = query.conversation.id
 
-        # Apply Langfuse observability decorator to provider execute method
-        decorated_execute = observe_llm_execution(
-            credentials=langfuse_credentials,
-            session_id=conversation_id,
-        )(provider_instance.execute)
+        operation = "chat"
+        provider_name = str(completion_config.provider)
+        model_name = str(completion_config.params.get("model") or "")
+        completion_type = str(completion_config.type or "")
+        record_llm_call_started(
+            provider=provider_name,
+            model=model_name,
+            operation=operation,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+        provider_started_at = time.perf_counter()
+        response = None
+        error = None
 
-        # Resolve input and execute LLM (context manager handles cleanup)
-        try:
-            with resolved_input_context(query.input) as resolved_input:
-                response, error = decorated_execute(
-                    completion_config=completion_config,
-                    query=query,
-                    resolved_input=resolved_input,
-                    include_provider_raw_response=include_provider_raw_response,
+        # Wrap the provider call in a `chat <model>` span so Sentry's AI Insights
+        # module recognises it (op=gen_ai.chat) and surfaces tokens / model /
+        # messages on the trace. This is the span AI Insights keys off — keep it
+        # as the parent of `llm.provider.execute`.
+        ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
+        with tracer.start_as_current_span(ai_span_name) as ai_span:
+            ai_span.set_attribute("sentry.op", "gen_ai.chat")
+            if completion_type:
+                ai_span.set_attribute("completion_type", completion_type)
+            set_gen_ai_request_attributes(
+                ai_span,
+                provider=provider_name,
+                model=model_name,
+                operation=operation,
+                organization_id=organization_id,
+                project_id=project_id,
+                params=completion_config.params or {},
+            )
+
+            try:
+                with resolved_input_context(query.input) as resolved_input:
+                    with tracer.start_as_current_span(
+                        "llm.provider.execute"
+                    ) as provider_span:
+                        provider_span.set_attribute("llm.provider", provider_name)
+                        provider_span.set_attribute(
+                            "llm.operation.name", "provider.execute"
+                        )
+                        if completion_type:
+                            provider_span.set_attribute(
+                                "completion_type", completion_type
+                            )
+                        if model_name:
+                            provider_span.set_attribute("llm.request.model", model_name)
+
+                        response, error = _execute_provider_call(
+                            func=provider_instance.execute,
+                            completion_config=completion_config,
+                            query=query,
+                            credentials=langfuse_credentials,
+                            session_id=conversation_id,
+                            organization_id=organization_id,
+                            project_id=project_id,
+                            telemetry_span=provider_span,
+                            resolved_input=resolved_input,
+                            include_provider_raw_response=include_provider_raw_response,
+                        )
+            except ValueError as ve:
+                ai_span.set_status(trace.Status(trace.StatusCode.ERROR, str(ve)))
+                record_llm_call_finished(
+                    provider=provider_name,
+                    model=model_name,
+                    operation=operation,
+                    duration_ms=(time.perf_counter() - provider_started_at) * 1000,
+                    error=True,
+                    organization_id=organization_id,
+                    project_id=project_id,
                 )
-        except ValueError as ve:
-            return BlockResult(error=str(ve), llm_call_id=llm_call_id)
+                return BlockResult(error=str(ve), llm_call_id=llm_call_id)
+
+            if response:
+                set_gen_ai_response_attributes(ai_span, response=response)
+            else:
+                ai_span.set_status(
+                    trace.Status(trace.StatusCode.ERROR, error or "Unknown error")
+                )
 
         if response:
             with Session(engine) as session:
                 if llm_call_id:
-                    try:
-                        update_llm_call_response(
-                            session,
-                            llm_call_id=llm_call_id,
-                            provider_response_id=response.response.provider_response_id,
-                            content=response.response.output.model_dump(),
-                            usage=response.usage.model_dump(),
-                            conversation_id=response.response.conversation_id,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[execute_llm_call] Failed to update LLM call record: {e} | "
-                            f"llm_call_id={llm_call_id}",
-                            exc_info=True,
-                        )
+                    with tracer.start_as_current_span(
+                        "llm.update_call_record"
+                    ) as update_span:
+                        update_span.set_attribute("llm.call_id", str(llm_call_id))
+                        update_span.set_attribute("llm.job_id", str(job_id))
+                        try:
+                            update_llm_call_response(
+                                session,
+                                llm_call_id=llm_call_id,
+                                provider_response_id=response.response.provider_response_id,
+                                content=response.response.output.model_dump(),
+                                usage=response.usage.model_dump(),
+                                conversation_id=response.response.conversation_id,
+                            )
+                        except Exception as e:
+                            update_span.record_exception(e)
+                            update_span.set_status(
+                                trace.Status(trace.StatusCode.ERROR, str(e))
+                            )
+                            logger.error(
+                                f"[execute_llm_call] Failed to update LLM call record: {e} | "
+                                f"llm_call_id={llm_call_id}",
+                                exc_info=True,
+                            )
+
+            duration_ms = (time.perf_counter() - provider_started_at) * 1000
+            record_llm_call_finished(
+                provider=provider_name,
+                model=model_name,
+                operation=operation,
+                duration_ms=duration_ms,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                total_tokens=response.usage.total_tokens,
+                error=False,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+
             result = BlockResult(
                 response=response,
                 llm_call_id=llm_call_id,
@@ -481,22 +655,37 @@ def execute_llm_call(
                 metadata=request_metadata,
             )
 
-            result, output_error = apply_output_guardrails(
-                config_blob=config_blob,
-                result=result,
-                job_id=job_id,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
-            if output_error:
-                return BlockResult(error=output_error, llm_call_id=llm_call_id)
+            with tracer.start_as_current_span(
+                "llm.guardrails.output"
+            ) as out_guard_span:
+                out_guard_span.set_attribute("llm.job_id", str(job_id))
+                result, output_error = apply_output_guardrails(
+                    config_blob=config_blob,
+                    result=result,
+                    job_id=job_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
+                if output_error:
+                    out_guard_span.set_status(
+                        trace.Status(trace.StatusCode.ERROR, output_error)
+                    )
+                    return BlockResult(error=output_error, llm_call_id=llm_call_id)
 
             return result
 
-        return BlockResult(
-            error=error or "Unknown error occurred",
-            llm_call_id=llm_call_id,
+        duration_ms = (time.perf_counter() - provider_started_at) * 1000
+        record_llm_call_finished(
+            provider=provider_name,
+            model=model_name,
+            operation=operation,
+            duration_ms=duration_ms,
+            error=True,
+            organization_id=organization_id,
+            project_id=project_id,
         )
+        error_message = error or "Unknown error occurred"
+        return BlockResult(error=error_message, llm_call_id=llm_call_id)
 
     except Exception as e:
         logger.error(
@@ -523,45 +712,48 @@ def execute_job(
         dict: Serialized APIResponse[LLMCallResponse] on success, APIResponse[None] on failure
     """
     request = LLMCallRequest(**request_data)
-    job_uuid = UUID(job_id)  # Renamed to avoid shadowing parameter
+    job_uuid = UUID(job_id)
     callback_url_str = str(request.callback_url) if request.callback_url else None
 
-    logger.info(
-        f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, callback_url {callback_url_str}"
-    )
-
-    try:
-        with Session(engine) as session:
-            job_crud = JobCrud(session=session)
-            job_crud.update(
-                job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
-            )
-
-            langfuse_credentials = get_provider_credential(
-                session=session,
-                org_id=organization_id,
-                project_id=project_id,
-                provider="langfuse",
-            )
-
-        result = execute_llm_call(
-            config=request.config,
-            query=request.query,
-            job_id=job_uuid,
-            project_id=project_id,
-            organization_id=organization_id,
-            request_metadata=request.request_metadata,
-            langfuse_credentials=langfuse_credentials,
-            include_provider_raw_response=request.include_provider_raw_response,
-        )
-
+    with log_context(
+        tag="llm-call",
+        lifecycle="llm.call.execute_job",
+        job_id=job_uuid,
+        task_id=task_id,
+        project_id=project_id,
+        organization_id=organization_id,
+    ):
         logger.info(
-            f"[execute_job] Error if any during execution of job: {result.error}"
+            f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, callback_url {callback_url_str}"
         )
 
-        if result.success:
-            callback_response = APIResponse.success_response(
-                data=result.response, metadata=result.metadata
+        try:
+            with Session(engine) as session:
+                job_crud = JobCrud(session=session)
+                job_crud.update(
+                    job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
+                )
+
+                langfuse_credentials = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="langfuse",
+                )
+
+            result = execute_llm_call(
+                config=request.config,
+                query=request.query,
+                job_id=job_uuid,
+                project_id=project_id,
+                organization_id=organization_id,
+                request_metadata=request.request_metadata,
+                langfuse_credentials=langfuse_credentials,
+                include_provider_raw_response=request.include_provider_raw_response,
+            )
+
+            logger.info(
+                f"[execute_job] Error if any during execution of job: {result.error}"
             )
             if callback_url_str:
                 with Session(engine) as session:
@@ -580,15 +772,19 @@ def execute_job(
                     webhook_secret=webhook_secret,
                 )
 
-            with Session(engine) as session:
-                JobCrud(session=session).update(
-                    job_id=job_uuid, job_update=JobUpdate(status=JobStatus.SUCCESS)
+            if result.success:
+                callback_response = APIResponse.success_response(
+                    data=result.response, metadata=result.metadata
                 )
-                logger.info(
-                    f"[execute_job] Successfully completed LLM job | job_id={job_id}, "
-                    f"tokens={result.usage.total_tokens}"
-                )
-                return callback_response.model_dump()
+                if callback_url_str:
+                    with tracer.start_as_current_span("llm.send_callback") as cb_span:
+                        cb_span.set_attribute("callback.url", callback_url_str)
+                        cb_span.set_attribute("callback.status", "success")
+                        cb_span.set_attribute("llm.job_id", str(job_uuid))
+                        send_callback(
+                            callback_url=callback_url_str,
+                            data=callback_response.model_dump(),
+                        )
 
         callback_response = APIResponse.failure_response(
             error=result.error or "Unknown error occurred",
@@ -618,6 +814,36 @@ def execute_job(
             organization_id=organization_id,
             project_id=project_id,
         )
+                with Session(engine) as session:
+                    JobCrud(session=session).update(
+                        job_id=job_uuid, job_update=JobUpdate(status=JobStatus.SUCCESS)
+                    )
+                    logger.info(
+                        f"[execute_job] Successfully completed LLM job | job_id={job_id}, "
+                        f"tokens={result.usage.total_tokens}"
+                    )
+                    return callback_response.model_dump()
+
+            error_message = result.error or "Unknown error occurred"
+            callback_response = APIResponse.failure_response(
+                error=error_message,
+                metadata=request.request_metadata,
+            )
+            return handle_job_error(job_uuid, callback_url_str, callback_response)
+
+        except Exception as e:
+            callback_response = APIResponse.failure_response(
+                error="Unexpected error occurred",
+                metadata=request.request_metadata,
+            )
+            logger.error(
+                f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
+                exc_info=True,
+            )
+            return handle_job_error(job_uuid, callback_url_str, callback_response)
+        finally:
+            # Ensure task spans are pushed promptly so Sentry dashboards update faster.
+            flush_telemetry()
 
 
 def execute_chain_job(
@@ -642,86 +868,97 @@ def execute_chain_job(
     callback_url_str = str(request.callback_url) if request.callback_url else None
     chain_uuid = None
 
-    logger.info(
-        f"[execute_chain_job] Starting chain execution | "
-        f"job_id={job_uuid}, total_blocks={len(request.blocks)}"
-    )
+    with log_context(
+        tag="llm-chain",
+        lifecycle="llm.chain.execute_job",
+        job_id=job_uuid,
+        task_id=task_id,
+        project_id=project_id,
+        organization_id=organization_id,
+        total_blocks=len(request.blocks),
+    ):
+        logger.info(
+            f"[execute_chain_job] Starting chain execution | "
+            f"job_id={job_uuid}, total_blocks={len(request.blocks)}"
+        )
 
-    try:
-        with Session(engine) as session:
-            chain_record = create_llm_chain(
-                session,
+        try:
+            with Session(engine) as session:
+                chain_record = create_llm_chain(
+                    session,
+                    job_id=job_uuid,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                    total_blocks=len(request.blocks),
+                    input=serialize_input(request.query.input),
+                    configs=[block.model_dump(mode="json") for block in request.blocks],
+                )
+                chain_uuid = chain_record.id
+
+                logger.info(
+                    f"[execute_chain_job] Created chain record | "
+                    f"chain_id={chain_uuid}, job_id={job_uuid}"
+                )
+
+                langfuse_credentials = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="langfuse",
+                )
+
+            context = ChainContext(
                 job_id=job_uuid,
+                chain_id=chain_uuid,
                 project_id=project_id,
                 organization_id=organization_id,
+                langfuse_credentials=langfuse_credentials,
+                request_metadata=request.request_metadata,
                 total_blocks=len(request.blocks),
-                input=serialize_input(request.query.input),
-                configs=[block.model_dump(mode="json") for block in request.blocks],
-            )
-            chain_uuid = chain_record.id
-
-            logger.info(
-                f"[execute_chain_job] Created chain record | "
-                f"chain_id={chain_uuid}, job_id={job_uuid}"
+                callback_url=str(request.callback_url)
+                if request.callback_url
+                else None,
+                intermediate_callback_flags=[
+                    block.intermediate_callback for block in request.blocks
+                ],
             )
 
-            langfuse_credentials = get_provider_credential(
-                session=session,
-                org_id=organization_id,
-                project_id=project_id,
-                provider="langfuse",
-            )
-
-        context = ChainContext(
-            job_id=job_uuid,
-            chain_id=chain_uuid,
-            project_id=project_id,
-            organization_id=organization_id,
-            langfuse_credentials=langfuse_credentials,
-            request_metadata=request.request_metadata,
-            total_blocks=len(request.blocks),
-            callback_url=str(request.callback_url) if request.callback_url else None,
-            intermediate_callback_flags=[
-                block.intermediate_callback for block in request.blocks
-            ],
-        )
-
-        blocks = [
-            ChainBlock(
-                config=block.config,
-                index=i,
-                context=context,
-                include_provider_raw_response=block.include_provider_raw_response,
-            )
-            for i, block in enumerate(request.blocks)
-        ]
-
-        chain = LLMChain(blocks, context)
-
-        executor = ChainExecutor(chain=chain, context=context, request=request)
-        return executor.run()
-
-    except Exception as e:
-        logger.error(
-            f"[execute_chain_job] Failed: {e} | job_id={job_uuid}",
-            exc_info=True,
-        )
-
-        if chain_uuid:
-            try:
-                with Session(engine) as session:
-                    update_llm_chain_status(
-                        session,
-                        chain_id=chain_uuid,
-                        status=ChainStatus.FAILED,
-                        error=str(e),
-                    )
-            except Exception:
-                logger.error(
-                    f"[execute_chain_job] Failed to update chain status: {e} | "
-                    f"chain_id={chain_uuid}",
-                    exc_info=True,
+            blocks = [
+                ChainBlock(
+                    config=block.config,
+                    index=i,
+                    context=context,
+                    include_provider_raw_response=block.include_provider_raw_response,
                 )
+                for i, block in enumerate(request.blocks)
+            ]
+
+            chain = LLMChain(blocks, context)
+
+            executor = ChainExecutor(chain=chain, context=context, request=request)
+            return executor.run()
+
+        except Exception as e:
+            logger.error(
+                f"[execute_chain_job] Failed: {e} | job_id={job_uuid}",
+                exc_info=True,
+            )
+
+            if chain_uuid:
+                try:
+                    with Session(engine) as session:
+                        update_llm_chain_status(
+                            session,
+                            chain_id=chain_uuid,
+                            status=ChainStatus.FAILED,
+                            error=str(e),
+                        )
+                except Exception as update_err:
+                    logger.error(
+                        f"[execute_chain_job] Failed to update chain status: {update_err} | "
+                        f"chain_id={chain_uuid}",
+                        exc_info=True,
+                    )
 
         callback_response = APIResponse.failure_response(
             error="Unexpected error occurred",
@@ -734,3 +971,11 @@ def execute_chain_job(
             organization_id=organization_id,
             project_id=project_id,
         )
+            callback_response = APIResponse.failure_response(
+                error="Unexpected error occurred",
+                metadata=request.request_metadata,
+            )
+            return handle_job_error(job_uuid, callback_url_str, callback_response)
+        finally:
+            # Ensure task spans are pushed promptly so Sentry dashboards update faster.
+            flush_telemetry()
