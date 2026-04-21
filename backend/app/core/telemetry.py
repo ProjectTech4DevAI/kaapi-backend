@@ -1,10 +1,8 @@
 import json
 import logging
-import os
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from threading import Lock
 from typing import TYPE_CHECKING, Any, Iterator
 
 import sentry_sdk
@@ -28,9 +26,6 @@ logger = logging.getLogger(__name__)
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
-
-_celery_metrics_lock = Lock()
-_celery_active_tasks = 0
 
 
 def _emit_sentry_metric(
@@ -190,74 +185,6 @@ def setup_telemetry(service_name: str | None = None) -> None:
         "[setup_telemetry] OpenTelemetry initialized (service=%s, sink=Sentry)",
         service_name or settings.OTEL_SERVICE_NAME,
     )
-
-
-def _extract_task_meta(task: object | None) -> tuple[str, str]:
-    task_name = getattr(task, "name", "unknown") if task is not None else "unknown"
-    task_queue = "unknown"
-    request = getattr(task, "request", None) if task is not None else None
-    delivery_info = getattr(request, "delivery_info", None)
-    if isinstance(delivery_info, dict) and delivery_info.get("routing_key"):
-        task_queue = str(delivery_info.get("routing_key"))
-    return str(task_name), task_queue
-
-
-def _emit_celery_worker_gauges(active: int, pid: str) -> None:
-    pid_attrs = {"worker.pid": pid}
-    _emit_sentry_metric(
-        "gauge", "celery.worker.active", 1 if active > 0 else 0, attributes=pid_attrs
-    )
-    _emit_sentry_metric(
-        "gauge", "celery.worker.idle", 0 if active > 0 else 1, attributes=pid_attrs
-    )
-
-
-def record_celery_task_started(task: object | None) -> None:
-    """Emit Celery task-start metrics to Sentry."""
-    global _celery_active_tasks
-    if not settings.OTEL_ENABLED:
-        return
-
-    task_name, task_queue = _extract_task_meta(task)
-    pid = str(os.getpid())
-    attrs = {"task.name": task_name, "task.queue": task_queue, "worker.pid": pid}
-
-    with _celery_metrics_lock:
-        _celery_active_tasks += 1
-        active = _celery_active_tasks
-
-    _emit_sentry_metric("count", "celery.task.total", 1, attributes=attrs)
-    _emit_sentry_metric("gauge", "celery.task.active", active, attributes=attrs)
-    _emit_celery_worker_gauges(active, pid)
-
-
-def record_celery_task_finished(task: object | None, state: str | None) -> None:
-    """Emit Celery task-completion metrics to Sentry."""
-    global _celery_active_tasks
-    if not settings.OTEL_ENABLED:
-        return
-
-    task_name, task_queue = _extract_task_meta(task)
-    task_state = (state or "UNKNOWN").upper()
-    pid = str(os.getpid())
-    attrs = {
-        "task.name": task_name,
-        "task.queue": task_queue,
-        "task.state": task_state,
-        "worker.pid": pid,
-    }
-
-    with _celery_metrics_lock:
-        _celery_active_tasks = max(0, _celery_active_tasks - 1)
-        active = _celery_active_tasks
-
-    if task_state == "SUCCESS":
-        _emit_sentry_metric("count", "celery.task.completed", 1, attributes=attrs)
-    elif task_state in {"FAILURE", "REVOKED"}:
-        _emit_sentry_metric("count", "celery.task.failed", 1, attributes=attrs)
-
-    _emit_sentry_metric("gauge", "celery.task.active", active, attributes=attrs)
-    _emit_celery_worker_gauges(active, pid)
 
 
 def _llm_call_attrs(
