@@ -1,15 +1,15 @@
 import uuid
 import logging
-from typing import Any, Callable, Dict, Optional
 from functools import wraps
+from typing import Any, Callable, Optional
 
 from asgi_correlation_id import correlation_id
 from langfuse import Langfuse
 from langfuse.client import StatefulGenerationClient, StatefulTraceClient
 from app.models.llm import (
+    LLMCallResponse,
     NativeCompletionConfig,
     QueryParams,
-    LLMCallResponse,
     TextOutput,
     AudioOutput,
 )
@@ -17,7 +17,7 @@ from app.models.llm import (
 logger = logging.getLogger(__name__)
 
 
-def extract_output_value(
+def extract_response_output(
     llm_output: TextOutput | AudioOutput | None,
 ) -> str | dict[str, Any]:
     """Extract output value from LLM output for logging/tracing.
@@ -41,8 +41,7 @@ def extract_output_value(
             "mime_type": llm_output.content.mime_type,
             "length": len(llm_output.content.value),
         }
-    else:
-        return str(llm_output)
+    return str(llm_output)
 
 
 class LangfuseTracer:
@@ -107,8 +106,8 @@ class LangfuseTracer:
     def start_trace(
         self,
         name: str,
-        input: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
+        input: Any,
+        metadata: Optional[dict[str, Any]] = None,
         tags: list[str] | None = None,
     ) -> None:
         if self._failed or not self.langfuse:
@@ -127,8 +126,8 @@ class LangfuseTracer:
     def start_generation(
         self,
         name: str,
-        input: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
+        input: Any,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         if self._failed or not self.trace:
             return
@@ -142,8 +141,8 @@ class LangfuseTracer:
 
     def end_generation(
         self,
-        output: Dict[str, Any],
-        usage: Optional[Dict[str, Any]] = None,
+        output: dict[str, Any],
+        usage: Optional[dict[str, Any]] = None,
         model: Optional[str] = None,
     ) -> None:
         if self._failed or not self.generation:
@@ -152,7 +151,7 @@ class LangfuseTracer:
             self.generation.end, output=output, usage=usage, model=model
         )
 
-    def update_trace(self, tags: list[str], output: Dict[str, Any]) -> None:
+    def update_trace(self, tags: list[str], output: dict[str, Any]) -> None:
         if self._failed or not self.trace:
             return
         self._langfuse_call(self.trace.update, tags=tags, output=output)
@@ -197,7 +196,6 @@ def observe_llm_execution(
         def wrapper(
             completion_config: NativeCompletionConfig, query: QueryParams, **kwargs
         ):
-            # Skip observability if no credentials provided
             if not credentials:
                 logger.info(
                     "[observe_llm_execution] No credentials - skipping observability"
@@ -222,7 +220,6 @@ def observe_llm_execution(
             failed = False
 
             def langfuse_call(fn, *args, **kwargs):
-                """Execute Langfuse operation safely. First failure disables further calls."""
                 nonlocal failed
                 if failed:
                     return None
@@ -251,7 +248,6 @@ def observe_llm_execution(
                     model=completion_config.params.get("model"),
                 )
 
-            # Execute the actual LLM call
             response: LLMCallResponse | None
             error: str | None
             response, error = func(completion_config, query, **kwargs)
@@ -262,7 +258,7 @@ def observe_llm_execution(
                         generation.end,
                         output={
                             "status": "success",
-                            "output": extract_output_value(response.response.output),
+                            "output": extract_response_output(response.response.output),
                         },
                         usage_details={
                             "input": response.usage.input_tokens,
@@ -275,7 +271,7 @@ def observe_llm_execution(
                         trace.update,
                         output={
                             "status": "success",
-                            "output": extract_output_value(response.response.output),
+                            "output": extract_response_output(response.response.output),
                         },
                         session_id=session_id or response.response.conversation_id,
                     )
