@@ -77,7 +77,7 @@ def log_pool_status_failure(
 
 
 @worker_process_init.connect
-def warm_llm_modules(**_) -> None:
+def initialize_worker_process(**_) -> None:
     """Initialize each forked Celery worker process.
 
     - Initialize Sentry so task transactions, errors, and logs ship to Sentry.

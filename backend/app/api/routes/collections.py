@@ -117,7 +117,7 @@ def create_collection(
             )
         )
 
-        # True iff both model and instructions were provided in the request body
+        # True if both model and instructions were provided in the request body
         with_assistant = bool(
             getattr(request, "model", None) and getattr(request, "instructions", None)
         )

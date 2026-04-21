@@ -527,8 +527,6 @@ def execute_llm_call(
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with tracer.start_as_current_span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
-            ai_span.set_attribute("gen_ai.request.organization_id", organization_id)
-            ai_span.set_attribute("gen_ai.request.project_id", project_id)
             if completion_type:
                 ai_span.set_attribute("completion_type", completion_type)
             set_gen_ai_request_attributes(
@@ -584,14 +582,6 @@ def execute_llm_call(
 
             if response:
                 set_gen_ai_response_attributes(ai_span, response=response)
-                usage = response.usage
-                if usage:
-                    ai_span.set_attribute("llm.usage.total_tokens", usage.total_tokens)
-                    ai_span.set_attribute("kaapi_llm_input_tokens", usage.input_tokens)
-                    ai_span.set_attribute(
-                        "kaapi_llm_output_tokens", usage.output_tokens
-                    )
-                    ai_span.set_attribute("kaapi_llm_total_tokens", usage.total_tokens)
             else:
                 ai_span.set_status(
                     trace.Status(trace.StatusCode.ERROR, error or "Unknown error")
