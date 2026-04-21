@@ -5,77 +5,72 @@ Tests the transformation of Kaapi-abstracted parameters to provider-native forma
 Covers real-world scenarios, edge cases, and provider-specific requirements.
 """
 
-import pytest
+from sqlmodel import Session
 
 from app.models.llm.request import (
-    TextLLMParams,
-    STTLLMParams,
-    TTSLLMParams,
     KaapiCompletionConfig,
     NativeCompletionConfig,
+    STTLLMParams,
+    TextLLMParams,
+    TTSLLMParams,
 )
 from app.services.llm.mappers import (
-    map_kaapi_to_openai_params,
-    map_kaapi_to_google_params,
-    map_kaapi_to_sarvam_params,
-    map_kaapi_to_elevenlabs_params,
     bcp47_to_elevenlabs_lang,
-    voice_to_id,
+    map_kaapi_to_elevenlabs_params,
+    map_kaapi_to_google_params,
+    map_kaapi_to_openai_params,
+    map_kaapi_to_sarvam_params,
     transform_kaapi_config_to_native,
-)
-from app.models.llm.constants import (
-    DEFAULT_STT_MODEL,
-    DEFAULT_TTS_MODEL,
-    DEFAULT_TTS_VOICE,
+    voice_to_id,
 )
 
 
 class TestMapKaapiToOpenAIParams:
     """Test cases for map_kaapi_to_openai_params function."""
 
-    def test_basic_model_mapping(self):
+    def test_basic_model_mapping(self, db: Session):
         """Test basic model parameter mapping."""
         kaapi_params = TextLLMParams(model="gpt-4o")
 
         result, warnings = map_kaapi_to_openai_params(
-            kaapi_params.model_dump(exclude_none=True)
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
         # TextLLMParams has default temperature=0.1
         assert result == {"model": "gpt-4o", "temperature": 0.1}
         assert warnings == []
 
-    def test_reasoning_mapping_for_reasoning_models(self):
+    def test_reasoning_mapping_for_reasoning_models(self, db: Session):
         """Test reasoning parameter mapping to OpenAI format for reasoning-capable models."""
         kaapi_params = TextLLMParams(
-            model="o1",
+            model="gpt-5",
             reasoning="high",
         )
 
         result, warnings = map_kaapi_to_openai_params(
-            kaapi_params.model_dump(exclude_none=True)
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result["model"] == "o1"
+        assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high"}
         # Temperature is suppressed for reasoning models (even default value)
         assert "temperature" not in result
         assert len(warnings) == 1
         assert "temperature" in warnings[0].lower()
 
-    def test_knowledge_base_ids_mapping(self):
+    def test_knowledge_base_ids_mapping(self, db: Session):
         """Test knowledge_base_ids mapping to OpenAI tools format."""
         kaapi_params = TextLLMParams(
-            model="gpt-4",
+            model="gpt-4o",
             knowledge_base_ids=["vs_abc123", "vs_def456"],
             max_num_results=50,
         )
 
         result, warnings = map_kaapi_to_openai_params(
-            kaapi_params.model_dump(exclude_none=True)
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result["model"] == "gpt-4"
+        assert result["model"] == "gpt-4o"
         assert "tools" in result
         assert len(result["tools"]) == 1
         assert result["tools"][0]["type"] == "file_search"
@@ -83,37 +78,37 @@ class TestMapKaapiToOpenAIParams:
         assert result["tools"][0]["max_num_results"] == 50
         assert warnings == []
 
-    def test_temperature_suppressed_for_reasoning_models(self):
+    def test_temperature_suppressed_for_reasoning_models(self, db: Session):
         """Test that temperature is suppressed with warning for reasoning models when reasoning is set."""
         kaapi_params = TextLLMParams(
-            model="o1",
+            model="gpt-5",
             temperature=0.7,
             reasoning="high",
         )
 
         result, warnings = map_kaapi_to_openai_params(
-            kaapi_params.model_dump(exclude_none=True)
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result["model"] == "o1"
+        assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high"}
         assert "temperature" not in result
         assert len(warnings) == 1
         assert "temperature" in warnings[0].lower()
         assert "suppressed" in warnings[0]
 
-    def test_reasoning_suppressed_for_non_reasoning_models(self):
+    def test_reasoning_suppressed_for_non_reasoning_models(self, db: Session):
         """Test that reasoning is suppressed with warning for non-reasoning models."""
         kaapi_params = TextLLMParams(
-            model="gpt-4",
+            model="gpt-4o",
             reasoning="high",
         )
 
         result, warnings = map_kaapi_to_openai_params(
-            kaapi_params.model_dump(exclude_none=True)
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        assert result["model"] == "gpt-4"
+        assert result["model"] == "gpt-4o"
         assert "reasoning" not in result
         assert len(warnings) == 1
         assert "reasoning" in warnings[0].lower()
@@ -826,7 +821,7 @@ class TestVoiceToId:
 class TestTransformKaapiConfigToNative:
     """Test end-to-end transformation with completion_type parameter."""
 
-    def test_transform_elevenlabs_tts_config(self):
+    def test_transform_elevenlabs_tts_config(self, db: Session):
         """Test transformation of ElevenLabs TTS config."""
         kaapi_config = KaapiCompletionConfig(
             provider="elevenlabs",
@@ -839,7 +834,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "elevenlabs-native"
@@ -850,7 +847,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["output_format"] == "mp3_44100_128"
         assert warnings == []
 
-    def test_transform_elevenlabs_stt_config(self):
+    def test_transform_elevenlabs_stt_config(self, db: Session):
         """Test transformation of ElevenLabs STT config."""
         kaapi_config = KaapiCompletionConfig(
             provider="elevenlabs",
@@ -862,7 +859,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "elevenlabs-native"
@@ -872,7 +871,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["temperature"] == 0.3
         assert warnings == []
 
-    def test_transform_sarvamai_stt_with_saaras_model(self):
+    def test_transform_sarvamai_stt_with_saaras_model(self, db: Session):
         """Test transformation of SarvamAI STT with saaras:v3 model."""
         kaapi_config = KaapiCompletionConfig(
             provider="sarvamai",
@@ -884,7 +883,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "sarvamai-native"
@@ -898,7 +899,7 @@ class TestTransformKaapiConfigToNative:
     # Removed test_transform_sarvamai_stt_with_saarika_model - model no longer in SUPPORTED_MODELS
     # The mapper logic for saarika (no mode parameter) is already tested in unit tests
 
-    def test_transform_sarvamai_tts_with_voice(self):
+    def test_transform_sarvamai_tts_with_voice(self, db: Session):
         """Test transformation of SarvamAI TTS with explicit voice."""
         kaapi_config = KaapiCompletionConfig(
             provider="sarvamai",
@@ -910,7 +911,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "sarvamai-native"
@@ -920,7 +923,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["speaker"] == "simran"
         assert warnings == []
 
-    def test_transform_google_text_completion(self):
+    def test_transform_google_text_completion(self, db: Session):
         """Test transformation of Google text completion."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
@@ -932,7 +935,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "google-native"
@@ -942,7 +947,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["reasoning"] == "high"
         assert warnings == []
 
-    def test_transform_google_stt_completion(self):
+    def test_transform_google_stt_completion(self, db: Session):
         """Test transformation of Google STT completion."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
@@ -950,7 +955,9 @@ class TestTransformKaapiConfigToNative:
             params={"model": "gemini-2.5-pro", "instructions": "Transcribe accurately"},
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "google-native"
@@ -959,7 +966,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["instructions"] == "Transcribe accurately"
         assert warnings == []
 
-    def test_transform_google_tts_completion(self):
+    def test_transform_google_tts_completion(self, db: Session):
         """Test transformation of Google TTS completion."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
@@ -971,7 +978,9 @@ class TestTransformKaapiConfigToNative:
             },
         )
 
-        result, warnings = transform_kaapi_config_to_native(kaapi_config)
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
         assert isinstance(result, NativeCompletionConfig)
         assert result.provider == "google-native"

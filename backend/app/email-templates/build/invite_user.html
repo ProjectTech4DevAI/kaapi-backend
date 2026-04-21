@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You're invited to {{ project_name }}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td style="padding: 60px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 520px; margin: 0 auto;">
+          <tr>
+            <td align="center" style="background-color: #ffffff; padding: 48px 40px; text-align: center;">
+              <h1 style="margin: 0 0 4px; font-size: 22px; font-weight: 600; color: #18181b;">
+                {{ app_name }}
+              </h1>
+              <p style="margin: 0 0 20px; font-size: 14px; color: #a1a1aa;">
+                {{ organization_name }}
+              </p>
+              <table role="presentation" width="40" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto 20px;">
+                <tr>
+                  <td style="border-top: 2px solid #e4e4e7;"></td>
+                </tr>
+              </table>
+              <p style="margin: 0 0 5px; font-size: 15px; line-height: 1.7; color: #3f3f46;">
+                You have been invited to join the <strong>{{ project_name }}</strong> project on {{ app_name }}.
+              </p>
+              <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.7; color: #3f3f46;">
+                Click the button below to accept the invitation and get started.
+              </p>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" style="background-color: #2563eb; border-radius: 10px;">
+                    <a href="{{ link }}" target="_blank" style="display: inline-block; padding: 10px 30px; font-size: 15px; font-weight: 600; color: #ffffff; text-decoration: none;">
+                      Accept Invitation
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 20px 0 0; font-size: 12px; color: #a1a1aa; line-height: 1.6;">
+                This invitation expires in {{ valid_days }} days.<br>
+                If you did not expect this invitation, you can safely ignore this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

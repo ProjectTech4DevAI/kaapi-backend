@@ -10,7 +10,7 @@ import logging
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 import requests
 import socket
@@ -18,10 +18,8 @@ import socket
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
-import jwt
 import emails
 from jinja2 import Template
-from jwt.exceptions import InvalidTokenError
 from fastapi import HTTPException
 from langfuse import Langfuse
 import openai
@@ -188,27 +186,56 @@ def generate_new_account_email(
     return EmailData(html_content=html_content, subject=subject)
 
 
-def generate_password_reset_token(email: str) -> str:
-    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
-    now = datetime.now(timezone.utc)
-    expires = now + delta
-    exp = expires.timestamp()
-    encoded_jwt = jwt.encode(
-        {"exp": exp, "nbf": now, "sub": email},
-        settings.SECRET_KEY,
-        algorithm=security.ALGORITHM,
+def generate_invite_email(
+    *,
+    email_to: str,
+    project_name: str,
+    organization_name: str,
+    invite_token: str,
+) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    subject = f"{app_name} - You've been invited to {project_name}"
+    link = f"{settings.FRONTEND_HOST}/invite?token={invite_token}"
+    html_content = render_email_template(
+        template_name="invite_user.html",
+        context={
+            "app_name": app_name,
+            "project_name": project_name,
+            "organization_name": organization_name,
+            "link": link,
+            "valid_days": settings.INVITE_TOKEN_EXPIRE_HOURS // 24,
+        },
     )
-    return encoded_jwt
+    return EmailData(html_content=html_content, subject=subject)
+
+
+def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    subject = f"{app_name} - Sign in to your account"
+    link = f"{settings.FRONTEND_HOST}/verify?token={magic_link_token}"
+    html_content = render_email_template(
+        template_name="magic_link_login.html",
+        context={
+            "app_name": app_name,
+            "email": email_to,
+            "link": link,
+            "valid_minutes": settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
+def generate_password_reset_token(email: str) -> str:
+    return security.encode_jwt_token(
+        subject=email,
+        token_type="password_reset",
+        expires_delta=timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS),
+    )
 
 
 def verify_password_reset_token(token: str) -> str | None:
-    try:
-        decoded_token = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
-        )
-        return str(decoded_token["sub"])
-    except InvalidTokenError:
-        return None
+    payload = security.decode_jwt_token(token, expected_type="password_reset")
+    return str(payload["sub"]) if payload and "sub" in payload else None
 
 
 def mask_string(value: str, mask_char: str = "*") -> str:

@@ -52,6 +52,21 @@ def get_model_config(
     return session.exec(statement).first()
 
 
+def is_reasoning_model(
+    session: Session, provider: Literal["openai", "google"], model_name: str
+) -> bool:
+    """Return True if the model is configured with a reasoning `effort` control.
+
+    A model is considered reasoning-capable if its `config` JSON contains an
+    `effort` key; models that instead expose a `temperature` key are treated
+    as standard chat models.
+    """
+    model = get_model_config(session=session, provider=provider, model_name=model_name)
+    if model is None or not isinstance(model.config, dict):
+        return False
+    return "effort" in model.config
+
+
 def estimate_model_cost(
     session: Session,
     provider: Literal["openai", "google"],
@@ -82,7 +97,6 @@ def estimate_model_cost(
 
     input_cost = (input_tokens / 1_000_000) * float(input_price)
     output_cost = (output_tokens / 1_000_000) * float(output_price)
-    total_cost = round(input_cost + output_cost, 4)
 
     return {
         "provider": provider,
@@ -92,6 +106,6 @@ def estimate_model_cost(
         "output_tokens": output_tokens,
         "input_cost": input_cost,
         "output_cost": output_cost,
-        "total_cost": total_cost,
+        "total_cost": input_cost + output_cost,
         "currency": "USD",
     }
