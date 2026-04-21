@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 1 days = 1 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 1
+    # 60 minutes * 24 hours * 7 days = 7 days
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ENVIRONMENT: Literal[
         "development", "testing", "staging", "production"
     ] = "development"
@@ -51,6 +53,33 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = ""
     KAAPI_GUARDRAILS_AUTH: str = ""
     KAAPI_GUARDRAILS_URL: str = ""
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+
+    # Frontend URL for magic links
+    FRONTEND_HOST: str = "http://localhost:3000"
+
+    # Invitation token expiry (default 24 hours)
+    INVITE_TOKEN_EXPIRE_HOURS: int = 24
+
+    # Magic link login token expiry (default 15 minutes)
+    MAGIC_LINK_TOKEN_EXPIRE_MINUTES: int = 15
+
+    # SMTP / Email
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_TLS: bool = True
+    SMTP_SSL: bool = False
+    EMAILS_FROM_EMAIL: str = ""
+    EMAILS_FROM_NAME: str = ""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def emails_enabled(self) -> bool:
+        return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -106,6 +135,8 @@ class Settings(BaseSettings):
         return f"{self.AWS_S3_BUCKET_PREFIX}-{self.ENVIRONMENT}"
 
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "kaapi-backend"
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None

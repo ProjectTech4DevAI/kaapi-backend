@@ -70,7 +70,7 @@ class TestStartJob:
             job_id = start_job(db, request, project.id, project.organization_id)
 
             job_crud = JobCrud(session=db)
-            job = job_crud.get(job_id)
+            job = job_crud.get(job_id=job_id, project_id=project.id)
             assert job is not None
             assert job.job_type == JobType.LLM_API
             assert job.status == JobStatus.PENDING
@@ -659,7 +659,7 @@ class TestExecuteJob:
                 provider="openai",
                 type="text",
                 params={
-                    "model": "o1",  # Reasoning model
+                    "model": "gpt-5",  # Reasoning model
                     "temperature": 0.7,  # This will be suppressed with warning
                 },
             )
@@ -1359,7 +1359,7 @@ class TestExecuteChainJob:
             mock_update_status.assert_called_once()
             _, kwargs = mock_update_status.call_args
             assert kwargs["chain_id"] == chain_id
-            assert kwargs["status"].value == "failed"
+            assert kwargs["status"].value == "FAILED"
 
 
 class TestResolveConfigBlob:

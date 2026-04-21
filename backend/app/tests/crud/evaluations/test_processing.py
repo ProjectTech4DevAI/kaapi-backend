@@ -1,23 +1,22 @@
-from typing import Any
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, select
 
+from app.core.util import now
+from app.crud.evaluations.core import create_evaluation_run
 from app.crud.evaluations.processing import (
     _extract_batch_error_message,
     check_and_process_evaluation,
     parse_evaluation_output,
+    poll_all_pending_evaluations,
     process_completed_embedding_batch,
     process_completed_evaluation,
-    poll_all_pending_evaluations,
 )
-from app.models import BatchJob, Organization, Project, EvaluationDataset, EvaluationRun
+from app.models import BatchJob, EvaluationDataset, EvaluationRun, Organization, Project
 from app.models.batch_job import BatchJobType
-from app.tests.utils.test_data import create_test_evaluation_dataset, create_test_config
-from app.crud.evaluations.core import create_evaluation_run
-from app.core.util import now
+from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
 
 class TestParseEvaluationOutput:
@@ -357,7 +356,11 @@ class TestProcessCompletedEvaluation:
                     "body": {
                         "id": "resp_123",
                         "output": "Answer 1",
-                        "usage": {"total_tokens": 10},
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "total_tokens": 150,
+                        },
                     }
                 },
             }
@@ -396,6 +399,20 @@ class TestProcessCompletedEvaluation:
         mock_fetch_dataset.assert_called_once()
         mock_create_langfuse.assert_called_once()
         mock_start_embedding.assert_called_once()
+
+        # Cost tracking: response cost should be aggregated and persisted.
+        db.refresh(result)
+        assert result.cost is not None
+        assert "response" in result.cost
+        response_cost = result.cost["response"]
+        assert response_cost["model"] == "gpt-4o"
+        assert response_cost["input_tokens"] == 100
+        assert response_cost["output_tokens"] == 50
+        assert response_cost["total_tokens"] == 150
+        assert response_cost["cost_usd"] > 0
+        assert result.cost["total_cost_usd"] == response_cost["cost_usd"]
+        # Embedding cost is added later by process_completed_embedding_batch.
+        assert "embedding" not in result.cost
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
@@ -547,7 +564,31 @@ class TestProcessCompletedEmbeddingBatch:
         eval_run_with_embedding_batch,
     ):
         """Test successfully processing completed embedding batch."""
-        mock_download.return_value = []
+        # Pre-populate eval_run.cost with a response entry to verify that the
+        # embedding stage merges (not overwrites) existing cost data.
+        eval_run_with_embedding_batch.cost = {
+            "response": {
+                "model": "gpt-4o",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "cost_usd": 0.000375,
+            },
+            "total_cost_usd": 0.000375,
+        }
+        db.add(eval_run_with_embedding_batch)
+        db.commit()
+        db.refresh(eval_run_with_embedding_batch)
+
+        # Raw results carry the usage payload that _build_embedding_cost_entry reads.
+        mock_download.return_value = [
+            {
+                "custom_id": "trace_123",
+                "response": {
+                    "body": {"usage": {"prompt_tokens": 200, "total_tokens": 200}}
+                },
+            }
+        ]
         mock_parse.return_value = [
             {
                 "item_id": "item1",
@@ -585,6 +626,22 @@ class TestProcessCompletedEmbeddingBatch:
         )
         assert cosine_score is not None
         assert cosine_score["avg"] == 0.95
+
+        # Cost tracking: embedding entry is added, response entry is preserved,
+        # and total_cost_usd is the sum of both.
+        assert result.cost is not None
+        assert "response" in result.cost
+        assert "embedding" in result.cost
+        assert result.cost["response"]["cost_usd"] == 0.000375
+        embedding_cost = result.cost["embedding"]
+        assert embedding_cost["model"] == "text-embedding-3-large"
+        assert embedding_cost["input_tokens"] == 200
+        assert embedding_cost["output_tokens"] == 0
+        assert embedding_cost["total_tokens"] == 200
+        assert embedding_cost["cost_usd"] > 0
+        assert result.cost["total_cost_usd"] == pytest.approx(
+            0.000375 + embedding_cost["cost_usd"]
+        )
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")

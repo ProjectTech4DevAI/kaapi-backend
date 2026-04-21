@@ -2,6 +2,12 @@ import logging
 from contextlib import asynccontextmanager
 
 import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -12,7 +18,10 @@ from app.api.docs.openapi_config import tags_metadata, customize_openapi_schema
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.feature_flags import init_unleash, shutdown_unleash
+from app.core.logger import configure_logging
 from app.core.middleware import http_request_logger
+from app.core.sentry_filters import before_send_transaction_filter
+from app.core.telemetry import instrument_app, setup_telemetry
 
 from app.load_env import load_environment
 
@@ -20,10 +29,39 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_environment()
+configure_logging()
+
+
+if settings.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=str(settings.SENTRY_DSN),
+        environment=settings.ENVIRONMENT,
+        release=settings.API_VERSION,
+        instrumenter="otel",
+        traces_sample_rate=1.0,
+        enable_logs=True,
+        before_send_transaction=before_send_transaction_filter,
+        integrations=[
+            LoggingIntegration(
+                level=logging.INFO,
+                sentry_logs_level=logging.INFO,
+            ),
+        ],
+        disabled_integrations=[
+            FastApiIntegration(),
+            StarletteIntegration(),
+            SqlalchemyIntegration(),
+            CeleryIntegration(),
+            HttpxIntegration(),
+        ],
+    )
+
+setup_telemetry()
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
-    return f"{route.tags[0]}-{route.name}"
+    tag = route.tags[0] if route.tags else "default"
+    return f"{tag}-{route.name}"
 
 
 if settings.SENTRY_DSN and settings.ENVIRONMENT != "development":
@@ -38,7 +76,6 @@ async def lifespan(app: FastAPI):
     yield
     shutdown_unleash()
     logger.info("[lifespan] Application shut down")
-
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -76,3 +113,13 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 register_exception_handlers(app)
+
+instrument_app(app)
+
+
+# health check endpoint for uptime monitoring
+@app.get("/health", include_in_schema=False)
+async def health() -> dict[str, str | float]:
+    return {
+        "status": "ok",
+    }

@@ -7,6 +7,7 @@ from fastapi import Path as FastPath
 
 from app.api.deps import SessionDep, AuthContextDep
 from app.api.permissions import Permission, require_permission
+from app.core.telemetry import log_context
 from app.crud import (
     CollectionCrud,
     CollectionJobCrud,
@@ -89,47 +90,60 @@ def create_collection(
     current_user: AuthContextDep,
     request: CreationRequest,
 ):
-    if request.callback_url:
-        validate_callback_url(str(request.callback_url))
-
-    if request.name:
-        ensure_unique_name(session, current_user.project_.id, request.name)
-
-    collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
-    collection_job = collection_job_crud.create(
-        CollectionJobCreate(
-            action_type=CollectionActionType.CREATE,
-            project_id=current_user.project_.id,
-            status=CollectionJobStatus.PENDING,
-        )
-    )
-
-    # True iff both model and instructions were provided in the request body
-    with_assistant = bool(
-        getattr(request, "model", None) and getattr(request, "instructions", None)
-    )
-
-    create_service.start_job(
-        db=session,
-        request=request,
-        collection_job_id=collection_job.id,
+    with log_context(
+        tag="collection",
+        system="collection",
+        lifecycle="api.collection.create",
+        action="create",
         project_id=current_user.project_.id,
         organization_id=current_user.organization_.id,
-        with_assistant=with_assistant,
-    )
+    ):
+        if request.callback_url:
+            validate_callback_url(str(request.callback_url))
 
-    metadata = None
-    if not with_assistant:
-        metadata = {
-            "note": (
-                "This job will create a vector store only (no Assistant). "
-                "Assistant creation happens when both 'model' and 'instructions' are included."
+        if request.name:
+            ensure_unique_name(session, current_user.project_.id, request.name)
+
+        unique_documents = list(dict.fromkeys(request.documents))
+
+        collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
+        collection_job = collection_job_crud.create(
+            CollectionJobCreate(
+                action_type=CollectionActionType.CREATE,
+                project_id=current_user.project_.id,
+                status=CollectionJobStatus.PENDING,
+                docs_num=len(unique_documents),
+                documents=[str(doc_id) for doc_id in unique_documents],
             )
-        }
+        )
 
-    return APIResponse.success_response(
-        CollectionJobImmediatePublic.model_validate(collection_job), metadata=metadata
-    )
+        # True if both model and instructions were provided in the request body
+        with_assistant = bool(
+            getattr(request, "model", None) and getattr(request, "instructions", None)
+        )
+
+        create_service.start_job(
+            db=session,
+            request=request,
+            collection_job_id=collection_job.id,
+            project_id=current_user.project_.id,
+            organization_id=current_user.organization_.id,
+            with_assistant=with_assistant,
+        )
+
+        metadata = None
+        if not with_assistant:
+            metadata = {
+                "note": (
+                    "This job will create a vector store only (no Assistant). "
+                    "Assistant creation happens when both 'model' and 'instructions' are included."
+                )
+            }
+
+        return APIResponse.success_response(
+            CollectionJobImmediatePublic.model_validate(collection_job),
+            metadata=metadata,
+        )
 
 
 @router.delete(
@@ -145,37 +159,46 @@ def delete_collection(
     collection_id: UUID = FastPath(description="Collection to delete"),
     request: CallbackRequest | None = Body(default=None),
 ):
-    if request and request.callback_url:
-        validate_callback_url(str(request.callback_url))
-
-    _ = CollectionCrud(session, current_user.project_.id).read_one(collection_id)
-
-    deletion_request = DeletionRequest(
+    with log_context(
+        tag="collection",
+        system="collection",
+        lifecycle="api.collection.delete",
+        action="delete",
         collection_id=collection_id,
-        callback_url=request.callback_url if request else None,
-    )
-
-    collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
-    collection_job = collection_job_crud.create(
-        CollectionJobCreate(
-            action_type=CollectionActionType.DELETE,
-            project_id=current_user.project_.id,
-            status=CollectionJobStatus.PENDING,
-            collection_id=collection_id,
-        )
-    )
-
-    delete_service.start_job(
-        db=session,
-        request=deletion_request,
-        collection_job_id=collection_job.id,
         project_id=current_user.project_.id,
         organization_id=current_user.organization_.id,
-    )
+    ):
+        if request and request.callback_url:
+            validate_callback_url(str(request.callback_url))
 
-    return APIResponse.success_response(
-        CollectionJobImmediatePublic.model_validate(collection_job)
-    )
+        _ = CollectionCrud(session, current_user.project_.id).read_one(collection_id)
+
+        deletion_request = DeletionRequest(
+            collection_id=collection_id,
+            callback_url=request.callback_url if request else None,
+        )
+
+        collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
+        collection_job = collection_job_crud.create(
+            CollectionJobCreate(
+                action_type=CollectionActionType.DELETE,
+                project_id=current_user.project_.id,
+                status=CollectionJobStatus.PENDING,
+                collection_id=collection_id,
+            )
+        )
+
+        delete_service.start_job(
+            db=session,
+            request=deletion_request,
+            collection_job_id=collection_job.id,
+            project_id=current_user.project_.id,
+            organization_id=current_user.organization_.id,
+        )
+
+        return APIResponse.success_response(
+            CollectionJobImmediatePublic.model_validate(collection_job)
+        )
 
 
 @router.get(

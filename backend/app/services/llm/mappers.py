@@ -1,12 +1,14 @@
-import litellm
 import logging
 
+from sqlmodel import Session
+
+from app.crud.model_config import is_reasoning_model
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.models.llm.constants import (
     BCP47_LOCALE_TO_GEMINI_LANG,
     BCP47_TO_ELEVENLABS_LANG,
-    ELEVENLABS_VOICE_TO_ID,
     DEFAULT_TTS_VOICE,
+    ELEVENLABS_VOICE_TO_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,13 +37,16 @@ def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
     return BCP47_TO_ELEVENLABS_LANG.get(bcp47_code)
 
 
-def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_openai_params(
+    session: Session, kaapi_params: dict
+) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
     This mapper transforms standardized Kaapi parameters into OpenAI-specific
     parameter format, enabling provider-agnostic interface design.
 
     Args:
+        session: Database session used to look up the model's config
         kaapi_params: Dictionary with standardized Kaapi parameters
 
     Supported Mapping:
@@ -67,7 +72,9 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
     max_num_results = kaapi_params.get("max_num_results")
 
-    support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
+    support_reasoning = bool(model) and is_reasoning_model(
+        session=session, provider="openai", model_name=model
+    )
 
     # Handle reasoning vs temperature mutual exclusivity
     if support_reasoning:
@@ -422,6 +429,7 @@ def map_kaapi_to_elevenlabs_params(
 
 
 def transform_kaapi_config_to_native(
+    session: Session,
     kaapi_config: KaapiCompletionConfig,
 ) -> tuple[NativeCompletionConfig, list[str]]:
     """Transform Kaapi completion config to native provider config with mapped parameters.
@@ -429,6 +437,7 @@ def transform_kaapi_config_to_native(
     Supports OpenAI,Google AI and Sarvam AI providers.
 
     Args:
+        session: Database session used to look up model-specific config (e.g. reasoning support)
         kaapi_config: KaapiCompletionConfig with abstracted parameters
 
     Returns:
@@ -438,7 +447,9 @@ def transform_kaapi_config_to_native(
     """
     # TODO change from magic string to enums
     if kaapi_config.provider == "openai":
-        mapped_params, warnings = map_kaapi_to_openai_params(kaapi_config.params)
+        mapped_params, warnings = map_kaapi_to_openai_params(
+            session=session, kaapi_params=kaapi_config.params
+        )
         return (
             NativeCompletionConfig(
                 provider="openai-native", params=mapped_params, type=kaapi_config.type

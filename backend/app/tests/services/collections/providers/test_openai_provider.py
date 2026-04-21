@@ -18,22 +18,19 @@ def test_create_openai_vector_store_only() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1", "doc2"],
-        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
     )
 
     storage = MagicMock()
-    document_crud = MagicMock()
-
-    fake_batches = [["doc1"], ["doc2"]]
+    documents = [
+        SimpleNamespace(file_size_kb=10),
+        SimpleNamespace(file_size_kb=20),
+    ]
     vector_store_id = generate_openai_id("vs_")
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        return_value=fake_batches,
-    ), patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls:
         vector_store_crud = vector_store_crud_cls.return_value
@@ -43,7 +40,7 @@ def test_create_openai_vector_store_only() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            document_crud,
+            documents,
         )
 
     assert isinstance(collection, Collection)
@@ -57,23 +54,17 @@ def test_create_openai_with_assistant() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=10,
         model="gpt-4o",
         instructions="You are helpful",
         temperature=0.7,
     )
 
     storage = MagicMock()
-    document_crud = MagicMock()
-
-    fake_batches = [["doc1"]]
+    documents = [SimpleNamespace(file_size_kb=10)]
     vector_store_id = generate_openai_id("vs_")
     assistant_id = generate_openai_id("asst_")
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        return_value=fake_batches,
-    ), patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls, patch(
         "app.services.collections.providers.openai.OpenAIAssistantCrud"
@@ -88,7 +79,7 @@ def test_create_openai_with_assistant() -> None:
         collection = provider.create(
             collection_request,
             storage,
-            document_crud,
+            documents,
         )
 
     assert collection.llm_service_id == assistant_id
@@ -138,19 +129,19 @@ def test_create_propagates_exception() -> None:
 
     collection_request = SimpleNamespace(
         documents=["doc1"],
-        batch_size=10,
         model=None,
         instructions=None,
         temperature=None,
     )
 
     with patch(
-        "app.services.collections.providers.openai.batch_documents",
-        side_effect=RuntimeError("boom"),
-    ):
+        "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
+    ) as vector_store_crud_cls:
+        vector_store_crud_cls.return_value.create.side_effect = RuntimeError("boom")
+
         with pytest.raises(RuntimeError):
             provider.create(
                 collection_request,
                 MagicMock(),
-                MagicMock(),
+                [SimpleNamespace(file_size_kb=10)],
             )

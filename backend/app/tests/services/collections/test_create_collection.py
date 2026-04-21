@@ -58,7 +58,6 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     project = get_project(db)
     request = CreationRequest(
         documents=[UUID("f3e86a17-1e6f-41ec-b020-5b08eebef928")],
-        batch_size=10,
         callback_url=None,
         provider="openai",
     )
@@ -133,7 +132,7 @@ def test_execute_job_success_flow_updates_job_and_creates_collection(
     aws.client.put_object(Bucket=settings.AWS_S3_BUCKET, Key=str(s3_key), Body=b"test")
 
     sample_request = CreationRequest(
-        documents=[document.id], batch_size=10, callback_url=None, provider="openai"
+        documents=[document.id], callback_url=None, provider="openai"
     )
 
     mock_get_llm_provider.return_value = get_mock_provider(
@@ -200,9 +199,7 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collectio
         collection_id=None,
     )
 
-    req = CreationRequest(
-        documents=[], batch_size=10, callback_url=None, provider="openai"
-    )
+    req = CreationRequest(documents=[], callback_url=None, provider="openai")
 
     mock_provider = get_mock_provider(
         llm_service_id="vs_123", llm_service_name="openai vector store"
@@ -220,15 +217,16 @@ def test_execute_job_assistant_create_failure_marks_failed_and_deletes_collectio
         MockCrud.return_value.create.side_effect = Exception("DB constraint violation")
 
         task_id = str(uuid4())
-        execute_job(
-            request=req.model_dump(),
-            project_id=project.id,
-            organization_id=project.organization_id,
-            task_id=task_id,
-            with_assistant=True,
-            job_id=str(job.id),
-            task_instance=None,
-        )
+        with pytest.raises(Exception, match="DB constraint violation"):
+            execute_job(
+                request=req.model_dump(),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=task_id,
+                with_assistant=True,
+                job_id=str(job.id),
+                task_instance=None,
+            )
 
     mock_provider.delete.assert_called_once()
 
@@ -265,7 +263,6 @@ def test_execute_job_success_flow_callback_job_and_creates_collection(
 
     sample_request = CreationRequest(
         documents=[document.id],
-        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
@@ -346,7 +343,6 @@ def test_execute_job_success_creates_collection_with_callback(
 
     sample_request = CreationRequest(
         documents=[document.id],
-        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
@@ -430,7 +426,6 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
 
     sample_request = CreationRequest(
         documents=[uuid.uuid4()],
-        batch_size=10,
         callback_url=callback_url,
         provider="openai",
     )
@@ -441,15 +436,18 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
         SessionCtor.return_value.__enter__.return_value = db
         SessionCtor.return_value.__exit__.return_value = False
 
-        execute_job(
-            request=sample_request.model_dump(),
-            project_id=project.id,
-            organization_id=project.organization_id,
-            task_id=str(task_id),
-            with_assistant=True,
-            job_id=str(job.id),
-            task_instance=None,
-        )
+        with pytest.raises(
+            ValueError, match="Requested atleast 1 document retrieved 0"
+        ):
+            execute_job(
+                request=sample_request.model_dump(),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(task_id),
+                with_assistant=True,
+                job_id=str(job.id),
+                task_instance=None,
+            )
 
     updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
 

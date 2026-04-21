@@ -85,11 +85,11 @@ def update_project(*, session: SessionDep, project_id: int, project_in: ProjectU
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project_in.model_dump(exclude_unset=True)
-    project = project.model_copy(update=project_data)
+    project.sqlmodel_update(project_data)
 
     session.add(project)
     session.commit()
-    session.flush()
+    session.refresh(project)
     logger.info(
         f"[update_project] Project updated successfully | project_id={project.id}"
     )
