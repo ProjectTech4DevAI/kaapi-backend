@@ -1,3 +1,4 @@
+import json
 import socket
 from typing import Any
 import requests
@@ -326,5 +327,12 @@ class TestSendCallback:
         send_callback("https://api.example.com/callback", test_data)
 
         call_kwargs = mock_session.post.call_args[1]
-        assert "json" in call_kwargs
-        assert call_kwargs["json"] == test_data
+        # Body is now pre-serialized so HMAC signs the exact bytes we send.
+        assert "data" in call_kwargs
+        assert (
+            call_kwargs["data"] == json.dumps(test_data, separators=(",", ":")).encode()
+        )
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
+        # No webhook_secret passed → no signature headers.
+        assert "X-Webhook-Signature" not in call_kwargs["headers"]
+        assert "X-Webhook-Timestamp" not in call_kwargs["headers"]

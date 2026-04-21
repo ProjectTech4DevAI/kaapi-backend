@@ -13,6 +13,7 @@ from app.crud import (
     DocumentCollectionCrud,
     CollectionJobCrud,
 )
+from app.crud.credentials import get_provider_credential
 from app.models import (
     CollectionJobStatus,
     CollectionJob,
@@ -246,7 +247,21 @@ def execute_job(
         )
 
         if creation_request.callback_url:
-            send_callback(creation_request.callback_url, success_payload)
+            with Session(engine) as session:
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="webhook_secret",
+                )
+            webhook_secret = (
+                creds.get("webhook_secret") if isinstance(creds, dict) else None
+            )
+            send_callback(
+                str(creation_request.callback_url),
+                success_payload,
+                webhook_secret=webhook_secret,
+            )
 
     except Exception as err:
         logger.error(
@@ -273,4 +288,18 @@ def execute_job(
 
         if creation_request and creation_request.callback_url and collection_job:
             failure_payload = build_failure_payload(collection_job, str(err))
-            send_callback(creation_request.callback_url, failure_payload)
+            with Session(engine) as session:
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="webhook_secret",
+                )
+            webhook_secret = (
+                creds.get("webhook_secret") if isinstance(creds, dict) else None
+            )
+            send_callback(
+                str(creation_request.callback_url),
+                failure_payload,
+                webhook_secret=webhook_secret,
+            )

@@ -6,6 +6,7 @@ from asgi_correlation_id import correlation_id
 
 from app.core.db import engine
 from app.crud import CollectionCrud, CollectionJobCrud
+from app.crud.credentials import get_provider_credential
 from app.models import (
     CollectionJobStatus,
     CollectionJobUpdate,
@@ -92,6 +93,7 @@ def build_failure_payload(
 
 def _mark_job_failed_and_callback(
     *,
+    organization_id: int,
     project_id: int,
     collection_id: UUID,
     job_id: UUID,
@@ -134,7 +136,17 @@ def _mark_job_failed_and_callback(
             collection_id=collection_id,
             error_message=str(err),
         )
-        send_callback(callback_url, failure_payload)
+        with Session(engine) as session:
+            creds = get_provider_credential(
+                session=session,
+                org_id=organization_id,
+                project_id=project_id,
+                provider="webhook_secret",
+            )
+        webhook_secret = (
+            creds.get("webhook_secret") if isinstance(creds, dict) else None
+        )
+        send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
 
 
 def execute_job(
@@ -202,10 +214,25 @@ def execute_job(
                 collection_job=collection_job,
                 collection_id=collection_id,
             )
-            send_callback(deletion_request.callback_url, success_payload)
+            with Session(engine) as session:
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="webhook_secret",
+                )
+            webhook_secret = (
+                creds.get("webhook_secret") if isinstance(creds, dict) else None
+            )
+            send_callback(
+                deletion_request.callback_url,
+                success_payload,
+                webhook_secret=webhook_secret,
+            )
 
     except Exception as err:
         _mark_job_failed_and_callback(
+            organization_id=organization_id,
             project_id=project_id,
             collection_id=collection_id,
             job_id=job_uuid,

@@ -122,12 +122,27 @@ def handle_job_error(
     job_id: UUID,
     callback_url: str | None,
     callback_response: APIResponse,
+    organization_id: int | None = None,
+    project_id: int | None = None,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     if callback_url:
+        webhook_secret = None
+        if organization_id is not None and project_id is not None:
+            with Session(engine) as session:
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider="webhook_secret",
+                )
+            webhook_secret = (
+                creds.get("webhook_secret") if isinstance(creds, dict) else None
+            )
         send_callback(
             callback_url=callback_url,
             data=callback_response.model_dump(),
+            webhook_secret=webhook_secret,
         )
 
     with Session(engine) as session:
@@ -549,9 +564,20 @@ def execute_job(
                 data=result.response, metadata=result.metadata
             )
             if callback_url_str:
+                with Session(engine) as session:
+                    creds = get_provider_credential(
+                        session=session,
+                        org_id=organization_id,
+                        project_id=project_id,
+                        provider="webhook_secret",
+                    )
+                webhook_secret = (
+                    creds.get("webhook_secret") if isinstance(creds, dict) else None
+                )
                 send_callback(
                     callback_url=callback_url_str,
                     data=callback_response.model_dump(),
+                    webhook_secret=webhook_secret,
                 )
 
             with Session(engine) as session:
@@ -568,7 +594,13 @@ def execute_job(
             error=result.error or "Unknown error occurred",
             metadata=request.request_metadata,
         )
-        return handle_job_error(job_uuid, callback_url_str, callback_response)
+        return handle_job_error(
+            job_uuid,
+            callback_url_str,
+            callback_response,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
 
     except Exception as e:
         callback_response = APIResponse.failure_response(
@@ -579,7 +611,13 @@ def execute_job(
             f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
             exc_info=True,
         )
-        return handle_job_error(job_uuid, callback_url_str, callback_response)
+        return handle_job_error(
+            job_uuid,
+            callback_url_str,
+            callback_response,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
 
 
 def execute_chain_job(
@@ -689,4 +727,10 @@ def execute_chain_job(
             error="Unexpected error occurred",
             metadata=request.request_metadata,
         )
-        return handle_job_error(job_uuid, callback_url_str, callback_response)
+        return handle_job_error(
+            job_uuid,
+            callback_url_str,
+            callback_response,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
