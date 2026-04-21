@@ -22,13 +22,13 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.STAGING_EC2_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.STAGING_EC2_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
 
       - name: Trigger deploy on EC2 via SSM
         id: ssm
         env:
-          INSTANCE_ID: ${{ vars.STAGING_EC2_INSTANCE_ID }}
+          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
         run: |
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
@@ -42,7 +42,7 @@ jobs:
 
       - name: Wait for SSM command to finish
         env:
-          INSTANCE_ID: ${{ vars.STAGING_EC2_INSTANCE_ID }}
+          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
           CMD_ID: ${{ steps.ssm.outputs.cmd_id }}
         run: |
           aws ssm wait command-executed \
