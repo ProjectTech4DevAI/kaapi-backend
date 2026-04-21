@@ -8,14 +8,14 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER not set}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB not set}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-kaapi}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - kaapi-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-kaapi}"]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -30,8 +30,8 @@ services:
     env_file:
       - .env
     command: >
-      sh -c "if [ -n \"${REDIS_PASSWORD}\" ]; then
-               redis-server --requirepass \"${REDIS_PASSWORD}\";
+      sh -c "if [ -n \"${REDIS_PASSWORD:-}\" ]; then
+               redis-server --requirepass \"${REDIS_PASSWORD:-}\";
              else
                redis-server;
              fi"
@@ -40,7 +40,7 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD-SHELL", "if [ -n \"${REDIS_PASSWORD}\" ]; then redis-cli -a \"${REDIS_PASSWORD}\" ping; else redis-cli ping; fi"]
+      test: ["CMD-SHELL", "if [ -n \"${REDIS_PASSWORD:-}\" ]; then redis-cli -a \"${REDIS_PASSWORD:-}\" ping; else redis-cli ping; fi"]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -53,9 +53,9 @@ services:
     env_file:
       - .env
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER not set}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD not set}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:?RABBITMQ_VHOST not set}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
     volumes:
       - kaapi-rabbitmq:/var/lib/rabbitmq
     ports:

@@ -1,3 +1,5 @@
+import json
+import logging
 import secrets
 import warnings
 import os
@@ -12,8 +14,55 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core import MultiHostUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)
 from typing_extensions import Self
+
+logger = logging.getLogger(__name__)
+
+
+def load_secret_from_aws(
+    secret_names: str, field_map: dict[str, str]
+) -> dict[str, Any]:
+    """Fetch one or more AWS secrets and remap their JSON keys.
+
+    secret_names: comma-separated Secrets Manager IDs
+                  (e.g. "kaapi-staging-db,kaapi-staging-cache").
+    field_map:    maps JSON keys in the secrets → Settings field names
+                  (e.g. {"password": "POSTGRES_PASSWORD"}).
+    """
+    if os.getenv("USE_AWS_SECRETS", "").strip().lower() not in ("1", "true", "yes"):
+        return {}
+
+    names = [n.strip() for n in secret_names.split(",") if n.strip()]
+    if not names:
+        return {}
+
+    import boto3
+
+    region = os.getenv("AWS_SECRETS_REGION") or os.getenv("AWS_DEFAULT_REGION")
+    client_kwargs: dict[str, Any] = {"region_name": region} if region else {}
+    client = boto3.client("secretsmanager", **client_kwargs)
+
+    merged: dict[str, Any] = {}
+    for name in names:
+        data = json.loads(client.get_secret_value(SecretId=name)["SecretString"])
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Secret '{name}' must be a JSON object " f"(got {type(data).__name__})"
+            )
+        merged.update(data)
+
+    overrides = {
+        field: merged[key] for key, field in field_map.items() if key in merged
+    }
+    logger.info(
+        f"[load_secret_from_aws] Loaded AWS secrets | "
+        f"{{'names': {names}, 'fields': {sorted(overrides)}}}"
+    )
+    return overrides
 
 
 def parse_cors(origins: Any) -> list[str] | str:
@@ -103,6 +152,11 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
+
+    # AWS Secrets Manager
+    USE_AWS_SECRETS: bool = False
+    AWS_SECRETS_NAMES: str = ""
+    AWS_SECRETS_REGION: str = ""
 
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
@@ -195,8 +249,18 @@ def get_settings() -> Settings:
     env_files = {"testing": "../.env.test", "development": "../.env"}
     env_file = env_files.get(environment, "../.env")
 
-    # Create Settings instance with the appropriate env file
-    return Settings(_env_file=env_file)
+    # Pull Postgres credentials from AWS Secrets Manager when enabled.
+    db_overrides = load_secret_from_aws(
+        secret_names=os.getenv("AWS_SECRETS_NAMES", ""),
+        field_map={
+            "username": "POSTGRES_USER",
+            "password": "POSTGRES_PASSWORD",
+            "host": "POSTGRES_SERVER",
+            "port": "POSTGRES_PORT",
+        },
+    )
+
+    return Settings(_env_file=env_file, **db_overrides)
 
 
 # Export settings instance
