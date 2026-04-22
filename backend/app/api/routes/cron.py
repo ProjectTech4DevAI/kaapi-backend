@@ -1,7 +1,7 @@
 import logging
 
 import sentry_sdk
-from sentry_sdk.crons import MonitorConfig
+from sentry_sdk.types import MonitorConfig
 
 from app.api.permissions import Permission, require_permission
 from fastapi import APIRouter, Depends
