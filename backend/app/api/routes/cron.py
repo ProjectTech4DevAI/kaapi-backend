@@ -15,15 +15,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Cron"])
 
 EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
+    # Expected cadence: a check-in every CRON_INTERVAL_MINUTES minutes.
     "schedule": {
         "type": "interval",
         "value": settings.CRON_INTERVAL_MINUTES,
         "unit": "minute",
     },
+    # Timezone for the schedule (only affects crontab-style schedules).
     "timezone": "UTC",
+    # Grace period (minutes) before a late check-in is marked as missed.
     "checkin_margin": 2,
+    # Max runtime (minutes) before an in-progress run is marked as timed out.
     "max_runtime": 2 * settings.CRON_INTERVAL_MINUTES,
+    # Consecutive failures/missed/timeouts required to open a Sentry issue.
     "failure_issue_threshold": 2,
+    # Consecutive successful check-ins required to auto-resolve the issue.
     "recovery_threshold": 1,
 }
 
