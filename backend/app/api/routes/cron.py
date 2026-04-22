@@ -1,5 +1,8 @@
 import logging
 
+import sentry_sdk
+from sentry_sdk.crons import MonitorConfig
+
 from app.api.permissions import Permission, require_permission
 from fastapi import APIRouter, Depends
 
@@ -10,11 +13,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Cron"])
 
+EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
+    "schedule": {"type": "interval", "value": 5, "unit": "minute"},
+    "timezone": "UTC",
+    "checkin_margin": 2,
+    "max_runtime": 10,
+    "failure_issue_threshold": 2,
+    "recovery_threshold": 1,
+}
+
 
 @router.get(
     "/cron/evaluations",
     include_in_schema=False,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="evaluation-cron-job",
+    monitor_config=EVALUATION_CRON_MONITOR_CONFIG,
 )
 def evaluation_cron_job(
     session: SessionDep,
@@ -34,7 +50,6 @@ def evaluation_cron_job(
     logger.info("[evaluation_cron_job] Cron job invoked")
 
     try:
-        # Process all pending evaluations across all organizations
         result = process_all_pending_evaluations_sync(session=session)
 
         logger.info(
@@ -51,10 +66,5 @@ def evaluation_cron_job(
             f"[evaluation_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
-        return {
-            "status": "error",
-            "error": str(e),
-            "total_processed": 0,
-            "total_failed": 0,
-            "total_still_processing": 0,
-        }
+        sentry_sdk.capture_exception(e)
+        raise
