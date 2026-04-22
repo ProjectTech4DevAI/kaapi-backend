@@ -1,3 +1,4 @@
+import boto3
 import json
 import logging
 import secrets
@@ -21,48 +22,6 @@ from pydantic_settings import (
 from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
-
-
-def load_secret_from_aws(
-    secret_names: str, field_map: dict[str, str]
-) -> dict[str, Any]:
-    """Fetch one or more AWS secrets and remap their JSON keys.
-
-    secret_names: comma-separated Secrets Manager IDs
-                  (e.g. "kaapi-staging-db,kaapi-staging-cache").
-    field_map:    maps JSON keys in the secrets → Settings field names
-                  (e.g. {"password": "POSTGRES_PASSWORD"}).
-    """
-    if os.getenv("USE_AWS_SECRETS", "").strip().lower() not in ("1", "true", "yes"):
-        return {}
-
-    names = [n.strip() for n in secret_names.split(",") if n.strip()]
-    if not names:
-        return {}
-
-    import boto3
-
-    region = os.getenv("AWS_SECRETS_REGION") or os.getenv("AWS_DEFAULT_REGION")
-    client_kwargs: dict[str, Any] = {"region_name": region} if region else {}
-    client = boto3.client("secretsmanager", **client_kwargs)
-
-    merged: dict[str, Any] = {}
-    for name in names:
-        data = json.loads(client.get_secret_value(SecretId=name)["SecretString"])
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"Secret '{name}' must be a JSON object " f"(got {type(data).__name__})"
-            )
-        merged.update(data)
-
-    overrides = {
-        field: merged[key] for key, field in field_map.items() if key in merged
-    }
-    logger.info(
-        f"[load_secret_from_aws] Loaded AWS secrets | "
-        f"{{'names': {names}, 'fields': {sorted(overrides)}}}"
-    )
-    return overrides
 
 
 def parse_cors(origins: Any) -> list[str] | str:
@@ -95,9 +54,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
     SENTRY_DSN: HttpUrl | None = None
-    POSTGRES_SERVER: str
+    POSTGRES_SERVER: str = ""
     POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str
+    POSTGRES_USER: str = ""
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
     KAAPI_GUARDRAILS_AUTH: str = ""
@@ -155,8 +114,8 @@ class Settings(BaseSettings):
 
     # AWS Secrets Manager
     USE_AWS_SECRETS: bool = False
-    AWS_SECRETS_NAMES: str = ""
     AWS_SECRETS_REGION: str = ""
+    AWS_POSTGRES_SECRET_NAME: str = ""
 
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
@@ -231,6 +190,64 @@ class Settings(BaseSettings):
                 raise ValueError(message)
 
     @model_validator(mode="after")
+    def _apply_aws_secrets(self) -> Self:
+        """Overlay service credentials from AWS Secrets Manager when enabled.
+
+        Each AWS_*_SECRET_NAME points to a secret whose SecretString is a
+        JSON object (e.g. the format produced by RDS/ElastiCache rotation).
+        Each secret is processed independently with its own field map so
+        services that share key names (username/password/host/port) do not
+        overwrite each other. Keys absent from a secret leave the existing
+        .env-derived value untouched.
+        """
+        if not self.USE_AWS_SECRETS:
+            return self
+
+        secret_configs: list[tuple[str, dict[str, str]]] = [
+            (
+                self.AWS_POSTGRES_SECRET_NAME,
+                {
+                    "username": "POSTGRES_USER",
+                    "password": "POSTGRES_PASSWORD",
+                    "host": "POSTGRES_SERVER",
+                    "port": "POSTGRES_PORT",
+                },
+            ),
+        ]
+
+        active = [(name, field_map) for name, field_map in secret_configs if name]
+        if not active:
+            return self
+
+        region = self.AWS_SECRETS_REGION or self.AWS_DEFAULT_REGION
+        client_kwargs: dict[str, Any] = {"region_name": region} if region else {}
+        client = boto3.client("secretsmanager", **client_kwargs)
+
+        for secret_name, field_map in active:
+            self._load_secret(client, secret_name, field_map)
+
+        return self
+
+    def _load_secret(
+        self, client: Any, secret_name: str, field_map: dict[str, str]
+    ) -> None:
+        data = json.loads(client.get_secret_value(SecretId=secret_name)["SecretString"])
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Secret '{secret_name}' must be a JSON object "
+                f"(got {type(data).__name__})"
+            )
+        applied: list[str] = []
+        for key, field in field_map.items():
+            if key in data:
+                setattr(self, field, data[key])
+                applied.append(field)
+        logger.info(
+            f"[_load_secret] Loaded AWS secret | "
+            f"{{'name': '{secret_name}', 'fields': {sorted(applied)}}}"
+        )
+
+    @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
@@ -249,18 +266,7 @@ def get_settings() -> Settings:
     env_files = {"testing": "../.env.test", "development": "../.env"}
     env_file = env_files.get(environment, "../.env")
 
-    # Pull Postgres credentials from AWS Secrets Manager when enabled.
-    db_overrides = load_secret_from_aws(
-        secret_names=os.getenv("AWS_SECRETS_NAMES", ""),
-        field_map={
-            "username": "POSTGRES_USER",
-            "password": "POSTGRES_PASSWORD",
-            "host": "POSTGRES_SERVER",
-            "port": "POSTGRES_PORT",
-        },
-    )
-
-    return Settings(_env_file=env_file, **db_overrides)
+    return Settings(_env_file=env_file)
 
 
 # Export settings instance
