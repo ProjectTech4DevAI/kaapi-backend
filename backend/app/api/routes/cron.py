@@ -7,6 +7,7 @@ from app.api.permissions import Permission, require_permission
 from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionDep
+from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations_sync
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Cron"])
 
 EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
-    "schedule": {"type": "interval", "value": 5, "unit": "minute"},
+    "schedule": {
+        "type": "interval",
+        "value": settings.CRON_INTERVAL_MINUTES,
+        "unit": "minute",
+    },
     "timezone": "UTC",
     "checkin_margin": 2,
-    "max_runtime": 10,
+    "max_runtime": 2 * settings.CRON_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
     "recovery_threshold": 1,
 }

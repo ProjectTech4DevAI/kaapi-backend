@@ -156,6 +156,10 @@ class Settings(BaseSettings):
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10
 
+    # Evaluation cron invocation interval (minutes). Shared by the external
+    # invoker script and the Sentry cron monitor schedule so both stay aligned.
+    CRON_INTERVAL_MINUTES: int = 5
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:
