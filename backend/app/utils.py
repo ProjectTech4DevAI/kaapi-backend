@@ -503,8 +503,6 @@ def send_callback(
             signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
             headers["X-Webhook-Signature"] = signature
             headers["X-Webhook-Timestamp"] = str(timestamp_ms)
-            logger.info("[send_callback] Callback signed with webhook secret")
-
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
