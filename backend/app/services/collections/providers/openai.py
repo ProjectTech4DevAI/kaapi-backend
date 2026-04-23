@@ -1,12 +1,16 @@
 import logging
+from io import BytesIO
 from typing import List
 
 from openai import OpenAI
+from sqlmodel import Session
 
 from app.services.collections.providers import BaseProvider
 from app.core.cloud.storage import CloudStorage
+from app.core.db import engine
+from app.crud import DocumentCrud
 from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import get_service_name, batch_documents
+from app.services.collections.helpers import get_service_name
 from app.models import CreationRequest, Collection, Document
 
 
@@ -20,28 +24,71 @@ class OpenAIProvider(BaseProvider):
         super().__init__(client)
         self.client = client
 
+    def get_existing_file_id(self, doc: Document) -> str | None:
+        return doc.openai_file_id
+
+    def upload_files(
+        self,
+        storage: CloudStorage,
+        docs: list[Document],
+        project_id: int,
+    ) -> None:
+        for doc in docs:
+            if self.get_existing_file_id(doc):
+                continue
+            try:
+                content = storage.get(doc.object_store_url)
+                if doc.file_size_kb is None:
+                    doc.file_size_kb = round(len(content) / 1024, 2)
+                f_obj = BytesIO(content)
+                f_obj.name = doc.fname
+                uploaded = self.client.files.create(file=f_obj, purpose="assistants")
+                doc.openai_file_id = uploaded.id
+                with Session(engine) as session:
+                    document_crud = DocumentCrud(session, project_id)
+                    db_doc = document_crud.read_one(doc.id)
+                    db_doc.openai_file_id = uploaded.id
+                    db_doc.file_size_kb = doc.file_size_kb
+                    document_crud.update(db_doc)
+            except Exception as err:
+                logger.error(
+                    "[OpenAIProvider.upload_files] Failed to upload file | doc_id=%s, error=%s",
+                    doc.id,
+                    str(err),
+                    exc_info=True,
+                )
+
     def create(
         self,
         collection_request: CreationRequest,
-        storage: CloudStorage,
-        documents: List[Document],
+        docs: List[Document],
+        vector_store_id: str | None = None,
+        is_final: bool = False,
     ) -> Collection:
-        """
-        Create OpenAI vector store with documents and optionally an assistant.
-        Batching and checkpointing are handled by the Celery task layer.
-        This method is kept for direct (non-batched) use cases.
-        """
         try:
-            docs_batches = batch_documents(documents)
             vector_store_crud = OpenAIVectorStoreCrud(self.client)
-            vector_store = vector_store_crud.create()
 
-            list(vector_store_crud.update(vector_store.id, storage, docs_batches))
+            if vector_store_id is None:
+                vector_store = vector_store_crud.create()
+                vector_store_id = vector_store.id
+                logger.info(
+                    "[OpenAIProvider.create] Vector store created | vector_store_id=%s",
+                    vector_store_id,
+                )
 
-            logger.info(
-                "[OpenAIProvider.create] Vector store created | "
-                f"vector_store_id={vector_store.id}, batches={len(docs_batches)}"
-            )
+            if docs:
+                vector_store_crud.update_batch(vector_store_id, docs)
+                logger.info(
+                    "[OpenAIProvider.create] Batch uploaded | vector_store_id=%s, doc_count=%d",
+                    vector_store_id,
+                    len(docs),
+                )
+
+            if not is_final:
+                return Collection(
+                    llm_service_id=vector_store_id,
+                    llm_service_name=get_service_name("openai"),
+                )
 
             with_assistant = (
                 collection_request.model is not None
@@ -59,11 +106,12 @@ class OpenAIProvider(BaseProvider):
                     k: v for k, v in assistant_options.items() if v is not None
                 }
 
-                assistant = assistant_crud.create(vector_store.id, **filtered_options)
+                assistant = assistant_crud.create(vector_store_id, **filtered_options)
 
                 logger.info(
-                    "[OpenAIProvider.create] Assistant created | "
-                    f"assistant_id={assistant.id}, vector_store_id={vector_store.id}"
+                    "[OpenAIProvider.create] Assistant created | assistant_id=%s, vector_store_id=%s",
+                    assistant.id,
+                    vector_store_id,
                 )
 
                 return Collection(
@@ -76,7 +124,7 @@ class OpenAIProvider(BaseProvider):
                 )
 
                 return Collection(
-                    llm_service_id=vector_store.id,
+                    llm_service_id=vector_store_id,
                     llm_service_name=get_service_name("openai"),
                 )
 

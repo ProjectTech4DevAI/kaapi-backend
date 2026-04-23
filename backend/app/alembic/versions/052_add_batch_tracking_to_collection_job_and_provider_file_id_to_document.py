@@ -47,7 +47,7 @@ def upgrade():
     op.add_column(
         "document",
         sa.Column(
-            "provider_file_id",
+            "openai_file_id",
             sa.String(),
             nullable=True,
             comment="File ID assigned by the LLM provider (e.g. OpenAI file ID) to avoid re-uploading",
@@ -59,4 +59,4 @@ def downgrade():
     op.drop_column("collection_jobs", "total_batches")
     op.drop_column("collection_jobs", "current_batch_number")
     op.drop_column("collection_jobs", "documents_uploaded")
-    op.drop_column("document", "provider_file_id")
+    op.drop_column("document", "openai_file_id")

@@ -1,6 +1,7 @@
 import json
 import logging
 import functools as ft
+import time
 from io import BytesIO
 from typing import Iterable
 
@@ -152,84 +153,48 @@ class OpenAIVectorStoreCrud(OpenAICrud):
     def update_batch(
         self,
         vector_store_id: str,
-        storage: CloudStorage,
         docs: list[Document],
     ) -> tuple[list[Document], list[Document]]:
         """
-        Upload a single batch of documents to the vector store with partial failure handling.
+        Attach a batch of documents to the vector store via a single upload_and_poll call.
 
-        Reuses provider_file_id if the document was already uploaded.
+        All docs must have provider_file_id set before calling this method.
         Returns (succeeded, failed) — failed docs should be retried in the next batch.
         """
         succeeded: list[Document] = []
         failed: list[Document] = []
 
-        reuse_docs = [doc for doc in docs if doc.provider_file_id]
-        new_docs = [doc for doc in docs if not doc.provider_file_id]
+        if not docs:
+            return succeeded, failed
 
-        # Attach already-uploaded files in one batch call
-        if reuse_docs:
-            try:
-                batch = self.client.vector_stores.file_batches.upload_and_poll(
-                    vector_store_id=vector_store_id,
-                    files=[],
-                    file_ids=[doc.provider_file_id for doc in reuse_docs],
-                )
-                logger.info(
-                    f"[OpenAIVectorStoreCrud.update_batch] Reuse batch complete | "
-                    f"{{'vector_store_id': '{vector_store_id}', 'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
-                )
-                if batch.file_counts.failed == 0:
-                    succeeded.extend(reuse_docs)
-                else:
-                    # Can't identify which specific files failed — retry all of them
-                    logger.warning(
-                        f"[OpenAIVectorStoreCrud.update_batch] Reuse batch had failures, marking all for retry | "
-                        f"{{'vector_store_id': '{vector_store_id}', 'failed_count': {batch.file_counts.failed}}}"
-                    )
-                    failed.extend(reuse_docs)
-            except OpenAIError as err:
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.update_batch] Reuse batch request failed | "
-                    f"{{'vector_store_id': '{vector_store_id}', 'error': '{str(err)}'}}",
-                    exc_info=True,
-                )
-                failed.extend(reuse_docs)
-
-        # Upload new files individually so we can track provider_file_id per doc
-        for idx, doc in enumerate(new_docs, start=1):
-            logger.info(
-                f"[OpenAIVectorStoreCrud.update_batch] Uploading file {idx}/{len(new_docs)} | "
-                f"{{'vector_store_id': '{vector_store_id}', 'doc_id': '{doc.id}', 'fname': '{doc.fname}'}}"
+        try:
+            _t0 = time.monotonic()
+            batch = self.client.vector_stores.file_batches.upload_and_poll(
+                vector_store_id=vector_store_id,
+                files=[],
+                file_ids=[doc.openai_file_id for doc in docs],
             )
-            try:
-                content = storage.get(doc.object_store_url)
-                f_obj = BytesIO(content)
-                f_obj.name = doc.fname
-
-                uploaded_file = self.client.files.create(
-                    file=f_obj, purpose="assistants"
+            logger.info(
+                f"[OpenAIVectorStoreCrud.update_batch] Batch upload_and_poll duration | "
+                f"{{'vector_store_id': '{vector_store_id}', 'duration_s': {time.monotonic() - _t0:.3f}, "
+                f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
+            )
+            if batch.file_counts.failed == 0:
+                succeeded.extend(docs)
+            else:
+                # Can't identify which specific files failed — retry all of them
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update_batch] Batch had failures, marking all for retry | "
+                    f"{{'vector_store_id': '{vector_store_id}', 'failed_count': {batch.file_counts.failed}}}"
                 )
-                doc.provider_file_id = uploaded_file.id
-
-                del content, f_obj
-
-                self.client.vector_stores.files.create(
-                    vector_store_id=vector_store_id,
-                    file_id=uploaded_file.id,
-                )
-                logger.info(
-                    f"[OpenAIVectorStoreCrud.update_batch] File uploaded and attached | "
-                    f"{{'vector_store_id': '{vector_store_id}', 'doc_id': '{doc.id}', 'provider_file_id': '{uploaded_file.id}'}}"
-                )
-                succeeded.append(doc)
-            except Exception as err:
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.update_batch] Failed to upload file | "
-                    f"{{'vector_store_id': '{vector_store_id}', 'doc_id': '{doc.id}', 'error': '{str(err)}'}}",
-                    exc_info=True,
-                )
-                failed.append(doc)
+                failed.extend(docs)
+        except OpenAIError as err:
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update_batch] Batch attach failed | "
+                f"{{'vector_store_id': '{vector_store_id}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            failed.extend(docs)
 
         logger.info(
             f"[OpenAIVectorStoreCrud.update_batch] Batch complete | "

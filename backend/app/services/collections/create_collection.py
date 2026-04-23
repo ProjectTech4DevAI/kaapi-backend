@@ -28,6 +28,7 @@ from app.services.collections.helpers import (
     to_collection_public,
 )
 from app.services.collections.providers.registry import get_llm_provider
+from gevent import Timeout
 from app.celery.utils import start_create_collection_job, start_collection_batch_job
 from app.utils import send_callback, APIResponse
 
@@ -119,14 +120,13 @@ def _mark_job_failed(
 
 
 def _persist_succeeded_docs(succeeded: list, project_id: int) -> list[str]:
-    """Persist provider_file_id for each succeeded doc and return their IDs."""
     with Session(engine) as session:
         document_crud = DocumentCrud(session, project_id)
         for doc in succeeded:
-            if doc.provider_file_id:
+            if doc.openai_file_id:
                 db_doc = document_crud.read_one(doc.id)
-                if db_doc.provider_file_id != doc.provider_file_id:
-                    db_doc.provider_file_id = doc.provider_file_id
+                if db_doc.openai_file_id != doc.openai_file_id:
+                    db_doc.openai_file_id = doc.openai_file_id
                     document_crud.update(db_doc)
     return [str(doc.id) for doc in succeeded]
 
@@ -134,14 +134,13 @@ def _persist_succeeded_docs(succeeded: list, project_id: int) -> list[str]:
 def _retry_failed_uploads(
     vector_store_crud,
     vector_store_id: str,
-    storage,
     failed_docs: list,
     project_id: int,
     max_retries: int = 3,
 ) -> list[str]:
     """
-    Retry uploading docs that failed the initial batch upload.
-    Persists provider_file_id for each success after every attempt.
+    Retry attaching docs that failed the initial batch upload_and_poll.
+    All docs must already have provider_file_id set.
     Returns the list of successfully retried doc IDs.
     Raises RuntimeError if any docs still fail after all retries.
     """
@@ -156,9 +155,7 @@ def _retry_failed_uploads(
             len(pending),
             vector_store_id,
         )
-        succeeded, failed = vector_store_crud.update_batch(
-            vector_store_id, storage, pending
-        )
+        succeeded, failed = vector_store_crud.update_batch(vector_store_id, pending)
 
         if succeeded:
             all_succeeded_ids += _persist_succeeded_docs(succeeded, project_id)
@@ -201,27 +198,7 @@ def execute_setup_job(
         with Session(engine) as session:
             document_crud = DocumentCrud(session, project_id)
             flat_docs = document_crud.read_each(creation_request.documents)
-
-            total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
-            total_size_mb = round(total_size_kb / 1024, 2)
-            docs_batches = batch_documents(flat_docs)
-            total_batches = len(docs_batches)
-
-            # Compute batch_doc_ids inside the session while docs are still attached
-            batch_doc_ids = [[str(doc.id) for doc in batch] for batch in docs_batches]
-
-            collection_job_crud = CollectionJobCrud(session, project_id)
-            collection_job = collection_job_crud.update(
-                job_uuid,
-                CollectionJobUpdate(
-                    task_id=task_id,
-                    status=CollectionJobStatus.PROCESSING,
-                    total_size_mb=total_size_mb,
-                    total_batches=total_batches,
-                    current_batch_number=0,
-                    documents_uploaded=[],
-                ),
-            )
+            storage = get_cloud_storage(session=session, project_id=project_id)
 
             provider = get_llm_provider(
                 session=session,
@@ -230,8 +207,38 @@ def execute_setup_job(
                 organization_id=organization_id,
             )
 
-        vector_store = OpenAIVectorStoreCrud(provider.client).create()
-        vector_store_id = vector_store.id
+            for doc in flat_docs:
+                session.expunge(doc)
+
+        provider.upload_files(storage, flat_docs, project_id)
+
+        logger.info(
+            "[create_collection.execute_setup_job] All file uploads complete | "
+            "job_id=%s, total=%d, failed=%d, duration_s=%.2f",
+            job_id,
+            len(flat_docs),
+        )
+
+        total_size_kb = sum(doc.file_size_kb for doc in flat_docs)
+        total_size_mb = total_size_kb / 1024
+
+        docs_batches = batch_documents(flat_docs)
+        total_batches = len(docs_batches)
+        batch_doc_ids = [[str(doc.id) for doc in batch] for batch in docs_batches]
+
+        with Session(engine) as session:
+            collection_job_crud = CollectionJobCrud(session, project_id)
+            collection_job = collection_job_crud.update(
+                job_uuid,
+                CollectionJobUpdate(
+                    task_id=task_id,
+                    status=CollectionJobStatus.PROCESSING,
+                    total_size_mb=total_size_mb,
+                    current_batch_number=0,
+                    total_batches=total_batches,
+                    documents_uploaded=[],
+                ),
+            )
 
         start_collection_batch_job(
             project_id=project_id,
@@ -240,7 +247,6 @@ def execute_setup_job(
             batch_number=1,
             batch_doc_ids=batch_doc_ids[0],
             remaining_batches=batch_doc_ids[1:],
-            vector_store_id=vector_store_id,
             request=request,
             with_assistant=with_assistant,
             organization_id=organization_id,
@@ -248,8 +254,20 @@ def execute_setup_job(
 
         logger.info(
             "[create_collection.execute_setup_job] Setup complete, first batch queued | "
-            f"job_id={job_id}, vector_store_id={vector_store_id}, total_batches={total_batches}"
+            f"job_id={job_id}, total_batches={total_batches}"
         )
+
+    except Timeout as err:
+        timeout_err = TimeoutError(
+            f"[execute_setup_job] Task exceeded soft time limit of {err.seconds}s"
+        )
+        _mark_job_failed(
+            project_id=project_id,
+            job_id=job_id,
+            err=timeout_err,
+            collection_job=collection_job,
+        )
+        raise
 
     except Exception as err:
         logger.error(
@@ -258,6 +276,7 @@ def execute_setup_job(
             str(err),
             exc_info=True,
         )
+
         collection_job = _mark_job_failed(
             project_id=project_id,
             job_id=job_id,
@@ -277,10 +296,10 @@ def execute_batch_job(
     task_id: str,
     job_id: str,
     task_instance,
+    vector_store_id: str | None,
     batch_number: int,
     batch_doc_ids: list[str],
     remaining_batches: list[list[str]],
-    vector_store_id: str,
 ) -> None:
     """
     Phase 2: Upload one batch of documents to the vector store.
@@ -312,12 +331,9 @@ def execute_batch_job(
         )
 
         all_doc_ids_this_batch = [UUID(d) for d in batch_doc_ids]
+        is_final = not remaining_batches
 
         with Session(engine) as session:
-            document_crud = DocumentCrud(session, project_id)
-            docs_this_batch = document_crud.read_each(all_doc_ids_this_batch)
-            storage = get_cloud_storage(session=session, project_id=project_id)
-
             provider = get_llm_provider(
                 session=session,
                 provider=creation_request.provider,
@@ -325,47 +341,33 @@ def execute_batch_job(
                 organization_id=organization_id,
             )
 
-        vector_store_crud = OpenAIVectorStoreCrud(provider.client)
-        logger.info(
-            "[create_collection.execute_batch_job] Uploading batch to vector store | "
-            "job_id=%s, batch_number=%d, vector_store_id=%s, total_docs=%d",
-            job_id,
-            batch_number,
-            vector_store_id,
-            len(all_doc_ids_this_batch),
-        )
-
-        succeeded, failed = vector_store_crud.update_batch(
-            vector_store_id, storage, docs_this_batch
-        )
-
-        new_uploaded_ids = (
-            _persist_succeeded_docs(succeeded, project_id) if succeeded else []
-        )
-
-        if failed:
-            logger.warning(
-                "[create_collection.execute_batch_job] %d doc(s) failed initial upload, retrying | "
-                "job_id=%s, batch_number=%d",
-                len(failed),
-                job_id,
-                batch_number,
+        with Session(engine) as session:
+            document_crud = DocumentCrud(session, project_id)
+            batch_docs = (
+                document_crud.read_each(all_doc_ids_this_batch)
+                if all_doc_ids_this_batch
+                else []
             )
-            retry_ids = _retry_failed_uploads(
-                vector_store_crud=vector_store_crud,
-                vector_store_id=vector_store_id,
-                storage=storage,
-                failed_docs=failed,
-                project_id=project_id,
-            )
-            new_uploaded_ids += retry_ids
+            for doc in batch_docs:
+                session.expunge(doc)
 
-        # Checkpoint batch progress
+        collection_result = provider.create(
+            creation_request,
+            batch_docs,
+            vector_store_id=vector_store_id,
+            is_final=is_final,
+        )
+        resolved_vector_store_id = (
+            collection_result.llm_service_id
+            if not is_final
+            else vector_store_id or collection_result.llm_service_id
+        )
+
         with Session(engine) as session:
             collection_job_crud = CollectionJobCrud(session, project_id)
             collection_job = collection_job_crud.read_one(job_uuid)
             already_uploaded = collection_job.documents_uploaded or []
-            now_uploaded = already_uploaded + new_uploaded_ids
+            now_uploaded = already_uploaded + [str(d) for d in all_doc_ids_this_batch]
 
             collection_job = collection_job_crud.update(
                 job_uuid,
@@ -377,9 +379,9 @@ def execute_batch_job(
 
         logger.info(
             "[create_collection.execute_batch_job] Batch %d complete | "
-            "uploaded=%d, job_id=%s",
+            "doc_count=%d, job_id=%s",
             batch_number,
-            len(new_uploaded_ids),
+            len(all_doc_ids_this_batch),
             job_id,
         )
 
@@ -388,24 +390,25 @@ def execute_batch_job(
                 project_id=project_id,
                 job_id=job_id,
                 trace_id=trace_id,
+                vector_store_id=resolved_vector_store_id,
                 batch_number=batch_number + 1,
                 batch_doc_ids=remaining_batches[0],
                 remaining_batches=remaining_batches[1:],
-                vector_store_id=vector_store_id,
                 request=request,
                 with_assistant=with_assistant,
                 organization_id=organization_id,
             )
             logger.info(
-                "[create_collection.execute_batch_job] Batch %d done, next batch queued | "
+                "[create_collection.execute_batch_job] Batch %d/%d done, next batch queued | "
                 "job_id=%s, elapsed=%.2fs",
                 batch_number,
+                batch_number + len(remaining_batches),
                 job_id,
                 time.time() - batch_start_time,
             )
             return
 
-        # Finalize: create Collection record, link all docs, mark job SUCCESSFUL
+        # Final batch: collection_result already has assistant/vector_store finalized
         finalize_start_time = time.time()
 
         with Session(engine) as session:
@@ -414,42 +417,16 @@ def execute_batch_job(
             all_docs = (
                 document_crud.read_each(all_uploaded_ids) if all_uploaded_ids else []
             )
+            for doc in all_docs:
+                session.expunge(doc)
 
-            # with_assistant_flag = (
-            #    creation_request.model is not None
-            #    and creation_request.instructions is not None
-            # )
-            #
-            # if with_assistant_flag:
-            #    assistant_crud_obj = __import__(
-            #        "app.crud.rag", fromlist=["OpenAIAssistantCrud"]
-            #    ).OpenAIAssistantCrud(provider.client)
-            #    assistant_options = {
-            #        k: v
-            #        for k, v in {
-            #            "model": creation_request.model,
-            #            "instructions": creation_request.instructions,
-            #            "temperature": creation_request.temperature,
-            #        }.items()
-            #        if v is not None
-            #    }
-            #    assistant = assistant_crud_obj.create(
-            #        vector_store_id, **assistant_options
-            #    )
-            #    llm_service_id = assistant.id
-            #    llm_service_name = assistant_options.get("model", "assistant")
-            # else:
-            from app.services.collections.helpers import get_service_name
-
-            llm_service_id = vector_store_id
-            llm_service_name = get_service_name("openai")
-
+        with Session(engine) as session:
             collection_id = uuid4()
             collection = Collection(
                 id=collection_id,
                 project_id=project_id,
-                llm_service_id=llm_service_id,
-                llm_service_name=llm_service_name,
+                llm_service_id=collection_result.llm_service_id,
+                llm_service_name=collection_result.llm_service_name,
                 provider=creation_request.provider,
                 name=creation_request.name,
                 description=creation_request.description,
@@ -484,7 +461,18 @@ def execute_batch_job(
         if creation_request.callback_url:
             send_callback(creation_request.callback_url, success_payload)
 
-    except Exception as err:
+    except Timeout as err:
+        timeout_err = TimeoutError(
+            f"[execute_batch_job] Task exceeded soft time limit of {err.seconds}s"
+        )
+        _mark_job_failed(
+            project_id=project_id,
+            job_id=job_id,
+            err=timeout_err,
+            collection_job=collection_job,
+        )
+        raise
+    except BaseException as err:
         logger.error(
             "[create_collection.execute_batch_job] Batch %d failed | job_id=%s, error=%s",
             batch_number,

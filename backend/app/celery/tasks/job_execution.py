@@ -4,6 +4,8 @@ from asgi_correlation_id import correlation_id
 from celery import current_task
 
 from app.celery.celery_app import celery_app
+from app.celery.utils import gevent_timeout
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kw
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_create_collection_job")
 def run_create_collection_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
@@ -86,6 +89,7 @@ def run_create_collection_job(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_collection_batch_job")
 def run_collection_batch_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
