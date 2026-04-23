@@ -91,8 +91,6 @@ services:
     command: bash scripts/prestart.sh
     env_file:
       - .env
-    environment:
-      POSTGRES_SERVER: db
     profiles: ["prestart"]
 
   backend:
@@ -111,7 +109,6 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_SERVER: db
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
     ports:
@@ -147,7 +144,6 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_SERVER: db
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
     command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
@@ -166,7 +162,6 @@ services:
     ports:
       - "5555:5555"
     environment:
-      POSTGRES_SERVER: db
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
     command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "flower", "--port=5555"]

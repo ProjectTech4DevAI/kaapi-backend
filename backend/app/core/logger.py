@@ -11,7 +11,8 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 
 LOGGING_LEVEL = logging.INFO
 LOGGING_FORMAT = (
-    "%(asctime)s - [%(correlation_id)s] - %(levelname)s - %(name)s - %(message)s"
+    "%(asctime)s - [%(service_name)s] - [%(correlation_id)s] - "
+    "%(levelname)s - %(name)s - %(message)s"
 )
 
 
@@ -21,26 +22,47 @@ class CorrelationIdFilter(logging.Filter):
         return True
 
 
-# Suppress info logs from LiteLLM
+class ServiceNameFilter(logging.Filter):
+    def __init__(self, service_name: str) -> None:
+        super().__init__()
+        self._service_name = service_name
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.service_name = self._service_name
+        return True
+
+
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("opentelemetry").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("celery.worker.consumer.connection").setLevel(logging.WARNING)
+logging.getLogger("celery.worker.consumer.mingle").setLevel(logging.WARNING)
+logging.getLogger("celery.apps.worker").setLevel(logging.WARNING)
 
-# Create root logger
-logger = logging.getLogger()
-logger.setLevel(LOGGING_LEVEL)
 
-# Formatter
-formatter = logging.Formatter(LOGGING_FORMAT)
+def configure_logging(service_name: str | None = None) -> None:
+    root_logger = logging.getLogger()
+    if getattr(root_logger, "_kaapi_logging_configured", False):
+        return
 
-# Stream handler (console)
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-stream_handler.addFilter(CorrelationIdFilter())
-logger.addHandler(stream_handler)
+    root_logger.setLevel(LOGGING_LEVEL)
 
-# Rotating file handler
-file_handler = RotatingFileHandler(
-    LOG_FILE_PATH, maxBytes=10 * 1024 * 1024, backupCount=5
-)
-file_handler.setFormatter(formatter)
-file_handler.addFilter(CorrelationIdFilter())
-logger.addHandler(file_handler)
+    formatter = logging.Formatter(LOGGING_FORMAT)
+    resolved_service_name = service_name or settings.OTEL_SERVICE_NAME
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(CorrelationIdFilter())
+    stream_handler.addFilter(ServiceNameFilter(resolved_service_name))
+
+    file_handler = RotatingFileHandler(
+        LOG_FILE_PATH, maxBytes=10 * 1024 * 1024, backupCount=5
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.addFilter(CorrelationIdFilter())
+    file_handler.addFilter(ServiceNameFilter(resolved_service_name))
+
+    root_logger.handlers.clear()
+    root_logger.addHandler(stream_handler)
+    root_logger.addHandler(file_handler)
+    root_logger._kaapi_logging_configured = True
