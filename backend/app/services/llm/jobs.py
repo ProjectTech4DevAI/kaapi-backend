@@ -447,15 +447,19 @@ def execute_llm_call(
                     llm_response = LLMCallResponse(
                         response=LLMResponse(
                             provider_response_id=str(job_id),
-                            provider="guardrail",
-                            model="guardrail",
+                            provider=str(config_blob.completion.provider),
+                            model=str(config_blob.completion.params.get("model") or ""),
                             output=TextOutput(
                                 content=TextContent(value=guardrail_direct_response)
                             ),
                         ),
                         usage=guardrail_usage,
                     )
-                    return BlockResult(response=llm_response, usage=guardrail_usage)
+                    return BlockResult(
+                        response=llm_response,
+                        usage=guardrail_usage,
+                        metadata=request_metadata,
+                    )
                 if input_error:
                     guard_span.set_status(
                         trace.Status(trace.StatusCode.ERROR, input_error)
