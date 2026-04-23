@@ -443,6 +443,26 @@ def sign_webhook_payload(
     return signature, timestamp_ms
 
 
+def get_webhook_secret(
+    project_id: int | None, organization_id: int | None
+) -> str | None:
+    """Look up the configured webhook signing secret for this project, or None."""
+    if project_id is None or organization_id is None:
+        return None
+    # Imported lazily: app.core.db pulls in app.crud, which imports app.utils,
+    # so a top-level import here would deadlock module initialization.
+    from app.core.db import engine
+
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
 def send_callback(
     callback_url: str,
     data: dict[str, Any],

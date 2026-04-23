@@ -3,7 +3,6 @@ import logging
 from sqlmodel import Session
 
 from app.core.db import engine
-from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.crud.llm_chain import update_llm_chain_block_completed, update_llm_chain_status
 from app.models import JobStatus, JobUpdate
@@ -14,7 +13,7 @@ from app.models.llm.request import (
 from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +61,9 @@ class ChainExecutor:
                 status=ChainStatus.RUNNING,
             )
 
-            creds = get_provider_credential(
-                session=session,
-                org_id=self._context.organization_id,
-                project_id=self._context.project_id,
-                provider="webhook_secret",
-            )
-            self._webhook_secret = (
-                creds.get("webhook_secret") if isinstance(creds, dict) else None
-            )
+        self._webhook_secret = get_webhook_secret(
+            self._context.project_id, self._context.organization_id
+        )
 
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""

@@ -7,7 +7,6 @@ from asgi_correlation_id import correlation_id
 
 from app.core.db import engine
 from app.crud import CollectionCrud, CollectionJobCrud
-from app.crud.credentials import get_provider_credential
 from app.models import (
     CollectionJobStatus,
     CollectionJobUpdate,
@@ -20,7 +19,7 @@ from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_delete_collection_job
 from app.core.telemetry import log_context
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -103,18 +102,6 @@ def build_failure_payload(
     ).model_dump(mode="json", exclude={"data": {"error_message"}})
 
 
-def _get_webhook_secret(project_id: int, organization_id: int) -> str | None:
-    """Look up the configured webhook signing secret for this project."""
-    with Session(engine) as session:
-        creds = get_provider_credential(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-            provider="webhook_secret",
-        )
-    return creds.get("webhook_secret") if isinstance(creds, dict) else None
-
-
 def _mark_job_failed_and_callback(
     *,
     organization_id: int,
@@ -160,7 +147,7 @@ def _mark_job_failed_and_callback(
             collection_id=collection_id,
             error_message=str(err),
         )
-        webhook_secret = _get_webhook_secret(project_id, organization_id)
+        webhook_secret = get_webhook_secret(project_id, organization_id)
         send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
 
 
@@ -251,7 +238,7 @@ def execute_job(
                     collection_job=collection_job,
                     collection_id=collection_uuid,
                 )
-                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
                 send_callback(
                     callback_url,
                     success_payload,

@@ -36,3 +36,4 @@ The `credential` field accepts **two formats** (both work the same):
 - **LLM:** openai, sarvamai, google(gemini)
 - **Observability:** langfuse
 - **Audio:** elevenlabs
+- **Miscellaneous** webhook_secret

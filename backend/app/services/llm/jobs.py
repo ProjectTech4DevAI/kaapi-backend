@@ -46,7 +46,13 @@ from app.services.llm.guardrails import (
 )
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
-from app.utils import APIResponse, cleanup_temp_file, resolve_input, send_callback
+from app.utils import (
+    APIResponse,
+    cleanup_temp_file,
+    get_webhook_secret,
+    resolve_input,
+    send_callback,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -173,22 +179,6 @@ def start_chain_job(
         return job.id
 
 
-def _get_webhook_secret(
-    project_id: int | None, organization_id: int | None
-) -> str | None:
-    """Look up the configured webhook signing secret for this project."""
-    if project_id is None or organization_id is None:
-        return None
-    with Session(engine) as session:
-        creds = get_provider_credential(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-            provider="webhook_secret",
-        )
-    return creds.get("webhook_secret") if isinstance(creds, dict) else None
-
-
 def handle_job_error(
     job_id: UUID,
     callback_url: str | None,
@@ -198,7 +188,7 @@ def handle_job_error(
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     if callback_url:
-        webhook_secret = _get_webhook_secret(project_id, organization_id)
+        webhook_secret = get_webhook_secret(project_id, organization_id)
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
             cb_span.set_attribute("callback.url", callback_url)
             cb_span.set_attribute("callback.status", "failure")
@@ -762,7 +752,7 @@ def execute_job(
                     data=result.response, metadata=result.metadata
                 )
                 if callback_url_str:
-                    webhook_secret = _get_webhook_secret(project_id, organization_id)
+                    webhook_secret = get_webhook_secret(project_id, organization_id)
                     with tracer.start_as_current_span("llm.send_callback") as cb_span:
                         cb_span.set_attribute("callback.url", callback_url_str)
                         cb_span.set_attribute("callback.status", "success")

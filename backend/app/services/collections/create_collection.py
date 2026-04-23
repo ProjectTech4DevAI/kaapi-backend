@@ -15,7 +15,6 @@ from app.crud import (
     DocumentCollectionCrud,
     CollectionJobCrud,
 )
-from app.crud.credentials import get_provider_credential
 from app.models import (
     CollectionJobStatus,
     CollectionJob,
@@ -30,7 +29,7 @@ from app.services.collections.helpers import (
 )
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_create_collection_job
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -145,18 +144,6 @@ def _mark_job_failed(
     except Exception:
         logger.warning("[create_collection.execute_job] Failed to mark job as FAILED")
         return None
-
-
-def _get_webhook_secret(project_id: int, organization_id: int) -> str | None:
-    """Look up the configured webhook signing secret for this project."""
-    with Session(engine) as session:
-        creds = get_provider_credential(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-            provider="webhook_secret",
-        )
-    return creds.get("webhook_secret") if isinstance(creds, dict) else None
 
 
 def execute_job(
@@ -287,7 +274,7 @@ def execute_job(
             )
 
             if creation_request.callback_url:
-                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
                 send_callback(
                     str(creation_request.callback_url),
                     success_payload,
@@ -321,7 +308,7 @@ def execute_job(
 
             if creation_request and creation_request.callback_url and collection_job:
                 failure_payload = build_failure_payload(collection_job, str(err))
-                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
                 send_callback(
                     str(creation_request.callback_url),
                     failure_payload,

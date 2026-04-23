@@ -11,7 +11,6 @@ from sqlmodel import Session
 from asgi_correlation_id import correlation_id
 from starlette.datastructures import Headers
 
-from app.crud.credentials import get_provider_credential
 from app.crud.document.doc_transformation_job import DocTransformationJobCrud
 from app.crud.document.document import DocumentCrud
 from app.models import (
@@ -25,7 +24,7 @@ from app.models import (
 )
 from app.core.cloud import get_cloud_storage
 from app.celery.utils import start_doctransform_job
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
 from app.core.db import engine
 
@@ -128,16 +127,8 @@ def execute_job(
         if callback_url:
             with Session(engine) as db:
                 project = db.get(Project, project_id)
-                if project is not None:
-                    creds = get_provider_credential(
-                        session=db,
-                        org_id=project.organization_id,
-                        project_id=project_id,
-                        provider="webhook_secret",
-                    )
-                    webhook_secret = (
-                        creds.get("webhook_secret") if isinstance(creds, dict) else None
-                    )
+            if project is not None:
+                webhook_secret = get_webhook_secret(project_id, project.organization_id)
 
         logger.info(
             "[doc_transform.execute_job] started | job_id=%s | transformer=%s | target=%s | project_id=%s",

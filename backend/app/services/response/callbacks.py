@@ -1,9 +1,5 @@
-from sqlmodel import Session
-
-from app.core.db import engine
-from app.crud.credentials import get_provider_credential
 from app.models import ResponsesAPIRequest, ResponsesSyncAPIRequest
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 
 def get_additional_data(request: dict) -> dict:
@@ -30,14 +26,7 @@ def send_response_callback(
 
     callback_response = callback_response.model_dump()
 
-    with Session(engine) as session:
-        creds = get_provider_credential(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-            provider="webhook_secret",
-        )
-    webhook_secret = creds.get("webhook_secret") if isinstance(creds, dict) else None
+    webhook_secret = get_webhook_secret(project_id, organization_id)
 
     send_callback(
         callback_url,
