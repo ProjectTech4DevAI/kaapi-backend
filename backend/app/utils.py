@@ -495,17 +495,16 @@ def send_callback(
     except ValueError as ve:
         logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
-
-    raw_body = json.dumps(data, separators=(",", ":")).encode()
-    headers = {"Content-Type": "application/json"}
-
-    if webhook_secret:
-        signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
-        headers["X-Webhook-Signature"] = signature
-        headers["X-Webhook-Timestamp"] = str(timestamp_ms)
-        logger.info("[send_callback] Callback signed with webhook secret")
-
     try:
+        raw_body = json.dumps(data, separators=(",", ":")).encode()
+        headers = {"Content-Type": "application/json"}
+
+        if webhook_secret:
+            signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
+            headers["X-Webhook-Signature"] = signature
+            headers["X-Webhook-Timestamp"] = str(timestamp_ms)
+            logger.info("[send_callback] Callback signed with webhook secret")
+
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
