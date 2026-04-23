@@ -173,6 +173,22 @@ def start_chain_job(
         return job.id
 
 
+def _get_webhook_secret(
+    project_id: int | None, organization_id: int | None
+) -> str | None:
+    """Look up the configured webhook signing secret for this project."""
+    if project_id is None or organization_id is None:
+        return None
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
 def handle_job_error(
     job_id: UUID,
     callback_url: str | None,
@@ -182,29 +198,14 @@ def handle_job_error(
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     if callback_url:
-        webhook_secret = None
-        if organization_id is not None and project_id is not None:
-            with Session(engine) as session:
-                creds = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="webhook_secret",
-                )
-            webhook_secret = (
-                creds.get("webhook_secret") if isinstance(creds, dict) else None
-            )
-        send_callback(
-            callback_url=callback_url,
-            data=callback_response.model_dump(),
-            webhook_secret=webhook_secret,
-        )
+        webhook_secret = _get_webhook_secret(project_id, organization_id)
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
             cb_span.set_attribute("callback.url", callback_url)
             cb_span.set_attribute("callback.status", "failure")
             send_callback(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
+                webhook_secret=webhook_secret,
             )
 
     with Session(engine) as session:
@@ -755,28 +756,13 @@ def execute_job(
             logger.info(
                 f"[execute_job] Error if any during execution of job: {result.error}"
             )
-            if callback_url_str:
-                with Session(engine) as session:
-                    creds = get_provider_credential(
-                        session=session,
-                        org_id=organization_id,
-                        project_id=project_id,
-                        provider="webhook_secret",
-                    )
-                webhook_secret = (
-                    creds.get("webhook_secret") if isinstance(creds, dict) else None
-                )
-                send_callback(
-                    callback_url=callback_url_str,
-                    data=callback_response.model_dump(),
-                    webhook_secret=webhook_secret,
-                )
 
             if result.success:
                 callback_response = APIResponse.success_response(
                     data=result.response, metadata=result.metadata
                 )
                 if callback_url_str:
+                    webhook_secret = _get_webhook_secret(project_id, organization_id)
                     with tracer.start_as_current_span("llm.send_callback") as cb_span:
                         cb_span.set_attribute("callback.url", callback_url_str)
                         cb_span.set_attribute("callback.status", "success")
@@ -784,36 +770,9 @@ def execute_job(
                         send_callback(
                             callback_url=callback_url_str,
                             data=callback_response.model_dump(),
+                            webhook_secret=webhook_secret,
                         )
 
-        callback_response = APIResponse.failure_response(
-            error=result.error or "Unknown error occurred",
-            metadata=request.request_metadata,
-        )
-        return handle_job_error(
-            job_uuid,
-            callback_url_str,
-            callback_response,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
-
-    except Exception as e:
-        callback_response = APIResponse.failure_response(
-            error="Unexpected error occurred",
-            metadata=request.request_metadata,
-        )
-        logger.error(
-            f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
-            exc_info=True,
-        )
-        return handle_job_error(
-            job_uuid,
-            callback_url_str,
-            callback_response,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
                 with Session(engine) as session:
                     JobCrud(session=session).update(
                         job_id=job_uuid, job_update=JobUpdate(status=JobStatus.SUCCESS)
@@ -824,12 +783,17 @@ def execute_job(
                     )
                     return callback_response.model_dump()
 
-            error_message = result.error or "Unknown error occurred"
             callback_response = APIResponse.failure_response(
-                error=error_message,
+                error=result.error or "Unknown error occurred",
                 metadata=request.request_metadata,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
 
         except Exception as e:
             callback_response = APIResponse.failure_response(
@@ -840,7 +804,13 @@ def execute_job(
                 f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
                 exc_info=True,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.
             flush_telemetry()
@@ -960,22 +930,17 @@ def execute_chain_job(
                         exc_info=True,
                     )
 
-        callback_response = APIResponse.failure_response(
-            error="Unexpected error occurred",
-            metadata=request.request_metadata,
-        )
-        return handle_job_error(
-            job_uuid,
-            callback_url_str,
-            callback_response,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
             callback_response = APIResponse.failure_response(
                 error="Unexpected error occurred",
                 metadata=request.request_metadata,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.
             flush_telemetry()

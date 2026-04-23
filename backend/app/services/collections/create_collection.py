@@ -147,6 +147,18 @@ def _mark_job_failed(
         return None
 
 
+def _get_webhook_secret(project_id: int, organization_id: int) -> str | None:
+    """Look up the configured webhook signing secret for this project."""
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
 def execute_job(
     request: dict,
     with_assistant: bool,
@@ -275,7 +287,12 @@ def execute_job(
             )
 
             if creation_request.callback_url:
-                send_callback(creation_request.callback_url, success_payload)
+                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
         except Exception as err:
             span.record_exception(err)
@@ -302,72 +319,12 @@ def execute_job(
                 collection_job=collection_job,
             )
 
-            success_payload = build_success_payload(collection_job, collection)
-
-        elapsed = time.time() - start_time
-        logger.info(
-            "[create_collection.execute_job] Collection created: %s | Time: %.2fs | Files: %d | Total Size: %s MB | Types: %s",
-            collection_id,
-            elapsed,
-            len(flat_docs),
-            collection_job.total_size_mb,
-            list(file_exts),
-        )
-
-        if creation_request.callback_url:
-            with Session(engine) as session:
-                creds = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="webhook_secret",
+            if creation_request and creation_request.callback_url and collection_job:
+                failure_payload = build_failure_payload(collection_job, str(err))
+                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    failure_payload,
+                    webhook_secret=webhook_secret,
                 )
-            webhook_secret = (
-                creds.get("webhook_secret") if isinstance(creds, dict) else None
-            )
-            send_callback(
-                str(creation_request.callback_url),
-                success_payload,
-                webhook_secret=webhook_secret,
-            )
-
-    except Exception as err:
-        logger.error(
-            "[create_collection.execute_job] Collection Creation Failed | {'collection_job_id': '%s', 'error': '%s'}",
-            job_id,
-            str(err),
-            exc_info=True,
-        )
-
-        if provider is not None and result is not None:
-            try:
-                provider.delete(result)
-            except Exception:
-                logger.warning(
-                    "[create_collection.execute_job] Provider cleanup failed"
-                )
-
-        collection_job = _mark_job_failed(
-            project_id=project_id,
-            job_id=job_id,
-            err=err,
-            collection_job=collection_job,
-        )
-
-        if creation_request and creation_request.callback_url and collection_job:
-            failure_payload = build_failure_payload(collection_job, str(err))
-            with Session(engine) as session:
-                creds = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="webhook_secret",
-                )
-            webhook_secret = (
-                creds.get("webhook_secret") if isinstance(creds, dict) else None
-            )
-            send_callback(
-                str(creation_request.callback_url),
-                failure_payload,
-                webhook_secret=webhook_secret,
-            )
+            raise

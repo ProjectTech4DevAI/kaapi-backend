@@ -478,13 +478,12 @@ def send_callback(
 
     raw_body = json.dumps(data, separators=(",", ":")).encode()
     headers = {"Content-Type": "application/json"}
-    logger.info(f"Webhook Secret Key: {webhook_secret}")
 
     if webhook_secret:
         signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
-        logger.info(f"Signature {signature} and timestamp_ms {timestamp_ms}")
         headers["X-Webhook-Signature"] = signature
         headers["X-Webhook-Timestamp"] = str(timestamp_ms)
+        logger.info("[send_callback] Callback signed with webhook secret")
 
     try:
         with requests.Session() as session:

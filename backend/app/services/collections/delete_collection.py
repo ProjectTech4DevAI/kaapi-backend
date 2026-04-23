@@ -103,6 +103,18 @@ def build_failure_payload(
     ).model_dump(mode="json", exclude={"data": {"error_message"}})
 
 
+def _get_webhook_secret(project_id: int, organization_id: int) -> str | None:
+    """Look up the configured webhook signing secret for this project."""
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
 def _mark_job_failed_and_callback(
     *,
     organization_id: int,
@@ -148,16 +160,7 @@ def _mark_job_failed_and_callback(
             collection_id=collection_id,
             error_message=str(err),
         )
-        with Session(engine) as session:
-            creds = get_provider_credential(
-                session=session,
-                org_id=organization_id,
-                project_id=project_id,
-                provider="webhook_secret",
-            )
-        webhook_secret = (
-            creds.get("webhook_secret") if isinstance(creds, dict) else None
-        )
+        webhook_secret = _get_webhook_secret(project_id, organization_id)
         send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
 
 
@@ -174,8 +177,11 @@ def execute_job(
 
     deletion_request = DeletionRequest(**request)
 
-    collection_id = UUID(collection_id)
+    collection_uuid = UUID(collection_id)
     job_uuid = UUID(job_id)
+    callback_url = (
+        str(deletion_request.callback_url) if deletion_request.callback_url else None
+    )
 
     collection_job = None
 
@@ -184,12 +190,12 @@ def execute_job(
         lifecycle="collection.delete.execute_job",
         action="delete",
         collection_job_id=job_id,
-        collection_id=collection_id,
+        collection_id=str(collection_uuid),
         task_id=task_id,
         project_id=project_id,
         organization_id=organization_id,
     ), tracer.start_as_current_span("collections.delete.execute_job") as span:
-        span.set_attribute("collection.id", str(collection_id))
+        span.set_attribute("collection.id", str(collection_uuid))
         span.set_attribute("collection.job_id", str(job_uuid))
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
@@ -206,7 +212,9 @@ def execute_job(
                     ),
                 )
 
-                collection = CollectionCrud(session, project_id).read_one(collection_id)
+                collection = CollectionCrud(session, project_id).read_one(
+                    collection_uuid
+                )
                 span.set_attribute("collection.provider", str(collection.provider))
 
                 provider = get_llm_provider(
@@ -220,7 +228,7 @@ def execute_job(
                 provider.delete(collection)
 
             with Session(engine) as session:
-                CollectionCrud(session, project_id).delete_by_id(collection_id)
+                CollectionCrud(session, project_id).delete_by_id(collection_uuid)
 
                 collection_job_crud = CollectionJobCrud(session, project_id)
                 collection_job_crud.update(
@@ -235,48 +243,30 @@ def execute_job(
             logger.info(
                 "[delete_collection.execute_job] Collection deleted successfully | "
                 "{'collection_id': '%s', 'job_id': '%s'}",
-                str(collection_id),
+                str(collection_uuid),
                 str(job_uuid),
             )
-            if deletion_request.callback_url and collection_job:
+            if callback_url and collection_job:
                 success_payload = build_success_payload(
                     collection_job=collection_job,
-                    collection_id=collection_id,
+                    collection_id=collection_uuid,
                 )
-                send_callback(deletion_request.callback_url, success_payload)
+                webhook_secret = _get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    callback_url,
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
         except Exception as err:
             span.record_exception(err)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
             _mark_job_failed_and_callback(
+                organization_id=organization_id,
                 project_id=project_id,
-                collection_id=collection_id,
+                collection_id=collection_uuid,
                 job_id=job_uuid,
                 err=err,
-                callback_url=deletion_request.callback_url,
+                callback_url=callback_url,
             )
-            with Session(engine) as session:
-                creds = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="webhook_secret",
-                )
-            webhook_secret = (
-                creds.get("webhook_secret") if isinstance(creds, dict) else None
-            )
-            send_callback(
-                deletion_request.callback_url,
-                success_payload,
-                webhook_secret=webhook_secret,
-            )
-
-    except Exception as err:
-        _mark_job_failed_and_callback(
-            organization_id=organization_id,
-            project_id=project_id,
-            collection_id=collection_id,
-            job_id=job_uuid,
-            err=err,
-            callback_url=deletion_request.callback_url,
-        )
+            raise
