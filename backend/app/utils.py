@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import base64
 import functools as ft
+import hashlib
+import hmac
 import ipaddress
+import json
 import logging
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -410,7 +414,60 @@ def validate_callback_url(url: str) -> None:
         raise ValueError(f"Error validating callback URL: {str(e)}") from e
 
 
-def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
+def sign_webhook_payload(
+    secret: str, raw_body: bytes, timestamp_ms: int | None = None
+) -> tuple[str, int]:
+    """
+    Generate an HMAC-SHA256 signature for a webhook payload.
+
+    Signing string format: "<timestamp_ms>.<raw_body>"
+    The receiver must reconstruct the exact same signing string to verify.
+
+    Args:
+        secret: Shared HMAC secret (pre-registered by the receiver).
+        raw_body: Exact bytes that will be sent in the HTTP body.
+        timestamp_ms: Unix timestamp in milliseconds. Generated if not provided.
+
+    Returns:
+        (hex_signature, timestamp_ms)
+    """
+    if timestamp_ms is None:
+        timestamp_ms = int(time.time() * 1000)
+
+    signing_string = f"{timestamp_ms}.".encode() + raw_body
+    signature = hmac.new(
+        secret.encode(),
+        signing_string,
+        hashlib.sha256,
+    ).hexdigest()
+    return signature, timestamp_ms
+
+
+def get_webhook_secret(
+    project_id: int | None, organization_id: int | None
+) -> str | None:
+    """Look up the configured webhook signing secret for this project, or None."""
+    if project_id is None or organization_id is None:
+        return None
+    # Imported lazily: app.core.db pulls in app.crud, which imports app.utils,
+    # so a top-level import here would deadlock module initialization.
+    from app.core.db import engine
+
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
+def send_callback(
+    callback_url: str,
+    data: dict[str, Any],
+    webhook_secret: str | None = None,
+) -> bool:
     """
     Send results to the callback URL (synchronously) with SSRF protection.
 
@@ -422,10 +479,13 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     - DNS rebinding protection
     - Redirect following disabled
     - Strict timeouts
+    - Optional HMAC-SHA256 signing when webhook_secret is provided
 
     Args:
         callback_url: The HTTPS URL to send the callback to
         data: The JSON data to send in the POST request
+        webhook_secret: If provided, sign the request with HMAC-SHA256 and
+            attach X-Webhook-Signature / X-Webhook-Timestamp headers.
 
     Returns:
         bool: True if callback succeeded, False otherwise
@@ -435,14 +495,21 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     except ValueError as ve:
         logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
-
     try:
+        raw_body = json.dumps(data, separators=(",", ":")).encode()
+        headers = {"Content-Type": "application/json"}
+
+        if webhook_secret:
+            signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
+            headers["X-Webhook-Signature"] = signature
+            headers["X-Webhook-Timestamp"] = str(timestamp_ms)
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
             response = session.post(
                 callback_url,
-                json=data,
+                data=raw_body,
+                headers=headers,
                 timeout=(
                     settings.CALLBACK_CONNECT_TIMEOUT,
                     settings.CALLBACK_READ_TIMEOUT,

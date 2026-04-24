@@ -169,6 +169,12 @@ class Settings(BaseSettings):
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10
 
+    # Evaluation cron invocation interval (minutes). In staging/production the
+    # endpoint is triggered by AWS EventBridge on this cadence; locally it can
+    # be driven by scripts/python/invoke-cron.py. The Sentry cron monitor reads
+    # this same value so its expected schedule stays aligned with the trigger.
+    CRON_INTERVAL_MINUTES: int = 5
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

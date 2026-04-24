@@ -36,9 +36,10 @@ from app.models.llm.request import (
     LLMCallConfig,
     PDFInput,
     QueryParams,
+    TextContent,
     TextInput,
 )
-from app.models.llm.response import TextOutput
+from app.models.llm.response import LLMCallResponse, LLMResponse, TextOutput, Usage
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import (
     list_validators_config,
@@ -46,7 +47,13 @@ from app.services.llm.guardrails import (
 )
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
-from app.utils import APIResponse, cleanup_temp_file, resolve_input, send_callback
+from app.utils import (
+    APIResponse,
+    cleanup_temp_file,
+    get_webhook_secret,
+    resolve_input,
+    send_callback,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -177,15 +184,19 @@ def handle_job_error(
     job_id: UUID,
     callback_url: str | None,
     callback_response: APIResponse,
+    organization_id: int | None = None,
+    project_id: int | None = None,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     if callback_url:
+        webhook_secret = get_webhook_secret(project_id, organization_id)
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
             cb_span.set_attribute("callback.url", callback_url)
             cb_span.set_attribute("callback.status", "failure")
             send_callback(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
+                webhook_secret=webhook_secret,
             )
 
     with Session(engine) as session:
@@ -264,10 +275,16 @@ def apply_input_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
-) -> tuple[QueryParams, str | None]:
-    """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain."""
+) -> tuple[QueryParams, str | None, str | None]:
+    """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
+
+    Returns (query, error, guardrail_direct_response) where:
+    - error is set when guardrails hard-block the request
+    - guardrail_direct_response is set when rephrase_needed=True and the safe_text
+      should be returned directly to the user without hitting the LLM
+    """
     if not config_blob or not config_blob.input_guardrails:
-        return query, None
+        return query, None, None
 
     if not isinstance(query.input, TextInput):
         logger.info(
@@ -275,7 +292,7 @@ def apply_input_guardrails(
             f"job_id={job_id}, "
             f"input_type={getattr(query.input, 'type', type(query.input).__name__)}"
         )
-        return query, None
+        return query, None, None
 
     input_guardrails, _ = list_validators_config(
         organization_id=organization_id,
@@ -285,7 +302,7 @@ def apply_input_guardrails(
     )
 
     if not input_guardrails:
-        return query, None
+        return query, None, None
 
     safe = run_guardrails_validation(
         query.input.content.value,
@@ -304,13 +321,19 @@ def apply_input_guardrails(
         logger.info(
             f"[apply_input_guardrails] Guardrails bypassed (service unavailable) | job_id={job_id}"
         )
-        return query, None
+        return query, None, None
 
     if safe["success"]:
-        query.input.content.value = safe["data"]["safe_text"]
-        return query, None
+        safe_text = safe["data"]["safe_text"]
+        if safe["data"].get("rephrase_needed"):
+            logger.info(
+                f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
+            )
+            return query, None, safe_text
+        query.input.content.value = safe_text
+        return query, None, None
 
-    return query, safe["error"]
+    return query, safe["error"], None
 
 
 def apply_output_guardrails(
@@ -418,13 +441,35 @@ def execute_llm_call(
 
             with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
                 guard_span.set_attribute("llm.job_id", str(job_id))
-                query, input_error = apply_input_guardrails(
+                query, input_error, guardrail_direct_response = apply_input_guardrails(
                     config_blob=config_blob,
                     query=query,
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
                 )
+                if guardrail_direct_response is not None:
+                    guardrail_usage = Usage(
+                        input_tokens=0,
+                        output_tokens=0,
+                        total_tokens=0,
+                    )
+                    llm_response = LLMCallResponse(
+                        response=LLMResponse(
+                            provider_response_id=str(job_id),
+                            provider=str(config_blob.completion.provider),
+                            model=str(config_blob.completion.params.get("model") or ""),
+                            output=TextOutput(
+                                content=TextContent(value=guardrail_direct_response)
+                            ),
+                        ),
+                        usage=guardrail_usage,
+                    )
+                    return BlockResult(
+                        response=llm_response,
+                        usage=guardrail_usage,
+                        metadata=request_metadata,
+                    )
                 if input_error:
                     guard_span.set_status(
                         trace.Status(trace.StatusCode.ERROR, input_error)
@@ -742,6 +787,7 @@ def execute_job(
                     data=result.response, metadata=result.metadata
                 )
                 if callback_url_str:
+                    webhook_secret = get_webhook_secret(project_id, organization_id)
                     with tracer.start_as_current_span("llm.send_callback") as cb_span:
                         cb_span.set_attribute("callback.url", callback_url_str)
                         cb_span.set_attribute("callback.status", "success")
@@ -749,6 +795,7 @@ def execute_job(
                         send_callback(
                             callback_url=callback_url_str,
                             data=callback_response.model_dump(),
+                            webhook_secret=webhook_secret,
                         )
 
                 with Session(engine) as session:
@@ -761,12 +808,17 @@ def execute_job(
                     )
                     return callback_response.model_dump()
 
-            error_message = result.error or "Unknown error occurred"
             callback_response = APIResponse.failure_response(
-                error=error_message,
+                error=result.error or "Unknown error occurred",
                 metadata=request.request_metadata,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
 
         except Exception as e:
             callback_response = APIResponse.failure_response(
@@ -777,7 +829,13 @@ def execute_job(
                 f"[execute_job] Unexpected error: {str(e)} | job_id={job_uuid}, task_id={task_id}",
                 exc_info=True,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.
             flush_telemetry()
@@ -901,7 +959,13 @@ def execute_chain_job(
                 error="Unexpected error occurred",
                 metadata=request.request_metadata,
             )
-            return handle_job_error(job_uuid, callback_url_str, callback_response)
+            return handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.
             flush_telemetry()
