@@ -1,20 +1,47 @@
 import logging
 
+import sentry_sdk
+from sentry_sdk.types import MonitorConfig
+
 from app.api.permissions import Permission, require_permission
 from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionDep
+from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations_sync
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Cron"])
 
+EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
+    # Expected cadence: a check-in every CRON_INTERVAL_MINUTES minutes.
+    "schedule": {
+        "type": "interval",
+        "value": settings.CRON_INTERVAL_MINUTES,
+        "unit": "minute",
+    },
+    # Timezone for the schedule (only affects crontab-style schedules).
+    "timezone": "UTC",
+    # Grace period (minutes) before a late check-in is marked as missed.
+    "checkin_margin": 2,
+    # Max runtime (minutes) before an in-progress run is marked as timed out.
+    "max_runtime": 2 * settings.CRON_INTERVAL_MINUTES,
+    # Consecutive failures/missed/timeouts required to open a Sentry issue.
+    "failure_issue_threshold": 2,
+    # Consecutive successful check-ins required to auto-resolve the issue.
+    "recovery_threshold": 1,
+}
+
 
 @router.get(
     "/cron/evaluations",
     include_in_schema=False,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="evaluation-cron-job",
+    monitor_config=EVALUATION_CRON_MONITOR_CONFIG,
 )
 def evaluation_cron_job(
     session: SessionDep,
@@ -34,7 +61,6 @@ def evaluation_cron_job(
     logger.info("[evaluation_cron_job] Cron job invoked")
 
     try:
-        # Process all pending evaluations across all organizations
         result = process_all_pending_evaluations_sync(session=session)
 
         logger.info(
@@ -51,10 +77,5 @@ def evaluation_cron_job(
             f"[evaluation_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
-        return {
-            "status": "error",
-            "error": str(e),
-            "total_processed": 0,
-            "total_failed": 0,
-            "total_still_processing": 0,
-        }
+        sentry_sdk.capture_exception(e)
+        raise

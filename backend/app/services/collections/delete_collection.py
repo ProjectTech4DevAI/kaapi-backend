@@ -19,7 +19,7 @@ from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_delete_collection_job
 from app.core.telemetry import log_context
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ def build_failure_payload(
 
 def _mark_job_failed_and_callback(
     *,
+    organization_id: int,
     project_id: int,
     collection_id: UUID,
     job_id: UUID,
@@ -146,7 +147,8 @@ def _mark_job_failed_and_callback(
             collection_id=collection_id,
             error_message=str(err),
         )
-        send_callback(callback_url, failure_payload)
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
 
 
 def execute_job(
@@ -162,8 +164,11 @@ def execute_job(
 
     deletion_request = DeletionRequest(**request)
 
-    collection_id = UUID(collection_id)
+    collection_uuid = UUID(collection_id)
     job_uuid = UUID(job_id)
+    callback_url = (
+        str(deletion_request.callback_url) if deletion_request.callback_url else None
+    )
 
     collection_job = None
 
@@ -172,12 +177,12 @@ def execute_job(
         lifecycle="collection.delete.execute_job",
         action="delete",
         collection_job_id=job_id,
-        collection_id=collection_id,
+        collection_id=str(collection_uuid),
         task_id=task_id,
         project_id=project_id,
         organization_id=organization_id,
     ), tracer.start_as_current_span("collections.delete.execute_job") as span:
-        span.set_attribute("collection.id", str(collection_id))
+        span.set_attribute("collection.id", str(collection_uuid))
         span.set_attribute("collection.job_id", str(job_uuid))
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
@@ -194,7 +199,9 @@ def execute_job(
                     ),
                 )
 
-                collection = CollectionCrud(session, project_id).read_one(collection_id)
+                collection = CollectionCrud(session, project_id).read_one(
+                    collection_uuid
+                )
                 span.set_attribute("collection.provider", str(collection.provider))
 
                 provider = get_llm_provider(
@@ -208,7 +215,7 @@ def execute_job(
                 provider.delete(collection)
 
             with Session(engine) as session:
-                CollectionCrud(session, project_id).delete_by_id(collection_id)
+                CollectionCrud(session, project_id).delete_by_id(collection_uuid)
 
                 collection_job_crud = CollectionJobCrud(session, project_id)
                 collection_job_crud.update(
@@ -223,24 +230,30 @@ def execute_job(
             logger.info(
                 "[delete_collection.execute_job] Collection deleted successfully | "
                 "{'collection_id': '%s', 'job_id': '%s'}",
-                str(collection_id),
+                str(collection_uuid),
                 str(job_uuid),
             )
-            if deletion_request.callback_url and collection_job:
+            if callback_url and collection_job:
                 success_payload = build_success_payload(
                     collection_job=collection_job,
-                    collection_id=collection_id,
+                    collection_id=collection_uuid,
                 )
-                send_callback(deletion_request.callback_url, success_payload)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    callback_url,
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
         except Exception as err:
             span.record_exception(err)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
             _mark_job_failed_and_callback(
+                organization_id=organization_id,
                 project_id=project_id,
-                collection_id=collection_id,
+                collection_id=collection_uuid,
                 job_id=job_uuid,
                 err=err,
-                callback_url=deletion_request.callback_url,
+                callback_url=callback_url,
             )
             raise

@@ -29,7 +29,7 @@ from app.services.collections.helpers import (
 )
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_create_collection_job
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -318,7 +318,12 @@ def execute_job(
             )
 
             if creation_request.callback_url:
-                send_callback(creation_request.callback_url, success_payload)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
         except Exception as err:
             span.record_exception(err)
@@ -347,5 +352,10 @@ def execute_job(
 
             if creation_request and creation_request.callback_url and collection_job:
                 failure_payload = build_failure_payload(collection_job, str(err))
-                send_callback(creation_request.callback_url, failure_payload)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    failure_payload,
+                    webhook_secret=webhook_secret,
+                )
             raise
