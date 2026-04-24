@@ -1074,9 +1074,10 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert result["success"] is True
-        env["provider"].execute.assert_called_once()
-        provider_query = env["provider"].execute.call_args[0][1]
-        assert provider_query.input.content.value == "Rephrased text"
+        env["provider"].execute.assert_not_called()
+        assert (
+            result["data"]["response"]["output"]["content"]["value"] == "Rephrased text"
+        )
 
     def test_execute_job_fetches_validator_configs_from_blob_refs(
         self, db, job_env, job_for_execution
