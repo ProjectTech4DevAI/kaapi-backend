@@ -35,9 +35,12 @@ class TextLLMParams(SQLModel):
         default=None,
         description="Model-specific reasoning effort setting for reasoning-capable models",
     )
-    summary: Literal["auto", "detailed", "concise", "null"] | None = Field(
+    summary: Literal["auto", "detailed", "concise"] | None = Field(
         default=None,
-        description="Model-specific reasoning summary preference",
+        description=(
+            "Model-specific reasoning summary preference. "
+            "Use null/None to disable."
+        ),
     )
     temperature: float | None = Field(
         default=0.1,

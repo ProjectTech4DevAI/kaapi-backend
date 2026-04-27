@@ -77,6 +77,7 @@ def _count_csv_rows(content: bytes) -> int:
 
 def _count_excel_rows(content: bytes) -> int:
     """Count data rows in an Excel file (excluding header)."""
+    wb = None
     try:
         import openpyxl
 
@@ -88,17 +89,17 @@ def _count_excel_rows(content: bytes) -> int:
         rows_iter = ws.iter_rows(values_only=True)
         header = next(rows_iter, None)
         if header is None:
-            wb.close()
             return 0
 
-        count = sum(
+        return sum(
             1 for row in rows_iter if row and any(cell is not None for cell in row)
         )
-        wb.close()
-        return count
     except Exception as e:
         logger.warning(f"[_count_excel_rows] Failed to count rows | {e}")
         return 0
+    finally:
+        if wb is not None:
+            wb.close()
 
 
 def _count_rows(content: bytes, file_ext: str) -> int:
@@ -144,6 +145,15 @@ def upload_dataset(
         file_ext=file_ext,
         dataset_name=dataset_name,
     )
+    if not object_store_url:
+        logger.error(
+            f"[upload_dataset] Object store upload failed | dataset={dataset_name} | "
+            f"org_id={organization_id} | project_id={project_id}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload dataset file. Please try again.",
+        )
 
     metadata = {
         "file_extension": file_ext,
