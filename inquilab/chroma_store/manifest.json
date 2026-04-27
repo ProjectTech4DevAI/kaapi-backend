@@ -1,0 +1,30 @@
+{
+  "embedding_model": "gemini-embedding-2",
+  "embedding_dim": 3072,
+  "files": {
+    "ATL_Handbook Volume I_10_10_2025 (1) (3).pdf": {
+      "size": 76513591,
+      "mtime": 1776922354
+    },
+    "Coffee_Table_Book_Final.pdf": {
+      "size": 5818048,
+      "mtime": 1776922354
+    },
+    "Idea-Competition-inspire.pdf": {
+      "size": 3573989,
+      "mtime": 1776922354
+    },
+    "innovation2.json": {
+      "size": 2692056,
+      "mtime": 1776922354
+    },
+    "innovations.json": {
+      "size": 406027,
+      "mtime": 1776922354
+    },
+    "the-ignious-tinkerer.pdf": {
+      "size": 33765306,
+      "mtime": 1776922354
+    }
+  }
+}

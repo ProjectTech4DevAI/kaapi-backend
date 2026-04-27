@@ -21,3 +21,6 @@ ENV/
 
 #
 /backend/app/logs
+inquilab/__pycache__
+inquilab/gpt_content_detection/
+inquilab/gpt_content_detection/*

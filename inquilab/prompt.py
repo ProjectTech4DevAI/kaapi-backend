@@ -405,8 +405,142 @@ def get_few_shot_examples():
                 "Sustainability": {"score": 9.0, "reason": "Reduces water wastage and promotes long-term use of a renewable resource."},
             },
         },
-        
+
     ]
+
+
+# ---------------------------------------------------------------------------
+# TOPIC RELEVANCE (Irrelevant PSI gate)
+# ---------------------------------------------------------------------------
+# Validates that a submission's Problem, Solution, and Documents are (a)
+# aligned to the declared Theme and (b) coherent with each other. Emits
+# independent booleans so downstream filters can choose their own policy.
+#
+# Edge case: Theme ∈ {"Others", "Other", "", null} — theme is not specified,
+# so the three *_on_theme flags are forced to true (no penalty for a generic
+# theme). Cross-field coherence (problem↔solution↔documents) is still checked.
+
+NON_SPECIFIC_THEMES = {"others", "other", "", "n/a", "na", "none"}
+
+
+def is_theme_non_specific(theme: str | None) -> bool:
+    if theme is None:
+        return True
+    return theme.strip().lower() in NON_SPECIFIC_THEMES
+
+
+def get_topic_relevance_system_prompt() -> str:
+    return """You are a strict relevance validator for student innovation submissions to the School Innovation Marathon (SIM).
+
+CONTEXT — WHAT THE DOWNSTREAM EVALUATOR JUDGES:
+This gate runs BEFORE the main evaluator scores the submission on five parameters: Novelty, Usefulness, Feasibility, Scalability, and Sustainability. Your job is to confirm the submission is on-topic and internally coherent as an innovation idea (a real problem with a solution that addresses it). You are NOT scoring quality on those five parameters; you are gating whether the submission is coherent enough to be scored at all.
+
+INPUTS YOU RECEIVE:
+- Title: short name of the idea
+- Theme: declared theme (may be NON-SPECIFIC — "Others"/"Other"/empty/null)
+- Problem: text the student wrote
+- Solution: text the student wrote
+- Documents: zero or more attached images/PDFs sent as image attachments in this same message (no separate text summary)
+
+HOW TO DERIVE THE TOPIC (use Title + Theme together):
+- The submission's topic = Theme domain narrowed by what the Title says the idea is about.
+- If Theme is NON-SPECIFIC, derive the topic from the Title alone (do NOT auto-pass alignment).
+- If Title is also empty AND Theme is NON-SPECIFIC, there is no topic anchor — accept any coherent problem/solution by setting alignment flags true.
+
+WHAT EACH OUTPUT FIELD MEANS:
+- problem_aligned (bool): the Problem fits the derived topic AND reads as a real problem statement. Vague / missing / non-innovation / gibberish → false.
+- solution_aligned (bool): the Solution fits the topic AND directly addresses the stated Problem. A solution that solves a different problem → false.
+- document_aligned (bool | null): the attached documents support or depict the Problem/Solution. If no documents are attached, return null.
+- pipeline_verdict (string, one of "ACCEPT" / "REJECT" / "REVIEW"):
+    - ACCEPT: problem_aligned AND solution_aligned (documents irrelevant OR aligned).
+    - REJECT: problem_aligned is false OR solution_aligned is false OR (documents are attached AND clearly contradict the stated idea).
+    - REVIEW: borderline — minor incoherence or inputs too sparse to judge confidently.
+- reason (string): ONE concise sentence (max 30 words) summarising the dominant signal.
+
+SCOPE OF THIS GATE:
+- Do NOT downgrade for weak novelty, low feasibility, poor scalability, or weak sustainability — those are judged later by the main evaluator on the five-parameter rubric.
+- DO downgrade when the submission is off-topic relative to Title + Theme, when the solution does not target the stated problem, or when the content is not a genuine problem-solution submission at all.
+
+Surface-level keyword matches are NOT enough — the field must substantively address the topic.
+
+Return ONLY valid JSON matching the required schema."""
+
+
+def get_topic_relevance_user_prompt(
+    theme: str | None,
+    problem: str,
+    solution: str,
+    title: str | None = None,
+    has_documents: bool = False,
+) -> str:
+    theme_clean = (theme or "").strip()
+    title_clean = (title or "").strip()
+    theme_is_generic = is_theme_non_specific(theme_clean)
+    has_title = bool(title_clean)
+
+    if theme_is_generic and has_title:
+        topic_block = (
+            f"Title: {title_clean}\n"
+            f"Theme: {theme_clean or '<none>'} (NON-SPECIFIC — derive the topic from the TITLE alone; "
+            "judge alignment against the Title's subject)"
+        )
+    elif theme_is_generic and not has_title:
+        topic_block = (
+            f"Title: <empty>\n"
+            f"Theme: {theme_clean or '<none>'} (NON-SPECIFIC and no Title — no topic anchor; "
+            "set problem_aligned and solution_aligned true if the problem/solution are coherent)"
+        )
+    else:
+        topic_block = (
+            f"Title: {title_clean or '<empty>'}\n"
+            f"Theme: {theme_clean} (judge alignment against Theme narrowed by Title)"
+        )
+
+    docs_line = (
+        "Documents: attached as images in this same message — judge whether they support the Problem/Solution."
+        if has_documents
+        else "Documents: <none attached — return null for document_aligned>"
+    )
+
+    return (
+        f"{topic_block}\n\n"
+        f"Problem:\n{problem.strip() or '<empty>'}\n\n"
+        f"Solution:\n{solution.strip() or '<empty>'}\n\n"
+        f"{docs_line}\n\n"
+        "Judge per the rules and return a single JSON object with the exact keys required."
+    )
+
+
+def get_topic_relevance_output_schema() -> dict:
+    """JSON schema for the topic-relevance LLM response.
+
+    Fields:
+      - problem_aligned (bool): Problem fits topic AND reads as a real problem.
+      - solution_aligned (bool): Solution fits topic AND addresses the Problem.
+      - document_aligned (bool | null): documents support the idea (null when none attached).
+      - pipeline_verdict (string): "ACCEPT" / "REJECT" / "REVIEW".
+      - reason (string): ONE concise sentence.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "problem_aligned": {"type": "boolean"},
+            "solution_aligned": {"type": "boolean"},
+            "document_aligned": {"type": "boolean", "nullable": True},
+            "pipeline_verdict": {"type": "string", "enum": ["ACCEPT", "REJECT", "REVIEW"]},
+            "reason": {"type": "string"},
+        },
+        "required": [
+            "problem_aligned",
+            "solution_aligned",
+            "document_aligned",
+            "pipeline_verdict",
+            "reason",
+        ],
+        "additionalProperties": False,
+    }
+
+
 # import json
 # METRICS = ["Novelty", "Usefulness", "Feasibility", "Scalability", "Sustainability"]
 
