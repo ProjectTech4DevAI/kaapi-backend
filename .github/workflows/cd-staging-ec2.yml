@@ -12,7 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: AWS_STAGING_ENV_VARS
+    environment: AWS_STAGING_ENV
 
     permissions:
       id-token: write
