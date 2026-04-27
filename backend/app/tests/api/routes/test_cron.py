@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -26,8 +26,13 @@ def test_evaluation_cron_job_success(
     }
 
     with patch(
-        "app.api.routes.cron.process_all_pending_evaluations_sync",
-        return_value=mock_result,
+        "app.api.routes.cron.process_all_pending_evaluations",
+        new=AsyncMock(return_value=mock_result),
+    ), patch(
+        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        new=AsyncMock(
+            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+        ),
     ):
         response = client.get(
             f"{settings.API_V1_STR}/cron/evaluations",
@@ -56,8 +61,13 @@ def test_evaluation_cron_job_no_pending(
     }
 
     with patch(
-        "app.api.routes.cron.process_all_pending_evaluations_sync",
-        return_value=mock_result,
+        "app.api.routes.cron.process_all_pending_evaluations",
+        new=AsyncMock(return_value=mock_result),
+    ), patch(
+        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        new=AsyncMock(
+            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+        ),
     ):
         response = client.get(
             f"{settings.API_V1_STR}/cron/evaluations",
@@ -91,8 +101,13 @@ def test_evaluation_cron_job_with_failures(
     }
 
     with patch(
-        "app.api.routes.cron.process_all_pending_evaluations_sync",
-        return_value=mock_result,
+        "app.api.routes.cron.process_all_pending_evaluations",
+        new=AsyncMock(return_value=mock_result),
+    ), patch(
+        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        new=AsyncMock(
+            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+        ),
     ):
         response = client.get(
             f"{settings.API_V1_STR}/cron/evaluations",
