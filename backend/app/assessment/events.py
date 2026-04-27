@@ -15,9 +15,7 @@ class AssessmentEventBroker:
     async def subscribe(self) -> AsyncIterator[str]:
         queue: asyncio.Queue[dict] = asyncio.Queue()
         self._subscribers.add(queue)
-        logger.info(
-            "[subscribe] New SSE subscriber | total=%d", len(self._subscribers)
-        )
+        logger.info("[subscribe] New SSE subscriber | total=%d", len(self._subscribers))
         try:
             yield "event: ready\ndata: {}\n\n"
             while True:
@@ -37,7 +35,9 @@ class AssessmentEventBroker:
 
     def publish(self, payload: dict) -> None:
         if not self._subscribers:
-            logger.debug("[publish] No subscribers, event dropped | type=%s", payload.get("type"))
+            logger.debug(
+                "[publish] No subscribers, event dropped | type=%s", payload.get("type")
+            )
             return
         logger.info(
             "[publish] Broadcasting event | type=%s | subscribers=%d",

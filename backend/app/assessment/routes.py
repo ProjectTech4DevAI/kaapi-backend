@@ -18,7 +18,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
-from app.api.permissions import Permission, require_feature, require_permission
+from app.api.permissions import Permission, require_permission
 from app.assessment.crud import (
     get_assessment_by_id,
     get_assessment_run_by_id,
@@ -51,7 +51,6 @@ from app.assessment.utils import (
 from app.assessment.utils.export import _safe_filename_part
 from app.assessment.validators import validate_dataset_file
 from app.core.cloud import get_cloud_storage
-from app.core.feature_flags import FeatureFlag
 from app.core.storage_utils import generate_timestamped_filename
 from app.crud.evaluations import get_dataset_by_id
 from app.crud.evaluations import list_datasets as list_evaluation_datasets
@@ -64,7 +63,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/assessment",
     tags=["Assessment"],
-    dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))],
 )
 
 
