@@ -1,6 +1,7 @@
 from sqlmodel import Session, create_engine, select
 
 from app import crud
+from app.core.telemetry import instrument_db_engine
 from app.models import User, UserCreate
 
 
@@ -32,6 +33,7 @@ def get_engine():
 
 # Create a default engine for backward compatibility
 engine = get_engine()
+instrument_db_engine(engine)
 
 
 # make sure all SQLModel models are imported (app.models) before initializing DB

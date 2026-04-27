@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from opentelemetry import trace
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
 
@@ -17,10 +18,12 @@ from app.models.collection import DeletionRequest
 from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_delete_collection_job
-from app.utils import send_callback, APIResponse
+from app.core.telemetry import log_context
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def start_job(
@@ -30,27 +33,36 @@ def start_job(
     collection_job_id: UUID,
     organization_id: int,
 ) -> str:
-    trace_id = correlation_id.get() or "N/A"
-
-    job_crud = CollectionJobCrud(db, project_id)
-    collection_job = job_crud.update(
-        collection_job_id, CollectionJobUpdate(trace_id=trace_id)
-    )
-
-    task_id = start_delete_collection_job(
+    with log_context(
+        tag="collection",
+        lifecycle="collection.delete.start_job",
+        action="delete",
+        collection_job_id=collection_job_id,
+        collection_id=request.collection_id,
         project_id=project_id,
-        job_id=str(collection_job_id),
-        trace_id=trace_id,
-        collection_id=str(request.collection_id),
-        request=request.model_dump(mode="json"),
         organization_id=organization_id,
-    )
+    ):
+        trace_id = correlation_id.get() or "N/A"
 
-    logger.info(
-        "[delete_collection.start_job] Job scheduled to delete collection | "
-        f"Job_id={collection_job_id}, project_id={project_id}, task_id={task_id}, collection_id={request.collection_id}"
-    )
-    return collection_job_id
+        job_crud = CollectionJobCrud(db, project_id)
+        collection_job = job_crud.update(
+            collection_job_id, CollectionJobUpdate(trace_id=trace_id)
+        )
+
+        task_id = start_delete_collection_job(
+            project_id=project_id,
+            job_id=str(collection_job_id),
+            trace_id=trace_id,
+            collection_id=str(request.collection_id),
+            request=request.model_dump(mode="json"),
+            organization_id=organization_id,
+        )
+
+        logger.info(
+            "[delete_collection.start_job] Job scheduled to delete collection | "
+            f"Job_id={collection_job_id}, project_id={project_id}, task_id={task_id}, collection_id={request.collection_id}"
+        )
+        return collection_job_id
 
 
 def build_success_payload(collection_job: CollectionJob, collection_id: UUID) -> dict:
@@ -92,6 +104,7 @@ def build_failure_payload(
 
 def _mark_job_failed_and_callback(
     *,
+    organization_id: int,
     project_id: int,
     collection_id: UUID,
     job_id: UUID,
@@ -134,7 +147,8 @@ def _mark_job_failed_and_callback(
             collection_id=collection_id,
             error_message=str(err),
         )
-        send_callback(callback_url, failure_payload)
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
 
 
 def execute_job(
@@ -150,65 +164,96 @@ def execute_job(
 
     deletion_request = DeletionRequest(**request)
 
-    collection_id = UUID(collection_id)
+    collection_uuid = UUID(collection_id)
     job_uuid = UUID(job_id)
+    callback_url = (
+        str(deletion_request.callback_url) if deletion_request.callback_url else None
+    )
 
     collection_job = None
 
-    try:
-        with Session(engine) as session:
-            collection_job_crud = CollectionJobCrud(session, project_id)
-            collection_job = collection_job_crud.read_one(job_uuid)
-            collection_job = collection_job_crud.update(
-                job_uuid,
-                CollectionJobUpdate(
-                    task_id=task_id,
-                    status=CollectionJobStatus.PROCESSING,
-                ),
+    with log_context(
+        tag="collection",
+        lifecycle="collection.delete.execute_job",
+        action="delete",
+        collection_job_id=job_id,
+        collection_id=str(collection_uuid),
+        task_id=task_id,
+        project_id=project_id,
+        organization_id=organization_id,
+    ), tracer.start_as_current_span("collections.delete.execute_job") as span:
+        span.set_attribute("collection.id", str(collection_uuid))
+        span.set_attribute("collection.job_id", str(job_uuid))
+        span.set_attribute("kaapi.project_id", project_id)
+        span.set_attribute("kaapi.organization_id", organization_id)
+
+        try:
+            with Session(engine) as session:
+                collection_job_crud = CollectionJobCrud(session, project_id)
+                collection_job = collection_job_crud.read_one(job_uuid)
+                collection_job = collection_job_crud.update(
+                    job_uuid,
+                    CollectionJobUpdate(
+                        task_id=task_id,
+                        status=CollectionJobStatus.PROCESSING,
+                    ),
+                )
+
+                collection = CollectionCrud(session, project_id).read_one(
+                    collection_uuid
+                )
+                span.set_attribute("collection.provider", str(collection.provider))
+
+                provider = get_llm_provider(
+                    session=session,
+                    provider=collection.provider,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
+
+            with tracer.start_as_current_span("collections.delete.provider"):
+                provider.delete(collection)
+
+            with Session(engine) as session:
+                CollectionCrud(session, project_id).delete_by_id(collection_uuid)
+
+                collection_job_crud = CollectionJobCrud(session, project_id)
+                collection_job_crud.update(
+                    collection_job.id,
+                    CollectionJobUpdate(
+                        status=CollectionJobStatus.SUCCESSFUL,
+                        error_message=None,
+                    ),
+                )
+                collection_job = collection_job_crud.read_one(collection_job.id)
+
+            logger.info(
+                "[delete_collection.execute_job] Collection deleted successfully | "
+                "{'collection_id': '%s', 'job_id': '%s'}",
+                str(collection_uuid),
+                str(job_uuid),
             )
+            if callback_url and collection_job:
+                success_payload = build_success_payload(
+                    collection_job=collection_job,
+                    collection_id=collection_uuid,
+                )
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    callback_url,
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
-            collection = CollectionCrud(session, project_id).read_one(collection_id)
-
-            provider = get_llm_provider(
-                session=session,
-                provider=collection.provider,
-                project_id=project_id,
+        except Exception as err:
+            span.record_exception(err)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
+            _mark_job_failed_and_callback(
                 organization_id=organization_id,
+                project_id=project_id,
+                collection_id=collection_uuid,
+                job_id=job_uuid,
+                err=err,
+                callback_url=callback_url,
             )
-
-        provider.delete(collection)
-
-        with Session(engine) as session:
-            CollectionCrud(session, project_id).delete_by_id(collection_id)
-
-            collection_job_crud = CollectionJobCrud(session, project_id)
-            collection_job_crud.update(
-                collection_job.id,
-                CollectionJobUpdate(
-                    status=CollectionJobStatus.SUCCESSFUL,
-                    error_message=None,
-                ),
-            )
-            collection_job = collection_job_crud.read_one(collection_job.id)
-
-        logger.info(
-            "[delete_collection.execute_job] Collection deleted successfully | "
-            "{'collection_id': '%s', 'job_id': '%s'}",
-            str(collection_id),
-            str(job_uuid),
-        )
-        if deletion_request.callback_url and collection_job:
-            success_payload = build_success_payload(
-                collection_job=collection_job,
-                collection_id=collection_id,
-            )
-            send_callback(deletion_request.callback_url, success_payload)
-
-    except Exception as err:
-        _mark_job_failed_and_callback(
-            project_id=project_id,
-            collection_id=collection_id,
-            job_id=job_uuid,
-            err=err,
-            callback_url=deletion_request.callback_url,
-        )
+            raise

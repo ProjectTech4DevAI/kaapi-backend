@@ -13,7 +13,7 @@ from app.models.llm.request import (
 from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class ChainExecutor:
         self._chain = chain
         self._context = context
         self._request = request
+        self._webhook_secret: str | None = None
 
     def run(self) -> dict:
         """Execute the full chain lifecycle. Returns serialized APIResponse."""
@@ -60,6 +61,10 @@ class ChainExecutor:
                 status=ChainStatus.RUNNING,
             )
 
+        self._webhook_secret = get_webhook_secret(
+            self._context.project_id, self._context.organization_id
+        )
+
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
@@ -76,6 +81,7 @@ class ChainExecutor:
                 send_callback(
                     callback_url=str(self._request.callback_url),
                     data=callback_response.model_dump(),
+                    webhook_secret=self._webhook_secret,
                 )
             with Session(engine) as session:
                 JobCrud(session).update(
@@ -107,6 +113,7 @@ class ChainExecutor:
             send_callback(
                 callback_url=str(self._request.callback_url),
                 data=callback_response.model_dump(),
+                webhook_secret=self._webhook_secret,
             )
 
         with Session(engine) as session:
@@ -166,6 +173,7 @@ class ChainExecutor:
             send_callback(
                 callback_url=str(self._request.callback_url),
                 data=callback_data.model_dump(),
+                webhook_secret=self._webhook_secret,
             )
             logger.info(
                 f"[_send_intermediate_callback] Sent intermediate callback | "

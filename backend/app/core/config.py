@@ -135,6 +135,8 @@ class Settings(BaseSettings):
         return f"{self.AWS_S3_BUCKET_PREFIX}-{self.ENVIRONMENT}"
 
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "kaapi-backend"
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
@@ -153,6 +155,12 @@ class Settings(BaseSettings):
     # callback timeouts and limits
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10
+
+    # Evaluation cron invocation interval (minutes). In staging/production the
+    # endpoint is triggered by AWS EventBridge on this cadence; locally it can
+    # be driven by scripts/python/invoke-cron.py. The Sentry cron monitor reads
+    # this same value so its expected schedule stays aligned with the trigger.
+    CRON_INTERVAL_MINUTES: int = 5
 
     @computed_field  # type: ignore[prop-decorator]
     @property
