@@ -1,4 +1,4 @@
-"""Assessment CRUD — thin wrappers around EvaluationRun for type='assessment'."""
+"""Assessment CRUD — operations for Assessment and AssessmentRun tables."""
 
 import logging
 from typing import Any
@@ -7,13 +7,9 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.core.util import now
-from app.assessment.models import Assessment
-from app.models.evaluation import EvaluationRun
+from app.assessment.models import Assessment, AssessmentRun
 
 logger = logging.getLogger(__name__)
-
-ASSESSMENT_TYPE = "assessment"
-
 
 def create_assessment(
     session: Session,
@@ -58,67 +54,20 @@ def create_assessment(
     return assessment
 
 
-def get_assessment_runs_for_manager(
+def get_assessment_by_id(
     session: Session,
-    assessment: Assessment,
-) -> list[EvaluationRun]:
-    """List child evaluation runs for a parent assessment row."""
-    statement = (
-        select(EvaluationRun)
-        .where(EvaluationRun.assessment_id == assessment.id)
-        .where(EvaluationRun.type == ASSESSMENT_TYPE)
-        .order_by(EvaluationRun.inserted_at.desc())
-    )
-    return list(session.exec(statement).all())
-
-
-def create_assessment_run(
-    session: Session,
-    run_name: str,
-    dataset_name: str,
-    dataset_id: int,
-    assessment_id: int | None,
-    config_id: UUID,
-    config_version: int,
+    assessment_id: int,
     organization_id: int,
     project_id: int,
-    assessment_config: dict[str, Any] | None = None,
-) -> EvaluationRun:
-    """Create an assessment evaluation run record.
-
-    Re-uses EvaluationRun with type='assessment' and stores assessment-specific
-    config in the score JSONB field under 'assessment_config'.
-    """
-    eval_run = EvaluationRun(
-        run_name=run_name,
-        dataset_name=dataset_name,
-        dataset_id=dataset_id,
-        assessment_id=assessment_id,
-        type=ASSESSMENT_TYPE,
-        config_id=config_id,
-        config_version=config_version,
-        status="pending",
-        score={"assessment_config": assessment_config} if assessment_config else None,
-        organization_id=organization_id,
-        project_id=project_id,
-        inserted_at=now(),
-        updated_at=now(),
+) -> Assessment | None:
+    """Get a specific parent assessment manager row."""
+    statement = (
+        select(Assessment)
+        .where(Assessment.id == assessment_id)
+        .where(Assessment.organization_id == organization_id)
+        .where(Assessment.project_id == project_id)
     )
-
-    session.add(eval_run)
-    try:
-        session.commit()
-        session.refresh(eval_run)
-    except Exception as e:
-        session.rollback()
-        logger.error(f"[create_assessment_run] Failed: {e}", exc_info=True)
-        raise
-
-    logger.info(
-        f"[create_assessment_run] Created run id={eval_run.id} | "
-        f"name={run_name} | config_id={config_id} v{config_version}"
-    )
-    return eval_run
+    return session.exec(statement).first()
 
 
 def list_assessments(
@@ -140,20 +89,81 @@ def list_assessments(
     return list(session.exec(statement).all())
 
 
-def get_assessment_by_id(
+# ── AssessmentRun (child) ───────────────────────────────────────
+
+
+def create_assessment_run(
     session: Session,
-    assessment_id: int,
+    run_name: str,
+    dataset_name: str,
+    dataset_id: int,
+    assessment_id: int | None,
+    config_id: UUID,
+    config_version: int,
     organization_id: int,
     project_id: int,
-) -> Assessment | None:
-    """Get a specific parent assessment manager row."""
+    assessment_input: dict[str, Any] | None = None,
+) -> AssessmentRun:
+    """Create an assessment run record in the assessment_run table."""
+    run = AssessmentRun(
+        run_name=run_name,
+        dataset_name=dataset_name,
+        dataset_id=dataset_id,
+        assessment_id=assessment_id,
+        config_id=config_id,
+        config_version=config_version,
+        status="pending",
+        total_items=0,
+        input=assessment_input,
+        organization_id=organization_id,
+        project_id=project_id,
+        inserted_at=now(),
+        updated_at=now(),
+    )
+
+    session.add(run)
+    try:
+        session.commit()
+        session.refresh(run)
+    except Exception as e:
+        session.rollback()
+        logger.error(f"[create_assessment_run] Failed: {e}", exc_info=True)
+        raise
+
+    logger.info(
+        f"[create_assessment_run] Created run id={run.id} | "
+        f"name={run_name} | config_id={config_id} v{config_version}"
+    )
+    return run
+
+
+def get_assessment_run_by_id(
+    session: Session,
+    run_id: int,
+    organization_id: int,
+    project_id: int,
+) -> AssessmentRun | None:
+    """Get a specific assessment run by ID."""
     statement = (
-        select(Assessment)
-        .where(Assessment.id == assessment_id)
-        .where(Assessment.organization_id == organization_id)
-        .where(Assessment.project_id == project_id)
+        select(AssessmentRun)
+        .where(AssessmentRun.id == run_id)
+        .where(AssessmentRun.organization_id == organization_id)
+        .where(AssessmentRun.project_id == project_id)
     )
     return session.exec(statement).first()
+
+
+def get_assessment_runs_for_manager(
+    session: Session,
+    assessment: Assessment,
+) -> list[AssessmentRun]:
+    """List child runs for a parent assessment."""
+    statement = (
+        select(AssessmentRun)
+        .where(AssessmentRun.assessment_id == assessment.id)
+        .order_by(AssessmentRun.inserted_at.desc())
+    )
+    return list(session.exec(statement).all())
 
 
 def list_assessment_runs(
@@ -163,50 +173,57 @@ def list_assessment_runs(
     assessment_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> list[EvaluationRun]:
-    """List child assessment evaluation runs by traversing from assessments."""
-    if assessment_id is not None:
-        assessment = get_assessment_by_id(
-            session=session,
-            assessment_id=assessment_id,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
-        if not assessment:
-            return []
-        runs = get_assessment_runs_for_manager(session=session, assessment=assessment)
-        return runs[offset : offset + limit]
-
-    assessments = list_assessments(
-        session=session,
-        organization_id=organization_id,
-        project_id=project_id,
-        limit=limit,
-        offset=offset,
-    )
-    runs: list[EvaluationRun] = []
-    for assessment in assessments:
-        runs.extend(
-            get_assessment_runs_for_manager(session=session, assessment=assessment)
-        )
-    return runs
-
-
-def get_assessment_run_by_id(
-    session: Session,
-    run_id: int,
-    organization_id: int,
-    project_id: int,
-) -> EvaluationRun | None:
-    """Get a specific assessment evaluation run by ID."""
+) -> list[AssessmentRun]:
+    """List assessment runs, optionally filtered by assessment_id."""
     statement = (
-        select(EvaluationRun)
-        .where(EvaluationRun.id == run_id)
-        .where(EvaluationRun.organization_id == organization_id)
-        .where(EvaluationRun.project_id == project_id)
-        .where(EvaluationRun.type == ASSESSMENT_TYPE)
+        select(AssessmentRun)
+        .where(AssessmentRun.organization_id == organization_id)
+        .where(AssessmentRun.project_id == project_id)
     )
-    return session.exec(statement).first()
+    if assessment_id is not None:
+        statement = statement.where(AssessmentRun.assessment_id == assessment_id)
+
+    statement = (
+        statement.order_by(AssessmentRun.inserted_at.desc()).limit(limit).offset(offset)
+    )
+    return list(session.exec(statement).all())
+
+
+def update_assessment_run_status(
+    session: Session,
+    run: AssessmentRun,
+    status: str,
+    error_message: str | None = None,
+    batch_job_id: int | None = None,
+    total_items: int | None = None,
+    object_store_url: str | None = None,
+) -> AssessmentRun:
+    """Update an assessment run's status and optional fields."""
+    run.status = status
+    run.updated_at = now()
+
+    if error_message is not None:
+        run.error_message = error_message
+    if batch_job_id is not None:
+        run.batch_job_id = batch_job_id
+    if total_items is not None:
+        run.total_items = total_items
+    if object_store_url is not None:
+        run.object_store_url = object_store_url
+
+    session.add(run)
+    try:
+        session.commit()
+        session.refresh(run)
+    except Exception as e:
+        session.rollback()
+        logger.error(f"[update_assessment_run_status] Failed: {e}", exc_info=True)
+        raise
+
+    return run
+
+
+# ── Assessment status recomputation ─────────────────────────────
 
 
 def _determine_assessment_status(
@@ -216,7 +233,7 @@ def _determine_assessment_status(
     completed_runs: int,
     failed_runs: int,
 ) -> str:
-    """Compute parent assessment status from child evaluation runs."""
+    """Compute parent assessment status from child run counts."""
     if total_runs == 0:
         return "pending"
     if completed_runs == total_runs:
@@ -245,19 +262,16 @@ def recompute_assessment_status(
         raise ValueError(f"Assessment {assessment_id} not found")
 
     statement = (
-        select(EvaluationRun)
-        .where(EvaluationRun.assessment_id == assessment_id)
-        .where(EvaluationRun.type == ASSESSMENT_TYPE)
-        .order_by(EvaluationRun.id.asc())
+        select(AssessmentRun)
+        .where(AssessmentRun.assessment_id == assessment_id)
+        .order_by(AssessmentRun.id.asc())
     )
     runs = list(session.exec(statement).all())
 
-    pending_runs = sum(1 for run in runs if run.status == "pending")
-    processing_runs = sum(
-        1 for run in runs if run.status in {"processing", "in_progress"}
-    )
-    completed_runs = sum(1 for run in runs if run.status == "completed")
-    failed_runs = sum(1 for run in runs if run.status == "failed")
+    pending_runs = sum(1 for r in runs if r.status == "pending")
+    processing_runs = sum(1 for r in runs if r.status in {"processing", "in_progress"})
+    completed_runs = sum(1 for r in runs if r.status == "completed")
+    failed_runs = sum(1 for r in runs if r.status == "failed")
     total_runs = len(runs)
 
     assessment.total_runs = total_runs
@@ -273,21 +287,19 @@ def recompute_assessment_status(
         failed_runs=failed_runs,
     )
     assessment.error_message = (
-        f"{failed_runs} of {total_runs} evaluation run(s) failed"
-        if failed_runs > 0
-        else None
+        f"{failed_runs} of {total_runs} run(s) failed" if failed_runs > 0 else None
     )
     assessment.run_stats = [
         {
-            "run_id": run.id,
-            "config_id": str(run.config_id) if run.config_id else None,
-            "config_version": run.config_version,
-            "status": run.status,
-            "total_items": run.total_items,
-            "error_message": run.error_message,
-            "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+            "run_id": r.id,
+            "config_id": str(r.config_id) if r.config_id else None,
+            "config_version": r.config_version,
+            "status": r.status,
+            "total_items": r.total_items,
+            "error_message": r.error_message,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
         }
-        for run in runs
+        for r in runs
     ]
     assessment.updated_at = now()
 
@@ -301,37 +313,3 @@ def recompute_assessment_status(
         raise
 
     return assessment
-
-
-def update_assessment_run_status(
-    session: Session,
-    eval_run: EvaluationRun,
-    status: str,
-    error_message: str | None = None,
-    batch_job_id: int | None = None,
-    total_items: int | None = None,
-    object_store_url: str | None = None,
-) -> EvaluationRun:
-    """Update an assessment run's status and optional fields."""
-    eval_run.status = status
-    eval_run.updated_at = now()
-
-    if error_message is not None:
-        eval_run.error_message = error_message
-    if batch_job_id is not None:
-        eval_run.batch_job_id = batch_job_id
-    if total_items is not None:
-        eval_run.total_items = total_items
-    if object_store_url is not None:
-        eval_run.object_store_url = object_store_url
-
-    session.add(eval_run)
-    try:
-        session.commit()
-        session.refresh(eval_run)
-    except Exception as e:
-        session.rollback()
-        logger.error(f"[update_assessment_run_status] Failed: {e}", exc_info=True)
-        raise
-
-    return eval_run

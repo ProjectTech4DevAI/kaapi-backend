@@ -18,7 +18,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
-from app.api.permissions import Permission, require_permission
+from app.api.permissions import Permission, require_feature, require_permission
 from app.assessment.crud import (
     get_assessment_by_id,
     get_assessment_run_by_id,
@@ -33,6 +33,7 @@ from app.assessment.models import (
     AssessmentExportRow,
     AssessmentPublic,
     AssessmentResponse,
+    AssessmentRun,
     AssessmentRunPublic,
 )
 from app.assessment.service import (
@@ -50,16 +51,21 @@ from app.assessment.utils import (
 from app.assessment.utils.export import _safe_filename_part
 from app.assessment.validators import validate_dataset_file
 from app.core.cloud import get_cloud_storage
+from app.core.feature_flags import FeatureFlag
 from app.core.storage_utils import generate_timestamped_filename
 from app.crud.evaluations import get_dataset_by_id
 from app.crud.evaluations import list_datasets as list_evaluation_datasets
 from app.crud.evaluations.dataset import delete_dataset as delete_dataset_crud
-from app.models.evaluation import EvaluationDataset, EvaluationRun
+from app.models.evaluation import EvaluationDataset
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/assessment", tags=["Assessment"])
+router = APIRouter(
+    prefix="/assessment",
+    tags=["Assessment"],
+    dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))],
+)
 
 
 # ── Dataset routes ───────────────────────────────────────────────
@@ -464,7 +470,7 @@ def export_assessment_results(
     )
 
     # Build per-run export data
-    runs_with_rows: list[tuple[EvaluationRun, list[AssessmentExportRow]]] = []
+    runs_with_rows: list[tuple[AssessmentRun, list[AssessmentExportRow]]] = []
     all_rows: list[AssessmentExportRow] = []
     for run in runs:
         rows = load_export_rows_for_run(session=session, run=run, assessment=assessment)
@@ -495,7 +501,7 @@ def export_assessment_results(
                 if run.config_version
                 else f"run_{run.id}"
             )
-            config_id_short = (run.config_id or "")[:8]
+            config_id_short = str(run.config_id)[:8] if run.config_id else ""
             file_base = _safe_filename_part(f"{config_label}_{config_id_short}")
             file_bytes, _ = serialize_export_rows(rows, export_format)
             zf.writestr(f"{file_base}.{export_format}", file_bytes)
@@ -600,7 +606,7 @@ def list_evaluations(
                 error_message=r.error_message,
                 organization_id=r.organization_id,
                 project_id=r.project_id,
-                assessment_config=(r.score or {}).get("assessment_config"),
+                input=r.input,
                 inserted_at=r.inserted_at,
                 updated_at=r.updated_at,
             )
@@ -647,7 +653,7 @@ def get_evaluation(
             error_message=run.error_message,
             organization_id=run.organization_id,
             project_id=run.project_id,
-            assessment_config=(run.score or {}).get("assessment_config"),
+            input=run.input,
             inserted_at=run.inserted_at,
             updated_at=run.updated_at,
         )

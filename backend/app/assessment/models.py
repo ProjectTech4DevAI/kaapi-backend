@@ -1,20 +1,23 @@
 """Assessment models — DB table, Pydantic schemas, and LLM param wrappers."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
-from sqlmodel import SQLModel
+from sqlmodel import Relationship, SQLModel
 
 from app.core.util import now
 from app.models.llm.request import TextLLMParams
 
+if TYPE_CHECKING:
+    from app.models.batch_job import BatchJob
 
-# ── Database model ──────────────────────────────────────────────
+
+# ── Database models ─────────────────────────────────────────────
 
 
 class Assessment(SQLModel, table=True):
@@ -125,6 +128,135 @@ class Assessment(SQLModel, table=True):
         default_factory=now,
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the assessment was last updated"},
+    )
+
+
+class AssessmentRun(SQLModel, table=True):
+    """Dedicated table for assessment evaluation runs."""
+
+    __tablename__ = "assessment_run"
+    __table_args__ = (
+        Index("idx_assessment_run_status_org", "status", "organization_id"),
+        Index("idx_assessment_run_status_project", "status", "project_id"),
+        Index("idx_assessment_run_assessment_id", "assessment_id"),
+    )
+
+    id: int = SQLField(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"comment": "Unique identifier for the assessment run"},
+    )
+    run_name: str = SQLField(
+        index=True,
+        description="Name of the assessment run (matches experiment name)",
+        sa_column_kwargs={"comment": "Name of the assessment run"},
+    )
+    assessment_id: int | None = SQLField(
+        default=None,
+        foreign_key="assessment.id",
+        nullable=True,
+        ondelete="SET NULL",
+        sa_column_kwargs={"comment": "Reference to parent assessment manager row"},
+    )
+    dataset_id: int = SQLField(
+        foreign_key="evaluation_dataset.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={"comment": "Reference to the evaluation dataset"},
+    )
+    dataset_name: str = SQLField(
+        nullable=False,
+        sa_column_kwargs={"comment": "Name of the dataset used"},
+    )
+    config_id: UUID | None = SQLField(
+        default=None,
+        foreign_key="config.id",
+        nullable=True,
+        sa_column_kwargs={"comment": "Reference to the stored config used"},
+    )
+    config_version: int | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Version of the config used"},
+    )
+    status: str = SQLField(
+        default="pending",
+        sa_column_kwargs={
+            "comment": "Run status: pending, processing, completed, failed"
+        },
+    )
+    batch_job_id: int | None = SQLField(
+        default=None,
+        foreign_key="batch_job.id",
+        nullable=True,
+        ondelete="SET NULL",
+        sa_column_kwargs={"comment": "Reference to the batch job processing this run"},
+    )
+    total_items: int = SQLField(
+        default=0,
+        nullable=False,
+        sa_column_kwargs={"comment": "Total number of dataset items in this run"},
+    )
+    input: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Assessment input config: prompt_template, text_columns, attachments, output_schema",
+        ),
+    )
+    object_store_url: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "S3 URL of processed batch results"},
+    )
+    error_message: str | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Text,
+            nullable=True,
+            comment="Error message if the run failed",
+        ),
+    )
+    eval_score: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Evaluation scores (reserved for future use)",
+        ),
+    )
+    eval_score_trace_url: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "S3 URL for evaluation score traces (reserved)"},
+    )
+    organization_id: int = SQLField(
+        foreign_key="organization.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={"comment": "Reference to the organization"},
+    )
+    project_id: int = SQLField(
+        foreign_key="project.id",
+        nullable=False,
+        ondelete="CASCADE",
+        sa_column_kwargs={"comment": "Reference to the project"},
+    )
+    inserted_at: datetime = SQLField(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the run was created"},
+    )
+    updated_at: datetime = SQLField(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the run was last updated"},
+    )
+
+    # Relationships
+    batch_job: Optional["BatchJob"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[AssessmentRun.batch_job_id]"}
     )
 
 
@@ -253,8 +385,9 @@ class AssessmentRunPublic(BaseModel):
     error_message: str | None
     organization_id: int
     project_id: int
-    assessment_config: dict[str, Any] | None = Field(
-        None, description="Assessment-specific configuration (prompt, columns, schema)"
+    input: dict[str, Any] | None = Field(
+        None,
+        description="Assessment input config (prompt_template, text_columns, attachments, output_schema)",
     )
     inserted_at: datetime
     updated_at: datetime

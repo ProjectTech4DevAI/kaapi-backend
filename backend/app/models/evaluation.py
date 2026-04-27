@@ -255,18 +255,6 @@ class EvaluationRun(SQLModel, table=True):
         sa_column_kwargs={"comment": "Reference to the evaluation dataset"},
     )
 
-    # Assessment reference (set when run belongs to a parent Assessment)
-    assessment_id: int | None = SQLField(
-        default=None,
-        foreign_key="assessment.id",
-        nullable=True,
-        ondelete="SET NULL",
-        description="Reference to parent assessment manager row, if applicable",
-        sa_column_kwargs={
-            "comment": "Reference to parent assessment manager row, if applicable"
-        },
-    )
-
     # Batch job references
     batch_job_id: int | None = SQLField(
         default=None,
@@ -430,7 +418,6 @@ class EvaluationRunPublic(SQLModel):
     config_id: UUID | None
     config_version: int | None
     dataset_id: int
-    assessment_id: int | None
     batch_job_id: int | None
     embedding_batch_job_id: int | None
     status: str
