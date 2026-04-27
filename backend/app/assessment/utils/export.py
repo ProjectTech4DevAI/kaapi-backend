@@ -11,15 +11,14 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.assessment.batch import _load_dataset_rows
-from app.assessment.models import AssessmentExportRow
+from app.assessment.models import Assessment, AssessmentExportRow, AssessmentRun
 from app.assessment.processing import parse_assessment_output
 from app.assessment.utils.parsing import parse_stored_results, usage_totals
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
 from app.crud.job import get_batch_job
-from app.assessment.models import Assessment
 from app.models.batch_job import BatchJob
-from app.models.evaluation import EvaluationDataset, EvaluationRun
+from app.models.evaluation import EvaluationDataset
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +100,8 @@ def _expand_output_columns(
     row_payload, input_col_names = _expand_input_columns(row_payload)
 
     base_fields = [
-        f for f in AssessmentExportRow.model_fields.keys()
+        f
+        for f in AssessmentExportRow.model_fields.keys()
         if f not in ("output", "input_data")
     ]
 
@@ -207,7 +207,8 @@ def serialize_export_rows(
 
     # XLSX shows input columns + output columns only (no metadata fields).
     metadata_fields = {
-        f for f in AssessmentExportRow.model_fields.keys()
+        f
+        for f in AssessmentExportRow.model_fields.keys()
         if f not in ("output", "input_data")
     }
     excel_fields = [f for f in fieldnames if f not in metadata_fields]
@@ -256,7 +257,7 @@ def build_export_response(
 
 def _load_parsed_results_for_run(
     session: Any,
-    run: EvaluationRun,
+    run: AssessmentRun,
     batch_job: BatchJob,
 ) -> list[dict[str, Any]] | None:
     """Fetch and parse the stored batch results for a run.
@@ -317,7 +318,7 @@ def _load_parsed_results_for_run(
 
 def _load_dataset_rows_for_run(
     session: Any,
-    run: EvaluationRun,
+    run: AssessmentRun,
 ) -> list[dict[str, str]]:
     """Load original dataset rows for input-output correlation.
 
@@ -343,7 +344,7 @@ def _load_dataset_rows_for_run(
 
 def load_export_rows_for_run(
     session: Any,
-    run: EvaluationRun,
+    run: AssessmentRun,
     assessment: Assessment | None = None,
 ) -> list[AssessmentExportRow]:
     """Load flattened export rows for a single child assessment run."""
