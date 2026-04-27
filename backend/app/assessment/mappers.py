@@ -31,7 +31,9 @@ def _ensure_openai_strict_schema(schema: dict) -> dict:
 
     if "properties" in normalized:
         normalized["properties"] = {
-            key: _ensure_openai_strict_schema(value) if isinstance(value, dict) else value
+            key: _ensure_openai_strict_schema(value)
+            if isinstance(value, dict)
+            else value
             for key, value in normalized["properties"].items()
         }
 

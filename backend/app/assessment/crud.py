@@ -11,6 +11,7 @@ from app.assessment.models import Assessment, AssessmentRun
 
 logger = logging.getLogger(__name__)
 
+
 def create_assessment(
     session: Session,
     experiment_name: str,
