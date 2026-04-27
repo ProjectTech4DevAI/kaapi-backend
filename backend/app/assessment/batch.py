@@ -8,6 +8,9 @@ import csv
 import io
 import logging
 import re
+import base64
+import binascii
+from urllib.parse import urlparse
 from typing import Any
 from uuid import UUID
 
@@ -41,6 +44,19 @@ _NATIVE_PROVIDERS = {
     "openai-native": "openai",
     "google": "google",
     "google-native": "google",
+}
+
+_IMAGE_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
 }
 
 
@@ -195,6 +211,72 @@ def _to_direct_attachment_url(url: str, attachment_type: str) -> str:
     return f"https://drive.google.com/uc?export=download&id={file_id}"
 
 
+def _split_data_url(value: str) -> tuple[str | None, str]:
+    """Return (mime_type, base64_payload) for a data URL; otherwise (None, value)."""
+    match = re.match(
+        r"^data:([^;]+);base64,(.+)$",
+        value.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None, value.strip()
+    return match.group(1).strip().lower(), match.group(2).strip()
+
+
+def _guess_image_mime_from_url(url: str) -> str | None:
+    path = urlparse(url).path or ""
+    for ext, mime in _IMAGE_MIME_BY_EXT.items():
+        if path.lower().endswith(ext):
+            return mime
+    return None
+
+
+def _decode_base64_prefix(payload: str, max_chars: int = 256) -> bytes | None:
+    compact = re.sub(r"\s+", "", payload)
+    if not compact:
+        return None
+    sample = compact[:max_chars]
+    padding = "=" * (-len(sample) % 4)
+    try:
+        return base64.b64decode(sample + padding, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _guess_image_mime_from_base64(payload: str) -> str | None:
+    blob = _decode_base64_prefix(payload)
+    if not blob:
+        return None
+    if blob.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if blob.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if blob.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if blob.startswith(b"BM"):
+        return "image/bmp"
+    if len(blob) >= 12 and blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return "image/webp"
+    if blob.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    return None
+
+
+def _resolve_image_mime_and_payload(
+    value: str,
+    format_type: str,
+) -> tuple[str, str]:
+    """Resolve image mime type and raw base64 payload (for base64 format)."""
+    if format_type == "url":
+        return _guess_image_mime_from_url(value) or "image/png", value
+
+    data_url_mime, payload = _split_data_url(value)
+    if data_url_mime and data_url_mime.startswith("image/"):
+        return data_url_mime, payload
+
+    return _guess_image_mime_from_base64(payload) or "image/png", payload
+
+
 def _resolve_attachment_values(
     value: str,
     att: AssessmentAttachment,
@@ -221,10 +303,14 @@ def _resolve_attachment_values(
             if att.format == "url":
                 resolved.append({"type": "input_image", "image_url": normalized_value})
             else:
+                mime_type, payload = _resolve_image_mime_and_payload(
+                    normalized_value,
+                    "base64",
+                )
                 resolved.append(
                     {
                         "type": "input_image",
-                        "image_url": f"data:image/png;base64,{normalized_value}",
+                        "image_url": f"data:{mime_type};base64,{payload}",
                     }
                 )
         elif att.type == "pdf":
@@ -232,15 +318,15 @@ def _resolve_attachment_values(
                 resolved.append(
                     {
                         "type": "input_file",
-                        "file_data": normalized_value,
-                        "filename": "document.pdf",
+                        "file_url": normalized_value,
                     }
                 )
             else:
+                _, payload = _split_data_url(normalized_value)
                 resolved.append(
                     {
                         "type": "input_file",
-                        "file_data": f"data:application/pdf;base64,{normalized_value}",
+                        "file_data": f"data:application/pdf;base64,{payload}",
                         "filename": "document.pdf",
                     }
                 )
@@ -350,11 +436,15 @@ def build_google_jsonl(
                     else item_value
                 )
                 if att.type == "image":
+                    mime_type, payload = _resolve_image_mime_and_payload(
+                        normalized_value,
+                        att.format,
+                    )
                     if att.format == "url":
                         parts.append(
                             {
                                 "fileData": {
-                                    "mimeType": "image/png",
+                                    "mimeType": mime_type,
                                     "fileUri": normalized_value,
                                 }
                             }
@@ -363,8 +453,8 @@ def build_google_jsonl(
                         parts.append(
                             {
                                 "inlineData": {
-                                    "mimeType": "image/png",
-                                    "data": normalized_value,
+                                    "mimeType": mime_type,
+                                    "data": payload,
                                 }
                             }
                         )
@@ -383,7 +473,7 @@ def build_google_jsonl(
                             {
                                 "inlineData": {
                                     "mimeType": "application/pdf",
-                                    "data": normalized_value,
+                                    "data": _split_data_url(normalized_value)[1],
                                 }
                             }
                         )
