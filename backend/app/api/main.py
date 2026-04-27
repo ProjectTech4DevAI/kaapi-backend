@@ -3,33 +3,34 @@ from fastapi import APIRouter
 from app.api.routes import (
     api_keys,
     assistants,
+    auth,
+    collection_job,
     collections,
     config,
+    credentials,
+    cron,
     doc_transformation_job,
     documents,
-    auth,
-    login,
+    evaluations,
+    features,
+    fine_tuning,
     languages,
     llm,
     llm_chain,
-    organization,
+    login,
+    model_config,
+    model_evaluation,
+    onboarding,
     openai_conversation,
+    organization,
+    private,
     project,
     responses,
-    private,
     threads,
     user_project,
     users,
     utils,
-    onboarding,
-    credentials,
-    cron,
-    fine_tuning,
-    model_evaluation,
-    collection_job,
-    model_config,
 )
-from app.api.routes import evaluations
 from app.assessment import routes as assessment_routes
 from app.core.config import settings
 
@@ -58,10 +59,11 @@ api_router.include_router(threads.router)
 api_router.include_router(user_project.router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
+api_router.include_router(features.router)
 api_router.include_router(fine_tuning.router)
 api_router.include_router(model_evaluation.router)
-api_router.include_router(model_config.router)
 api_router.include_router(assessment_routes.router)
+api_router.include_router(model_config.router)
 
 if settings.ENVIRONMENT in ["development", "testing"]:
     api_router.include_router(private.router)

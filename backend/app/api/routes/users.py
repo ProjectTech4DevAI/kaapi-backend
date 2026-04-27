@@ -10,6 +10,7 @@ from app.api.deps import (
 )
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
+from app.core.feature_flags import resolve_all_flags
 from app.core.security import get_password_hash, verify_password
 from app.crud import create_user, get_user_by_email, update_user
 from app.models import (
@@ -117,8 +118,19 @@ def update_password_me(
 
 
 @router.get("/me", response_model=UserPublic)
-def read_user_me(current_user_dep: AuthContextDep) -> Any:
-    return current_user_dep.user
+def read_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Any:
+    user = current_user_dep.user
+    org = current_user_dep.organization
+    project = current_user_dep.project
+    features: list[str] = []
+    if org is not None:
+        resolved = resolve_all_flags(
+            session=session,
+            organization_id=org.id,
+            project_id=project.id if project else None,
+        )
+        features = [key for key, enabled in resolved.items() if enabled]
+    return UserPublic(**user.model_dump(), features=features)
 
 
 @router.delete("/me", response_model=Message)

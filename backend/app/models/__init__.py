@@ -89,7 +89,18 @@ from .evaluation import (
     EvaluationRunPublic,
     EvaluationRunUpdate,
 )
-from .file import AudioUploadResponse, File, FilePublic, FileType
+from .feature_flag import (
+    FeatureFlag,
+    FeatureFlagCreate,
+    FeatureFlagDelete,
+    FeatureFlagPublic,
+    FeatureFlagUpdate,
+)
+
+from app.assessment.models import Assessment, AssessmentRun  # noqa: F401
+
+from .file import File, FilePublic, FileType, AudioUploadResponse
+
 from .fine_tuning import (
     Fine_Tuning,
     FineTuningJobBase,

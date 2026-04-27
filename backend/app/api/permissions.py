@@ -1,13 +1,14 @@
-from enum import Enum
-from typing import Annotated
-from fastapi import Depends, HTTPException
+from enum import StrEnum
+
+from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.models import AuthContext
 from app.api.deps import AuthContextDep, SessionDep
+from app.core.feature_flags import FeatureFlag
+from app.models import AuthContext
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     """Permission types for authorization checks"""
 
     SUPERUSER = "require_superuser"
@@ -18,7 +19,7 @@ class Permission(str, Enum):
 def has_permission(
     auth_context: AuthContext,
     permission: Permission,
-    session: Session | None = None,
+    _session: Session | None = None,
 ) -> bool:
     """
     Check if the auth_context has the specified permission.
@@ -68,3 +69,35 @@ def require_permission(permission: Permission):
             )
 
     return permission_checker
+
+
+def require_feature(flag: FeatureFlag):
+    """Dependency factory that gates a route behind a feature flag.
+
+    Returns 403 when the flag is disabled for the caller's org/project,
+    so callers can explicitly handle feature access denial.
+
+    Usage::
+
+        router = APIRouter(
+            dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))]
+        )
+    """
+    from app.core.feature_flags import is_enabled
+
+    def _check_with_session(auth_context: AuthContextDep, session: SessionDep):
+        org_id = auth_context.organization.id if auth_context.organization else None
+        project_id = auth_context.project.id if auth_context.project else None
+
+        if org_id is None or not is_enabled(
+            session=session,
+            flag=flag,
+            organization_id=org_id,
+            project_id=project_id,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Feature '{flag.name}' is not enabled for this organization.",
+            )
+
+    return _check_with_session
