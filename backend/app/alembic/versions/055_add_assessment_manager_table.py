@@ -1,7 +1,7 @@
 """add assessment manager table
 
-Revision ID: 050
-Revises: 049
+Revision ID: 55
+Revises: 054
 Create Date: 2026-03-26 23:30:00.000000
 
 """
@@ -12,8 +12,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "050"
-down_revision = "049"
+revision = "55"
+down_revision = "054"
 branch_labels = None
 depends_on = None
 
