@@ -2,7 +2,7 @@ name: Deploy Kaapi staging to EC2
 
 on:
   push:
-    branches: [feat/staging-deployment-ec2]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -45,11 +45,15 @@ jobs:
           INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
           CMD_ID: ${{ steps.ssm.outputs.cmd_id }}
         run: |
+          WAIT_EXIT=0
           aws ssm wait command-executed \
             --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID"
+            --instance-id "$INSTANCE_ID" || WAIT_EXIT=$?
+
           aws ssm get-command-invocation \
             --command-id "$CMD_ID" \
             --instance-id "$INSTANCE_ID" \
             --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
             --output json
+
+          exit $WAIT_EXIT
