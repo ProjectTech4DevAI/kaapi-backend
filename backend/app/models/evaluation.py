@@ -216,6 +216,12 @@ class EvaluationRun(SQLModel, table=True):
         description="Evaluation type: text, stt, or tts",
         sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
     )
+    run_mode: str = SQLField(
+        default="batch",
+        max_length=10,
+        description="Execution mode: 'batch' (OpenAI Batch API) or 'live' (Celery fan-out)",
+        sa_column_kwargs={"comment": "Execution mode: batch | live"},
+    )
     language_id: int | None = SQLField(
         default=None,
         foreign_key="global.languages.id",
@@ -415,6 +421,7 @@ class EvaluationRunPublic(SQLModel):
     id: int
     run_name: str
     dataset_name: str
+    run_mode: str
     config_id: UUID | None
     config_version: int | None
     dataset_id: int

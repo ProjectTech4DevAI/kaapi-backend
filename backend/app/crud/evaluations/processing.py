@@ -816,11 +816,13 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [...]
         }
     """
-    # Single query to fetch all processing text evaluation runs
-    # STT/TTS evaluations have their own polling
+    # Single query to fetch all processing text evaluation runs in batch mode.
+    # STT/TTS evaluations have their own polling. Live-mode runs are owned by
+    # Celery (chord callback drives their lifecycle), so they're excluded here.
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.type == "text",
+        EvaluationRun.run_mode == "batch",
     )
     pending_runs = session.exec(statement).all()
 

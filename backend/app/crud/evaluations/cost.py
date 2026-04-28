@@ -19,7 +19,7 @@ Either stage entry is optional. Embedding entries use output_tokens=0.
 
 import logging
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Literal
 
 from sqlmodel import Session
 
@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 # USD rounding precision for persisted cost values.
 COST_USD_DECIMALS = 6
+
+# OpenAI pricing tier used by `estimate_model_cost`. "batch" is the discounted
+# Batch API rate; "response" is standard (non-batch) pricing. Live evaluation
+# mode uses "response" because it calls the regular Responses API.
+UsageType = Literal["response", "batch"]
 
 
 def _cost_usd(estimate: dict[str, Any] | None) -> float:
@@ -69,15 +74,16 @@ def _build_cost_entry(
     session: Session,
     model: str,
     totals: dict[str, int],
+    usage_type: UsageType = "batch",
 ) -> dict[str, Any]:
-    """Price aggregated token usage against the model's batch pricing row."""
+    """Price aggregated token usage against the model's pricing row."""
     estimate = estimate_model_cost(
         session=session,
         provider="openai",
         model_name=model,
         input_tokens=totals["input_tokens"],
         output_tokens=totals["output_tokens"],
-        usage_type="batch",
+        usage_type=usage_type,
     )
     return {
         "model": model,
@@ -89,7 +95,10 @@ def _build_cost_entry(
 
 
 def _build_response_cost_entry(
-    session: Session, model: str, results: list[dict[str, Any]]
+    session: Session,
+    model: str,
+    results: list[dict[str, Any]],
+    usage_type: UsageType = "batch",
 ) -> dict[str, Any]:
     """Build a response-stage cost entry from parsed evaluation results."""
     totals = _sum_tokens(
@@ -97,11 +106,16 @@ def _build_response_cost_entry(
         usage_extractor=lambda r: r.get("usage"),
         input_key="input_tokens",
     )
-    return _build_cost_entry(session=session, model=model, totals=totals)
+    return _build_cost_entry(
+        session=session, model=model, totals=totals, usage_type=usage_type
+    )
 
 
 def _build_embedding_cost_entry(
-    session: Session, model: str, raw_results: list[dict[str, Any]]
+    session: Session,
+    model: str,
+    raw_results: list[dict[str, Any]],
+    usage_type: UsageType = "batch",
 ) -> dict[str, Any]:
     """Build an embedding-stage cost entry from raw embedding batch output."""
     totals = _sum_tokens(
@@ -109,7 +123,30 @@ def _build_embedding_cost_entry(
         usage_extractor=lambda r: r.get("response", {}).get("body", {}).get("usage"),
         input_key="prompt_tokens",
     )
-    return _build_cost_entry(session=session, model=model, totals=totals)
+    return _build_cost_entry(
+        session=session, model=model, totals=totals, usage_type=usage_type
+    )
+
+
+def _build_embedding_cost_entry_from_total(
+    session: Session,
+    model: str,
+    total_input_tokens: int,
+    usage_type: UsageType = "response",
+) -> dict[str, Any]:
+    """Build an embedding-stage cost entry directly from a token total.
+
+    Used by live mode, where we already have per-row embedding token counts
+    aggregated and don't need to walk a batch JSONL output.
+    """
+    totals = {
+        "input_tokens": total_input_tokens,
+        "output_tokens": 0,
+        "total_tokens": total_input_tokens,
+    }
+    return _build_cost_entry(
+        session=session, model=model, totals=totals, usage_type=usage_type
+    )
 
 
 def _build_cost_dict(
@@ -141,19 +178,30 @@ def attach_cost(
     response_results: list[dict[str, Any]] | None = None,
     embedding_model: str | None = None,
     embedding_raw_results: list[dict[str, Any]] | None = None,
+    embedding_input_tokens: int | None = None,
+    usage_type: UsageType = "batch",
 ) -> None:
     """Compute cost for the given stage(s) and attach to `eval_run.cost`, never raising.
 
     Caller is responsible for persisting `eval_run` afterwards. Either stage's
     previously-computed entry on `eval_run.cost` is preserved when that stage's
     inputs are not supplied, so partial updates never clobber prior data.
+
+    `usage_type` selects the pricing tier: "batch" for OpenAI Batch API runs
+    (default, applies to both stages) and "response" for live evaluations that
+    call the regular Responses + Embeddings APIs. For embedding cost, callers
+    using live mode pass `embedding_input_tokens` (a precomputed total) instead
+    of `embedding_raw_results`.
     """
     try:
         existing_cost = eval_run.cost or {}
 
         if response_model is not None and response_results is not None:
             response_entry = _build_response_cost_entry(
-                session=session, model=response_model, results=response_results
+                session=session,
+                model=response_model,
+                results=response_results,
+                usage_type=usage_type,
             )
         else:
             response_entry = existing_cost.get("response")
@@ -163,6 +211,14 @@ def attach_cost(
                 session=session,
                 model=embedding_model,
                 raw_results=embedding_raw_results,
+                usage_type=usage_type,
+            )
+        elif embedding_model is not None and embedding_input_tokens is not None:
+            embedding_entry = _build_embedding_cost_entry_from_total(
+                session=session,
+                model=embedding_model,
+                total_input_tokens=embedding_input_tokens,
+                usage_type=usage_type,
             )
         else:
             embedding_entry = existing_cost.get("embedding")

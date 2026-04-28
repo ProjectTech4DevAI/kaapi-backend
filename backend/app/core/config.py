@@ -162,6 +162,10 @@ class Settings(BaseSettings):
     # this same value so its expected schedule stays aligned with the trigger.
     CRON_INTERVAL_MINUTES: int = 5
 
+    # Live evaluation mode (Celery fan-out, non-batch).
+    EVAL_LIVE_MAX_ITEMS: int = 100
+    EVAL_LIVE_FAILURE_THRESHOLD: float = 0.5
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

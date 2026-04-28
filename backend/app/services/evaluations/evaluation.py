@@ -1,11 +1,13 @@
 """Evaluation run orchestration service."""
 
 import logging
+from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.crud.evaluations import (
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
@@ -14,6 +16,7 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     save_score,
     start_evaluation_batch,
+    start_evaluation_live,
 )
 from app.models.evaluation import EvaluationRun
 from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
@@ -24,6 +27,8 @@ from app.core.storage_utils import load_json_from_object_store
 
 logger = logging.getLogger(__name__)
 
+RunMode = Literal["batch", "live"]
+
 
 def start_evaluation(
     session: Session,
@@ -33,6 +38,7 @@ def start_evaluation(
     config_version: int,
     organization_id: int,
     project_id: int,
+    run_mode: RunMode = "batch",
 ) -> EvaluationRun:
     """
     Start an evaluation run.
@@ -41,7 +47,7 @@ def start_evaluation(
     1. Validate dataset exists and has Langfuse ID
     2. Resolve config from stored config management
     3. Create evaluation run record
-    4. Start batch processing
+    4. Dispatch the chosen execution mode (batch or live)
 
     Args:
         session: Database session
@@ -51,6 +57,10 @@ def start_evaluation(
         config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
+        run_mode: Execution mode. "batch" (default) submits the dataset to
+            OpenAI's Batch API and lets the cron poller drive completion.
+            "live" fans out per-row Celery tasks against the regular
+            Responses API for fast turnaround on small datasets.
 
     Returns:
         EvaluationRun instance
@@ -63,7 +73,8 @@ def start_evaluation(
         f"dataset_id={dataset_id} | "
         f"org_id={organization_id} | "
         f"config_id={config_id} | "
-        f"config_version={config_version}"
+        f"config_version={config_version} | "
+        f"run_mode={run_mode}"
     )
 
     # Step 1: Fetch dataset from database
@@ -112,6 +123,30 @@ def start_evaluation(
             detail="Only 'openai' provider is supported for evaluation configs",
         )
 
+    if run_mode == "live":
+        if config.completion.type != "text":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Live mode is only supported for text evaluations "
+                    f"(got '{config.completion.type}')"
+                ),
+            )
+        total_items = (
+            (dataset.dataset_metadata or {}).get("total_items_count")
+            if dataset.dataset_metadata
+            else None
+        )
+        if total_items is not None and total_items > settings.EVAL_LIVE_MAX_ITEMS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Live mode is capped at {settings.EVAL_LIVE_MAX_ITEMS} items "
+                    f"(dataset has {total_items}). Use run_mode='batch' for "
+                    f"larger datasets."
+                ),
+            )
+
     logger.info(
         "[start_evaluation] Successfully resolved config from config management"
     )
@@ -138,10 +173,25 @@ def start_evaluation(
         config_version=config_version,
         organization_id=organization_id,
         project_id=project_id,
+        run_mode=run_mode,
     )
 
-    # Step 4: Start the batch evaluation
+    # Step 4: Dispatch the chosen execution mode
     try:
+        if run_mode == "live":
+            eval_run = start_evaluation_live(
+                session=session,
+                eval_run=eval_run,
+                config_id=config_id,
+                config_version=config_version,
+                langfuse=langfuse,
+            )
+            logger.info(
+                f"[start_evaluation] Live evaluation dispatched | "
+                f"run_id={eval_run.id} | total_items={eval_run.total_items}"
+            )
+            return eval_run
+
         # Convert params dict to appropriate model instance based on type
         param_models = {
             "text": TextLLMParams,
@@ -171,7 +221,7 @@ def start_evaluation(
             f"[start_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
             exc_info=True,
         )
-        # Error is already handled in start_evaluation_batch
+        # Error is already handled by start_evaluation_batch / start_evaluation_live
         session.refresh(eval_run)
         return eval_run
 

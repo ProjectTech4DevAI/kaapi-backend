@@ -154,6 +154,7 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
     include=[
         "app.celery.tasks.job_execution",
+        "app.celery.tasks.evaluation_live",
     ],
 )
 
@@ -178,6 +179,12 @@ celery_app.conf.update(
         ),
         Queue("cron", exchange=default_exchange, routing_key="cron"),
         Queue("default", exchange=default_exchange, routing_key="default"),
+        Queue(
+            "evaluations",
+            exchange=default_exchange,
+            routing_key="evaluations",
+            queue_arguments={"x-max-priority": 6},
+        ),
     ),
     # Task routing — queue is set per-task via @celery_app.task(queue=...).
     # Only cron tasks need an explicit override here.

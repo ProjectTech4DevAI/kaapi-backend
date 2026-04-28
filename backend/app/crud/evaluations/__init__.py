@@ -1,6 +1,7 @@
 """Evaluation-related CRUD operations."""
 
 from app.crud.evaluations.batch import start_evaluation_batch
+from app.crud.evaluations.live import start_evaluation_live
 from app.crud.evaluations.core import (
     create_evaluation_run,
     get_evaluation_run_by_id,
@@ -65,6 +66,8 @@ __all__ = [
     "upload_csv_to_object_store",
     # Batch
     "start_evaluation_batch",
+    # Live
+    "start_evaluation_live",
     # Processing
     "check_and_process_evaluation",
     "poll_all_pending_evaluations",

@@ -62,6 +62,36 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
     return items
 
 
+def build_response_body(question: str, config: KaapiLLMParams) -> dict[str, Any]:
+    """Build a Responses API request body for one dataset question.
+
+    Shared between the batch JSONL builder and the live (per-row Celery task)
+    evaluation path so the request shape stays identical.
+    """
+    body: dict[str, Any] = {
+        "model": config.model,
+        "instructions": config.instructions,
+        "input": question,
+    }
+
+    if "temperature" in config.model_fields_set:
+        body["temperature"] = config.temperature
+
+    if config.reasoning:
+        body["reasoning"] = {"effort": config.reasoning}
+
+    if config.knowledge_base_ids:
+        body["tools"] = [
+            {
+                "type": "file_search",
+                "vector_store_ids": config.knowledge_base_ids,
+                "max_num_results": config.max_num_results or 20,
+            }
+        ]
+
+    return body
+
+
 def build_evaluation_jsonl(
     dataset_items: list[dict[str, Any]], config: KaapiLLMParams
 ) -> list[dict[str, Any]]:
@@ -101,30 +131,7 @@ def build_evaluation_jsonl(
             )
             continue
 
-        # Build the batch request object for Responses API
-        # Use config as-is and only add the input field
-        body: dict[str, Any] = {
-            "model": config.model,
-            "instructions": config.instructions,
-            "input": question,  # Add input from dataset
-        }
-
-        if "temperature" in config.model_fields_set:
-            body["temperature"] = config.temperature
-
-        # Add reasoning only if provided
-        if config.reasoning:
-            body["reasoning"] = {"effort": config.reasoning}
-
-        # Add tools only if knowledge_base_ids are provided
-        if config.knowledge_base_ids:
-            body["tools"] = [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": config.knowledge_base_ids,
-                    "max_num_results": config.max_num_results or 20,
-                }
-            ]
+        body = build_response_body(question=question, config=config)
 
         batch_request = {
             BATCH_KEY: item["id"],

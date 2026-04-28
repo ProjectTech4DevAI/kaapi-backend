@@ -1,6 +1,7 @@
 """Evaluation run API routes."""
 
 import logging
+from typing import Literal
 from uuid import UUID
 
 from fastapi import (
@@ -45,6 +46,14 @@ def evaluate(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
+    run_mode: Literal["batch", "live"] = Body(
+        "batch",
+        description=(
+            "Execution mode. 'batch' (default) submits the dataset to OpenAI's "
+            "Batch API. 'live' fans out per-row Celery tasks against the regular "
+            "Responses API for fast turnaround on small datasets (capped server-side)."
+        ),
+    ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
     eval_run = start_evaluation(
@@ -55,6 +64,7 @@ def evaluate(
         config_version=config_version,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
+        run_mode=run_mode,
     )
 
     if eval_run.status == "failed":
