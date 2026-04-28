@@ -19,8 +19,8 @@ from app.assessment.events import assessment_event_broker
 from app.assessment.models import AssessmentRun
 from app.core.batch import (
     BATCH_KEY,
-    OpenAIBatchProvider,
     GeminiBatchProvider,
+    OpenAIBatchProvider,
     download_batch_results,
     poll_batch_status,
     upload_batch_results_to_object_store,

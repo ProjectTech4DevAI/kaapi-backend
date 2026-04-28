@@ -1,12 +1,11 @@
 import logging
 
 import sentry_sdk
+from fastapi import APIRouter, Depends
 from sentry_sdk.types import MonitorConfig
 
-from app.api.permissions import Permission, require_permission
-from fastapi import APIRouter, Depends
-
 from app.api.deps import SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
 
