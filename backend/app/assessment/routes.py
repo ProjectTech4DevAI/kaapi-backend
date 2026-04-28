@@ -90,7 +90,7 @@ def _dataset_to_response(
 
 @router.post(
     "/datasets",
-    description=load_description("evaluation/upload_dataset.md"),
+    description=load_description("assessment/upload_dataset.md"),
     response_model=APIResponse[AssessmentDatasetResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -121,7 +121,7 @@ async def upload_dataset(
 
 @router.get(
     "/datasets",
-    description=load_description("evaluation/list_datasets.md"),
+    description=load_description("assessment/list_datasets.md"),
     response_model=APIResponse[list[AssessmentDatasetResponse]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -149,7 +149,7 @@ def list_datasets(
 
 @router.get(
     "/datasets/{dataset_id}",
-    description=load_description("evaluation/get_dataset.md"),
+    description=load_description("assessment/get_dataset.md"),
     response_model=APIResponse[AssessmentDatasetResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -188,7 +188,7 @@ def get_dataset(
 
 @router.delete(
     "/datasets/{dataset_id}",
-    description=load_description("evaluation/delete_dataset.md"),
+    description=load_description("assessment/delete_dataset.md"),
     response_model=APIResponse[dict],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -228,6 +228,7 @@ def delete_dataset(
 
 @router.post(
     "/evaluations",
+    description=load_description("assessment/create_evaluation.md"),
     response_model=APIResponse[AssessmentResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -256,6 +257,7 @@ def create_evaluation(
 
 @router.post(
     "/assessments/{assessment_id}/retry",
+    description=load_description("assessment/retry_assessment.md"),
     response_model=APIResponse[AssessmentResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -288,6 +290,7 @@ def retry_assessment_manager(
 
 @router.post(
     "/evaluations/{evaluation_id}/retry",
+    description=load_description("assessment/retry_evaluation.md"),
     response_model=APIResponse[AssessmentResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -347,6 +350,7 @@ async def stream_assessment_events(
 
 @router.get(
     "/assessments",
+    description=load_description("assessment/list_assessments.md"),
     response_model=APIResponse[list[AssessmentPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -367,31 +371,15 @@ def list_assessment_managers(
 
     return APIResponse.success_response(
         data=[
-            AssessmentPublic(
-                id=a.id,
-                experiment_name=a.experiment_name,
-                dataset_id=a.dataset_id,
-                dataset_name=a.dataset_name,
-                status=a.status,
-                total_runs=a.total_runs,
-                pending_runs=a.pending_runs,
-                processing_runs=a.processing_runs,
-                completed_runs=a.completed_runs,
-                failed_runs=a.failed_runs,
-                run_stats=a.run_stats,
-                error_message=a.error_message,
-                organization_id=a.organization_id,
-                project_id=a.project_id,
-                inserted_at=a.inserted_at,
-                updated_at=a.updated_at,
-            )
-            for a in assessments
+            AssessmentPublic.model_validate(assessment, from_attributes=True)
+            for assessment in assessments
         ]
     )
 
 
 @router.get(
     "/assessments/{assessment_id}",
+    description=load_description("assessment/get_assessment.md"),
     response_model=APIResponse[AssessmentPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -415,29 +403,13 @@ def get_assessment_manager(
         )
 
     return APIResponse.success_response(
-        data=AssessmentPublic(
-            id=assessment.id,
-            experiment_name=assessment.experiment_name,
-            dataset_id=assessment.dataset_id,
-            dataset_name=assessment.dataset_name,
-            status=assessment.status,
-            total_runs=assessment.total_runs,
-            pending_runs=assessment.pending_runs,
-            processing_runs=assessment.processing_runs,
-            completed_runs=assessment.completed_runs,
-            failed_runs=assessment.failed_runs,
-            run_stats=assessment.run_stats,
-            error_message=assessment.error_message,
-            organization_id=assessment.organization_id,
-            project_id=assessment.project_id,
-            inserted_at=assessment.inserted_at,
-            updated_at=assessment.updated_at,
-        )
+        data=AssessmentPublic.model_validate(assessment, from_attributes=True)
     )
 
 
 @router.get(
     "/assessments/{assessment_id}/results",
+    description=load_description("assessment/export_assessment_results.md"),
     response_model=APIResponse[list[dict[str, Any]]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -520,6 +492,7 @@ def export_assessment_results(
 
 @router.get(
     "/evaluations/{evaluation_id}/results",
+    description=load_description("assessment/export_evaluation_results.md"),
     response_model=APIResponse[list[dict[str, Any]]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -571,6 +544,7 @@ def export_assessment_run_results(
 
 @router.get(
     "/evaluations",
+    description=load_description("assessment/list_evaluations.md"),
     response_model=APIResponse[list[AssessmentRunPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -593,30 +567,15 @@ def list_evaluations(
 
     return APIResponse.success_response(
         data=[
-            AssessmentRunPublic(
-                id=r.id,
-                assessment_id=r.assessment_id,
-                run_name=r.run_name,
-                dataset_name=r.dataset_name,
-                dataset_id=r.dataset_id,
-                config_id=r.config_id,
-                config_version=r.config_version,
-                status=r.status,
-                total_items=r.total_items,
-                error_message=r.error_message,
-                organization_id=r.organization_id,
-                project_id=r.project_id,
-                input=r.input,
-                inserted_at=r.inserted_at,
-                updated_at=r.updated_at,
-            )
-            for r in runs
+            AssessmentRunPublic.model_validate(run, from_attributes=True)
+            for run in runs
         ]
     )
 
 
 @router.get(
     "/evaluations/{evaluation_id}",
+    description=load_description("assessment/get_evaluation.md"),
     response_model=APIResponse[AssessmentRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -640,21 +599,5 @@ def get_evaluation(
         )
 
     return APIResponse.success_response(
-        data=AssessmentRunPublic(
-            id=run.id,
-            assessment_id=run.assessment_id,
-            run_name=run.run_name,
-            dataset_name=run.dataset_name,
-            dataset_id=run.dataset_id,
-            config_id=run.config_id,
-            config_version=run.config_version,
-            status=run.status,
-            total_items=run.total_items,
-            error_message=run.error_message,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
-            input=run.input,
-            inserted_at=run.inserted_at,
-            updated_at=run.updated_at,
-        )
+        data=AssessmentRunPublic.model_validate(run, from_attributes=True)
     )

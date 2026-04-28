@@ -46,19 +46,25 @@ def _ensure_openai_strict_schema(schema: dict) -> dict:
 
 def _strip_additional_properties(schema: dict) -> dict:
     """Recursively strip additionalProperties — unsupported by Google GenAI."""
-    schema = dict(schema)
-    schema.pop("additionalProperties", None)
+    normalized_schema = dict(schema)
+    normalized_schema.pop("additionalProperties", None)
 
-    if "properties" in schema:
-        schema["properties"] = {
-            k: _strip_additional_properties(v) if isinstance(v, dict) else v
-            for k, v in schema["properties"].items()
+    if "properties" in normalized_schema:
+        normalized_schema["properties"] = {
+            property_name: _strip_additional_properties(property_schema)
+            if isinstance(property_schema, dict)
+            else property_schema
+            for property_name, property_schema in normalized_schema[
+                "properties"
+            ].items()
         }
 
-    if "items" in schema and isinstance(schema["items"], dict):
-        schema["items"] = _strip_additional_properties(schema["items"])
+    if "items" in normalized_schema and isinstance(normalized_schema["items"], dict):
+        normalized_schema["items"] = _strip_additional_properties(
+            normalized_schema["items"]
+        )
 
-    return schema
+    return normalized_schema
 
 
 def _convert_json_schema_to_google(schema: dict) -> dict:

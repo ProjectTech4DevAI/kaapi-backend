@@ -29,7 +29,7 @@ class Assessment(SQLModel, table=True):
         Index("idx_assessment_status_project", "status", "project_id"),
     )
 
-    id: int = SQLField(
+    id: int | None = SQLField(
         default=None,
         primary_key=True,
         sa_column_kwargs={"comment": "Unique identifier for the assessment"},
@@ -141,7 +141,7 @@ class AssessmentRun(SQLModel, table=True):
         Index("idx_assessment_run_assessment_id", "assessment_id"),
     )
 
-    id: int = SQLField(
+    id: int | None = SQLField(
         default=None,
         primary_key=True,
         sa_column_kwargs={"comment": "Unique identifier for the assessment run"},
@@ -279,9 +279,6 @@ class AssessmentPublic(BaseModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
-
-
-# ── Extended LLM params ──────────────────────────────────────────
 
 
 class AssessmentTextLLMParams(TextLLMParams):
