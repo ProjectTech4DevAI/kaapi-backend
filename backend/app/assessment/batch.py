@@ -4,14 +4,14 @@ Builds provider-specific JSONL files from dataset rows + config,
 then submits them via the core batch infrastructure.
 """
 
+import base64
+import binascii
 import csv
 import io
 import logging
 import re
-import base64
-import binascii
-from urllib.parse import urlparse
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlmodel import Session
@@ -24,16 +24,14 @@ from app.assessment.mappers import (
 from app.assessment.models import (
     AssessmentAttachment,
     AssessmentRun,
-    AssessmentTextLLMParams,
 )
 from app.core.batch import BATCH_KEY, start_batch_job
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
-from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.version import ConfigVersionCrud
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
-from app.models.llm.request import ConfigBlob, KaapiCompletionConfig, LLMCallConfig
+from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.services.llm.jobs import resolve_config_blob
 
 logger = logging.getLogger(__name__)
