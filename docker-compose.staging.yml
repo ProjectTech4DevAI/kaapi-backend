@@ -37,6 +37,15 @@ services:
         awslogs-stream: backend
         awslogs-create-group: "true"
 
+  migrate:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    profiles: ["migrate"]
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+
   celery_worker:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
     container_name: celery-worker
