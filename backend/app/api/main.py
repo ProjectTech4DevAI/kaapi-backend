@@ -12,7 +12,6 @@ from app.api.routes import (
     doc_transformation_job,
     documents,
     evaluations,
-    features,
     fine_tuning,
     languages,
     llm,

@@ -6,8 +6,8 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from app.core.util import now
 from app.assessment.models import Assessment, AssessmentRun
+from app.core.util import now
 
 logger = logging.getLogger(__name__)
 

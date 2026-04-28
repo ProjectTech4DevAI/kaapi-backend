@@ -1,5 +1,7 @@
 from sqlmodel import SQLModel
 
+from app.assessment.models import Assessment, AssessmentRun  # noqa: F401
+
 from .api_key import (
     APIKey,
     APIKeyBase,
@@ -89,18 +91,7 @@ from .evaluation import (
     EvaluationRunPublic,
     EvaluationRunUpdate,
 )
-from .feature_flag import (
-    FeatureFlag,
-    FeatureFlagCreate,
-    FeatureFlagDelete,
-    FeatureFlagPublic,
-    FeatureFlagUpdate,
-)
-
-from app.assessment.models import Assessment, AssessmentRun  # noqa: F401
-
-from .file import File, FilePublic, FileType, AudioUploadResponse
-
+from .file import AudioUploadResponse, File, FilePublic, FileType
 from .fine_tuning import (
     Fine_Tuning,
     FineTuningJobBase,
