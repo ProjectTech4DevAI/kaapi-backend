@@ -146,7 +146,7 @@ def generate_response(
 
     except openai.OpenAIError as e:
         error_message = handle_openai_error(e)
-        logger.error(
+        logger.warning(
             f"[process_response_task] OpenAI API error: {error_message}",
             exc_info=True,
         )
@@ -225,7 +225,7 @@ def process_response(
 
             assistant = get_assistant_by_id(session, assistant_id, project_id)
             if not assistant:
-                logger.error(
+                logger.warning(
                     f"[process_response_task] Assistant not found: "
                     f"assistant_id={mask_string(assistant_id)}, project_id={project_id}"
                 )

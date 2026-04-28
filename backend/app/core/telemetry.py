@@ -56,6 +56,34 @@ def _emit_sentry_metric(
         logger.debug("[_emit_sentry_metric] Failed to emit %s (%s)", name, metric_type)
 
 
+def set_request_log_context(
+    org_id: int | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Attach org/project to the current request's log context and Sentry scope.
+
+    Call once per authenticated request (from the auth dependency). All subsequent
+    log records in this request will carry org_id and project_id automatically
+    via LogContextFilter — no need to add them to individual log statements.
+    """
+    current = _log_context_var.get() or {}
+    payload = dict(current)
+    if org_id is not None:
+        payload["org_id"] = str(org_id)
+    if project_id is not None:
+        payload["project_id"] = str(project_id)
+    _log_context_var.set(payload)
+
+    try:
+        if sentry_sdk.get_client().is_active():
+            if org_id is not None:
+                sentry_sdk.set_tag("tenant.org_id", str(org_id))
+            if project_id is not None:
+                sentry_sdk.set_tag("tenant.project_id", str(project_id))
+    except Exception:
+        pass
+
+
 @contextmanager
 def log_context(
     *, tag: str | None = None, **fields: str | int | float | bool | None

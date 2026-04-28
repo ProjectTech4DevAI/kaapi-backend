@@ -2,6 +2,7 @@ import logging
 import time
 
 import sentry_sdk
+from asgi_correlation_id import correlation_id
 from fastapi import Request, Response
 from opentelemetry import trace
 
@@ -32,6 +33,8 @@ async def http_request_logger(request: Request, call_next) -> Response:
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.method", method)
         sentry_sdk.set_tag("http.request.method", method)
+        if request_id := correlation_id.get():
+            sentry_sdk.set_tag("correlation_id", request_id)
 
     try:
         response = await call_next(request)

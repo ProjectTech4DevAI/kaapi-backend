@@ -65,7 +65,7 @@ class ConfigVersionCrud:
             validated_blob = ConfigBlob.model_validate(merged_config)
         except ValidationError as e:
             validation_errors = e.errors()
-            logger.error(
+            logger.warning(
                 f"[ConfigVersionCrud.create_or_raise] Validation failed | "
                 f"{{'config_id': '{self.config_id}', 'error_count': {len(validation_errors)}, "
                 f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"

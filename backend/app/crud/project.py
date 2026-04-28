@@ -17,7 +17,7 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
         project_name=project_create.name,
     )
     if project:
-        logger.error(
+        logger.warning(
             f"[create_project] Project already exists | 'project_id': {project.id}, 'name': {project.name}"
         )
         raise HTTPException(409, "Project already exists")
@@ -58,13 +58,13 @@ def validate_project(session: Session, project_id: int) -> Project:
     """
     project = get_project_by_id(session=session, project_id=project_id)
     if not project:
-        logger.error(
+        logger.warning(
             f"[validate_project] Project not found | 'project_id': {project_id}"
         )
         raise HTTPException(404, "Project not found")
 
     if not project.is_active:
-        logger.error(
+        logger.warning(
             f"[validate_project] Project is not active | 'project_id': {project_id}"
         )
         raise HTTPException(404, "Project is not active")

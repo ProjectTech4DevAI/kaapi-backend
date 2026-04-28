@@ -50,7 +50,7 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
 )
 def create_user_endpoint(*, session: SessionDep, user_in: UserCreate) -> Any:
     if get_user_by_email(session=session, email=user_in.email):
-        logger.error(
+        logger.warning(
             f"[create_user_endpoint] Attempting to create user with existing email | email: {user_in.email}"
         )
         raise HTTPException(
@@ -80,7 +80,7 @@ def update_user_me(
     if user_in.email:
         existing_user = get_user_by_email(session=session, email=user_in.email)
         if existing_user and existing_user.id != current_user.id:
-            logger.error(
+            logger.warning(
                 f"[update_user_me] Attempting to update user with existing email | email: {user_in.email}, user_id: {current_user.id}"
             )
             raise HTTPException(
@@ -125,7 +125,7 @@ def read_user_me(current_user_dep: AuthContextDep) -> Any:
 def delete_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Any:
     current_user = current_user_dep.user
     if current_user.is_superuser:
-        logger.error(
+        logger.warning(
             f"[delete_user_me] Attempting to delete superuser account by itself | user_id: {current_user.id}"
         )
         raise HTTPException(
@@ -147,7 +147,7 @@ def register_user(session: SessionDep, user_in: UserRegister) -> Any:
     This endpoint allows the registration of a new user and is accessible only by a superuser.
     """
     if get_user_by_email(session=session, email=user_in.email):
-        logger.error(
+        logger.warning(
             f"[register_user] Attempting to create user with existing email | email: {user_in.email}"
         )
         raise HTTPException(
@@ -190,7 +190,6 @@ def update_user_endpoint(
 ) -> Any:
     db_user = session.get(User, user_id)
     if not db_user:
-        logger.error(f"[update_user_endpoint] User not found | user_id: {user_id}")
         raise HTTPException(
             status_code=404,
             detail="The user with this id does not exist in the system",
@@ -199,7 +198,7 @@ def update_user_endpoint(
     if user_in.email:
         existing_user = get_user_by_email(session=session, email=user_in.email)
         if existing_user and existing_user.id != user_id:
-            logger.error(
+            logger.warning(
                 f"[update_user_endpoint] Attempting to update user with existing email | email: {user_in.email}, user_id: {user_id}"
             )
             raise HTTPException(
@@ -219,11 +218,10 @@ def delete_user(
 ) -> Message:
     user = session.get(User, user_id)
     if not user:
-        logger.error(f"[delete_user] User not found | user_id: {user_id}")
         raise HTTPException(status_code=404, detail="User not found")
 
     if user == current_user.user:
-        logger.error(
+        logger.warning(
             f"[delete_user] Attempting to delete self by superuser | user_id: {current_user.user.id}"
         )
         raise HTTPException(

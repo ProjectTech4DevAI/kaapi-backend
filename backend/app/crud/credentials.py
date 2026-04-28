@@ -22,7 +22,7 @@ def set_creds_for_org(
     created_credentials = []
 
     if not creds_add.credential:
-        logger.error(
+        logger.warning(
             f"[set_creds_for_org] No credentials provided | project_id: {project_id}"
         )
         raise HTTPException(400, "No credentials provided")
@@ -31,7 +31,7 @@ def set_creds_for_org(
         try:
             validate_provider_credentials(provider, credentials)
         except ValueError as e:
-            logger.error(
+            logger.warning(
                 f"[set_creds_for_org] Validation error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
             )
             raise HTTPException(status_code=400, detail=str(e))
@@ -197,7 +197,7 @@ def update_creds_for_org(
     try:
         validate_provider_credentials(creds_in.provider, credential_data)
     except ValueError as e:
-        logger.error(
+        logger.warning(
             f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
         )
         raise HTTPException(status_code=400, detail=str(e))
