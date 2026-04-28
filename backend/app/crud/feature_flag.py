@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.core.util import now
-from app.models import FeatureFlag
+from app.models import FeatureFlag as FeatureFlagModel
 
 
 def get_feature_flag(
@@ -9,12 +9,12 @@ def get_feature_flag(
     session: Session,
     key: str,
     organization_id: int,
-    project_id: int | None,
-) -> FeatureFlag | None:
-    statement = select(FeatureFlag).where(
-        FeatureFlag.key == key,
-        FeatureFlag.organization_id == organization_id,
-        FeatureFlag.project_id == project_id,
+    project_id: int,
+) -> FeatureFlagModel | None:
+    statement = select(FeatureFlagModel).where(
+        FeatureFlagModel.key == key,
+        FeatureFlagModel.organization_id == organization_id,
+        FeatureFlagModel.project_id == project_id,
     )
     return session.exec(statement).first()
 
@@ -24,12 +24,12 @@ def get_feature_flag_enabled(
     session: Session,
     key: str,
     organization_id: int,
-    project_id: int | None,
+    project_id: int,
 ) -> bool | None:
-    statement = select(FeatureFlag.enabled).where(
-        FeatureFlag.key == key,
-        FeatureFlag.organization_id == organization_id,
-        FeatureFlag.project_id == project_id,
+    statement = select(FeatureFlagModel.enabled).where(
+        FeatureFlagModel.key == key,
+        FeatureFlagModel.organization_id == organization_id,
+        FeatureFlagModel.project_id == project_id,
     )
     return session.exec(statement).first()
 
@@ -39,9 +39,9 @@ def create_feature_flag(
     session: Session,
     key: str,
     organization_id: int,
-    project_id: int | None,
+    project_id: int,
     enabled: bool,
-) -> FeatureFlag | None:
+) -> FeatureFlagModel | None:
     feature_flag = get_feature_flag(
         session=session,
         key=key,
@@ -51,7 +51,7 @@ def create_feature_flag(
     if feature_flag is not None:
         return None
 
-    feature_flag = FeatureFlag(
+    feature_flag = FeatureFlagModel(
         key=key,
         organization_id=organization_id,
         project_id=project_id,
@@ -68,9 +68,9 @@ def update_feature_flag(
     session: Session,
     key: str,
     organization_id: int,
-    project_id: int | None,
+    project_id: int,
     enabled: bool,
-) -> FeatureFlag | None:
+) -> FeatureFlagModel | None:
     feature_flag = get_feature_flag(
         session=session,
         key=key,
@@ -93,7 +93,7 @@ def delete_feature_flag(
     session: Session,
     key: str,
     organization_id: int,
-    project_id: int | None,
+    project_id: int,
 ) -> bool:
     feature_flag = get_feature_flag(
         session=session,
@@ -115,13 +115,13 @@ def list_feature_flags(
     key: str | None = None,
     organization_id: int | None = None,
     project_id: int | None = None,
-) -> list[FeatureFlag]:
-    statement = select(FeatureFlag)
+) -> list[FeatureFlagModel]:
+    statement = select(FeatureFlagModel)
     if key is not None:
-        statement = statement.where(FeatureFlag.key == key)
+        statement = statement.where(FeatureFlagModel.key == key)
     if organization_id is not None:
-        statement = statement.where(FeatureFlag.organization_id == organization_id)
+        statement = statement.where(FeatureFlagModel.organization_id == organization_id)
     if project_id is not None:
-        statement = statement.where(FeatureFlag.project_id == project_id)
-    statement = statement.order_by(FeatureFlag.key.asc())
+        statement = statement.where(FeatureFlagModel.project_id == project_id)
+    statement = statement.order_by(FeatureFlagModel.key.asc())
     return list(session.exec(statement).all())

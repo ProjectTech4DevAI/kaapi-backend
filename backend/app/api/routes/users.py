@@ -24,7 +24,7 @@ from app.models import (
     UserUpdate,
     UserUpdateMe,
 )
-from app.utils import generate_new_account_email, send_email
+from app.utils import generate_new_account_email, load_description, send_email
 from app.core.exception_handlers import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -117,17 +117,20 @@ def update_password_me(
     return Message(message="Password updated successfully")
 
 
-@router.get("/me", response_model=UserPublic)
-def read_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Any:
+@router.get("/me", description=load_description("users/get_me.md"), response_model=UserPublic)
+def read_user_me(
+    session: SessionDep,
+    current_user_dep: AuthContextDep,
+) -> Any:
     user = current_user_dep.user
+    features: list[str] = []
     org = current_user_dep.organization
     project = current_user_dep.project
-    features: list[str] = []
-    if org is not None:
+    if org is not None and project is not None:
         resolved = resolve_all_flags(
             session=session,
             organization_id=org.id,
-            project_id=project.id if project else None,
+            project_id=project.id,
         )
         features = [key for key, enabled in resolved.items() if enabled]
     return UserPublic(**user.model_dump(), features=features)

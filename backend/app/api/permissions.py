@@ -83,21 +83,22 @@ def require_feature(flag: FeatureFlag):
             dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))]
         )
     """
-    from app.core.feature_flags import is_enabled
 
     def _check_with_session(auth_context: AuthContextDep, session: SessionDep):
+        from app.core.feature_flags import is_enabled
+
         org_id = auth_context.organization.id if auth_context.organization else None
         project_id = auth_context.project.id if auth_context.project else None
 
-        if org_id is None or not is_enabled(
+        if org_id is None or project_id is None or not is_enabled(
             session=session,
-            flag=flag,
+            flag=flag.value,
             organization_id=org_id,
             project_id=project_id,
         ):
             raise HTTPException(
                 status_code=403,
-                detail=f"Feature '{flag.name}' is not enabled for this organization.",
+                detail=f"Feature '{flag.value}' is not enabled for this org or project.",
             )
 
     return _check_with_session

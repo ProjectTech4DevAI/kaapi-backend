@@ -1,16 +1,21 @@
 from datetime import datetime
 
-from sqlmodel import Field, SQLModel, UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import Index
+from sqlmodel import Field, SQLModel
 
+from app.core.feature_flags.constants import FeatureFlag as FeatureFlagKeyEnum
 from app.core.util import now
 
 
 class FeatureFlagBase(SQLModel):
-    key: str = Field(
-        min_length=1,
-        max_length=128,
-        index=True,
-        sa_column_kwargs={"comment": "Feature flag key (matches FeatureFlag enum value)"},
+    key: FeatureFlagKeyEnum = Field(
+        sa_column=sa.Column(
+            sa.Enum(FeatureFlagKeyEnum, name="featureflagkey"),
+            nullable=False,
+            index=True,
+            comment="Feature flag key",
+        ),
     )
     organization_id: int = Field(
         foreign_key="organization.id",
@@ -19,11 +24,11 @@ class FeatureFlagBase(SQLModel):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Organization scope for this feature flag"},
     )
-    project_id: int | None = Field(
-        default=None,
+    project_id: int = Field(
         foreign_key="project.id",
+        nullable=False,
         ondelete="CASCADE",
-        sa_column_kwargs={"comment": "Optional project scope for this feature flag"},
+        sa_column_kwargs={"comment": "Project scope for this feature flag"},
     )
     enabled: bool = Field(
         sa_column_kwargs={"comment": "Whether the feature flag is enabled"},
@@ -33,11 +38,12 @@ class FeatureFlagBase(SQLModel):
 class FeatureFlag(FeatureFlagBase, table=True):
     __tablename__ = "feature_flag"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_feature_flag_key_org_project",
             "key",
             "organization_id",
             "project_id",
-            name="uq_feature_flag_key_org_project",
+            unique=True,
         ),
     )
 
@@ -59,23 +65,20 @@ class FeatureFlag(FeatureFlagBase, table=True):
 
 
 class FeatureFlagCreate(SQLModel):
-    key: str = Field(min_length=1, max_length=128)
+    key: FeatureFlagKeyEnum
     organization_id: int
-    project_id: int | None = None
+    project_id: int
     enabled: bool
 
 
-class FeatureFlagUpdate(SQLModel):
-    key: str = Field(min_length=1, max_length=128)
-    organization_id: int
-    project_id: int | None = None
-    enabled: bool
+class FeatureFlagUpdate(FeatureFlagCreate):
+    """Same fields as FeatureFlagCreate; subclassed so the OpenAPI schema keeps a distinct name."""
 
 
 class FeatureFlagDelete(SQLModel):
-    key: str = Field(min_length=1, max_length=128)
+    key: FeatureFlagKeyEnum
     organization_id: int
-    project_id: int | None = None
+    project_id: int
 
 
 class FeatureFlagPublic(FeatureFlagBase):
