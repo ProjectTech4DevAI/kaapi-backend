@@ -2,7 +2,7 @@ name: Deploy Kaapi staging to EC2
 
 on:
   push:
-    branches: [feat/staging-deployment-ec2]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
