@@ -34,7 +34,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy kaapi-backend kaapi-staging" \
-            --parameters commands='["set -eux","sudo -iu ubuntu bash -lc \"cd /data/kaapi-backend && git fetch --all && git pull origin feat/staging-deployment-ec2 && docker compose -f docker-compose.staging.yml build && docker compose -f docker-compose.staging.yml run --rm backend uv run alembic upgrade head && docker compose -f docker-compose.staging.yml up -d --remove-orphans && docker image prune -f\""]' \
+            --parameters commands='["set -eux","chown -R ubuntu:ubuntu /data/kaapi-backend","sudo -iu ubuntu bash -lc \"cd /data/kaapi-backend && git fetch --all && git pull origin feat/staging-deployment-ec2 && docker compose -f docker-compose.staging.yml build && docker compose -f docker-compose.staging.yml run --rm backend uv run alembic upgrade head && docker compose -f docker-compose.staging.yml up -d --remove-orphans && docker image prune -f\""]' \
             --cloud-watch-output-config CloudWatchOutputEnabled=true \
             --query "Command.CommandId" --output text)
           echo "cmd_id=$CMD_ID" >> "$GITHUB_OUTPUT"
