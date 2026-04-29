@@ -149,7 +149,9 @@ class TestPollAllPendingAssessmentEvaluations:
         ), patch(
             "app.assessment.cron.recompute_assessment_status",
             return_value=refreshed,
-        ), patch("app.assessment.cron.check_and_process_assessment", new=AsyncMock()):
+        ), patch(
+            "app.assessment.cron.check_and_process_assessment", new=AsyncMock()
+        ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
         assert result["total"] == 1
@@ -178,7 +180,9 @@ class TestPollAllPendingAssessmentEvaluations:
                     "provider_status": "completed",
                 }
             ),
-        ), patch("app.assessment.cron.assessment_event_broker.publish") as publish:
+        ), patch(
+            "app.assessment.cron.assessment_event_broker.publish"
+        ) as publish:
             result = await poll_all_pending_assessment_evaluations(session=session)
 
         assert result["processed"] == 1

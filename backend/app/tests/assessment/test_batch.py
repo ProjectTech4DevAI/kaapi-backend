@@ -262,9 +262,7 @@ class TestBatchHelpers:
         assert _decode_base64_prefix("###") == b""
 
     def test_resolve_image_mime_and_payload(self) -> None:
-        mime, payload = _resolve_image_mime_and_payload(
-            "https://x/y/file.webp", "url"
-        )
+        mime, payload = _resolve_image_mime_and_payload("https://x/y/file.webp", "url")
         assert mime == "image/webp"
         assert payload.endswith("file.webp")
         mime2, payload2 = _resolve_image_mime_and_payload(
@@ -275,7 +273,9 @@ class TestBatchHelpers:
 
     def test_resolve_attachment_values(self) -> None:
         image_url_att = AssessmentAttachment(column="img", type="image", format="url")
-        image_b64_att = AssessmentAttachment(column="img", type="image", format="base64")
+        image_b64_att = AssessmentAttachment(
+            column="img", type="image", format="base64"
+        )
         pdf_url_att = AssessmentAttachment(column="pdf", type="pdf", format="url")
         pdf_b64_att = AssessmentAttachment(column="pdf", type="pdf", format="base64")
 
@@ -292,7 +292,9 @@ class TestBatchHelpers:
         assert values[0]["type"] == "input_file"
         assert "file_url" in values[0]
 
-        values = _resolve_attachment_values("data:application/pdf;base64,AAAA", pdf_b64_att)
+        values = _resolve_attachment_values(
+            "data:application/pdf;base64,AAAA", pdf_b64_att
+        )
         assert values[0]["file_data"].startswith("data:application/pdf;base64,")
 
     def test_build_openai_and_google_jsonl(self) -> None:

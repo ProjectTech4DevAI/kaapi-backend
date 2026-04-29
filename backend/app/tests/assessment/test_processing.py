@@ -286,7 +286,9 @@ class TestCheckAndProcessAssessment:
         batch_job.provider_output_file_id = None
         batch_job.id = 99
 
-        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+        with patch(
+            "app.assessment.processing.get_batch_job", return_value=batch_job
+        ), patch(
             "app.assessment.processing._get_batch_provider", return_value=MagicMock()
         ), patch(
             "app.assessment.processing.poll_batch_status",
@@ -294,7 +296,9 @@ class TestCheckAndProcessAssessment:
                 "request_counts": {"failed": 3, "completed": 0, "total": 3},
                 "error_file_id": "err-1",
             },
-        ), patch("app.assessment.processing.update_assessment_run_status"), patch(
+        ), patch(
+            "app.assessment.processing.update_assessment_run_status"
+        ), patch(
             "app.assessment.processing.recompute_assessment_status"
         ):
             result = await check_and_process_assessment(run=run, session=session)
@@ -312,7 +316,9 @@ class TestCheckAndProcessAssessment:
         batch_job.provider_output_file_id = None
         batch_job.id = 99
 
-        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+        with patch(
+            "app.assessment.processing.get_batch_job", return_value=batch_job
+        ), patch(
             "app.assessment.processing._get_batch_provider", return_value=MagicMock()
         ), patch(
             "app.assessment.processing.poll_batch_status",
@@ -332,7 +338,9 @@ class TestCheckAndProcessAssessment:
         batch_job.provider_output_file_id = "file-1"
         batch_job.id = 99
 
-        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+        with patch(
+            "app.assessment.processing.get_batch_job", return_value=batch_job
+        ), patch(
             "app.assessment.processing._get_batch_provider", return_value=MagicMock()
         ), patch(
             "app.assessment.processing.poll_batch_status",
@@ -346,9 +354,13 @@ class TestCheckAndProcessAssessment:
         ), patch(
             "app.assessment.processing.parse_assessment_output",
             return_value=[{"row_id": "row_0", "error": None}],
-        ), patch("app.assessment.processing.update_assessment_run_status"), patch(
+        ), patch(
+            "app.assessment.processing.update_assessment_run_status"
+        ), patch(
             "app.assessment.processing.recompute_assessment_status"
-        ), patch("app.assessment.processing.assessment_event_broker.publish") as publish:
+        ), patch(
+            "app.assessment.processing.assessment_event_broker.publish"
+        ) as publish:
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "processed"
@@ -363,11 +375,17 @@ class TestCheckAndProcessAssessment:
         batch_job.provider_status = "failed"
         batch_job.error_message = "provider failed"
 
-        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+        with patch(
+            "app.assessment.processing.get_batch_job", return_value=batch_job
+        ), patch(
             "app.assessment.processing._get_batch_provider", return_value=MagicMock()
-        ), patch("app.assessment.processing.poll_batch_status", return_value={}), patch(
+        ), patch(
+            "app.assessment.processing.poll_batch_status", return_value={}
+        ), patch(
             "app.assessment.processing.update_assessment_run_status"
-        ), patch("app.assessment.processing.recompute_assessment_status"):
+        ), patch(
+            "app.assessment.processing.recompute_assessment_status"
+        ):
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "failed"
@@ -381,9 +399,13 @@ class TestCheckAndProcessAssessment:
         batch_job.provider = "openai"
         batch_job.provider_status = "in_progress"
 
-        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+        with patch(
+            "app.assessment.processing.get_batch_job", return_value=batch_job
+        ), patch(
             "app.assessment.processing._get_batch_provider", return_value=MagicMock()
-        ), patch("app.assessment.processing.poll_batch_status", return_value={}):
+        ), patch(
+            "app.assessment.processing.poll_batch_status", return_value={}
+        ):
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "no_change"

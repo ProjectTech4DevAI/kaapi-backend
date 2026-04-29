@@ -157,10 +157,14 @@ class TestStartAssessment:
         run = _make_run()
         run.status = "failed"
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="openai", params={"model": "gpt-4.1-mini"})
+            completion=SimpleNamespace(
+                provider="openai", params={"model": "gpt-4.1-mini"}
+            )
         )
 
-        with patch("app.assessment.service.get_dataset_by_id", return_value=dataset), patch(
+        with patch(
+            "app.assessment.service.get_dataset_by_id", return_value=dataset
+        ), patch(
             "app.assessment.service.resolve_evaluation_config",
             return_value=(config_blob, None),
         ), patch(
@@ -175,7 +179,9 @@ class TestStartAssessment:
         ), patch(
             "app.assessment.service.update_assessment_run_status",
             return_value=run,
-        ) as update_run, patch("app.assessment.service.recompute_assessment_status"):
+        ) as update_run, patch(
+            "app.assessment.service.recompute_assessment_status"
+        ):
             response = start_assessment(
                 session=session,
                 request=request,
@@ -239,9 +245,9 @@ class TestRetryHelpers:
             runs=[],
         )
 
-        with patch("app.assessment.service.get_assessment_runs_for_manager", return_value=[run]), patch(
-            "app.assessment.service.start_assessment", return_value=result
-        ):
+        with patch(
+            "app.assessment.service.get_assessment_runs_for_manager", return_value=[run]
+        ), patch("app.assessment.service.start_assessment", return_value=result):
             resp = retry_assessment(session, assessment, 1, 1)
         assert resp.assessment_id == 1
 

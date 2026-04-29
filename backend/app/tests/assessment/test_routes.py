@@ -134,9 +134,9 @@ class TestDatasetRoutes:
     def test_get_dataset_with_signed_url(self) -> None:
         storage = MagicMock()
         storage.get_signed_url.return_value = "signed-url"
-        with patch("app.assessment.routes.get_dataset_by_id", return_value=_dataset()), patch(
-            "app.assessment.routes.get_cloud_storage", return_value=storage
-        ):
+        with patch(
+            "app.assessment.routes.get_dataset_by_id", return_value=_dataset()
+        ), patch("app.assessment.routes.get_cloud_storage", return_value=storage):
             resp = get_dataset(
                 7,
                 session=MagicMock(),
@@ -148,13 +148,15 @@ class TestDatasetRoutes:
         assert resp.data.signed_url == "signed-url"
 
     def test_delete_dataset_success_and_error(self) -> None:
-        with patch("app.assessment.routes.get_dataset_by_id", return_value=_dataset()), patch(
-            "app.assessment.routes.delete_dataset_crud", return_value=None
-        ):
+        with patch(
+            "app.assessment.routes.get_dataset_by_id", return_value=_dataset()
+        ), patch("app.assessment.routes.delete_dataset_crud", return_value=None):
             resp = delete_dataset(7, session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
 
-        with patch("app.assessment.routes.get_dataset_by_id", return_value=_dataset()), patch(
+        with patch(
+            "app.assessment.routes.get_dataset_by_id", return_value=_dataset()
+        ), patch(
             "app.assessment.routes.delete_dataset_crud",
             return_value="cannot delete",
         ):
@@ -183,7 +185,9 @@ class TestEvaluationRoutes:
             runs=[],
         )
         with patch("app.assessment.routes.start_assessment", return_value=result):
-            resp = create_evaluation(request, session=MagicMock(), auth_context=_auth_context())
+            resp = create_evaluation(
+                request, session=MagicMock(), auth_context=_auth_context()
+            )
         assert resp.success is True
 
     def test_retry_endpoints(self) -> None:
@@ -195,15 +199,17 @@ class TestEvaluationRoutes:
             num_configs=1,
             runs=[],
         )
-        with patch("app.assessment.routes.get_assessment_by_id", return_value=_assessment()), patch(
-            "app.assessment.routes.retry_assessment", return_value=result
-        ):
-            resp = retry_assessment_manager(10, session=MagicMock(), auth_context=_auth_context())
+        with patch(
+            "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
+        ), patch("app.assessment.routes.retry_assessment", return_value=result):
+            resp = retry_assessment_manager(
+                10, session=MagicMock(), auth_context=_auth_context()
+            )
         assert resp.success is True
 
-        with patch("app.assessment.routes.get_assessment_run_by_id", return_value=_run()), patch(
-            "app.assessment.routes.retry_assessment_run", return_value=result
-        ):
+        with patch(
+            "app.assessment.routes.get_assessment_run_by_id", return_value=_run()
+        ), patch("app.assessment.routes.retry_assessment_run", return_value=result):
             resp = retry_assessment_evaluation(
                 22, session=MagicMock(), auth_context=_auth_context()
             )
@@ -227,7 +233,9 @@ class TestEvaluationRoutes:
 
 class TestManagerAndRunRoutes:
     def test_list_and_get_managers(self) -> None:
-        with patch("app.assessment.routes.list_assessments", return_value=[_assessment()]):
+        with patch(
+            "app.assessment.routes.list_assessments", return_value=[_assessment()]
+        ):
             resp = list_assessment_managers(
                 session=MagicMock(),
                 auth_context=_auth_context(),
@@ -235,7 +243,9 @@ class TestManagerAndRunRoutes:
         assert resp.success is True
         assert len(resp.data or []) == 1
 
-        with patch("app.assessment.routes.get_assessment_by_id", return_value=_assessment()):
+        with patch(
+            "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
+        ):
             resp = get_assessment_manager(
                 10,
                 session=MagicMock(),
@@ -245,14 +255,18 @@ class TestManagerAndRunRoutes:
 
         with patch("app.assessment.routes.get_assessment_by_id", return_value=None):
             with pytest.raises(HTTPException, match="not found"):
-                get_assessment_manager(10, session=MagicMock(), auth_context=_auth_context())
+                get_assessment_manager(
+                    10, session=MagicMock(), auth_context=_auth_context()
+                )
 
     def test_list_and_get_runs(self) -> None:
         with patch("app.assessment.routes.list_assessment_runs", return_value=[_run()]):
             resp = list_evaluations(session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
 
-        with patch("app.assessment.routes.get_assessment_run_by_id", return_value=_run()):
+        with patch(
+            "app.assessment.routes.get_assessment_run_by_id", return_value=_run()
+        ):
             resp = get_evaluation(22, session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
 
@@ -267,11 +281,13 @@ class TestExportRoutes:
         run2 = _run()
         run2.id = 23
         run2.config_version = 2
-        with patch("app.assessment.routes.get_assessment_by_id", return_value=_assessment()), patch(
+        with patch(
+            "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
+        ), patch(
             "app.assessment.routes.list_assessment_runs", return_value=[run1, run2]
         ), patch(
             "app.assessment.routes.load_export_rows_for_run",
-            side_effect=[[ _row(run_id=22)], [_row(run_id=23)]],
+            side_effect=[[_row(run_id=22)], [_row(run_id=23)]],
         ), patch(
             "app.assessment.routes.sort_export_rows",
             side_effect=lambda rows: rows,
@@ -287,11 +303,13 @@ class TestExportRoutes:
             )
         assert json_resp.success is True
 
-        with patch("app.assessment.routes.get_assessment_by_id", return_value=_assessment()), patch(
+        with patch(
+            "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
+        ), patch(
             "app.assessment.routes.list_assessment_runs", return_value=[run1, run2]
         ), patch(
             "app.assessment.routes.load_export_rows_for_run",
-            side_effect=[[ _row(run_id=22)], [_row(run_id=23)]],
+            side_effect=[[_row(run_id=22)], [_row(run_id=23)]],
         ), patch(
             "app.assessment.routes.sort_export_rows",
             side_effect=lambda rows: rows,
@@ -312,7 +330,9 @@ class TestExportRoutes:
 
     def test_export_assessment_run_results_json_and_file(self) -> None:
         run = _run()
-        with patch("app.assessment.routes.get_assessment_run_by_id", return_value=run), patch(
+        with patch(
+            "app.assessment.routes.get_assessment_run_by_id", return_value=run
+        ), patch(
             "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
         ), patch(
             "app.assessment.routes.load_export_rows_for_run", return_value=[_row()]
@@ -331,7 +351,9 @@ class TestExportRoutes:
             )
         assert json_resp.success is True
 
-        with patch("app.assessment.routes.get_assessment_run_by_id", return_value=run), patch(
+        with patch(
+            "app.assessment.routes.get_assessment_run_by_id", return_value=run
+        ), patch(
             "app.assessment.routes.get_assessment_by_id", return_value=_assessment()
         ), patch(
             "app.assessment.routes.load_export_rows_for_run", return_value=[_row()]
