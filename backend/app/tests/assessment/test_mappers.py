@@ -168,6 +168,10 @@ class TestMapKaapiToOpenAIParams:
         )
         assert result["reasoning"]["summary"] is None
 
+    def test_top_p_set_for_non_reasoning_model(self) -> None:
+        result, _ = self._call({"model": "gpt-4o", "top_p": 0.85})
+        assert result["top_p"] == 0.85
+
 
 class TestMapKaapiToGoogleParams:
     def _call(self, params: dict):
@@ -218,3 +222,53 @@ class TestMapKaapiToGoogleParams:
             {"model": "gemini-1.5-pro", "instructions": "Be kind\\n"}
         )
         assert result["instructions"] == "Be kind\n"
+
+    def test_max_output_tokens_set(self) -> None:
+        result, _ = self._call({"model": "gemini-1.5-pro", "max_output_tokens": 512})
+        assert result["max_output_tokens"] == 512
+
+    def test_reasoning_set(self) -> None:
+        result, _ = self._call(
+            {"model": "gemini-2.0-flash-thinking", "reasoning": "high"}
+        )
+        assert result["reasoning"] == "high"
+
+
+class TestConvertJsonSchemaToGoogle:
+    def _call(self, schema: dict) -> dict:
+        mock_result = MagicMock()
+        mock_result.model_dump.return_value = {"properties": {"score": {}}}
+        with patch(
+            "app.assessment.mappers.genai_transformers.t_schema",
+            return_value=mock_result,
+        ):
+            from app.assessment.mappers import _convert_json_schema_to_google
+
+            return _convert_json_schema_to_google(schema)
+
+    def test_property_ordering_added_from_required(self) -> None:
+        schema = {
+            "type": "object",
+            "required": ["score", "reason"],
+            "properties": {"score": {}, "reason": {}},
+        }
+        result = self._call(schema)
+        assert result["propertyOrdering"] == ["score", "reason"]
+
+    def test_property_ordering_falls_back_to_keys(self) -> None:
+        schema = {"type": "object", "properties": {"a": {}, "b": {}}}
+        result = self._call(schema)
+        assert "propertyOrdering" in result
+
+
+class TestOpenAIResponseFormat:
+    def _call(self, params: dict):
+        with patch(
+            "app.assessment.mappers.litellm.supports_reasoning",
+            return_value=False,
+        ):
+            return map_kaapi_to_openai_params(params)
+
+    def test_non_text_response_format_sets_text_field(self) -> None:
+        result, _ = self._call({"model": "gpt-4o", "response_format": "json_object"})
+        assert result["text"]["format"]["type"] == "json_object"

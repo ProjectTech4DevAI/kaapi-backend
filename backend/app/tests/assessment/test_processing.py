@@ -1,10 +1,16 @@
 """Tests for assessment/processing.py pure functions."""
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.assessment.processing import _sanitize_json_output, parse_assessment_output
+from app.assessment.processing import (
+    _get_batch_provider,
+    _sanitize_json_output,
+    parse_assessment_output,
+    poll_all_pending_assessments,
+)
 
 
 class TestSanitizeJsonOutput:
@@ -179,6 +185,18 @@ class TestParseAssessmentOutputGoogle:
         results = parse_assessment_output(raw, "google")
         assert results[0]["error"] == "Empty response"
 
+    def test_google_empty_text_from_response(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "app.assessment.processing.extract_text_from_response_dict",
+            return_value="",
+        ):
+            raw = [{"key": "row_0", "response": {"candidates": []}, "error": None}]
+            results = parse_assessment_output(raw, "google")
+        assert results[0]["output"] is None
+        assert results[0]["error"] == "Empty response output"
+
     def test_google_native_provider_accepted(self) -> None:
         from unittest.mock import patch
 
@@ -189,3 +207,57 @@ class TestParseAssessmentOutputGoogle:
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
             results = parse_assessment_output(raw, "google-native")
         assert results[0]["output"] == "out"
+
+
+class TestGetBatchProvider:
+    def test_unsupported_provider_raises(self) -> None:
+        session = MagicMock()
+        with pytest.raises(ValueError, match="Unsupported provider"):
+            _get_batch_provider(
+                session=session,
+                provider_name="anthropic",
+                organization_id=1,
+                project_id=1,
+            )
+
+    def test_openai_provider_returned(self) -> None:
+        session = MagicMock()
+        mock_client = MagicMock()
+        with patch(
+            "app.assessment.processing.get_openai_client", return_value=mock_client
+        ), patch("app.assessment.processing.OpenAIBatchProvider") as mock_cls:
+            _get_batch_provider(
+                session=session,
+                provider_name="openai",
+                organization_id=1,
+                project_id=1,
+            )
+        mock_cls.assert_called_once_with(client=mock_client)
+
+    def test_google_provider_returned(self) -> None:
+        session = MagicMock()
+        mock_gemini = MagicMock()
+        with patch("app.assessment.processing.GeminiClient") as mock_cls, patch(
+            "app.assessment.processing.GeminiBatchProvider"
+        ) as mock_batch_cls:
+            mock_cls.from_credentials.return_value = mock_gemini
+            _get_batch_provider(
+                session=session,
+                provider_name="google",
+                organization_id=1,
+                project_id=1,
+            )
+        mock_batch_cls.assert_called_once_with(client=mock_gemini.client)
+
+
+class TestPollAllPendingAssessments:
+    @pytest.mark.asyncio
+    async def test_delegates_to_cron(self) -> None:
+        session = MagicMock()
+        expected = {"processed": 2, "failed": 0}
+        with patch(
+            "app.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(return_value=expected),
+        ):
+            result = await poll_all_pending_assessments(session=session)
+        assert result == expected

@@ -215,8 +215,8 @@ def parse_assessment_output(
                 results.append(
                     {
                         "row_id": row_id,
-                        "output": text,
-                        "error": None,
+                        "output": text if text else None,
+                        "error": None if text else "Empty response output",
                         "usage": None,
                     }
                 )
@@ -250,7 +250,7 @@ async def check_and_process_assessment(
     Returns:
         Dict with status information
     """
-    log_prefix = f"[assessment_run={run.id}]"
+    log_prefix = f"[check_and_process_assessment][assessment_run={run.id}]"
     previous_status = run.status
 
     try:

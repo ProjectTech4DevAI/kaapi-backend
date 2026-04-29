@@ -56,16 +56,30 @@ def _expand_input_columns(
             row.pop("input_data", None)
         return row_payload, []
 
+    reserved_fields = set(AssessmentExportRow.model_fields.keys()) - {"input_data"}
+    key_map: dict[str, str] = {}
+    for k in input_keys:
+        col = f"input_{k}" if k in reserved_fields else k
+        key_map[k] = col
+
+    collisions = {k: v for k, v in key_map.items() if k != v}
+    if collisions:
+        logger.warning(
+            "[_expand_input_columns] Input dataset columns conflict with reserved "
+            "export fields and were namespaced: %s",
+            collisions,
+        )
+
     expanded: list[dict[str, Any]] = []
     for row in row_payload:
         input_data = row.pop("input_data", None) or {}
         new_row = {}
         for k in input_keys:
-            new_row[k] = input_data.get(k)
+            new_row[key_map[k]] = input_data.get(k)
         new_row.update(row)
         expanded.append(new_row)
 
-    return expanded, list(input_keys)
+    return expanded, [key_map[k] for k in input_keys]
 
 
 def _drop_empty_columns(

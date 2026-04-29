@@ -152,34 +152,45 @@ async def poll_all_pending_assessment_evaluations(
                     f"error={e}",
                     exc_info=True,
                 )
-                update_assessment_run_status(
-                    session=session,
-                    run=run,
-                    status="failed",
-                    error_message="Processing failed. Check server logs for details.",
-                )
-                refreshed_assessment = recompute_assessment_status(
-                    session=session, assessment_id=assessment.id
-                )
-                failure_result = {
-                    "assessment_id": run.assessment_id,
-                    "run_id": run.id,
-                    "run_name": run.run_name,
-                    "config_id": str(run.config_id) if run.config_id else None,
-                    "config_version": run.config_version,
-                    "action": "failed",
-                    "error": "Processing failed",
-                    "current_status": "failed",
-                }
-                all_results.append(failure_result)
-                assessment_event_broker.publish(
-                    _build_callback_payload(
-                        refreshed_assessment,
-                        run,
-                        failure_result,
+                try:
+                    update_assessment_run_status(
+                        session=session,
+                        run=run,
+                        status="failed",
+                        error_message="Processing failed. Check server logs for details.",
                     )
-                )
-                failed += 1
+                    refreshed_assessment = recompute_assessment_status(
+                        session=session, assessment_id=assessment.id
+                    )
+                    failure_result = {
+                        "assessment_id": run.assessment_id,
+                        "run_id": run.id,
+                        "run_name": run.run_name,
+                        "config_id": str(run.config_id) if run.config_id else None,
+                        "config_version": run.config_version,
+                        "action": "failed",
+                        "error": "Processing failed",
+                        "current_status": "failed",
+                    }
+                    all_results.append(failure_result)
+                    assessment_event_broker.publish(
+                        _build_callback_payload(
+                            refreshed_assessment,
+                            run,
+                            failure_result,
+                        )
+                    )
+                    failed += 1
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "[poll_all_pending_assessment_evaluations] "
+                        f"Cleanup failed for run {run.id} | "
+                        f"assessment_id={run.assessment_id} | "
+                        f"run_name={run.run_name} | "
+                        f"error={cleanup_exc}",
+                        exc_info=True,
+                    )
+                    failed += 1
 
     logger.info(
         "[poll_all_pending_assessment_evaluations] Summary | "
