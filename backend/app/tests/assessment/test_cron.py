@@ -4,7 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.assessment.cron import _build_callback_payload, _log_config_progress
+from app.assessment.cron import (
+    _build_callback_payload,
+    _log_config_progress,
+    poll_all_pending_assessment_evaluations,
+)
 
 
 def _make_assessment(*, id: int = 1, status: str = "processing") -> MagicMock:
@@ -119,3 +123,89 @@ class TestBuildCallbackPayload:
         run = _make_run()
         payload = _build_callback_payload(assessment, run, {})
         assert payload["success"] is True
+
+
+class TestPollAllPendingAssessmentEvaluations:
+    @pytest.mark.asyncio
+    async def test_no_pending_assessments(self) -> None:
+        session = MagicMock()
+        session.exec.return_value.all.return_value = []
+        result = await poll_all_pending_assessment_evaluations(session=session)
+        assert result["total"] == 0
+        assert result["processed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_active_runs_recompute(self) -> None:
+        session = MagicMock()
+        assessment = _make_assessment(id=1, status="processing")
+        session.exec.return_value.all.return_value = [assessment]
+        refreshed = _make_assessment(id=1, status="processing")
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "app.assessment.cron.get_assessment_runs_for_manager",
+            return_value=[_make_run(id=11, run_name="exp", config_version=1)],
+        ), patch(
+            "app.assessment.cron.recompute_assessment_status",
+            return_value=refreshed,
+        ), patch("app.assessment.cron.check_and_process_assessment", new=AsyncMock()):
+            result = await poll_all_pending_assessment_evaluations(session=session)
+
+        assert result["total"] == 1
+        assert result["still_processing"] == 1
+
+    @pytest.mark.asyncio
+    async def test_active_run_processed_publishes_event(self) -> None:
+        session = MagicMock()
+        assessment = _make_assessment(id=1, status="processing")
+        run = _make_run(id=11)
+        run.status = "processing"
+        session.exec.return_value.all.return_value = [assessment]
+        session.get.return_value = assessment
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "app.assessment.cron.get_assessment_runs_for_manager",
+            return_value=[run],
+        ), patch(
+            "app.assessment.cron.check_and_process_assessment",
+            new=AsyncMock(
+                return_value={
+                    "action": "processed",
+                    "current_status": "completed",
+                    "provider_status": "completed",
+                }
+            ),
+        ), patch("app.assessment.cron.assessment_event_broker.publish") as publish:
+            result = await poll_all_pending_assessment_evaluations(session=session)
+
+        assert result["processed"] == 1
+        publish.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_active_run_failure_and_cleanup_failure(self) -> None:
+        session = MagicMock()
+        assessment = _make_assessment(id=1, status="processing")
+        run = _make_run(id=11)
+        run.status = "processing"
+        session.exec.return_value.all.return_value = [assessment]
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "app.assessment.cron.get_assessment_runs_for_manager",
+            return_value=[run],
+        ), patch(
+            "app.assessment.cron.check_and_process_assessment",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ), patch(
+            "app.assessment.cron.update_assessment_run_status",
+            side_effect=RuntimeError("cleanup-failed"),
+        ), patch(
+            "app.assessment.cron.recompute_assessment_status",
+        ):
+            result = await poll_all_pending_assessment_evaluations(session=session)
+
+        assert result["failed"] == 1

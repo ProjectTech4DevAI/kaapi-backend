@@ -10,6 +10,7 @@ from app.assessment.processing import (
     _sanitize_json_output,
     parse_assessment_output,
     poll_all_pending_assessments,
+    check_and_process_assessment,
 )
 
 
@@ -261,3 +262,142 @@ class TestPollAllPendingAssessments:
         ):
             result = await poll_all_pending_assessments(session=session)
         assert result == expected
+
+
+class TestCheckAndProcessAssessment:
+    def _make_run(self) -> MagicMock:
+        run = MagicMock()
+        run.id = 1
+        run.batch_job_id = 99
+        run.status = "processing"
+        run.assessment_id = 10
+        run.organization_id = 1
+        run.project_id = 1
+        run.run_name = "exp"
+        return run
+
+    @pytest.mark.asyncio
+    async def test_completed_with_no_output_file_and_failed_counts(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        batch_job = MagicMock()
+        batch_job.provider = "openai"
+        batch_job.provider_status = "completed"
+        batch_job.provider_output_file_id = None
+        batch_job.id = 99
+
+        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+        ), patch(
+            "app.assessment.processing.poll_batch_status",
+            return_value={
+                "request_counts": {"failed": 3, "completed": 0, "total": 3},
+                "error_file_id": "err-1",
+            },
+        ), patch("app.assessment.processing.update_assessment_run_status"), patch(
+            "app.assessment.processing.recompute_assessment_status"
+        ):
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "failed"
+        assert result["current_status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_completed_with_no_output_file_not_ready(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        batch_job = MagicMock()
+        batch_job.provider = "openai"
+        batch_job.provider_status = "completed"
+        batch_job.provider_output_file_id = None
+        batch_job.id = 99
+
+        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+        ), patch(
+            "app.assessment.processing.poll_batch_status",
+            return_value={"request_counts": {"failed": 0, "completed": 1, "total": 1}},
+        ):
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "no_change"
+
+    @pytest.mark.asyncio
+    async def test_completed_with_output_file_processes_results(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        batch_job = MagicMock()
+        batch_job.provider = "openai"
+        batch_job.provider_status = "completed"
+        batch_job.provider_output_file_id = "file-1"
+        batch_job.id = 99
+
+        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+        ), patch(
+            "app.assessment.processing.poll_batch_status",
+            return_value={},
+        ), patch(
+            "app.assessment.processing.download_batch_results",
+            return_value=[{"custom_id": "row_0"}],
+        ), patch(
+            "app.assessment.processing.upload_batch_results_to_object_store",
+            return_value="s3://results",
+        ), patch(
+            "app.assessment.processing.parse_assessment_output",
+            return_value=[{"row_id": "row_0", "error": None}],
+        ), patch("app.assessment.processing.update_assessment_run_status"), patch(
+            "app.assessment.processing.recompute_assessment_status"
+        ), patch("app.assessment.processing.assessment_event_broker.publish") as publish:
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "processed"
+        assert publish.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_terminal_provider_status_marks_failed(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        batch_job = MagicMock()
+        batch_job.provider = "openai"
+        batch_job.provider_status = "failed"
+        batch_job.error_message = "provider failed"
+
+        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+        ), patch("app.assessment.processing.poll_batch_status", return_value={}), patch(
+            "app.assessment.processing.update_assessment_run_status"
+        ), patch("app.assessment.processing.recompute_assessment_status"):
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "failed"
+        assert result["provider_status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_still_processing_returns_no_change(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        batch_job = MagicMock()
+        batch_job.provider = "openai"
+        batch_job.provider_status = "in_progress"
+
+        with patch("app.assessment.processing.get_batch_job", return_value=batch_job), patch(
+            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+        ), patch("app.assessment.processing.poll_batch_status", return_value={}):
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "no_change"
+
+    @pytest.mark.asyncio
+    async def test_exception_path_marks_failed(self) -> None:
+        session = MagicMock()
+        run = self._make_run()
+        run.batch_job_id = None
+
+        with patch("app.assessment.processing.update_assessment_run_status"), patch(
+            "app.assessment.processing.recompute_assessment_status"
+        ):
+            result = await check_and_process_assessment(run=run, session=session)
+
+        assert result["action"] == "failed"
+        assert result["provider_status"] == "unknown"

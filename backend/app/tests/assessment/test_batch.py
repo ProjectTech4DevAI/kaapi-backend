@@ -9,10 +9,22 @@ from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from app.assessment.batch import (
+    _build_text_prompt,
+    _decode_base64_prefix,
+    _guess_image_mime_from_base64,
+    _guess_image_mime_from_url,
     _load_dataset_rows,
     _parse_excel_rows,
+    _resolve_attachment_values,
+    _resolve_image_mime_and_payload,
+    _split_attachment_urls,
+    _split_data_url,
+    _to_direct_attachment_url,
+    build_google_jsonl,
+    build_openai_jsonl,
     submit_assessment_batch,
 )
+from app.assessment.models import AssessmentAttachment
 
 
 def _make_run() -> MagicMock:
@@ -210,3 +222,99 @@ class TestBatchDatasetParsing:
         ):
             with pytest.raises(ValueError, match="Failed to parse XLSX dataset rows"):
                 _parse_excel_rows(b"bad")
+
+
+class TestBatchHelpers:
+    def test_build_text_prompt_template_and_concat(self) -> None:
+        row = {"q": " What? ", "ctx": "Context"}
+        templated = _build_text_prompt(row, ["q", "ctx"], "Q:{q}\nC:{ctx}")
+        assert "Q:" in templated
+        assert "What?" in templated
+        concatenated = _build_text_prompt(row, ["q", "ctx"], None)
+        assert "What?" in concatenated
+        assert concatenated.endswith("\nContext")
+
+    def test_split_and_direct_urls(self) -> None:
+        urls = _split_attachment_urls(" https://a.com\nhttps://b.com , https://c.com ")
+        assert urls == ["https://a.com", "https://b.com", "https://c.com"]
+        image_url = _to_direct_attachment_url(
+            "https://drive.google.com/file/d/abc123/view?usp=sharing", "image"
+        )
+        assert "googleusercontent.com" in image_url
+        pdf_url = _to_direct_attachment_url(
+            "https://drive.google.com/open?id=abc123", "pdf"
+        )
+        assert "drive.google.com/uc" in pdf_url
+
+    def test_data_url_and_mime_guessers(self) -> None:
+        mime, payload = _split_data_url("data:image/png;base64,AAAA")
+        assert mime == "image/png"
+        assert payload == "AAAA"
+        none_mime, raw = _split_data_url("rawbase64")
+        assert none_mime is None
+        assert raw == "rawbase64"
+        assert _guess_image_mime_from_url("https://x/y/file.jpeg") == "image/jpeg"
+        assert _guess_image_mime_from_url("https://x/y/file.unknown") is None
+
+    def test_base64_guess_and_decode(self) -> None:
+        png_head = "iVBORw0KGgoAAAANSUhEUg=="
+        assert _guess_image_mime_from_base64(png_head) == "image/png"
+        assert _decode_base64_prefix("###") == b""
+
+    def test_resolve_image_mime_and_payload(self) -> None:
+        mime, payload = _resolve_image_mime_and_payload(
+            "https://x/y/file.webp", "url"
+        )
+        assert mime == "image/webp"
+        assert payload.endswith("file.webp")
+        mime2, payload2 = _resolve_image_mime_and_payload(
+            "data:image/jpeg;base64,AAAA", "base64"
+        )
+        assert mime2 == "image/jpeg"
+        assert payload2 == "AAAA"
+
+    def test_resolve_attachment_values(self) -> None:
+        image_url_att = AssessmentAttachment(column="img", type="image", format="url")
+        image_b64_att = AssessmentAttachment(column="img", type="image", format="base64")
+        pdf_url_att = AssessmentAttachment(column="pdf", type="pdf", format="url")
+        pdf_b64_att = AssessmentAttachment(column="pdf", type="pdf", format="base64")
+
+        values = _resolve_attachment_values(
+            "https://example.com/a.png,https://example.com/b.png", image_url_att
+        )
+        assert len(values) == 2
+        assert values[0]["type"] == "input_image"
+
+        values = _resolve_attachment_values("data:image/png;base64,AAAA", image_b64_att)
+        assert values[0]["image_url"].startswith("data:image/png;base64,")
+
+        values = _resolve_attachment_values("https://example.com/a.pdf", pdf_url_att)
+        assert values[0]["type"] == "input_file"
+        assert "file_url" in values[0]
+
+        values = _resolve_attachment_values("data:application/pdf;base64,AAAA", pdf_b64_att)
+        assert values[0]["file_data"].startswith("data:application/pdf;base64,")
+
+    def test_build_openai_and_google_jsonl(self) -> None:
+        rows = [{"q": "What is 2+2?", "img": "https://example.com/a.png"}]
+        attachments = [AssessmentAttachment(column="img", type="image", format="url")]
+
+        openai_jsonl = build_openai_jsonl(
+            rows=rows,
+            text_columns=["q"],
+            attachments=attachments,
+            prompt_template=None,
+            openai_params={"model": "gpt-4.1-mini"},
+        )
+        assert len(openai_jsonl) == 1
+        assert openai_jsonl[0]["custom_id"] == "row_0"
+
+        google_jsonl = build_google_jsonl(
+            rows=rows,
+            text_columns=["q"],
+            attachments=attachments,
+            prompt_template=None,
+            google_params={"temperature": 0.2, "instructions": "system"},
+        )
+        assert len(google_jsonl) == 1
+        assert google_jsonl[0]["metadata"]["key"] == "row_0"
