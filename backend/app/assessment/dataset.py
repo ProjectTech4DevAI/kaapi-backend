@@ -1,4 +1,4 @@
-"""Dataset management service for assessment evaluations (CSV + Excel).
+"""Dataset management service for assessment evaluations (CSV + XLSX).
 
 Upload stores files directly to object store as-is (no column validation,
 no format conversion). Row count is computed for metadata.
@@ -19,10 +19,17 @@ from app.services.evaluations.validators import sanitize_dataset_name
 
 logger = logging.getLogger(__name__)
 
+try:
+    from openpyxl.utils.exceptions import InvalidFileException
+except Exception:  # pragma: no cover - openpyxl is expected in runtime deps
+
+    class InvalidFileException(Exception):
+        pass
+
+
 _MIME_TYPES = {
     ".csv": "text/csv",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xls": "application/vnd.ms-excel",
 }
 
 
@@ -94,17 +101,26 @@ def _count_excel_rows(content: bytes) -> int:
         return sum(
             1 for row in rows_iter if row and any(cell is not None for cell in row)
         )
+    except InvalidFileException as e:
+        logger.warning("[_count_excel_rows] Invalid XLSX file content: %s", e)
+        raise
     except Exception as e:
-        logger.warning(f"[_count_excel_rows] Failed to count rows | {e}")
-        return 0
+        logger.warning(
+            "[_count_excel_rows] Failed to count rows | %s", e, exc_info=True
+        )
+        raise ValueError("Failed to parse XLSX file") from e
     finally:
         if wb is not None:
             wb.close()
 
 
 def _count_rows(content: bytes, file_ext: str) -> int:
-    """Count data rows in a file (CSV or Excel), excluding the header."""
-    if file_ext in (".xlsx", ".xls"):
+    """Count data rows in a file (CSV or XLSX), excluding the header."""
+    if file_ext == ".xls":
+        raise ValueError(
+            "Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv."
+        )
+    if file_ext == ".xlsx":
         return _count_excel_rows(content)
     return _count_csv_rows(content)
 
@@ -130,7 +146,20 @@ def upload_dataset(
             f"[upload_dataset] Dataset name sanitized | '{original_name}' -> '{dataset_name}'"
         )
 
-    row_count = _count_rows(file_content, file_ext)
+    try:
+        row_count = _count_rows(file_content, file_ext)
+    except InvalidFileException as e:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid XLSX file content. Please upload a valid .xlsx file.",
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail="Unable to parse dataset file. Please upload a valid CSV or XLSX file.",
+        ) from e
 
     logger.info(
         f"[upload_dataset] Uploading dataset | dataset={dataset_name} | "

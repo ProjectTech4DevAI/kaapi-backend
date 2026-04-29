@@ -219,16 +219,17 @@ class TestSerializeExportRows:
 
 
 class TestSortExportRows:
-    def test_sorts_by_config_version_then_row_id(self) -> None:
+    def test_sorts_by_config_version_then_numeric_row_index(self) -> None:
         rows = [
             _make_row(run_id=1, row_id="row_1", config_version=2),
             _make_row(run_id=2, row_id="row_0", config_version=1),
-            _make_row(run_id=3, row_id="row_0", config_version=2),
+            _make_row(run_id=3, row_id="row_10", config_version=2),
+            _make_row(run_id=4, row_id="row_2", config_version=2),
         ]
         sorted_rows = sort_export_rows(rows)
         assert sorted_rows[0].config_version == 1
         assert sorted_rows[1].config_version == 2
-        assert sorted_rows[1].row_id == "row_0"
+        assert [r.row_id for r in sorted_rows[1:]] == ["row_1", "row_2", "row_10"]
 
     def test_none_config_version_treated_as_zero(self) -> None:
         rows = [
@@ -237,6 +238,15 @@ class TestSortExportRows:
         ]
         sorted_rows = sort_export_rows(rows)
         assert sorted_rows[0].config_version is None
+
+    def test_invalid_row_id_suffix_falls_back_to_zero(self) -> None:
+        rows = [
+            _make_row(run_id=3, row_id="row_2", config_version=1),
+            _make_row(run_id=2, row_id="row_xyz", config_version=1),
+            _make_row(run_id=1, row_id="bad", config_version=1),
+        ]
+        sorted_rows = sort_export_rows(rows)
+        assert [r.run_id for r in sorted_rows] == [1, 2, 3]
 
     def test_empty_list(self) -> None:
         assert sort_export_rows([]) == []

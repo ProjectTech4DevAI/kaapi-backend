@@ -437,10 +437,19 @@ def sort_export_rows(
     export_rows: list[AssessmentExportRow],
 ) -> list[AssessmentExportRow]:
     """Sort exported rows for stable downloads across runs/configs."""
+
+    def _row_index(row_id: str) -> int:
+        if not row_id.startswith("row_"):
+            return 0
+        try:
+            return int(row_id.split("_", 1)[1])
+        except (ValueError, IndexError):
+            return 0
+
     export_rows.sort(
         key=lambda row: (
             row.config_version or 0,
-            row.row_id,
+            _row_index(row.row_id),
             row.run_id,
         )
     )

@@ -39,14 +39,18 @@ class TestValidateDatasetFile:
         assert ext == ".xlsx"
 
     @pytest.mark.asyncio
-    async def test_valid_xls_accepted(self) -> None:
+    async def test_xls_rejected_with_clear_error(self) -> None:
         file = _make_upload(
             "data.xls",
             b"fake_xls",
             content_type="application/vnd.ms-excel",
         )
-        content, ext = await validate_dataset_file(file)
-        assert ext == ".xls"
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_dataset_file(file)
+        assert exc_info.value.status_code == 422
+        assert "Legacy Excel format (.xls) is not supported" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_missing_filename_raises_422(self) -> None:

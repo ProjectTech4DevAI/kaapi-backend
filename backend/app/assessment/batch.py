@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from sqlmodel import Session
+from openpyxl.utils.exceptions import InvalidFileException
 
 from app.assessment.mappers import (
     map_kaapi_to_google_params,
@@ -71,7 +72,11 @@ def _load_dataset_rows(
     metadata = dataset.dataset_metadata or {}
     file_ext = metadata.get("file_extension", ".csv")
 
-    if file_ext in (".xlsx", ".xls"):
+    if file_ext == ".xls":
+        raise ValueError(
+            "Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv."
+        )
+    if file_ext == ".xlsx":
         return _parse_excel_rows(file_content)
     return _parse_csv_rows(file_content)
 
@@ -93,32 +98,43 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
 
 def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
     """Parse Excel content into list of row dicts."""
+    wb = None
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            return []
 
-    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    ws = wb.active
-    if ws is None:
-        wb.close()
-        return []
+        rows_iter = ws.iter_rows(values_only=True)
+        header = next(rows_iter, None)
+        if header is None:
+            return []
 
-    rows_iter = ws.iter_rows(values_only=True)
-    header = next(rows_iter, None)
-    if header is None:
-        wb.close()
-        return []
+        columns = [
+            str(h) if h is not None else f"col_{i}" for i, h in enumerate(header)
+        ]
+        result = []
+        for row in rows_iter:
+            if row and any(cell is not None for cell in row):
+                row_dict = {
+                    columns[i]: str(cell) if cell is not None else ""
+                    for i, cell in enumerate(row)
+                    if i < len(columns)
+                }
+                result.append(row_dict)
 
-    columns = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(header)]
-    result = []
-    for row in rows_iter:
-        if row and any(cell is not None for cell in row):
-            row_dict = {
-                columns[i]: str(cell) if cell is not None else ""
-                for i, cell in enumerate(row)
-                if i < len(columns)
-            }
-            result.append(row_dict)
-
-    wb.close()
-    return result
+        return result
+    except InvalidFileException as e:
+        logger.warning("[_parse_excel_rows] Invalid XLSX file content: %s", e)
+        raise
+    except Exception as e:
+        logger.warning(
+            "[_parse_excel_rows] Failed to parse XLSX rows | %s", e, exc_info=True
+        )
+        raise ValueError("Failed to parse XLSX dataset rows") from e
+    finally:
+        if wb is not None:
+            wb.close()
 
 
 def _build_text_prompt(
