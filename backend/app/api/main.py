@@ -13,6 +13,7 @@ from app.api.routes import (
     documents,
     evaluations,
     fine_tuning,
+    features,
     languages,
     llm,
     llm_chain,
