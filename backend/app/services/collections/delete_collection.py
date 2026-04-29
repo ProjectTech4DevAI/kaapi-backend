@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
@@ -244,6 +245,28 @@ def execute_job(
                     success_payload,
                     webhook_secret=webhook_secret,
                 )
+
+        except Timeout as err:
+            timeout_err = TimeoutError(
+                f"[execute_job] Collection deletion exceeded soft time limit: {err}"
+            )
+            logger.error(
+                "[delete_collection.execute_job] Collection Deletion Timed Out | "
+                "{'collection_id': '%s', 'job_id': '%s'}",
+                str(collection_uuid),
+                str(job_uuid),
+            )
+            span.record_exception(timeout_err)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(timeout_err)))
+            _mark_job_failed_and_callback(
+                organization_id=organization_id,
+                project_id=project_id,
+                collection_id=collection_uuid,
+                job_id=job_uuid,
+                err=timeout_err,
+                callback_url=callback_url,
+            )
+            raise
 
         except Exception as err:
             span.record_exception(err)

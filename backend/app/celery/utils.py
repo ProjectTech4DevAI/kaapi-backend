@@ -3,9 +3,11 @@ Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
+import functools
 from typing import Any, Dict
 
 from celery.result import AsyncResult
+from gevent import Timeout
 from opentelemetry.propagate import inject
 
 from app.celery.celery_app import celery_app
@@ -211,3 +213,25 @@ def revoke_task(task_id: str, terminate: bool = False) -> bool:
     except Exception as e:
         logger.error(f"[revoke_task] Failed to revoke task {task_id}: {e}")
         return False
+
+
+def gevent_timeout(seconds, task_name=None):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            name = task_name or func.__name__
+            timeout = Timeout(seconds)
+            timeout.start()
+            try:
+                return func(*args, **kwargs)
+            except Timeout:
+                logger.error(
+                    f"[{name}] Timed out after {seconds}s — args={args}, kwargs={kwargs}"
+                )
+                raise
+            finally:
+                timeout.cancel()
+
+        return wrapper
+
+    return decorator

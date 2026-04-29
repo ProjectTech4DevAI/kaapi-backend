@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from gevent import Timeout
 from sqlalchemy import update
 from sqlmodel import Session, select
 
@@ -152,6 +153,21 @@ def execute_metric_computation(
                 "skipped": skipped_count,
                 "failed": failed_count,
             }
+
+        except Timeout as err:
+            timeout_err = TimeoutError(
+                f"[execute_metric_computation] STT metric computation exceeded soft time limit: {err}"
+            )
+            logger.error(
+                f"[execute_metric_computation] STT metric computation timed out | run_id={run_id}"
+            )
+            update_stt_run(
+                session=session,
+                run_id=run_id,
+                status="failed",
+                error_message=str(timeout_err),
+            )
+            raise
 
         except Exception as e:
             logger.error(
