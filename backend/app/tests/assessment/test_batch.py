@@ -3,7 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import io
 import pytest
+from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from app.assessment.batch import (
@@ -117,6 +119,31 @@ class TestSubmitAssessmentBatchProviderRouting:
 
 
 class TestBatchDatasetParsing:
+    def test_load_dataset_rows_routes_xlsx_to_excel_parser(self) -> None:
+        session = MagicMock()
+        dataset = MagicMock()
+        dataset.id = 8
+        dataset.project_id = 1
+        dataset.object_store_url = "s3://bucket/key"
+        dataset.dataset_metadata = {"file_extension": ".xlsx"}
+
+        storage = MagicMock()
+        stream_body = MagicMock()
+        stream_body.read.return_value = b"xlsx-content"
+        storage.stream.return_value = stream_body
+
+        expected = [{"question": "q1"}]
+        with patch(
+            "app.assessment.batch.get_cloud_storage", return_value=storage
+        ), patch(
+            "app.assessment.batch._parse_excel_rows",
+            return_value=expected,
+        ) as parse_excel:
+            result = _load_dataset_rows(session=session, dataset=dataset)
+
+        assert result == expected
+        parse_excel.assert_called_once_with(b"xlsx-content")
+
     def test_load_dataset_rows_rejects_legacy_xls(self) -> None:
         session = MagicMock()
         dataset = MagicMock()
@@ -137,3 +164,49 @@ class TestBatchDatasetParsing:
     def test_parse_excel_rows_invalid_payload_raises(self) -> None:
         with pytest.raises((ValueError, InvalidFileException)):
             _parse_excel_rows(b"not-a-valid-xlsx")
+
+    def test_parse_excel_rows_success(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.append(["question", "answer"])
+        ws.append(["What is 2+2?", "4"])
+        ws.append(["", None])  # empty row should be skipped
+        buf = io.BytesIO()
+        wb.save(buf)
+        wb.close()
+
+        rows = _parse_excel_rows(buf.getvalue())
+        assert rows == [{"question": "What is 2+2?", "answer": "4"}]
+
+    def test_parse_excel_rows_returns_empty_when_sheet_missing(self) -> None:
+        fake_wb = MagicMock()
+        fake_wb.active = None
+        with patch("app.assessment.batch.openpyxl.load_workbook", return_value=fake_wb):
+            assert _parse_excel_rows(b"irrelevant") == []
+        fake_wb.close.assert_called_once()
+
+    def test_parse_excel_rows_returns_empty_when_header_missing(self) -> None:
+        fake_ws = MagicMock()
+        fake_ws.iter_rows.return_value = iter([])
+        fake_wb = MagicMock()
+        fake_wb.active = fake_ws
+        with patch("app.assessment.batch.openpyxl.load_workbook", return_value=fake_wb):
+            assert _parse_excel_rows(b"irrelevant") == []
+        fake_wb.close.assert_called_once()
+
+    def test_parse_excel_rows_invalid_file_exception_re_raises(self) -> None:
+        with patch(
+            "app.assessment.batch.openpyxl.load_workbook",
+            side_effect=InvalidFileException("bad xlsx"),
+        ):
+            with pytest.raises(InvalidFileException):
+                _parse_excel_rows(b"bad")
+
+    def test_parse_excel_rows_unexpected_exception_raises_value_error(self) -> None:
+        with patch(
+            "app.assessment.batch.openpyxl.load_workbook",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(ValueError, match="Failed to parse XLSX dataset rows"):
+                _parse_excel_rows(b"bad")
