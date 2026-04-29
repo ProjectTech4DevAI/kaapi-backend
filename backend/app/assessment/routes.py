@@ -68,9 +68,6 @@ router = APIRouter(
 )
 
 
-# ── Dataset routes ───────────────────────────────────────────────
-
-
 def _dataset_to_response(
     dataset: EvaluationDataset,
     signed_url: str | None = None,
@@ -221,9 +218,6 @@ def delete_dataset(
             "dataset_id": dataset_id,
         }
     )
-
-
-# ── Evaluation routes ────────────────────────────────────────────
 
 
 @router.post(

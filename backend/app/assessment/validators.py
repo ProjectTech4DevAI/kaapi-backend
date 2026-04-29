@@ -1,4 +1,4 @@
-"""Validation utilities for assessment dataset file uploads (CSV + Excel).
+"""Validation utilities for assessment dataset file uploads (CSV + XLSX).
 
 Only validates file type and size — no column requirements.
 """
@@ -12,18 +12,17 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_MIME_TYPES = {
     "text/csv",
     "application/csv",
     "text/plain",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-excel",
 }
 
 
 async def validate_dataset_file(file: UploadFile) -> tuple[bytes, str]:
-    """Validate an uploaded dataset file (CSV or Excel).
+    """Validate an uploaded dataset file (CSV or XLSX).
 
     Only checks file type and size — does NOT inspect columns.
 
@@ -37,10 +36,15 @@ async def validate_dataset_file(file: UploadFile) -> tuple[bytes, str]:
         raise HTTPException(status_code=422, detail="File must have a filename")
 
     file_ext = Path(file.filename).suffix.lower()
+    if file_ext == ".xls":
+        raise HTTPException(
+            status_code=422,
+            detail="Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv.",
+        )
     if file_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid file type. Allowed: CSV, XLSX, XLS. Got: {file_ext}",
+            detail=f"Invalid file type. Allowed: CSV, XLSX. Got: {file_ext}",
         )
 
     content_type = file.content_type
