@@ -90,9 +90,6 @@ def list_assessments(
     return list(session.exec(statement).all())
 
 
-# ── AssessmentRun (child) ───────────────────────────────────────
-
-
 def create_assessment_run(
     session: Session,
     run_name: str,
@@ -222,9 +219,6 @@ def update_assessment_run_status(
         raise
 
     return run
-
-
-# ── Assessment status recomputation ─────────────────────────────
 
 
 def _determine_assessment_status(

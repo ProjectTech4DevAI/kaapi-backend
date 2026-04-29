@@ -7,7 +7,8 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.assessment.batch import _resolve_config, submit_assessment_batch
+from app.assessment.batch import submit_assessment_batch
+from app.crud.evaluations.core import resolve_evaluation_config
 from app.assessment.crud import (
     create_assessment,
     create_assessment_run,
@@ -25,8 +26,11 @@ from app.assessment.models import (
     AssessmentRunSummary,
 )
 from app.crud.evaluations import get_dataset_by_id
+from app.services.llm.providers.registry import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+_SUPPORTED_BATCH_PROVIDERS = {LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE}
 
 
 def _build_retry_request(
@@ -116,7 +120,7 @@ def start_assessment(
     # 3. Validate all configs first before creating any runs
     resolved_configs = []
     for cfg in request.configs:
-        config_blob, error = _resolve_config(
+        config_blob, error = resolve_evaluation_config(
             session=session,
             config_id=cfg.config_id,
             config_version=cfg.config_version,
@@ -126,6 +130,16 @@ def start_assessment(
             raise HTTPException(
                 status_code=400,
                 detail=f"Failed to resolve config {cfg.config_id} v{cfg.config_version}: {error}",
+            )
+        provider = config_blob.completion.provider or LLMProvider.OPENAI
+        if provider not in _SUPPORTED_BATCH_PROVIDERS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Config {cfg.config_id} v{cfg.config_version} uses provider '{provider}', "
+                    f"which is not supported for batch assessment. "
+                    f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
+                ),
             )
         resolved_configs.append((cfg, config_blob))
 

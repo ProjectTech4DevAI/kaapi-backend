@@ -17,9 +17,6 @@ if TYPE_CHECKING:
     from app.models.batch_job import BatchJob
 
 
-# ── Database models ─────────────────────────────────────────────
-
-
 class Assessment(SQLModel, table=True):
     """Manager table for multi-config assessment evaluations."""
 
@@ -294,9 +291,6 @@ class AssessmentTextLLMParams(TextLLMParams):
     )
 
 
-# ── Attachment / config references ───────────────────────────────
-
-
 class AssessmentAttachment(BaseModel):
     """Attachment column configuration."""
 
@@ -310,9 +304,6 @@ class AssessmentConfigRef(BaseModel):
 
     config_id: UUID = Field(..., description="Stored config UUID")
     config_version: int = Field(..., ge=1, description="Config version number")
-
-
-# ── Request model ────────────────────────────────────────────────
 
 
 class AssessmentCreate(BaseModel):
@@ -341,9 +332,6 @@ class AssessmentCreate(BaseModel):
     configs: list[AssessmentConfigRef] = Field(
         ..., min_length=1, max_length=4, description="Config versions to evaluate"
     )
-
-
-# ── Response models ──────────────────────────────────────────────
 
 
 class AssessmentRunSummary(BaseModel):

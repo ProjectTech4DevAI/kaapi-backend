@@ -9,10 +9,10 @@ import binascii
 import csv
 import io
 import logging
+import openpyxl
 import re
 from typing import Any
 from urllib.parse import urlparse
-from uuid import UUID
 
 from sqlmodel import Session
 
@@ -28,21 +28,12 @@ from app.assessment.models import (
 from app.core.batch import BATCH_KEY, start_batch_job
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
-from app.crud.config.version import ConfigVersionCrud
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
-from app.models.llm.request import ConfigBlob, LLMCallConfig
-from app.services.llm.jobs import resolve_config_blob
+from app.models.llm.request import ConfigBlob
+from app.services.llm.providers.registry import LLMProvider
 
 logger = logging.getLogger(__name__)
-
-# Provider name → native provider suffix mapping
-_NATIVE_PROVIDERS = {
-    "openai": "openai",
-    "openai-native": "openai",
-    "google": "google",
-    "google-native": "google",
-}
 
 _IMAGE_MIME_BY_EXT = {
     ".png": "image/png",
@@ -56,24 +47,6 @@ _IMAGE_MIME_BY_EXT = {
     ".heic": "image/heic",
     ".heif": "image/heif",
 }
-
-
-def _resolve_config(
-    session: Session,
-    config_id: UUID,
-    config_version: int,
-    project_id: int,
-) -> tuple[ConfigBlob | None, str | None]:
-    """Resolve a stored config into a ConfigBlob."""
-    config_crud = ConfigVersionCrud(
-        session=session,
-        config_id=config_id,
-        project_id=project_id,
-    )
-    return resolve_config_blob(
-        config_crud=config_crud,
-        config=LLMCallConfig(id=config_id, version=config_version),
-    )
 
 
 def _load_dataset_rows(
@@ -120,7 +93,6 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
 
 def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
     """Parse Excel content into list of row dicts."""
-    import openpyxl
 
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
@@ -566,9 +538,9 @@ def submit_assessment_batch(
         params["output_schema"] = output_schema
 
     # Determine the base provider (openai or google)
-    base_provider = _NATIVE_PROVIDERS.get(provider_name, "openai")
+    base_provider = provider_name.replace("-native", "")
 
-    if base_provider == "openai":
+    if base_provider == LLMProvider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(params)
         if warnings:
             logger.info(f"[submit_assessment_batch] Mapper warnings: {warnings}")
@@ -608,7 +580,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == "google":
+    elif base_provider == LLMProvider.GOOGLE:
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info(f"[submit_assessment_batch] Mapper warnings: {warnings}")

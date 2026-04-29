@@ -29,6 +29,7 @@ from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.job import get_batch_job
+from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def _get_batch_provider(
     project_id: int,
 ) -> BatchProvider:
     """Get the appropriate batch provider instance."""
-    if provider_name in ("openai", "openai-native"):
+    if provider_name in (LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE):
         openai_client = get_openai_client(
             session=session,
             org_id=organization_id,
@@ -85,7 +86,7 @@ def _get_batch_provider(
         )
         return OpenAIBatchProvider(client=openai_client)
 
-    if provider_name in ("google", "google-native"):
+    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
         gemini_client = GeminiClient.from_credentials(
             session=session,
             org_id=organization_id,
@@ -114,7 +115,7 @@ def parse_assessment_output(
     for result in raw_results:
         row_id = result.get(BATCH_KEY) or result.get("key", "unknown")
 
-        if provider_name in ("openai", "openai-native"):
+        if provider_name in (LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE):
             response = result.get("response", {})
             response_status = response.get("status_code")
             response_body = result.get("response", {}).get("body", {})
@@ -195,7 +196,7 @@ def parse_assessment_output(
                 }
             )
 
-        elif provider_name in ("google", "google-native"):
+        elif provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
             response = result.get("response")
             error = result.get("error")
 

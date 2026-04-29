@@ -44,7 +44,7 @@ def _build_callback_payload(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     """Build minimal SSE payload for assessment invalidation."""
-    return APIResponse.success_response(
+    payload = APIResponse.success_response(
         data={
             "type": "assessment.child_status_changed",
             "assessment_id": assessment.id,
@@ -59,6 +59,8 @@ def _build_callback_payload(
             },
         }
     ).model_dump()
+    payload["type"] = "assessment.child_status_changed"
+    return payload
 
 
 async def poll_all_pending_assessment_evaluations(
