@@ -64,8 +64,6 @@ async def evaluation_cron_job(
         # Process all pending evaluations across all organizations
         result = await process_all_pending_evaluations(session=session)
 
-        # Also poll assessment evaluations (must await in the same event loop
-        # so that SSE publish reaches subscribers via the shared broker).
         try:
             from app.assessment.cron import (
                 poll_all_pending_assessment_evaluations,

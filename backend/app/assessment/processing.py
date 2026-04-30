@@ -15,7 +15,6 @@ from app.assessment.crud import (
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.assessment.events import assessment_event_broker
 from app.assessment.models import AssessmentRun
 from app.core.batch import (
     BATCH_KEY,
@@ -334,16 +333,6 @@ async def check_and_process_assessment(
                     "action": "no_change",
                 }
 
-            # Emit SSE: results are being prepared
-            assessment_event_broker.publish(
-                {
-                    "type": "assessment.results_preparing",
-                    "assessment_id": run.assessment_id,
-                    "run_id": run.id,
-                    "message": "Results are being prepared",
-                }
-            )
-
             # Download and process results
             raw_results = download_batch_results(provider=provider, batch_job=batch_job)
 
@@ -384,19 +373,6 @@ async def check_and_process_assessment(
                 recompute_assessment_status(
                     session=session, assessment_id=run.assessment_id
                 )
-
-            # Emit SSE: results are ready
-            assessment_event_broker.publish(
-                {
-                    "type": "assessment.results_ready",
-                    "assessment_id": run.assessment_id,
-                    "run_id": run.id,
-                    "status": run_status,
-                    "total_results": len(parsed),
-                    "errors": error_count,
-                    "message": "Results are ready",
-                }
-            )
 
             return {
                 "run_id": run.id,
