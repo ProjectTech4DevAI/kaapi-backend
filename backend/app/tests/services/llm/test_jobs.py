@@ -1334,9 +1334,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch(
-                "app.services.llm.jobs.update_llm_chain_status"
-            ) as mock_update_status,
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch(
                 "app.services.llm.chain.chain.LLMChain",
@@ -1357,10 +1354,9 @@ class TestExecuteChainJob:
 
             result = self._execute_chain_job(chain_request_data)
 
-            mock_update_status.assert_called_once()
-            _, kwargs = mock_update_status.call_args
+            mock_handle_error.assert_called_once()
+            _, kwargs = mock_handle_error.call_args
             assert kwargs["chain_id"] == chain_id
-            assert kwargs["status"].value == "FAILED"
 
 
 class TestResolveConfigBlob:

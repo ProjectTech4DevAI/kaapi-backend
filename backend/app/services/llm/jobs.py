@@ -971,7 +971,7 @@ def execute_chain_job(
                 f"[execute_chain_job] Chain job timed out | job_id={job_uuid}, task_id={task_id}"
             )
             callback_response = APIResponse.failure_response(
-                error=f"[execute_chain_job] Chain job exceeded soft time limit: {err}",
+                error="Chain job exceeded soft time limit",
                 metadata=request.request_metadata,
             )
             handle_job_error(

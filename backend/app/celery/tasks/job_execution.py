@@ -1,5 +1,7 @@
 import logging
+from typing import Any
 
+import celery
 from asgi_correlation_id import correlation_id
 from celery import current_task
 
@@ -80,10 +82,10 @@ def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kw
 def run_create_collection_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
-    from app.services.collections.create_collection import execute_setup_job
+    from app.services.collections.create_collection import execute_job
 
     _set_trace(trace_id)
-    return execute_setup_job(
+    return execute_job(
         project_id=project_id,
         job_id=job_id,
         task_id=current_task.request.id,
@@ -95,8 +97,8 @@ def run_create_collection_job(
 @celery_app.task(bind=True, queue="low_priority", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_collection_batch_job")
 def run_collection_batch_job(
-    self, project_id: int, job_id: str, trace_id: str, **kwargs
-):
+    self: celery.Task, project_id: int, job_id: str, trace_id: str, **kwargs: Any
+) -> None:
     from app.services.collections.create_collection import execute_batch_job
 
     _set_trace(trace_id)

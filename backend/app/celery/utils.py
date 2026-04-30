@@ -225,9 +225,7 @@ def gevent_timeout(seconds, task_name=None):
             try:
                 return func(*args, **kwargs)
             except Timeout:
-                logger.error(
-                    f"[{name}] Timed out after {seconds}s — args={args}, kwargs={kwargs}"
-                )
+                logger.error(f"[{name}] Timed out after {seconds}s")
                 raise
             finally:
                 timeout.cancel()
