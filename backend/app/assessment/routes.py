@@ -1,6 +1,5 @@
 """Assessment API routes."""
 
-import asyncio
 import io
 import logging
 import zipfile
@@ -26,7 +25,6 @@ from app.assessment.crud import (
     list_assessments,
 )
 from app.assessment.dataset import upload_dataset as upload_assessment_dataset
-from app.assessment.events import assessment_event_broker
 from app.assessment.models import (
     AssessmentCreate,
     AssessmentDatasetResponse,
@@ -311,33 +309,6 @@ def retry_assessment_evaluation(
         project_id=auth_context.project_.id,
     )
     return APIResponse.success_response(data=result)
-
-
-@router.get(
-    "/events",
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
-    include_in_schema=False,
-)
-async def stream_assessment_events(
-    _session: SessionDep,
-    _auth_context: AuthContextDep,
-) -> StreamingResponse:
-    """SSE stream for assessment invalidation events."""
-
-    async def event_stream():
-        async for chunk in assessment_event_broker.subscribe():
-            yield chunk
-            await asyncio.sleep(0)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.get(

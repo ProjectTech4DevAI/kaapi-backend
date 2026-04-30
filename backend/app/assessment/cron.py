@@ -10,10 +10,8 @@ from app.assessment.crud import (
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.assessment.events import assessment_event_broker
 from app.assessment.models import Assessment, AssessmentRun
 from app.assessment.processing import check_and_process_assessment
-from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
 
@@ -36,31 +34,6 @@ def _log_config_progress(result: dict[str, Any], run: AssessmentRun) -> None:
         f"status={result.get('current_status')} | "
         f"provider_status={result.get('provider_status')}"
     )
-
-
-def _build_callback_payload(
-    assessment: Assessment,
-    run: AssessmentRun,
-    result: dict[str, Any],
-) -> dict[str, Any]:
-    """Build minimal SSE payload for assessment invalidation."""
-    payload = APIResponse.success_response(
-        data={
-            "type": "assessment.child_status_changed",
-            "assessment_id": assessment.id,
-            "assessment_status": assessment.status,
-            "run": {
-                "id": run.id,
-                "config_id": str(run.config_id) if run.config_id else None,
-                "config_version": run.config_version,
-                "status": result.get("current_status"),
-                "error": result.get("error"),
-                "updated_at": run.updated_at.isoformat() if run.updated_at else None,
-            },
-        }
-    ).model_dump()
-    payload["type"] = "assessment.child_status_changed"
-    return payload
 
 
 async def poll_all_pending_assessment_evaluations(
@@ -125,17 +98,6 @@ async def poll_all_pending_assessment_evaluations(
                 all_results.append(result)
                 _log_config_progress(result, run)
 
-                if result["action"] in {"processed", "failed"}:
-                    refreshed_assessment = session.get(Assessment, assessment.id)
-                    if refreshed_assessment:
-                        assessment_event_broker.publish(
-                            _build_callback_payload(
-                                refreshed_assessment,
-                                run,
-                                result,
-                            )
-                        )
-
                 if result["action"] == "processed":
                     processed += 1
                 elif result["action"] == "failed":
@@ -161,7 +123,7 @@ async def poll_all_pending_assessment_evaluations(
                         status="failed",
                         error_message="Processing failed. Check server logs for details.",
                     )
-                    refreshed_assessment = recompute_assessment_status(
+                    recompute_assessment_status(
                         session=session, assessment_id=assessment.id
                     )
                     failure_result = {
@@ -175,13 +137,6 @@ async def poll_all_pending_assessment_evaluations(
                         "current_status": "failed",
                     }
                     all_results.append(failure_result)
-                    assessment_event_broker.publish(
-                        _build_callback_payload(
-                            refreshed_assessment,
-                            run,
-                            failure_result,
-                        )
-                    )
                     failed += 1
                 except Exception as cleanup_exc:
                     logger.error(
