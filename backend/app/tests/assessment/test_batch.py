@@ -30,8 +30,14 @@ from app.assessment.models import AssessmentAttachment
 def _make_run() -> MagicMock:
     run = MagicMock()
     run.id = 99
-    run.run_name = "exp-v1"
     return run
+
+
+def _make_assessment() -> MagicMock:
+    assessment = MagicMock()
+    assessment.id = 21
+    assessment.experiment_name = "exp-v1"
+    return assessment
 
 
 def _make_dataset() -> MagicMock:
@@ -46,34 +52,107 @@ class TestSubmitAssessmentBatchProviderRouting:
         run = _make_run()
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="openai-native", params={})
+            completion=SimpleNamespace(
+                provider="openai-native",
+                params={"instructions": "config system"},
+            )
         )
         batch_job = MagicMock()
         batch_job.id = 1
         batch_job.total_items = 1
 
-        with patch(
-            "app.assessment.batch._load_dataset_rows",
-            return_value=[{"question": "q1"}],
-        ), patch(
-            "app.assessment.batch.map_kaapi_to_openai_params",
-            return_value=({}, []),
-        ), patch(
-            "app.assessment.batch.build_openai_jsonl",
-            return_value=[{"custom_id": "row_0"}],
-        ), patch(
-            "app.utils.get_openai_client",
-            return_value=MagicMock(),
-        ), patch(
-            "app.assessment.batch.OpenAIBatchProvider",
-            return_value=MagicMock(),
-        ), patch(
-            "app.assessment.batch.start_batch_job",
-            return_value=batch_job,
-        ) as start_batch:
+        with (
+            patch(
+                "app.assessment.batch._load_dataset_rows",
+                return_value=[{"question": "q1"}],
+            ),
+            patch(
+                "app.assessment.batch.map_kaapi_to_openai_params",
+                return_value=({}, []),
+            ) as map_params,
+            patch(
+                "app.assessment.batch.build_openai_jsonl",
+                return_value=[{"custom_id": "row_0"}],
+            ),
+            patch(
+                "app.utils.get_openai_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.assessment.batch.OpenAIBatchProvider",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.assessment.batch.start_batch_job",
+                return_value=batch_job,
+            ) as start_batch,
+        ):
             result = submit_assessment_batch(
                 session=session,
                 run=run,
+                assessment=_make_assessment(),
+                dataset=dataset,
+                config_blob=config_blob,
+                assessment_input={
+                    "text_columns": ["question"],
+                    "attachments": [],
+                    "system_instruction": "request system",
+                },
+                organization_id=1,
+                project_id=1,
+            )
+
+        assert result.id == 1
+        assert map_params.call_args.kwargs["session"] is session
+        assert map_params.call_args.kwargs["kaapi_params"]["instructions"] == (
+            "request system"
+        )
+        assert start_batch.call_args.kwargs["provider_name"] == "openai"
+
+    def test_config_instruction_is_not_used_without_request_instruction(self) -> None:
+        session = MagicMock()
+        run = _make_run()
+        dataset = _make_dataset()
+        config_blob = SimpleNamespace(
+            completion=SimpleNamespace(
+                provider="openai",
+                params={"instructions": "config system", "model": "gpt-4.1-mini"},
+            )
+        )
+        batch_job = MagicMock()
+        batch_job.id = 3
+        batch_job.total_items = 1
+
+        with (
+            patch(
+                "app.assessment.batch._load_dataset_rows",
+                return_value=[{"question": "q1"}],
+            ),
+            patch(
+                "app.assessment.batch.map_kaapi_to_openai_params",
+                return_value=({"model": "gpt-4.1-mini"}, []),
+            ) as map_params,
+            patch(
+                "app.assessment.batch.build_openai_jsonl",
+                return_value=[{"custom_id": "row_0"}],
+            ),
+            patch(
+                "app.utils.get_openai_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.assessment.batch.OpenAIBatchProvider",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.assessment.batch.start_batch_job",
+                return_value=batch_job,
+            ),
+        ):
+            submit_assessment_batch(
+                session=session,
+                run=run,
+                assessment=_make_assessment(),
                 dataset=dataset,
                 config_blob=config_blob,
                 assessment_input={"text_columns": ["question"], "attachments": []},
@@ -81,15 +160,18 @@ class TestSubmitAssessmentBatchProviderRouting:
                 project_id=1,
             )
 
-        assert result.id == 1
-        assert start_batch.call_args.kwargs["provider_name"] == "openai"
+        assert map_params.call_args.kwargs["session"] is session
+        assert "instructions" not in map_params.call_args.kwargs["kaapi_params"]
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()
         run = _make_run()
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="google-native", params={})
+            completion=SimpleNamespace(
+                provider="google-native",
+                params={"instructions": "config system"},
+            )
         )
         batch_job = MagicMock()
         batch_job.id = 2
@@ -97,36 +179,47 @@ class TestSubmitAssessmentBatchProviderRouting:
         gemini_client = MagicMock()
         gemini_client.client = MagicMock()
 
-        with patch(
-            "app.assessment.batch._load_dataset_rows",
-            return_value=[{"question": "q1"}],
-        ), patch(
-            "app.assessment.batch.map_kaapi_to_google_params",
-            return_value=({"model": "gemini-2.5-pro"}, []),
-        ), patch(
-            "app.assessment.batch.build_google_jsonl",
-            return_value=[{"key": "row_0"}],
-        ), patch(
-            "app.core.batch.client.GeminiClient"
-        ) as gemini_cls, patch(
-            "app.core.batch.GeminiBatchProvider",
-            return_value=MagicMock(),
-        ), patch(
-            "app.assessment.batch.start_batch_job",
-            return_value=batch_job,
-        ) as start_batch:
+        with (
+            patch(
+                "app.assessment.batch._load_dataset_rows",
+                return_value=[{"question": "q1"}],
+            ),
+            patch(
+                "app.assessment.batch.map_kaapi_to_google_params",
+                return_value=({"model": "gemini-2.5-pro"}, []),
+            ) as map_params,
+            patch(
+                "app.assessment.batch.build_google_jsonl",
+                return_value=[{"key": "row_0"}],
+            ),
+            patch("app.core.batch.client.GeminiClient") as gemini_cls,
+            patch(
+                "app.core.batch.GeminiBatchProvider",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.assessment.batch.start_batch_job",
+                return_value=batch_job,
+            ) as start_batch,
+        ):
             gemini_cls.from_credentials.return_value = gemini_client
             result = submit_assessment_batch(
                 session=session,
                 run=run,
+                assessment=_make_assessment(),
                 dataset=dataset,
                 config_blob=config_blob,
-                assessment_input={"text_columns": ["question"], "attachments": []},
+                assessment_input={
+                    "text_columns": ["question"],
+                    "attachments": [],
+                    "system_instruction": "request system",
+                },
                 organization_id=1,
                 project_id=1,
             )
 
         assert result.id == 2
+        assert map_params.call_args.args[0]["instructions"] == "request system"
         assert start_batch.call_args.kwargs["provider_name"] == "google"
 
 
@@ -145,12 +238,13 @@ class TestBatchDatasetParsing:
         storage.stream.return_value = stream_body
 
         expected = [{"question": "q1"}]
-        with patch(
-            "app.assessment.batch.get_cloud_storage", return_value=storage
-        ), patch(
-            "app.assessment.batch._parse_excel_rows",
-            return_value=expected,
-        ) as parse_excel:
+        with (
+            patch("app.assessment.batch.get_cloud_storage", return_value=storage),
+            patch(
+                "app.assessment.batch._parse_excel_rows",
+                return_value=expected,
+            ) as parse_excel,
+        ):
             result = _load_dataset_rows(session=session, dataset=dataset)
 
         assert result == expected
@@ -320,3 +414,6 @@ class TestBatchHelpers:
         )
         assert len(google_jsonl) == 1
         assert google_jsonl[0]["metadata"]["key"] == "row_0"
+        assert google_jsonl[0]["request"]["systemInstruction"] == {
+            "parts": [{"text": "system"}]
+        }

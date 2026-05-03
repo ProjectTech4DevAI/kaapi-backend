@@ -1,4 +1,4 @@
-"""Assessment models — DB table, Pydantic schemas, and LLM param wrappers."""
+"""Assessment models — DB tables, Pydantic schemas, and LLM param wrappers."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -18,12 +18,17 @@ if TYPE_CHECKING:
 
 
 class Assessment(SQLModel, table=True):
-    """Manager table for multi-config assessment evaluations."""
+    """Parent assessment — one experiment over a dataset, grouping N config runs."""
 
     __tablename__ = "assessment"
     __table_args__ = (
-        Index("idx_assessment_status_org", "status", "organization_id"),
-        Index("idx_assessment_status_project", "status", "project_id"),
+        Index(
+            "idx_assessment_org_project",
+            "organization_id",
+            "project_id",
+            "inserted_at",
+        ),
+        Index("idx_assessment_status", "status"),
     )
 
     id: int | None = SQLField(
@@ -33,8 +38,7 @@ class Assessment(SQLModel, table=True):
     )
     experiment_name: str = SQLField(
         index=True,
-        description="Experiment name shared by child config runs",
-        sa_column_kwargs={"comment": "Experiment name shared by child config runs"},
+        sa_column_kwargs={"comment": "Name of the experiment grouping its config runs"},
     )
     dataset_id: int = SQLField(
         foreign_key="evaluation_dataset.id",
@@ -42,66 +46,13 @@ class Assessment(SQLModel, table=True):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the evaluation dataset"},
     )
-    dataset_name: str = SQLField(
-        nullable=False,
-        description="Name of the dataset used by this assessment",
-        sa_column_kwargs={"comment": "Name of the dataset used by this assessment"},
-    )
     status: str = SQLField(
         default="pending",
-        description="Overall assessment status across all child evaluation runs",
         sa_column_kwargs={
-            "comment": "Overall assessment status across all child evaluation runs"
-        },
-    )
-    total_runs: int = SQLField(
-        default=0,
-        nullable=False,
-        sa_column_kwargs={"comment": "Total number of child evaluation runs"},
-    )
-    pending_runs: int = SQLField(
-        default=0,
-        nullable=False,
-        sa_column_kwargs={"comment": "Number of child runs in pending state"},
-    )
-    processing_runs: int = SQLField(
-        default=0,
-        nullable=False,
-        sa_column_kwargs={"comment": "Number of child runs in processing state"},
-    )
-    completed_runs: int = SQLField(
-        default=0,
-        nullable=False,
-        sa_column_kwargs={"comment": "Number of child runs in completed state"},
-    )
-    failed_runs: int = SQLField(
-        default=0,
-        nullable=False,
-        sa_column_kwargs={"comment": "Number of child runs in failed state"},
-    )
-    run_stats: list[dict[str, Any]] = SQLField(
-        default_factory=list,
-        sa_column=Column(
-            JSONB,
-            nullable=False,
-            comment="Cached status snapshot for child evaluation runs",
-        ),
-        description="Cached status snapshot for child evaluation runs",
-    )
-    error_message: str | None = SQLField(
-        default=None,
-        sa_column=Column(
-            Text,
-            nullable=True,
-            comment="Aggregated error message for child run failures",
-        ),
-        description="Aggregated error message for child run failures",
-    )
-    callback_url: str | None = SQLField(
-        default=None,
-        nullable=True,
-        sa_column_kwargs={
-            "comment": "Optional frontend callback URL for status updates"
+            "comment": (
+                "Aggregate status: pending, processing, completed, "
+                "completed_with_errors, failed"
+            )
         },
     )
     organization_id: int = SQLField(
@@ -129,51 +80,29 @@ class Assessment(SQLModel, table=True):
 
 
 class AssessmentRun(SQLModel, table=True):
-    """Dedicated table for assessment evaluation runs."""
+    """Child run — a single config evaluation against the parent's dataset."""
 
     __tablename__ = "assessment_run"
-    __table_args__ = (
-        Index("idx_assessment_run_status_org", "status", "organization_id"),
-        Index("idx_assessment_run_status_project", "status", "project_id"),
-        Index("idx_assessment_run_assessment_id", "assessment_id"),
-    )
+    __table_args__ = (Index("idx_assessment_run_assessment_id", "assessment_id"),)
 
     id: int | None = SQLField(
         default=None,
         primary_key=True,
         sa_column_kwargs={"comment": "Unique identifier for the assessment run"},
     )
-    run_name: str = SQLField(
-        index=True,
-        description="Name of the assessment run (matches experiment name)",
-        sa_column_kwargs={"comment": "Name of the assessment run"},
-    )
-    assessment_id: int | None = SQLField(
-        default=None,
+    assessment_id: int = SQLField(
         foreign_key="assessment.id",
-        nullable=True,
-        ondelete="SET NULL",
-        sa_column_kwargs={"comment": "Reference to parent assessment manager row"},
-    )
-    dataset_id: int = SQLField(
-        foreign_key="evaluation_dataset.id",
         nullable=False,
         ondelete="CASCADE",
-        sa_column_kwargs={"comment": "Reference to the evaluation dataset"},
+        sa_column_kwargs={"comment": "Reference to the parent assessment"},
     )
-    dataset_name: str = SQLField(
-        nullable=False,
-        sa_column_kwargs={"comment": "Name of the dataset used"},
-    )
-    config_id: UUID | None = SQLField(
-        default=None,
+    config_id: UUID = SQLField(
         foreign_key="config.id",
-        nullable=True,
+        nullable=False,
         sa_column_kwargs={"comment": "Reference to the stored config used"},
     )
-    config_version: int | None = SQLField(
-        default=None,
-        nullable=True,
+    config_version: int = SQLField(
+        nullable=False,
         sa_column_kwargs={"comment": "Version of the config used"},
     )
     status: str = SQLField(
@@ -194,12 +123,14 @@ class AssessmentRun(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Total number of dataset items in this run"},
     )
-    input: dict[str, Any] | None = SQLField(
-        default=None,
+    input: dict[str, Any] = SQLField(
         sa_column=Column(
             JSONB,
-            nullable=True,
-            comment="Assessment input config: prompt_template, text_columns, attachments, output_schema",
+            nullable=False,
+            comment=(
+                "Assessment input: prompt_template, system_instruction, "
+                "text_columns, attachments, output_schema"
+            ),
         ),
     )
     object_store_url: str | None = SQLField(
@@ -215,31 +146,6 @@ class AssessmentRun(SQLModel, table=True):
             comment="Error message if the run failed",
         ),
     )
-    eval_score: dict[str, Any] | None = SQLField(
-        default=None,
-        sa_column=Column(
-            JSONB,
-            nullable=True,
-            comment="Evaluation scores (reserved for future use)",
-        ),
-    )
-    eval_score_trace_url: str | None = SQLField(
-        default=None,
-        nullable=True,
-        sa_column_kwargs={"comment": "S3 URL for evaluation score traces (reserved)"},
-    )
-    organization_id: int = SQLField(
-        foreign_key="organization.id",
-        nullable=False,
-        ondelete="CASCADE",
-        sa_column_kwargs={"comment": "Reference to the organization"},
-    )
-    project_id: int = SQLField(
-        foreign_key="project.id",
-        nullable=False,
-        ondelete="CASCADE",
-        sa_column_kwargs={"comment": "Reference to the project"},
-    )
     inserted_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
@@ -251,31 +157,84 @@ class AssessmentRun(SQLModel, table=True):
         sa_column_kwargs={"comment": "Timestamp when the run was last updated"},
     )
 
-    # Relationships
     batch_job: Optional["BatchJob"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[AssessmentRun.batch_job_id]"}
     )
+    assessment: Optional["Assessment"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[AssessmentRun.assessment_id]"}
+    )
+
+
+# ---------- Run-count aggregate (derived on read) ----------
+
+
+class AssessmentRunCounts(BaseModel):
+    """Derived counters for a parent assessment, computed from its child runs."""
+
+    total: int = 0
+    pending: int = 0
+    processing: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
+class AssessmentRunStat(BaseModel):
+    """Summary entry for one child run, embedded in parent responses."""
+
+    run_id: int
+    config_id: str | None
+    config_version: int | None
+    status: str
+    total_items: int
+    error_message: str | None
+    updated_at: datetime | None
+
+
+# ---------- Public response models ----------
 
 
 class AssessmentPublic(BaseModel):
-    """Public model for assessment manager rows."""
+    """Public model for a parent assessment row, with derived run aggregates."""
 
     id: int
     experiment_name: str
     dataset_id: int
-    dataset_name: str
+    dataset_name: str | None = None
     status: str
-    total_runs: int
-    pending_runs: int
-    processing_runs: int
-    completed_runs: int
-    failed_runs: int
-    run_stats: list[dict[str, Any]]
-    error_message: str | None
+    counts: AssessmentRunCounts = AssessmentRunCounts()
+    run_stats: list[AssessmentRunStat] = []
+    error_message: str | None = None
     organization_id: int
     project_id: int
     inserted_at: datetime
     updated_at: datetime
+
+
+class AssessmentRunPublic(BaseModel):
+    """Public view of an assessment run."""
+
+    id: int
+    assessment_id: int
+    experiment_name: str | None = None
+    dataset_id: int | None = None
+    dataset_name: str | None = None
+    config_id: UUID
+    config_version: int
+    status: str
+    total_items: int
+    error_message: str | None
+    input: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Assessment input config: prompt_template, system_instruction, "
+            "text_columns, attachments, output_schema"
+        ),
+    )
+    inserted_at: datetime
+    updated_at: datetime
+
+
+# ---------- LLM param + request schemas ----------
 
 
 class AssessmentTextLLMParams(TextLLMParams):
@@ -307,10 +266,10 @@ class AssessmentConfigRef(BaseModel):
 
 
 class AssessmentCreate(BaseModel):
-    """Request body for creating an assessment evaluation."""
+    """Request body for creating an assessment and child runs."""
 
     experiment_name: str = Field(
-        ..., min_length=1, description="Name for this evaluation experiment"
+        ..., min_length=1, description="Name for this assessment experiment"
     )
     dataset_id: int = Field(..., description="ID of the uploaded dataset")
     prompt_template: str | None = Field(
@@ -319,6 +278,10 @@ class AssessmentCreate(BaseModel):
             "Prompt template with {column} placeholders. "
             "If null, all text columns are concatenated."
         ),
+    )
+    system_instruction: str | None = Field(
+        None,
+        description="System instruction used when generating assessment outputs",
     )
     text_columns: list[str] = Field(
         default_factory=list, description="Column names mapped as text input"
@@ -330,22 +293,22 @@ class AssessmentCreate(BaseModel):
         None, description="JSON Schema for structured output"
     )
     configs: list[AssessmentConfigRef] = Field(
-        ..., min_length=1, max_length=4, description="Config versions to evaluate"
+        ..., min_length=1, max_length=4, description="Config versions to run"
     )
 
 
 class AssessmentRunSummary(BaseModel):
-    """Summary of a single evaluation run created for one config."""
+    """Summary of a single assessment run created for one config."""
 
     run_id: int
-    assessment_id: int | None = None
+    assessment_id: int
     config_id: str
     config_version: int
     status: str
 
 
 class AssessmentResponse(BaseModel):
-    """Response after submitting an assessment evaluation."""
+    """Response after submitting an assessment run request."""
 
     assessment_id: int
     experiment_name: str
@@ -353,29 +316,6 @@ class AssessmentResponse(BaseModel):
     dataset_name: str
     num_configs: int
     runs: list[AssessmentRunSummary]
-
-
-class AssessmentRunPublic(BaseModel):
-    """Public view of an assessment evaluation run."""
-
-    id: int
-    assessment_id: int | None
-    run_name: str
-    dataset_name: str
-    dataset_id: int
-    config_id: UUID | None
-    config_version: int | None
-    status: str
-    total_items: int
-    error_message: str | None
-    organization_id: int
-    project_id: int
-    input: dict[str, Any] | None = Field(
-        None,
-        description="Assessment input config (prompt_template, text_columns, attachments, output_schema)",
-    )
-    inserted_at: datetime
-    updated_at: datetime
 
 
 class AssessmentExportRow(BaseModel):

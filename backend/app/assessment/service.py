@@ -1,4 +1,4 @@
-"""Assessment evaluation orchestration service."""
+"""Assessment run orchestration service."""
 
 import logging
 from typing import Any
@@ -8,11 +8,10 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.assessment.batch import submit_assessment_batch
-from app.crud.evaluations.core import resolve_evaluation_config
 from app.assessment.crud import (
     create_assessment,
     create_assessment_run,
-    get_assessment_runs_for_manager,
+    get_assessment_runs_for_assessment,
     recompute_assessment_status,
     update_assessment_run_status,
 )
@@ -25,12 +24,20 @@ from app.assessment.models import (
     AssessmentRun,
     AssessmentRunSummary,
 )
+from app.crud.config import ConfigCrud
 from app.crud.evaluations import get_dataset_by_id
+from app.crud.evaluations.core import resolve_evaluation_config
+from app.models.config.config import ConfigTag
 from app.services.llm.providers.registry import LLMProvider
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BATCH_PROVIDERS = {LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE}
+_SUPPORTED_BATCH_PROVIDERS = {
+    LLMProvider.OPENAI,
+    LLMProvider.OPENAI_NATIVE,
+    LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_NATIVE,
+}
 
 
 def _build_retry_request(
@@ -69,6 +76,7 @@ def _build_retry_request(
         experiment_name=experiment_name,
         dataset_id=dataset_id,
         prompt_template=assessment_input.get("prompt_template"),
+        system_instruction=assessment_input.get("system_instruction"),
         text_columns=list(assessment_input.get("text_columns") or []),
         attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
         output_schema=assessment_input.get("output_schema"),
@@ -82,7 +90,7 @@ def start_assessment(
     organization_id: int,
     project_id: int,
 ) -> AssessmentResponse:
-    """Start an assessment evaluation.
+    """Start an assessment run request.
 
     Validates the dataset, resolves each config, creates one AssessmentRun per config,
     and kicks off batch processing for each.
@@ -95,7 +103,6 @@ def start_assessment(
         f"org_id={organization_id}"
     )
 
-    # 1. Validate dataset
     dataset = get_dataset_by_id(
         session=session,
         dataset_id=request.dataset_id,
@@ -108,18 +115,37 @@ def start_assessment(
             detail=f"Dataset {request.dataset_id} not found or not accessible",
         )
 
-    # 2. Build assessment input to store with each run (flat structure)
     assessment_input: dict[str, Any] = {
         "prompt_template": request.prompt_template,
+        "system_instruction": request.system_instruction,
         "text_columns": request.text_columns,
         "attachments": [a.model_dump() for a in request.attachments],
     }
     if request.output_schema:
         assessment_input["output_schema"] = request.output_schema
 
-    # 3. Validate all configs first before creating any runs
+    config_crud = ConfigCrud(session=session, project_id=project_id)
+
     resolved_configs = []
     for cfg in request.configs:
+        # Bare assessment-tag check: reject configs explicitly tagged for non-assessment
+        # use. NULL (legacy/untagged) configs are still accepted to preserve
+        # backward compatibility with assessments created before tagging existed.
+        parent_config = config_crud.read_one(cfg.config_id)
+        if (
+            parent_config is not None
+            and parent_config.tag is not None
+            and parent_config.tag != ConfigTag.ASSESSMENT
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Config {cfg.config_id} has tag '{parent_config.tag.value}' "
+                    f"and cannot be used for assessment. "
+                    f"Only configs tagged 'ASSESSMENT' (or untagged) are allowed."
+                ),
+            )
+
         config_blob, error = resolve_evaluation_config(
             session=session,
             config_id=cfg.config_id,
@@ -129,52 +155,46 @@ def start_assessment(
         if error or config_blob is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Failed to resolve config {cfg.config_id} v{cfg.config_version}: {error}",
+                detail=(
+                    f"Failed to resolve config {cfg.config_id} "
+                    f"v{cfg.config_version}: {error}"
+                ),
             )
         provider = config_blob.completion.provider or LLMProvider.OPENAI
         if provider not in _SUPPORTED_BATCH_PROVIDERS:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} v{cfg.config_version} uses provider '{provider}', "
-                    f"which is not supported for batch assessment. "
+                    f"Config {cfg.config_id} v{cfg.config_version} uses provider "
+                    f"'{provider}', which is not supported for batch assessment. "
                     f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
                 ),
             )
         resolved_configs.append((cfg, config_blob))
 
-    # 4. Create parent assessment manager row
     assessment = create_assessment(
         session=session,
         experiment_name=request.experiment_name,
         dataset_id=request.dataset_id,
-        dataset_name=dataset.name,
         organization_id=organization_id,
         project_id=project_id,
-        total_runs=len(resolved_configs),
     )
 
-    # 5. Create one AssessmentRun per config and submit batches
     runs: list[AssessmentRun] = []
     for cfg, config_blob in resolved_configs:
         run = create_assessment_run(
             session=session,
-            run_name=request.experiment_name,
-            dataset_name=dataset.name,
-            dataset_id=request.dataset_id,
             assessment_id=assessment.id,
             config_id=cfg.config_id,
             config_version=cfg.config_version,
-            organization_id=organization_id,
-            project_id=project_id,
             assessment_input=assessment_input,
         )
 
-        # Submit batch for this run
         try:
             batch_job = submit_assessment_batch(
                 session=session,
                 run=run,
+                assessment=assessment,
                 dataset=dataset,
                 config_blob=config_blob,
                 assessment_input=assessment_input,
@@ -238,8 +258,10 @@ def retry_assessment(
     organization_id: int,
     project_id: int,
 ) -> AssessmentResponse:
-    """Create a new assessment run using the same parent assessment inputs."""
-    runs = get_assessment_runs_for_manager(session=session, assessment=assessment)
+    """Create a new assessment using the same parent assessment inputs."""
+    runs = get_assessment_runs_for_assessment(
+        session=session, assessment_id=assessment.id
+    )
     request = _build_retry_request(
         experiment_name=assessment.experiment_name,
         dataset_id=assessment.dataset_id,
@@ -260,9 +282,15 @@ def retry_assessment_run(
     project_id: int,
 ) -> AssessmentResponse:
     """Create a new assessment using the same inputs as a single child run."""
+    parent = run.assessment or session.get(Assessment, run.assessment_id)
+    if not parent:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Parent assessment {run.assessment_id} not found",
+        )
     request = _build_retry_request(
-        experiment_name=run.run_name,
-        dataset_id=run.dataset_id,
+        experiment_name=parent.experiment_name,
+        dataset_id=parent.dataset_id,
         runs=[run],
     )
     return start_assessment(

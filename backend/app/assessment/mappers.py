@@ -1,8 +1,10 @@
 import logging
 import unicodedata
 
-import litellm
 from google.genai import _transformers as genai_transformers
+from sqlmodel import Session
+
+from app.crud.model_config import is_reasoning_model
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,9 @@ def _convert_json_schema_to_google(schema: dict) -> dict:
     return google_schema
 
 
-def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_openai_params(
+    session: Session, kaapi_params: dict
+) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
     Returns:
@@ -111,7 +115,11 @@ def map_kaapi_to_openai_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     response_format = kaapi_params.get("response_format")
     output_schema = kaapi_params.get("output_schema")
 
-    support_reasoning = litellm.supports_reasoning(model=f"openai/{model}")
+    support_reasoning = bool(model) and is_reasoning_model(
+        session=session,
+        provider="openai",
+        model_name=model,
+    )
 
     # max_output_tokens is intentionally omitted for batch assessment —
     # Indic feedback responses can be long and a stored token limit would truncate them.

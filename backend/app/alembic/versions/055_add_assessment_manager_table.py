@@ -31,7 +31,7 @@ def upgrade():
             "experiment_name",
             sqlmodel.sql.sqltypes.AutoString(),
             nullable=False,
-            comment="Experiment name shared by child config runs",
+            comment="Name of the experiment grouping its config runs",
         ),
         sa.Column(
             "dataset_id",
@@ -40,71 +40,14 @@ def upgrade():
             comment="Reference to the evaluation dataset",
         ),
         sa.Column(
-            "dataset_name",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=False,
-            comment="Name of the dataset used by this assessment",
-        ),
-        sa.Column(
             "status",
             sqlmodel.sql.sqltypes.AutoString(),
             nullable=False,
             server_default="pending",
-            comment="Overall assessment status across all child evaluation runs",
-        ),
-        sa.Column(
-            "total_runs",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-            comment="Total number of child evaluation runs",
-        ),
-        sa.Column(
-            "pending_runs",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-            comment="Number of child runs in pending state",
-        ),
-        sa.Column(
-            "processing_runs",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-            comment="Number of child runs in processing state",
-        ),
-        sa.Column(
-            "completed_runs",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-            comment="Number of child runs in completed state",
-        ),
-        sa.Column(
-            "failed_runs",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-            comment="Number of child runs in failed state",
-        ),
-        sa.Column(
-            "run_stats",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
-            comment="Cached status snapshot for child evaluation runs",
-        ),
-        sa.Column(
-            "error_message",
-            sa.Text(),
-            nullable=True,
-            comment="Aggregated error message for child run failures",
-        ),
-        sa.Column(
-            "callback_url",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=True,
-            comment="Optional frontend callback URL for status updates",
+            comment=(
+                "Aggregate status: pending, processing, completed, "
+                "completed_with_errors, failed"
+            ),
         ),
         sa.Column(
             "organization_id",
@@ -155,17 +98,18 @@ def upgrade():
         unique=False,
     )
     op.create_index(
-        "idx_assessment_status_org",
+        "idx_assessment_org_project",
         "assessment",
-        ["status", "organization_id"],
+        ["organization_id", "project_id", "inserted_at"],
         unique=False,
     )
     op.create_index(
-        "idx_assessment_status_project",
+        "idx_assessment_status",
         "assessment",
-        ["status", "project_id"],
+        ["status"],
         unique=False,
     )
+
     op.create_table(
         "assessment_run",
         sa.Column(
@@ -175,39 +119,21 @@ def upgrade():
             comment="Unique identifier for the assessment run",
         ),
         sa.Column(
-            "run_name",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=False,
-            comment="Name of the assessment run",
-        ),
-        sa.Column(
             "assessment_id",
             sa.Integer(),
-            nullable=True,
-            comment="Reference to parent assessment manager row",
-        ),
-        sa.Column(
-            "dataset_id",
-            sa.Integer(),
             nullable=False,
-            comment="Reference to the evaluation dataset",
-        ),
-        sa.Column(
-            "dataset_name",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=False,
-            comment="Name of the dataset used",
+            comment="Reference to the parent assessment",
         ),
         sa.Column(
             "config_id",
             sa.Uuid(),
-            nullable=True,
+            nullable=False,
             comment="Reference to the stored config used",
         ),
         sa.Column(
             "config_version",
             sa.Integer(),
-            nullable=True,
+            nullable=False,
             comment="Version of the config used",
         ),
         sa.Column(
@@ -233,8 +159,11 @@ def upgrade():
         sa.Column(
             "input",
             postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            comment="Assessment input config: prompt_template, text_columns, attachments, output_schema",
+            nullable=False,
+            comment=(
+                "Assessment input: prompt_template, text_columns, attachments, "
+                "output_schema"
+            ),
         ),
         sa.Column(
             "object_store_url",
@@ -247,30 +176,6 @@ def upgrade():
             sa.Text(),
             nullable=True,
             comment="Error message if the run failed",
-        ),
-        sa.Column(
-            "eval_score",
-            postgresql.JSONB(astext_type=sa.Text()),
-            nullable=True,
-            comment="Evaluation scores (reserved for future use)",
-        ),
-        sa.Column(
-            "eval_score_trace_url",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=True,
-            comment="S3 URL for evaluation score traces (reserved)",
-        ),
-        sa.Column(
-            "organization_id",
-            sa.Integer(),
-            nullable=False,
-            comment="Reference to the organization",
-        ),
-        sa.Column(
-            "project_id",
-            sa.Integer(),
-            nullable=False,
-            comment="Reference to the project",
         ),
         sa.Column(
             "inserted_at",
@@ -288,12 +193,6 @@ def upgrade():
             ["assessment_id"],
             ["assessment.id"],
             name="fk_assessment_run_assessment_id",
-            ondelete="SET NULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["dataset_id"],
-            ["evaluation_dataset.id"],
-            name="fk_assessment_run_dataset_id",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -307,35 +206,7 @@ def upgrade():
             name="fk_assessment_run_batch_job_id",
             ondelete="SET NULL",
         ),
-        sa.ForeignKeyConstraint(
-            ["organization_id"],
-            ["organization.id"],
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["project.id"],
-            ondelete="CASCADE",
-        ),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        op.f("ix_assessment_run_run_name"),
-        "assessment_run",
-        ["run_name"],
-        unique=False,
-    )
-    op.create_index(
-        "idx_assessment_run_status_org",
-        "assessment_run",
-        ["status", "organization_id"],
-        unique=False,
-    )
-    op.create_index(
-        "idx_assessment_run_status_project",
-        "assessment_run",
-        ["status", "project_id"],
-        unique=False,
     )
     op.create_index(
         "idx_assessment_run_assessment_id",
@@ -347,11 +218,8 @@ def upgrade():
 
 def downgrade():
     op.drop_index("idx_assessment_run_assessment_id", table_name="assessment_run")
-    op.drop_index("idx_assessment_run_status_project", table_name="assessment_run")
-    op.drop_index("idx_assessment_run_status_org", table_name="assessment_run")
-    op.drop_index(op.f("ix_assessment_run_run_name"), table_name="assessment_run")
     op.drop_table("assessment_run")
-    op.drop_index("idx_assessment_status_project", table_name="assessment")
-    op.drop_index("idx_assessment_status_org", table_name="assessment")
+    op.drop_index("idx_assessment_status", table_name="assessment")
+    op.drop_index("idx_assessment_org_project", table_name="assessment")
     op.drop_index(op.f("ix_assessment_experiment_name"), table_name="assessment")
     op.drop_table("assessment")

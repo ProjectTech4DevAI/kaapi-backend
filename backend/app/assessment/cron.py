@@ -6,17 +6,23 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.assessment.crud import (
-    get_assessment_runs_for_manager,
+    compute_run_counts,
+    get_assessment_runs_for_assessment,
     recompute_assessment_status,
     update_assessment_run_status,
 )
 from app.assessment.models import Assessment, AssessmentRun
-from app.assessment.processing import check_and_process_assessment
+from app.assessment.processing import (
+    check_and_process_assessment,
+    format_assessment_failure_message,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _log_config_progress(result: dict[str, Any], run: AssessmentRun) -> None:
+def _log_config_progress(
+    result: dict[str, Any], run: AssessmentRun, assessment: Assessment
+) -> None:
     """Emit explicit config-level logs for grouped assessment experiments."""
     action = result.get("action")
     if action not in {"processed", "failed"}:
@@ -25,7 +31,7 @@ def _log_config_progress(result: dict[str, Any], run: AssessmentRun) -> None:
     logger.info(
         "[poll_all_pending_assessment_evaluations] "
         "Experiment config update | "
-        f"experiment={run.run_name} | "
+        f"experiment={assessment.experiment_name} | "
         f"assessment_id={run.assessment_id} | "
         f"run_id={run.id} | "
         f"config_id={run.config_id} | "
@@ -68,7 +74,9 @@ async def poll_all_pending_assessment_evaluations(
     still_processing = 0
 
     for assessment in pending_assessments:
-        runs = get_assessment_runs_for_manager(session=session, assessment=assessment)
+        runs = get_assessment_runs_for_assessment(
+            session=session, assessment_id=assessment.id
+        )
         active_runs = [
             run for run in runs if run.status in {"processing", "in_progress"}
         ]
@@ -77,13 +85,14 @@ async def poll_all_pending_assessment_evaluations(
             refreshed = recompute_assessment_status(
                 session=session, assessment_id=assessment.id
             )
+            counts = compute_run_counts(runs)
             logger.info(
                 "[poll_all_pending_assessment_evaluations] "
                 f"No active runs for assessment {assessment.id} | "
                 f"recomputed status={refreshed.status} | "
-                f"total_runs={refreshed.total_runs} | "
-                f"completed={refreshed.completed_runs} | "
-                f"failed={refreshed.failed_runs}"
+                f"total_runs={counts.total} | "
+                f"completed={counts.completed} | "
+                f"failed={counts.failed}"
             )
             if refreshed.status in {"pending", "processing"}:
                 still_processing += 1
@@ -96,7 +105,7 @@ async def poll_all_pending_assessment_evaluations(
                     session=session,
                 )
                 all_results.append(result)
-                _log_config_progress(result, run)
+                _log_config_progress(result, run, assessment)
 
                 if result["action"] == "processed":
                     processed += 1
@@ -106,14 +115,15 @@ async def poll_all_pending_assessment_evaluations(
                     still_processing += 1
 
             except Exception as e:
+                error_msg = format_assessment_failure_message(e)
                 logger.error(
                     "[poll_all_pending_assessment_evaluations] "
                     f"Failed run {run.id} | "
-                    f"experiment={run.run_name} | "
+                    f"experiment={assessment.experiment_name} | "
                     f"assessment_id={run.assessment_id} | "
                     f"config_id={run.config_id} | "
                     f"config_version={run.config_version} | "
-                    f"error={e}",
+                    f"error={error_msg}",
                     exc_info=True,
                 )
                 try:
@@ -121,7 +131,7 @@ async def poll_all_pending_assessment_evaluations(
                         session=session,
                         run=run,
                         status="failed",
-                        error_message="Processing failed. Check server logs for details.",
+                        error_message=error_msg,
                     )
                     recompute_assessment_status(
                         session=session, assessment_id=assessment.id
@@ -129,11 +139,11 @@ async def poll_all_pending_assessment_evaluations(
                     failure_result = {
                         "assessment_id": run.assessment_id,
                         "run_id": run.id,
-                        "run_name": run.run_name,
+                        "experiment_name": assessment.experiment_name,
                         "config_id": str(run.config_id) if run.config_id else None,
                         "config_version": run.config_version,
                         "action": "failed",
-                        "error": "Processing failed",
+                        "error": error_msg,
                         "current_status": "failed",
                     }
                     all_results.append(failure_result)
@@ -143,7 +153,7 @@ async def poll_all_pending_assessment_evaluations(
                         "[poll_all_pending_assessment_evaluations] "
                         f"Cleanup failed for run {run.id} | "
                         f"assessment_id={run.assessment_id} | "
-                        f"run_name={run.run_name} | "
+                        f"experiment={assessment.experiment_name} | "
                         f"error={cleanup_exc}",
                         exc_info=True,
                     )

@@ -5,10 +5,12 @@ import io
 import json
 import logging
 import re
+import zipfile
 from typing import Any, Literal
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from sqlmodel import Session
 
 from app.assessment.batch import _load_dataset_rows
 from app.assessment.models import Assessment, AssessmentExportRow, AssessmentRun
@@ -19,6 +21,7 @@ from app.core.storage_utils import generate_timestamped_filename
 from app.crud.job import get_batch_job
 from app.models.batch_job import BatchJob
 from app.models.evaluation import EvaluationDataset
+from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
 
@@ -279,10 +282,18 @@ def _load_parsed_results_for_run(
     Tries object store first; falls back to downloading directly from the
     batch provider (e.g. OpenAI file API) when the S3 copy is unavailable.
     """
+    parent = session.get(Assessment, run.assessment_id)
+    if not parent:
+        logger.warning(
+            "[_load_parsed_results_for_run] Parent assessment not found for run id=%s",
+            run.id,
+        )
+        return None
+
     # 1. Try object store (S3)
     if run.object_store_url:
         try:
-            storage = get_cloud_storage(session, project_id=run.project_id)
+            storage = get_cloud_storage(session, project_id=parent.project_id)
             body = storage.stream(run.object_store_url)
             raw_results = parse_stored_results(body.read().decode("utf-8"))
             if raw_results:
@@ -307,8 +318,8 @@ def _load_parsed_results_for_run(
             provider = _get_batch_provider(
                 session=session,
                 provider_name=batch_job.provider,
-                organization_id=run.organization_id,
-                project_id=run.project_id,
+                organization_id=parent.organization_id,
+                project_id=parent.project_id,
             )
             raw_results = download_batch_results(provider=provider, batch_job=batch_job)
             return parse_assessment_output(raw_results, batch_job.provider)
@@ -333,13 +344,14 @@ def _load_parsed_results_for_run(
 def _load_dataset_rows_for_run(
     session: Any,
     run: AssessmentRun,
+    assessment: Assessment,
 ) -> list[dict[str, str]]:
     """Load original dataset rows for input-output correlation.
 
     Returns an empty list if the dataset is not available.
     """
     try:
-        dataset = session.get(EvaluationDataset, run.dataset_id)
+        dataset = session.get(EvaluationDataset, assessment.dataset_id)
         if not dataset or not dataset.object_store_url:
             logger.warning(
                 "[_load_dataset_rows_for_run] Dataset not available for run id=%s",
@@ -376,6 +388,15 @@ def load_export_rows_for_run(
         )
         return []
 
+    if assessment is None:
+        assessment = session.get(Assessment, run.assessment_id)
+    if assessment is None:
+        logger.warning(
+            "[load_export_rows_for_run] Parent assessment missing for run id=%s",
+            run.id,
+        )
+        return []
+
     parsed_results = _load_parsed_results_for_run(
         session=session,
         run=run,
@@ -384,12 +405,9 @@ def load_export_rows_for_run(
     if parsed_results is None:
         return []
 
-    # Load original dataset rows for input correlation
-    dataset_rows = _load_dataset_rows_for_run(session, run)
-
-    experiment_name = assessment.experiment_name if assessment else run.run_name
-    dataset_id = assessment.dataset_id if assessment else run.dataset_id
-    dataset_name = assessment.dataset_name if assessment else run.dataset_name
+    dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
+    dataset = session.get(EvaluationDataset, assessment.dataset_id)
+    dataset_name = dataset.name if dataset else None
 
     export_rows: list[AssessmentExportRow] = []
     for item in parsed_results:
@@ -408,12 +426,12 @@ def load_export_rows_for_run(
 
         export_rows.append(
             AssessmentExportRow(
-                assessment_id=run.assessment_id or 0,
-                experiment_name=experiment_name,
-                dataset_id=dataset_id,
+                assessment_id=run.assessment_id,
+                experiment_name=assessment.experiment_name,
+                dataset_id=assessment.dataset_id,
                 dataset_name=dataset_name,
                 run_id=run.id,
-                run_name=run.run_name,
+                run_name=assessment.experiment_name,
                 run_status=run.status,
                 config_id=run.config_id,
                 config_version=run.config_version,
@@ -454,3 +472,61 @@ def sort_export_rows(
         )
     )
     return export_rows
+
+
+def build_assessment_results_response(
+    session: Session,
+    assessment: Assessment,
+    runs: list[AssessmentRun],
+    export_format: Literal["json", "csv", "xlsx"],
+) -> APIResponse[list[dict[str, Any]]] | StreamingResponse:
+    """Bundle child-run results for a parent assessment into a download response.
+
+    JSON returns a flat list. CSV/XLSX with one run returns a single file;
+    multiple runs are zipped one-file-per-run.
+    """
+    runs_with_rows: list[tuple[AssessmentRun, list[AssessmentExportRow]]] = []
+    all_rows: list[AssessmentExportRow] = []
+    for run in runs:
+        rows = load_export_rows_for_run(session=session, run=run, assessment=assessment)
+        if rows:
+            runs_with_rows.append((run, sort_export_rows(rows)))
+            all_rows.extend(rows)
+
+    all_rows = sort_export_rows(all_rows)
+
+    if export_format == "json":
+        return APIResponse.success_response(data=build_json_export_rows(all_rows))
+
+    if len(runs_with_rows) <= 1:
+        return build_export_response(
+            export_rows=all_rows,
+            export_format=export_format,
+            base_name=(
+                f"{assessment.experiment_name}_assessment_{assessment.id}_results"
+            ),
+        )
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for run, rows in runs_with_rows:
+            config_label = (
+                f"config_v{run.config_version}"
+                if run.config_version
+                else f"run_{run.id}"
+            )
+            config_id_short = str(run.config_id)[:8] if run.config_id else ""
+            file_base = _safe_filename_part(f"{config_label}_{config_id_short}")
+            file_bytes, _ = serialize_export_rows(rows, export_format)
+            zf.writestr(f"{file_base}.{export_format}", file_bytes)
+
+    zip_buffer.seek(0)
+    zip_filename = generate_timestamped_filename(
+        _safe_filename_part(f"{assessment.experiment_name}_assessment_{assessment.id}"),
+        extension="zip",
+    )
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+    )

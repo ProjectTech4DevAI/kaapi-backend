@@ -1,6 +1,7 @@
 """Assessment utility functions."""
 
 from app.assessment.utils.export import (
+    build_assessment_results_response,
     build_export_response,
     build_json_export_rows,
     load_export_rows_for_run,
@@ -13,6 +14,7 @@ from app.assessment.utils.parsing import (
 )
 
 __all__ = [
+    "build_assessment_results_response",
     "build_export_response",
     "build_json_export_rows",
     "load_export_rows_for_run",

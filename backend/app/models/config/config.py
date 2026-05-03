@@ -1,13 +1,31 @@
+from enum import Enum
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 from sqlmodel import Field, SQLModel, Index, text
 from pydantic import field_validator
 
 from app.core.util import now
 from app.models.llm.request import ConfigBlob
 from .version import ConfigVersionPublic
+
+
+class ConfigTag(str, Enum):
+    """Config classification tag."""
+
+    DEFAULT = "default"
+    ASSESSMENT = "ASSESSMENT"
+
+
+_CONFIG_TAG_PG_ENUM = postgresql.ENUM(
+    ConfigTag,
+    name="config_tag",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
 
 
 class ConfigBase(SQLModel):
@@ -60,6 +78,18 @@ class Config(ConfigBase, table=True):
         sa_column_kwargs={"comment": "Reference to the project"},
     )
 
+    tag: ConfigTag | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            _CONFIG_TAG_PG_ENUM,
+            nullable=True,
+            comment=(
+                "Optional tag classifying the config: 'default' for general use, "
+                "'ASSESSMENT' for assessment UI picker; NULL means untagged."
+            ),
+        ),
+    )
+
     inserted_at: datetime = Field(
         default_factory=now,
         nullable=False,
@@ -90,6 +120,14 @@ class ConfigCreate(ConfigBase):
         max_length=512,
         description="Optional message describing the changes in this version",
     )
+    tag: ConfigTag | None = Field(
+        default=None,
+        description=(
+            "Optional tag for classifying this config. "
+            "Omit (NULL) for untagged/general-purpose; set 'ASSESSMENT' to surface "
+            "the config in the Assessment UI picker."
+        ),
+    )
 
     @field_validator("config_blob")
     def validate_blob_not_empty(cls, value):
@@ -102,6 +140,13 @@ class ConfigUpdate(SQLModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(
         default=None, max_length=512, description="Optional description"
+    )
+    tag: ConfigTag | None = Field(
+        default=None,
+        description=(
+            "Optional tag for classifying this config. "
+            "Currently set-only; omitting it leaves the existing tag untouched."
+        ),
     )
 
 

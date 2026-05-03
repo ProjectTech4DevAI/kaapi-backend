@@ -1,7 +1,7 @@
 """create feature flag table
 
-Revision ID: 056
-Revises: 055
+Revision ID: 057
+Revises: 056
 Create Date: 2026-04-22 12:00:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "056"
-down_revision = "055"
+revision = "057"
+down_revision = "056"
 branch_labels = None
 depends_on = None
 
