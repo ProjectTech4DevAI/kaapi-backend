@@ -1,5 +1,3 @@
-"""Assessment API routes — assembled from per-resource sub-routers."""
-
 from fastapi import APIRouter
 
 from app.assessment.routes import assessments, datasets, runs

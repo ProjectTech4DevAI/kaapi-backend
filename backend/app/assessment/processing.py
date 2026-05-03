@@ -1,7 +1,5 @@
 """Assessment batch result processing and polling.
 
-Handles downloading completed batch results, parsing them, and updating
-the assessment run status. Follows the same pattern as text evaluation
 processing but adapted for multi-provider (OpenAI + Google) support.
 """
 

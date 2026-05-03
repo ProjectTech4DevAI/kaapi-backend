@@ -1,15 +1,13 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import SessionDep, AuthContextDep
 from app.crud.config import ConfigCrud
 from app.models import (
-    Config,
     ConfigCreate,
     ConfigUpdate,
     ConfigPublic,
     ConfigWithVersion,
-    ConfigVersion,
     Message,
 )
 from app.models.config.config import ConfigTag
@@ -62,8 +60,7 @@ def list_configs(
         None,
         description=(
             "Optional tag filter. Omit to return all configs (default behavior). "
-            "Pass 'ASSESSMENT' to surface only assessment-tagged configs in the "
-            "Assessment UI; pass 'default' for explicitly default-tagged configs."
+            "Supported values: 'default', 'assessment'. NULL/None means untagged (legacy)."
         ),
     ),
 ) -> APIResponse[list[ConfigPublic]]:
