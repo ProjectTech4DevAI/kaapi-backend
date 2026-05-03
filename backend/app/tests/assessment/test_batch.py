@@ -103,7 +103,10 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 1
-        assert map_params.call_args.args[0]["instructions"] == "request system"
+        assert map_params.call_args.kwargs["session"] is session
+        assert map_params.call_args.kwargs["kaapi_params"]["instructions"] == (
+            "request system"
+        )
         assert start_batch.call_args.kwargs["provider_name"] == "openai"
 
     def test_config_instruction_is_not_used_without_request_instruction(self) -> None:
@@ -157,7 +160,8 @@ class TestSubmitAssessmentBatchProviderRouting:
                 project_id=1,
             )
 
-        assert "instructions" not in map_params.call_args.args[0]
+        assert map_params.call_args.kwargs["session"] is session
+        assert "instructions" not in map_params.call_args.kwargs["kaapi_params"]
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()

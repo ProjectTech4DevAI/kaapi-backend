@@ -564,7 +564,10 @@ def submit_assessment_batch(
     base_provider = provider_name.replace("-native", "")
 
     if base_provider == LLMProvider.OPENAI:
-        mapped_params, warnings = map_kaapi_to_openai_params(params)
+        mapped_params, warnings = map_kaapi_to_openai_params(
+            session=session,
+            kaapi_params=params,
+        )
         if warnings:
             logger.info(f"[submit_assessment_batch] Mapper warnings: {warnings}")
 
