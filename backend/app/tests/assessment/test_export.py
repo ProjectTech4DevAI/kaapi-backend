@@ -449,17 +449,23 @@ class TestLoadParsedResultsForRun:
 
 
 class TestLoadDatasetRowsForRun:
-    def _make_run(self, dataset_id: int = 1) -> MagicMock:
+    def _make_run(self) -> MagicMock:
         run = MagicMock()
         run.id = 1
-        run.dataset_id = dataset_id
         return run
+
+    def _make_assessment(self, dataset_id: int = 1) -> MagicMock:
+        assessment = MagicMock()
+        assessment.id = 10
+        assessment.dataset_id = dataset_id
+        return assessment
 
     def test_dataset_not_found_returns_empty(self) -> None:
         session = MagicMock()
         session.get.return_value = None
-        run = self._make_run()
-        result = _load_dataset_rows_for_run(session=session, run=run)
+        result = _load_dataset_rows_for_run(
+            session=session, run=self._make_run(), assessment=self._make_assessment()
+        )
         assert result == []
 
     def test_dataset_no_url_returns_empty(self) -> None:
@@ -467,15 +473,17 @@ class TestLoadDatasetRowsForRun:
         dataset = MagicMock()
         dataset.object_store_url = None
         session.get.return_value = dataset
-        run = self._make_run()
-        result = _load_dataset_rows_for_run(session=session, run=run)
+        result = _load_dataset_rows_for_run(
+            session=session, run=self._make_run(), assessment=self._make_assessment()
+        )
         assert result == []
 
     def test_exception_returns_empty(self) -> None:
         session = MagicMock()
         session.get.side_effect = Exception("DB error")
-        run = self._make_run()
-        result = _load_dataset_rows_for_run(session=session, run=run)
+        result = _load_dataset_rows_for_run(
+            session=session, run=self._make_run(), assessment=self._make_assessment()
+        )
         assert result == []
 
     def test_valid_dataset_returns_rows(self) -> None:
@@ -483,11 +491,14 @@ class TestLoadDatasetRowsForRun:
         dataset = MagicMock()
         dataset.object_store_url = "s3://bucket/ds.csv"
         session.get.return_value = dataset
-        run = self._make_run()
         with patch(
             "app.assessment.utils.export._load_dataset_rows", return_value=[{"q": "hi"}]
         ):
-            result = _load_dataset_rows_for_run(session=session, run=run)
+            result = _load_dataset_rows_for_run(
+                session=session,
+                run=self._make_run(),
+                assessment=self._make_assessment(),
+            )
         assert result == [{"q": "hi"}]
 
 
@@ -497,17 +508,19 @@ class TestLoadExportRowsForRun:
         run.id = 1
         run.assessment_id = 10
         run.batch_job_id = 5
-        run.run_name = "exp_v1"
         run.status = "completed"
         run.config_id = None
         run.config_version = 1
-        run.dataset_id = 2
-        run.dataset_name = "ds"
         run.object_store_url = None
-        run.organization_id = 1
-        run.project_id = 1
         run.updated_at = datetime(2024, 1, 1)
         return run
+
+    def _make_assessment(self) -> MagicMock:
+        assessment = MagicMock()
+        assessment.id = 10
+        assessment.experiment_name = "exp_v1"
+        assessment.dataset_id = 2
+        return assessment
 
     def test_no_batch_job_id_returns_empty(self) -> None:
         session = MagicMock()
@@ -520,7 +533,9 @@ class TestLoadExportRowsForRun:
         session = MagicMock()
         run = self._make_run()
         with patch("app.assessment.utils.export.get_batch_job", return_value=None):
-            result = load_export_rows_for_run(session=session, run=run)
+            result = load_export_rows_for_run(
+                session=session, run=run, assessment=self._make_assessment()
+            )
         assert result == []
 
     def test_no_parsed_results_returns_empty(self) -> None:
@@ -532,11 +547,16 @@ class TestLoadExportRowsForRun:
             "app.assessment.utils.export._load_parsed_results_for_run",
             return_value=None,
         ):
-            result = load_export_rows_for_run(session=session, run=run)
+            result = load_export_rows_for_run(
+                session=session, run=run, assessment=self._make_assessment()
+            )
         assert result == []
 
     def test_parsed_results_build_export_rows(self) -> None:
         session = MagicMock()
+        dataset = MagicMock()
+        dataset.name = "ds"
+        session.get.return_value = dataset
         run = self._make_run()
         parsed = [
             {
@@ -555,13 +575,18 @@ class TestLoadExportRowsForRun:
         ), patch(
             "app.assessment.utils.export._load_dataset_rows_for_run", return_value=[]
         ):
-            result = load_export_rows_for_run(session=session, run=run)
+            result = load_export_rows_for_run(
+                session=session, run=run, assessment=self._make_assessment()
+            )
         assert len(result) == 1
         assert result[0].result_status == "passed"
         assert result[0].row_id == "row_0"
 
     def test_error_result_sets_failed_status(self) -> None:
         session = MagicMock()
+        dataset = MagicMock()
+        dataset.name = "ds"
+        session.get.return_value = dataset
         run = self._make_run()
         parsed = [
             {
@@ -580,11 +605,16 @@ class TestLoadExportRowsForRun:
         ), patch(
             "app.assessment.utils.export._load_dataset_rows_for_run", return_value=[]
         ):
-            result = load_export_rows_for_run(session=session, run=run)
+            result = load_export_rows_for_run(
+                session=session, run=run, assessment=self._make_assessment()
+            )
         assert result[0].result_status == "failed"
 
     def test_input_data_correlated_via_row_id(self) -> None:
         session = MagicMock()
+        dataset = MagicMock()
+        dataset.name = "ds"
+        session.get.return_value = dataset
         run = self._make_run()
         parsed = [
             {
@@ -605,5 +635,7 @@ class TestLoadExportRowsForRun:
             "app.assessment.utils.export._load_dataset_rows_for_run",
             return_value=dataset_rows,
         ):
-            result = load_export_rows_for_run(session=session, run=run)
+            result = load_export_rows_for_run(
+                session=session, run=run, assessment=self._make_assessment()
+            )
         assert result[0].input_data == {"q": "second"}

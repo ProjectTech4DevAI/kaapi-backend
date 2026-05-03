@@ -21,6 +21,7 @@ def _make_request(provider_config_id: UUID) -> AssessmentCreate:
         experiment_name="exp-1",
         dataset_id=7,
         prompt_template="Answer: {question}",
+        system_instruction="Assess strictly",
         text_columns=["question"],
         attachments=[],
         configs=[
@@ -46,6 +47,19 @@ def _make_run() -> MagicMock:
     return run
 
 
+def _untagged_config_crud_patch():
+    """Patch ConfigCrud so the bare tag-check in start_assessment short-circuits.
+
+    Returns a config whose ``tag`` is None — i.e. legacy/untagged — which the
+    check accepts.
+    """
+    crud = MagicMock()
+    crud.read_one.return_value = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000001"), tag=None
+    )
+    return patch("app.assessment.service.ConfigCrud", return_value=crud)
+
+
 class TestStartAssessment:
     def test_dataset_not_found(self) -> None:
         session = MagicMock()
@@ -62,12 +76,16 @@ class TestStartAssessment:
     def test_config_resolution_failure(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        with patch(
-            "app.assessment.service.get_dataset_by_id",
-            return_value=_make_dataset(),
-        ), patch(
-            "app.assessment.service.resolve_evaluation_config",
-            return_value=(None, "missing"),
+        with (
+            patch(
+                "app.assessment.service.get_dataset_by_id",
+                return_value=_make_dataset(),
+            ),
+            patch(
+                "app.assessment.service.resolve_evaluation_config",
+                return_value=(None, "missing"),
+            ),
+            _untagged_config_crud_patch(),
         ):
             with pytest.raises(HTTPException, match="Failed to resolve config"):
                 start_assessment(
@@ -80,17 +98,20 @@ class TestStartAssessment:
     def test_rejects_unsupported_provider(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="google"))
+        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="anthropic"))
 
-        with patch(
-            "app.assessment.service.get_dataset_by_id",
-            return_value=_make_dataset(),
-        ), patch(
-            "app.assessment.service.resolve_evaluation_config",
-            return_value=(config_blob, None),
-        ), patch(
-            "app.assessment.service.create_assessment"
-        ) as create_assessment:
+        with (
+            patch(
+                "app.assessment.service.get_dataset_by_id",
+                return_value=_make_dataset(),
+            ),
+            patch(
+                "app.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch("app.assessment.service.create_assessment") as create_assessment,
+            _untagged_config_crud_patch(),
+        ):
             with pytest.raises(
                 HTTPException, match="not supported for batch assessment"
             ):
@@ -101,6 +122,55 @@ class TestStartAssessment:
                     project_id=1,
                 )
         create_assessment.assert_not_called()
+
+    def test_google_provider_is_supported(self) -> None:
+        session = MagicMock()
+        request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
+        dataset = _make_dataset()
+        assessment = MagicMock()
+        assessment.id = 21
+        run = _make_run()
+        config_blob = SimpleNamespace(
+            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
+        )
+        batch_job = MagicMock()
+        batch_job.id = 101
+        batch_job.total_items = 3
+
+        with (
+            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
+            patch(
+                "app.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.assessment.service.create_assessment",
+                return_value=assessment,
+            ),
+            patch(
+                "app.assessment.service.create_assessment_run",
+                return_value=run,
+            ),
+            patch(
+                "app.assessment.service.submit_assessment_batch",
+                return_value=batch_job,
+            ) as submit_batch,
+            patch(
+                "app.assessment.service.update_assessment_run_status",
+                return_value=run,
+            ),
+            patch("app.assessment.service.recompute_assessment_status"),
+            _untagged_config_crud_patch(),
+        ):
+            response = start_assessment(
+                session=session,
+                request=request,
+                organization_id=1,
+                project_id=1,
+            )
+
+        assert response.num_configs == 1
+        assert submit_batch.call_args.kwargs["config_blob"] is config_blob
 
     def test_defaults_missing_provider_to_openai(self) -> None:
         session = MagicMock()
@@ -116,25 +186,30 @@ class TestStartAssessment:
         batch_job.id = 101
         batch_job.total_items = 3
 
-        with patch(
-            "app.assessment.service.get_dataset_by_id", return_value=dataset
-        ), patch(
-            "app.assessment.service.resolve_evaluation_config",
-            return_value=(config_blob, None),
-        ), patch(
-            "app.assessment.service.create_assessment",
-            return_value=assessment,
-        ), patch(
-            "app.assessment.service.create_assessment_run",
-            return_value=run,
-        ), patch(
-            "app.assessment.service.submit_assessment_batch",
-            return_value=batch_job,
-        ) as submit_batch, patch(
-            "app.assessment.service.update_assessment_run_status",
-            return_value=run,
-        ), patch(
-            "app.assessment.service.recompute_assessment_status"
+        with (
+            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
+            patch(
+                "app.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.assessment.service.create_assessment",
+                return_value=assessment,
+            ),
+            patch(
+                "app.assessment.service.create_assessment_run",
+                return_value=run,
+            ) as create_run,
+            patch(
+                "app.assessment.service.submit_assessment_batch",
+                return_value=batch_job,
+            ) as submit_batch,
+            patch(
+                "app.assessment.service.update_assessment_run_status",
+                return_value=run,
+            ),
+            patch("app.assessment.service.recompute_assessment_status"),
+            _untagged_config_crud_patch(),
         ):
             response = start_assessment(
                 session=session,
@@ -146,7 +221,47 @@ class TestStartAssessment:
         assert response.assessment_id == 21
         assert response.num_configs == 1
         assert response.runs[0].run_id == 11
+        assessment_input = create_run.call_args.kwargs["assessment_input"]
+        assert assessment_input["system_instruction"] == "Assess strictly"
+        assert (
+            submit_batch.call_args.kwargs["assessment_input"]["system_instruction"]
+            == "Assess strictly"
+        )
         submit_batch.assert_called_once()
+
+    def test_rejects_default_tagged_config(self) -> None:
+        """Configs explicitly tagged 'default' must be rejected for assessment."""
+        from app.models.config.config import ConfigTag
+
+        session = MagicMock()
+        request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
+
+        crud = MagicMock()
+        crud.read_one.return_value = SimpleNamespace(
+            id=UUID("00000000-0000-0000-0000-000000000001"),
+            tag=ConfigTag.DEFAULT,
+        )
+
+        with (
+            patch(
+                "app.assessment.service.get_dataset_by_id",
+                return_value=_make_dataset(),
+            ),
+            patch("app.assessment.service.ConfigCrud", return_value=crud),
+            patch("app.assessment.service.resolve_evaluation_config") as resolve,
+        ):
+            with pytest.raises(
+                HTTPException,
+                match="cannot be used for assessment",
+            ):
+                start_assessment(
+                    session=session,
+                    request=request,
+                    organization_id=1,
+                    project_id=1,
+                )
+        # Tag check must fire BEFORE config resolution.
+        resolve.assert_not_called()
 
     def test_batch_submission_failure_marks_run_failed(self) -> None:
         session = MagicMock()
@@ -162,25 +277,30 @@ class TestStartAssessment:
             )
         )
 
-        with patch(
-            "app.assessment.service.get_dataset_by_id", return_value=dataset
-        ), patch(
-            "app.assessment.service.resolve_evaluation_config",
-            return_value=(config_blob, None),
-        ), patch(
-            "app.assessment.service.create_assessment",
-            return_value=assessment,
-        ), patch(
-            "app.assessment.service.create_assessment_run",
-            return_value=run,
-        ), patch(
-            "app.assessment.service.submit_assessment_batch",
-            side_effect=RuntimeError("submit failed"),
-        ), patch(
-            "app.assessment.service.update_assessment_run_status",
-            return_value=run,
-        ) as update_run, patch(
-            "app.assessment.service.recompute_assessment_status"
+        with (
+            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
+            patch(
+                "app.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.assessment.service.create_assessment",
+                return_value=assessment,
+            ),
+            patch(
+                "app.assessment.service.create_assessment_run",
+                return_value=run,
+            ),
+            patch(
+                "app.assessment.service.submit_assessment_batch",
+                side_effect=RuntimeError("submit failed"),
+            ),
+            patch(
+                "app.assessment.service.update_assessment_run_status",
+                return_value=run,
+            ) as update_run,
+            patch("app.assessment.service.recompute_assessment_status"),
+            _untagged_config_crud_patch(),
         ):
             response = start_assessment(
                 session=session,
@@ -214,6 +334,7 @@ class TestRetryHelpers:
         run3.id = 2
         run3.input = {
             "prompt_template": "p",
+            "system_instruction": "sys",
             "text_columns": ["q"],
             "attachments": [],
             "output_schema": {"type": "object"},
@@ -222,19 +343,21 @@ class TestRetryHelpers:
         run3.config_version = 1
         req = _build_retry_request(experiment_name="exp", dataset_id=1, runs=[run3])
         assert req.experiment_name == "exp"
+        assert req.system_instruction == "sys"
         assert len(req.configs) == 1
 
     def test_retry_assessment_wrappers(self) -> None:
         session = MagicMock()
         assessment = MagicMock()
+        assessment.id = 21
         assessment.experiment_name = "exp"
         assessment.dataset_id = 7
         run = MagicMock()
+        run.assessment_id = 21
+        run.assessment = assessment
         run.input = {"prompt_template": "p", "text_columns": [], "attachments": []}
         run.config_id = UUID("00000000-0000-0000-0000-000000000001")
         run.config_version = 1
-        run.run_name = "exp"
-        run.dataset_id = 7
 
         result = SimpleNamespace(
             assessment_id=1,
@@ -245,9 +368,13 @@ class TestRetryHelpers:
             runs=[],
         )
 
-        with patch(
-            "app.assessment.service.get_assessment_runs_for_manager", return_value=[run]
-        ), patch("app.assessment.service.start_assessment", return_value=result):
+        with (
+            patch(
+                "app.assessment.service.get_assessment_runs_for_assessment",
+                return_value=[run],
+            ),
+            patch("app.assessment.service.start_assessment", return_value=result),
+        ):
             resp = retry_assessment(session, assessment, 1, 1)
         assert resp.assessment_id == 1
 

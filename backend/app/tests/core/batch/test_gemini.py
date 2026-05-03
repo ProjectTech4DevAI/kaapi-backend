@@ -99,6 +99,37 @@ class TestGeminiBatchProvider:
         assert result["total_items"] == 1
         mock_genai_client.batches.create.assert_called_once()
 
+    def test_create_batch_preserves_unicode_text_in_jsonl(
+        self, provider, mock_genai_client
+    ):
+        """Test JSONL upload keeps non-ASCII prompt text UTF-8 encoded."""
+        jsonl_data = [
+            {
+                "key": "req-1",
+                "request": {
+                    "contents": [
+                        {
+                            "parts": [{"text": "# Problem Statement\n\nఎండ్"}],
+                            "role": "user",
+                        }
+                    ]
+                },
+            }
+        ]
+        config = {"display_name": "test"}
+
+        provider.upload_file = MagicMock(return_value="files/uploaded-123")
+        mock_batch_job = MagicMock()
+        mock_batch_job.name = "batches/batch-123"
+        mock_batch_job.state.name = "JOB_STATE_PENDING"
+        mock_genai_client.batches.create.return_value = mock_batch_job
+
+        provider.create_batch(jsonl_data, config)
+
+        uploaded_content = provider.upload_file.call_args.args[0]
+        assert "ఎండ్" in uploaded_content
+        assert "\\u0c" not in uploaded_content
+
     def test_create_batch_file_upload_error(self, provider, mock_genai_client):
         """Test handling of file upload error during batch creation."""
         jsonl_data = [{"key": "req-1", "request": {}}]

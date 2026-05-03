@@ -6,7 +6,12 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from app.assessment.models import Assessment, AssessmentRun
+from app.assessment.models import (
+    Assessment,
+    AssessmentRun,
+    AssessmentRunCounts,
+    AssessmentRunStat,
+)
 from app.core.util import now
 
 logger = logging.getLogger(__name__)
@@ -16,23 +21,14 @@ def create_assessment(
     session: Session,
     experiment_name: str,
     dataset_id: int,
-    dataset_name: str,
     organization_id: int,
     project_id: int,
-    total_runs: int,
 ) -> Assessment:
-    """Create a parent assessment manager row."""
+    """Create a parent assessment row."""
     assessment = Assessment(
         experiment_name=experiment_name,
         dataset_id=dataset_id,
-        dataset_name=dataset_name,
         status="pending",
-        total_runs=total_runs,
-        pending_runs=total_runs,
-        processing_runs=0,
-        completed_runs=0,
-        failed_runs=0,
-        run_stats=[],
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
@@ -50,7 +46,7 @@ def create_assessment(
 
     logger.info(
         f"[create_assessment] Created assessment id={assessment.id} | "
-        f"experiment={experiment_name} | total_runs={total_runs}"
+        f"experiment={experiment_name}"
     )
     return assessment
 
@@ -61,7 +57,7 @@ def get_assessment_by_id(
     organization_id: int,
     project_id: int,
 ) -> Assessment | None:
-    """Get a specific parent assessment manager row."""
+    """Get a specific parent assessment row."""
     statement = (
         select(Assessment)
         .where(Assessment.id == assessment_id)
@@ -78,7 +74,7 @@ def list_assessments(
     limit: int = 50,
     offset: int = 0,
 ) -> list[Assessment]:
-    """List parent assessment manager rows."""
+    """List parent assessment rows."""
     statement = (
         select(Assessment)
         .where(Assessment.organization_id == organization_id)
@@ -92,29 +88,19 @@ def list_assessments(
 
 def create_assessment_run(
     session: Session,
-    run_name: str,
-    dataset_name: str,
-    dataset_id: int,
-    assessment_id: int | None,
+    assessment_id: int,
     config_id: UUID,
     config_version: int,
-    organization_id: int,
-    project_id: int,
-    assessment_input: dict[str, Any] | None = None,
+    assessment_input: dict[str, Any],
 ) -> AssessmentRun:
-    """Create an assessment run record in the assessment_run table."""
+    """Create an assessment run record under a parent assessment."""
     run = AssessmentRun(
-        run_name=run_name,
-        dataset_name=dataset_name,
-        dataset_id=dataset_id,
         assessment_id=assessment_id,
         config_id=config_id,
         config_version=config_version,
         status="pending",
         total_items=0,
         input=assessment_input,
-        organization_id=organization_id,
-        project_id=project_id,
         inserted_at=now(),
         updated_at=now(),
     )
@@ -130,7 +116,8 @@ def create_assessment_run(
 
     logger.info(
         f"[create_assessment_run] Created run id={run.id} | "
-        f"name={run_name} | config_id={config_id} v{config_version}"
+        f"assessment_id={assessment_id} | "
+        f"config_id={config_id} v{config_version}"
     )
     return run
 
@@ -141,25 +128,26 @@ def get_assessment_run_by_id(
     organization_id: int,
     project_id: int,
 ) -> AssessmentRun | None:
-    """Get a specific assessment run by ID."""
+    """Get a specific assessment run by ID, scoped via parent organization/project."""
     statement = (
         select(AssessmentRun)
+        .join(Assessment, Assessment.id == AssessmentRun.assessment_id)
         .where(AssessmentRun.id == run_id)
-        .where(AssessmentRun.organization_id == organization_id)
-        .where(AssessmentRun.project_id == project_id)
+        .where(Assessment.organization_id == organization_id)
+        .where(Assessment.project_id == project_id)
     )
     return session.exec(statement).first()
 
 
-def get_assessment_runs_for_manager(
+def get_assessment_runs_for_assessment(
     session: Session,
-    assessment: Assessment,
+    assessment_id: int,
 ) -> list[AssessmentRun]:
-    """List child runs for a parent assessment."""
+    """List child runs for a parent assessment, ordered by id."""
     statement = (
         select(AssessmentRun)
-        .where(AssessmentRun.assessment_id == assessment.id)
-        .order_by(AssessmentRun.inserted_at.desc())
+        .where(AssessmentRun.assessment_id == assessment_id)
+        .order_by(AssessmentRun.id.asc())
     )
     return list(session.exec(statement).all())
 
@@ -175,8 +163,9 @@ def list_assessment_runs(
     """List assessment runs, optionally filtered by assessment_id."""
     statement = (
         select(AssessmentRun)
-        .where(AssessmentRun.organization_id == organization_id)
-        .where(AssessmentRun.project_id == project_id)
+        .join(Assessment, Assessment.id == AssessmentRun.assessment_id)
+        .where(Assessment.organization_id == organization_id)
+        .where(Assessment.project_id == project_id)
     )
     if assessment_id is not None:
         statement = statement.where(AssessmentRun.assessment_id == assessment_id)
@@ -221,81 +210,79 @@ def update_assessment_run_status(
     return run
 
 
-def _determine_assessment_status(
-    total_runs: int,
-    pending_runs: int,
-    processing_runs: int,
-    completed_runs: int,
-    failed_runs: int,
-) -> str:
-    """Compute parent assessment status from child run counts."""
-    if total_runs == 0:
+# ---------- Derived aggregates ----------
+
+
+def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
+    """Aggregate child run statuses into counters."""
+    return AssessmentRunCounts(
+        total=len(runs),
+        pending=sum(1 for r in runs if r.status == "pending"),
+        processing=sum(1 for r in runs if r.status in {"processing", "in_progress"}),
+        completed=sum(1 for r in runs if r.status == "completed"),
+        failed=sum(1 for r in runs if r.status == "failed"),
+    )
+
+
+def derive_assessment_status(counts: AssessmentRunCounts) -> str:
+    """Compute parent assessment status from child run counters."""
+    if counts.total == 0:
         return "pending"
-    if completed_runs == total_runs:
+    if counts.completed == counts.total:
         return "completed"
-    if failed_runs == total_runs:
+    if counts.failed == counts.total:
         return "failed"
     if (
-        completed_runs > 0
-        and failed_runs > 0
-        and pending_runs == 0
-        and processing_runs == 0
+        counts.completed > 0
+        and counts.failed > 0
+        and counts.pending == 0
+        and counts.processing == 0
     ):
         return "completed_with_errors"
-    if pending_runs > 0 and pending_runs == total_runs:
+    if counts.pending > 0 and counts.pending == counts.total:
         return "pending"
     return "processing"
+
+
+def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
+    """Build per-run summary entries for embedding in parent responses."""
+    return [
+        AssessmentRunStat(
+            run_id=r.id,
+            config_id=str(r.config_id) if r.config_id else None,
+            config_version=r.config_version,
+            status=r.status,
+            total_items=r.total_items,
+            error_message=r.error_message,
+            updated_at=r.updated_at,
+        )
+        for r in runs
+    ]
+
+
+def derive_aggregate_error(counts: AssessmentRunCounts) -> str | None:
+    """Build an aggregate error summary string for parent assessments."""
+    if counts.failed > 0:
+        return f"{counts.failed} of {counts.total} run(s) failed"
+    return None
 
 
 def recompute_assessment_status(
     session: Session,
     assessment_id: int,
 ) -> Assessment:
-    """Recompute cached parent assessment counters from child runs."""
+    """Recompute the parent's `status` from its child runs.
+
+    Counters and run_stats are derived on-read; only `status` is persisted so
+    cron's `WHERE status IN (...)` filter remains index-friendly.
+    """
     assessment = session.get(Assessment, assessment_id)
     if not assessment:
         raise ValueError(f"Assessment {assessment_id} not found")
 
-    statement = (
-        select(AssessmentRun)
-        .where(AssessmentRun.assessment_id == assessment_id)
-        .order_by(AssessmentRun.id.asc())
-    )
-    runs = list(session.exec(statement).all())
-
-    pending_runs = sum(1 for r in runs if r.status == "pending")
-    processing_runs = sum(1 for r in runs if r.status in {"processing", "in_progress"})
-    completed_runs = sum(1 for r in runs if r.status == "completed")
-    failed_runs = sum(1 for r in runs if r.status == "failed")
-    total_runs = len(runs)
-
-    assessment.total_runs = total_runs
-    assessment.pending_runs = pending_runs
-    assessment.processing_runs = processing_runs
-    assessment.completed_runs = completed_runs
-    assessment.failed_runs = failed_runs
-    assessment.status = _determine_assessment_status(
-        total_runs=total_runs,
-        pending_runs=pending_runs,
-        processing_runs=processing_runs,
-        completed_runs=completed_runs,
-        failed_runs=failed_runs,
-    )
-    assessment.error_message = (
-        f"{failed_runs} of {total_runs} run(s) failed" if failed_runs > 0 else None
-    )
-    assessment.run_stats = [
-        {
-            "run_id": r.id,
-            "config_id": str(r.config_id) if r.config_id else None,
-            "config_version": r.config_version,
-            "status": r.status,
-            "total_items": r.total_items,
-            "error_message": r.error_message,
-            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-        }
-        for r in runs
-    ]
+    runs = get_assessment_runs_for_assessment(session, assessment_id)
+    counts = compute_run_counts(runs)
+    assessment.status = derive_assessment_status(counts)
     assessment.updated_at = now()
 
     session.add(assessment)

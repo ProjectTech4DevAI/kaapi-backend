@@ -11,6 +11,7 @@ from app.models import (
     ConfigUpdate,
     ConfigVersion,
 )
+from app.models.config.config import ConfigTag
 from app.core.util import now
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class ConfigCrud:
                 name=config_create.name,
                 description=config_create.description,
                 project_id=self.project_id,
+                tag=config_create.tag,
             )
 
             self.session.add(config)
@@ -86,7 +88,11 @@ class ConfigCrud:
         return self.session.exec(statement).one_or_none()
 
     def read_all(
-        self, query: str | None, skip: int = 0, limit: int = 100
+        self,
+        query: str | None,
+        skip: int = 0,
+        limit: int = 100,
+        tag: ConfigTag | None = None,
     ) -> tuple[list[Config], bool]:
         filters = [
             Config.project_id == self.project_id,
@@ -95,6 +101,9 @@ class ConfigCrud:
 
         if query:
             filters.append(Config.name.ilike(f"{query}%"))
+
+        if tag is not None:
+            filters.append(Config.tag == tag)
 
         statement = (
             select(Config)

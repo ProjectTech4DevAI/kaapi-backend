@@ -358,13 +358,10 @@ class TestCheckAndProcessAssessment:
             "app.assessment.processing.update_assessment_run_status"
         ), patch(
             "app.assessment.processing.recompute_assessment_status"
-        ), patch(
-            "app.assessment.processing.assessment_event_broker.publish"
-        ) as publish:
+        ):
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "processed"
-        assert publish.call_count == 2
 
     @pytest.mark.asyncio
     async def test_terminal_provider_status_marks_failed(self) -> None:
@@ -416,10 +413,17 @@ class TestCheckAndProcessAssessment:
         run = self._make_run()
         run.batch_job_id = None
 
-        with patch("app.assessment.processing.update_assessment_run_status"), patch(
-            "app.assessment.processing.recompute_assessment_status"
-        ):
+        with patch(
+            "app.assessment.processing.update_assessment_run_status"
+        ) as update_run, patch("app.assessment.processing.recompute_assessment_status"):
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "failed"
         assert result["provider_status"] == "unknown"
+        assert result["error"] == "Assessment run 1 has no batch_job_id"
+        update_run.assert_called_once_with(
+            session=session,
+            run=run,
+            status="failed",
+            error_message="Assessment run 1 has no batch_job_id",
+        )

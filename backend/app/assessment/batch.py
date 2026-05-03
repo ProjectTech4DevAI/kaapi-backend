@@ -23,6 +23,7 @@ from app.assessment.mappers import (
     normalize_llm_text,
 )
 from app.assessment.models import (
+    Assessment,
     AssessmentAttachment,
     AssessmentRun,
 )
@@ -508,6 +509,7 @@ def build_google_jsonl(
 def submit_assessment_batch(
     session: Session,
     run: AssessmentRun,
+    assessment: Assessment,
     dataset: EvaluationDataset,
     config_blob: ConfigBlob,
     assessment_input: dict[str, Any],
@@ -530,6 +532,7 @@ def submit_assessment_batch(
     """
     text_columns = assessment_input.get("text_columns", [])
     prompt_template = assessment_input.get("prompt_template")
+    system_instruction = assessment_input.get("system_instruction")
     attachments_raw = assessment_input.get("attachments", [])
     output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
@@ -550,6 +553,10 @@ def submit_assessment_batch(
     provider_name = completion.provider or "openai"
 
     params = dict(completion.params)
+    params.pop("instructions", None)
+    params.pop("system_instruction", None)
+    if isinstance(system_instruction, str) and system_instruction.strip():
+        params["instructions"] = system_instruction
     if output_schema:
         params["output_schema"] = output_schema
 
@@ -581,7 +588,7 @@ def submit_assessment_batch(
 
         batch_config = {
             "endpoint": "/v1/responses",
-            "description": f"Assessment: {run.run_name}",
+            "description": f"Assessment: {assessment.experiment_name}",
             "completion_window": "24h",
         }
 
@@ -624,7 +631,7 @@ def submit_assessment_batch(
         )
 
         batch_config = {
-            "display_name": f"assessment-{run.run_name}",
+            "display_name": f"assessment-{assessment.experiment_name}",
             "model": f"models/{mapped_params.get('model', 'gemini-2.5-pro')}",
         }
 

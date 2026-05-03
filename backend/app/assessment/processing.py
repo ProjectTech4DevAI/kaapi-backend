@@ -9,13 +9,14 @@ import json
 import logging
 from typing import Any
 
+from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.assessment.crud import (
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.assessment.models import AssessmentRun
+from app.assessment.models import Assessment, AssessmentRun
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
@@ -32,6 +33,24 @@ from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
+
+
+def format_assessment_failure_message(exc: Exception) -> str:
+    """Extract a DB-safe error message from assessment polling exceptions."""
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, str):
+            message = detail.strip()
+            if message:
+                return message
+        elif detail:
+            try:
+                return json.dumps(detail, ensure_ascii=False)
+            except (TypeError, ValueError):
+                pass
+
+    message = str(exc).strip()
+    return message or exc.__class__.__name__
 
 
 def _sanitize_json_output(raw: str) -> str:
@@ -252,6 +271,8 @@ async def check_and_process_assessment(
     """
     log_prefix = f"[check_and_process_assessment][assessment_run={run.id}]"
     previous_status = run.status
+    parent_pre = session.get(Assessment, run.assessment_id)
+    experiment_name_pre = parent_pre.experiment_name if parent_pre else None
 
     try:
         if not run.batch_job_id:
@@ -261,12 +282,16 @@ async def check_and_process_assessment(
         if not batch_job:
             raise ValueError(f"BatchJob {run.batch_job_id} not found")
 
+        parent = parent_pre
+        if not parent:
+            raise ValueError(f"Parent assessment {run.assessment_id} not found")
+
         # Get provider and poll status
         provider = _get_batch_provider(
             session=session,
             provider_name=batch_job.provider,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
+            organization_id=parent.organization_id,
+            project_id=parent.project_id,
         )
         status_result = poll_batch_status(
             session=session,
@@ -303,15 +328,14 @@ async def check_and_process_assessment(
                         status="failed",
                         error_message=error_msg,
                     )
-                    if run.assessment_id is not None:
-                        recompute_assessment_status(
-                            session=session, assessment_id=run.assessment_id
-                        )
+                    recompute_assessment_status(
+                        session=session, assessment_id=run.assessment_id
+                    )
 
                     return {
                         "run_id": run.id,
                         "assessment_id": run.assessment_id,
-                        "run_name": run.run_name,
+                        "experiment_name": experiment_name_pre,
                         "previous_status": previous_status,
                         "current_status": "failed",
                         "provider_status": provider_status,
@@ -326,7 +350,7 @@ async def check_and_process_assessment(
                 return {
                     "run_id": run.id,
                     "assessment_id": run.assessment_id,
-                    "run_name": run.run_name,
+                    "experiment_name": experiment_name_pre,
                     "previous_status": previous_status,
                     "current_status": run.status,
                     "provider_status": provider_status,
@@ -369,15 +393,14 @@ async def check_and_process_assessment(
                 error_message=error_msg,
                 object_store_url=object_store_url,
             )
-            if run.assessment_id is not None:
-                recompute_assessment_status(
-                    session=session, assessment_id=run.assessment_id
-                )
+            recompute_assessment_status(
+                session=session, assessment_id=run.assessment_id
+            )
 
             return {
                 "run_id": run.id,
                 "assessment_id": run.assessment_id,
-                "run_name": run.run_name,
+                "experiment_name": experiment_name_pre,
                 "previous_status": previous_status,
                 "current_status": run_status,
                 "provider_status": provider_status,
@@ -401,15 +424,14 @@ async def check_and_process_assessment(
                 status="failed",
                 error_message=error_msg,
             )
-            if run.assessment_id is not None:
-                recompute_assessment_status(
-                    session=session, assessment_id=run.assessment_id
-                )
+            recompute_assessment_status(
+                session=session, assessment_id=run.assessment_id
+            )
 
             return {
                 "run_id": run.id,
                 "assessment_id": run.assessment_id,
-                "run_name": run.run_name,
+                "experiment_name": experiment_name_pre,
                 "previous_status": previous_status,
                 "current_status": "failed",
                 "provider_status": provider_status,
@@ -422,7 +444,7 @@ async def check_and_process_assessment(
             return {
                 "run_id": run.id,
                 "assessment_id": run.assessment_id,
-                "run_name": run.run_name,
+                "experiment_name": experiment_name_pre,
                 "previous_status": previous_status,
                 "current_status": run.status,
                 "provider_status": provider_status,
@@ -430,29 +452,27 @@ async def check_and_process_assessment(
             }
 
     except Exception as e:
+        error_msg = format_assessment_failure_message(e)
         logger.error(
-            f"{log_prefix} Error checking assessment: {e}",
+            f"{log_prefix} Error checking assessment: {error_msg}",
             exc_info=True,
         )
         update_assessment_run_status(
             session=session,
             run=run,
             status="failed",
-            error_message="Processing failed. Check server logs for details.",
+            error_message=error_msg,
         )
-        if run.assessment_id is not None:
-            recompute_assessment_status(
-                session=session, assessment_id=run.assessment_id
-            )
+        recompute_assessment_status(session=session, assessment_id=run.assessment_id)
         return {
             "run_id": run.id,
             "assessment_id": run.assessment_id,
-            "run_name": run.run_name,
+            "experiment_name": experiment_name_pre,
             "previous_status": previous_status,
             "current_status": "failed",
             "provider_status": "unknown",
             "action": "failed",
-            "error": "Processing failed",
+            "error": error_msg,
         }
 
 

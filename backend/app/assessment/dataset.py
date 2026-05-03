@@ -1,4 +1,4 @@
-"""Dataset management service for assessment evaluations (CSV + XLSX).
+"""Dataset management service for assessments (CSV + XLSX).
 
 Upload stores files directly to object store as-is (no column validation,
 no format conversion). Row count is computed for metadata.

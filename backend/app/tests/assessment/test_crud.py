@@ -8,12 +8,16 @@ from uuid import UUID
 import pytest
 
 from app.assessment.crud import (
-    _determine_assessment_status,
+    AssessmentRunCounts,
+    build_run_stats,
+    compute_run_counts,
     create_assessment,
     create_assessment_run,
+    derive_aggregate_error,
+    derive_assessment_status,
     get_assessment_by_id,
     get_assessment_run_by_id,
-    get_assessment_runs_for_manager,
+    get_assessment_runs_for_assessment,
     list_assessment_runs,
     list_assessments,
     recompute_assessment_status,
@@ -21,14 +25,30 @@ from app.assessment.crud import (
 )
 
 
-class TestDetermineAssessmentStatus:
+def _counts(total=0, pending=0, processing=0, completed=0, failed=0):
+    return AssessmentRunCounts(
+        total=total,
+        pending=pending,
+        processing=processing,
+        completed=completed,
+        failed=failed,
+    )
+
+
+class TestDeriveAssessmentStatus:
     def test_status_variants(self) -> None:
-        assert _determine_assessment_status(0, 0, 0, 0, 0) == "pending"
-        assert _determine_assessment_status(2, 0, 0, 2, 0) == "completed"
-        assert _determine_assessment_status(2, 0, 0, 0, 2) == "failed"
-        assert _determine_assessment_status(2, 0, 0, 1, 1) == "completed_with_errors"
-        assert _determine_assessment_status(2, 2, 0, 0, 0) == "pending"
-        assert _determine_assessment_status(2, 1, 1, 0, 0) == "processing"
+        assert derive_assessment_status(_counts()) == "pending"
+        assert derive_assessment_status(_counts(total=2, completed=2)) == "completed"
+        assert derive_assessment_status(_counts(total=2, failed=2)) == "failed"
+        assert (
+            derive_assessment_status(_counts(total=2, completed=1, failed=1))
+            == "completed_with_errors"
+        )
+        assert derive_assessment_status(_counts(total=2, pending=2)) == "pending"
+        assert (
+            derive_assessment_status(_counts(total=2, pending=1, processing=1))
+            == "processing"
+        )
 
 
 class TestCrudBasicQueries:
@@ -42,11 +62,10 @@ class TestCrudBasicQueries:
         assert get_assessment_run_by_id(session, 1, 1, 1) == "assessment"
         assert list_assessment_runs(session, 1, 1, None, 10, 0) == ["a1", "a2"]
 
-    def test_get_assessment_runs_for_manager(self) -> None:
+    def test_get_assessment_runs_for_assessment(self) -> None:
         session = MagicMock()
         session.exec.return_value.all.return_value = ["r1", "r2"]
-        assessment = SimpleNamespace(id=10)
-        assert get_assessment_runs_for_manager(session, assessment) == ["r1", "r2"]
+        assert get_assessment_runs_for_assessment(session, 10) == ["r1", "r2"]
 
 
 class TestCrudWrites:
@@ -56,10 +75,8 @@ class TestCrudWrites:
             session=session,
             experiment_name="exp",
             dataset_id=1,
-            dataset_name="ds",
             organization_id=1,
             project_id=1,
-            total_runs=2,
         )
         assert result.experiment_name == "exp"
         session.add.assert_called_once()
@@ -70,38 +87,30 @@ class TestCrudWrites:
         session = MagicMock()
         session.commit.side_effect = RuntimeError("db error")
         with pytest.raises(RuntimeError):
-            create_assessment(session, "exp", 1, "ds", 1, 1, 1)
+            create_assessment(session, "exp", 1, 1, 1)
         session.rollback.assert_called_once()
 
     def test_create_assessment_run_success_and_failure(self) -> None:
         session = MagicMock()
         run = create_assessment_run(
             session=session,
-            run_name="exp",
-            dataset_name="ds",
-            dataset_id=1,
             assessment_id=10,
             config_id=UUID("00000000-0000-0000-0000-000000000001"),
             config_version=1,
-            organization_id=1,
-            project_id=1,
             assessment_input={"k": "v"},
         )
-        assert run.run_name == "exp"
+        assert run.assessment_id == 10
+        assert run.input == {"k": "v"}
 
         session2 = MagicMock()
         session2.commit.side_effect = RuntimeError("db error")
         with pytest.raises(RuntimeError):
             create_assessment_run(
                 session=session2,
-                run_name="exp",
-                dataset_name="ds",
-                dataset_id=1,
                 assessment_id=10,
                 config_id=UUID("00000000-0000-0000-0000-000000000001"),
                 config_version=1,
-                organization_id=1,
-                project_id=1,
+                assessment_input={},
             )
         session2.rollback.assert_called_once()
 
@@ -146,6 +155,46 @@ class TestCrudWrites:
         session.rollback.assert_called_once()
 
 
+class TestDerivedAggregates:
+    def test_compute_run_counts(self) -> None:
+        runs = [
+            SimpleNamespace(status="completed"),
+            SimpleNamespace(status="failed"),
+            SimpleNamespace(status="processing"),
+            SimpleNamespace(status="pending"),
+        ]
+        counts = compute_run_counts(runs)
+        assert counts.total == 4
+        assert counts.completed == 1
+        assert counts.failed == 1
+        assert counts.processing == 1
+        assert counts.pending == 1
+
+    def test_build_run_stats(self) -> None:
+        runs = [
+            SimpleNamespace(
+                id=1,
+                config_id=UUID("00000000-0000-0000-0000-000000000001"),
+                config_version=1,
+                status="completed",
+                total_items=2,
+                error_message=None,
+                updated_at=datetime(2024, 1, 1),
+            ),
+        ]
+        stats = build_run_stats(runs)
+        assert len(stats) == 1
+        assert stats[0].run_id == 1
+        assert stats[0].status == "completed"
+
+    def test_derive_aggregate_error(self) -> None:
+        assert derive_aggregate_error(_counts(total=2, completed=2)) is None
+        assert (
+            derive_aggregate_error(_counts(total=3, completed=1, failed=2))
+            == "2 of 3 run(s) failed"
+        )
+
+
 class TestRecomputeAssessmentStatus:
     def test_recompute_not_found(self) -> None:
         session = MagicMock()
@@ -153,19 +202,10 @@ class TestRecomputeAssessmentStatus:
         with pytest.raises(ValueError, match="not found"):
             recompute_assessment_status(session=session, assessment_id=1)
 
-    def test_recompute_success(self) -> None:
+    def test_recompute_success_persists_status_only(self) -> None:
         session = MagicMock()
         assessment = SimpleNamespace(
-            id=1,
-            status="pending",
-            total_runs=0,
-            pending_runs=0,
-            processing_runs=0,
-            completed_runs=0,
-            failed_runs=0,
-            error_message=None,
-            run_stats=[],
-            updated_at=datetime(2024, 1, 1),
+            id=1, status="pending", updated_at=datetime(2024, 1, 1)
         )
         runs = [
             SimpleNamespace(
@@ -192,23 +232,12 @@ class TestRecomputeAssessmentStatus:
 
         result = recompute_assessment_status(session=session, assessment_id=1)
         assert result.status == "completed_with_errors"
-        assert result.error_message == "1 of 2 run(s) failed"
-        assert len(result.run_stats) == 2
         session.commit.assert_called_once()
 
     def test_recompute_commit_failure_rolls_back(self) -> None:
         session = MagicMock()
         assessment = SimpleNamespace(
-            id=1,
-            status="pending",
-            total_runs=0,
-            pending_runs=0,
-            processing_runs=0,
-            completed_runs=0,
-            failed_runs=0,
-            error_message=None,
-            run_stats=[],
-            updated_at=datetime(2024, 1, 1),
+            id=1, status="pending", updated_at=datetime(2024, 1, 1)
         )
         session.get.return_value = assessment
         session.exec.return_value.all.return_value = []
