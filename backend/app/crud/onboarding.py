@@ -9,6 +9,7 @@ from app.crud import (
     get_project_by_name,
     get_user_by_email,
 )
+from app.crud.user_project import add_user_to_project
 from app.models import (
     APIKey,
     Credential,
@@ -89,6 +90,19 @@ def onboard_project(
         )
         session.add(user)
         session.flush()
+
+    _, mapping_status = add_user_to_project(
+        session=session,
+        email=user.email,
+        organization_id=organization.id,
+        project_id=project.id,
+        full_name=onboard_in.user_name,
+    )
+    if mapping_status == "different_project":
+        raise HTTPException(
+            status_code=409,
+            detail=(f"User '{user.email}' is already associated with another project"),
+        )
 
     raw_key, key_prefix, key_hash = api_key_manager.generate()
 
