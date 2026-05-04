@@ -29,7 +29,8 @@ def create_version(
     version_create: ConfigVersionUpdate,
     current_user: AuthContextDep,
     session: SessionDep,
-    tag: ConfigTag | None = Query(
+    tag: ConfigTag
+    | None = Query(
         None,
         description=(
             "Optional tag scope. Omit to use general configs only (tag 'default')."
@@ -69,7 +70,8 @@ def list_versions(
     session: SessionDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag | None = Query(
+    tag: ConfigTag
+    | None = Query(
         None,
         description=(
             "Optional tag scope. Omit to use general configs only (tag 'default')."
@@ -109,7 +111,8 @@ def get_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag | None = Query(
+    tag: ConfigTag
+    | None = Query(
         None,
         description=(
             "Optional tag scope. Omit to use general configs only (tag 'default')."
@@ -145,7 +148,8 @@ def delete_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag | None = Query(
+    tag: ConfigTag
+    | None = Query(
         None,
         description=(
             "Optional tag scope. Omit to use general configs only (tag 'default')."
