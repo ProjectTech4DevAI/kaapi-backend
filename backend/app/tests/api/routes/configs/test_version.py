@@ -754,7 +754,7 @@ def test_create_config_with_kaapi_provider_success(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         json=config_data,
     )

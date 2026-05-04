@@ -20,7 +20,7 @@ class PrivateUserCreate(BaseModel):
     is_verified: bool = False
 
 
-@router.post("/users/", response_model=UserPublic, include_in_schema=False)
+@router.post("/users", response_model=UserPublic, include_in_schema=False)
 def create_user(user_in: PrivateUserCreate, session: SessionDep) -> Any:
     """
     Create a new user.

@@ -17,7 +17,7 @@ router = APIRouter(prefix="/models", tags=["Model Config"])
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[ModelConfigListPublic],
     description=load_description("model_config/list_models.md"),
 )
