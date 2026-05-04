@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Union
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -7,33 +8,33 @@ from fastapi import (
     Depends,
     File,
     Form,
-    HTTPException,
     Query,
     UploadFile,
 )
 from fastapi import Path as FastPath
+from fastapi import HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.core.cloud import get_cloud_storage
 from app.crud import CollectionCrud, DocumentCrud
 from app.crud.rag import OpenAIAssistantCrud, OpenAIVectorStoreCrud
 from app.models import (
-    DocTransformationJobPublic,
     Document,
     DocumentPublic,
+    TransformedDocumentPublic,
     DocumentUploadResponse,
     Message,
     TransformationJobInfo,
-    TransformedDocumentPublic,
+    DocTransformationJobPublic,
 )
-from app.services.collections.helpers import MAX_DOC_SIZE_MB, pick_service_for_documennt
+from app.core.cloud import get_cloud_storage
+from app.services.collections.helpers import pick_service_for_documennt, MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
+    calculate_file_size,
+    schedule_transformation,
+    pre_transform_validation,
     build_document_schema,
     build_document_schemas,
-    calculate_file_size,
-    pre_transform_validation,
-    schedule_transformation,
 )
 from app.utils import (
     APIResponse,
@@ -41,6 +42,7 @@ from app.utils import (
     load_description,
     validate_callback_url,
 )
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -68,7 +70,7 @@ def doctransformation_callback_notification(
 @router.get(
     "/",
     description=load_description("documents/list.md"),
-    response_model=APIResponse[list[DocumentPublic | TransformedDocumentPublic]],
+    response_model=APIResponse[list[Union[DocumentPublic, TransformedDocumentPublic]]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_docs(
@@ -94,7 +96,7 @@ def list_docs(
         include_url=include_url,
         storage=storage,
     )
-    return APIResponse.success_response(results, metadata={"has_more": has_more})
+    return APIResponse.success_response(results, metadata=dict(has_more=has_more))
 
 
 @router.post(
@@ -250,7 +252,7 @@ def permanent_delete_doc(
 @router.get(
     "/{doc_id}",
     description=load_description("documents/info.md"),
-    response_model=APIResponse[DocumentPublic | TransformedDocumentPublic],
+    response_model=APIResponse[Union[DocumentPublic, TransformedDocumentPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def doc_info(
