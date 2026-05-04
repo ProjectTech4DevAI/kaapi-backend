@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     api_keys,
+    assessment as assessment_routes,
     assistants,
     auth,
     collection_job,
@@ -31,7 +32,6 @@ from app.api.routes import (
     users,
     utils,
 )
-from app.assessment import routes as assessment_routes
 from app.core.config import settings
 
 api_router = APIRouter()

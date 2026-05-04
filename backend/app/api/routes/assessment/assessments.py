@@ -8,22 +8,24 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.assessment.crud import (
+from app.crud.assessment import (
     build_run_stats,
     compute_run_counts,
     derive_aggregate_error,
     get_assessment_by_id,
     get_assessment_runs_for_assessment,
+)
+from app.crud.assessment import (
     list_assessments as list_assessments_crud,
 )
-from app.assessment.models import (
+from app.models.assessment import (
     Assessment,
     AssessmentPublic,
     AssessmentResponse,
 )
-from app.assessment.service import retry_assessment as retry_assessment_service
-from app.assessment.utils import build_assessment_results_response
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.service import retry_assessment as retry_assessment_service
+from app.services.assessment.utils import build_assessment_results_response
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -93,7 +95,7 @@ def retry_assessment(
 
 @router.get(
     "/assessments",
-    summary="List Assessments",
+    summary="List Assessments Parent details",
     description=load_description("assessment/list_assessments.md"),
     response_model=APIResponse[list[AssessmentPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -120,7 +122,7 @@ def list_assessments(
 
 @router.get(
     "/assessments/{assessment_id}",
-    summary="Get Assessment",
+    summary="Get Parent Assessment Information",
     description=load_description("assessment/get_assessment.md"),
     response_model=APIResponse[AssessmentPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

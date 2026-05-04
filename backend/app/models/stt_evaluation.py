@@ -1,27 +1,28 @@
 """STT Evaluation models for Speech-to-Text evaluation feature."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, Text
-from sqlmodel import SQLModel
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
+from sqlmodel import SQLModel
 
-from app.models.job import JobStatus
 from app.core.util import now
+from app.models.job import JobStatus
 
 # Supported STT models for evaluation
 # SUPPORTED_STT_MODELS = ["gemini-2.5-pro", "gemini-2.5-pro", "gemini-2.0-flash"]
 SUPPORTED_STT_MODELS = ["gemini-2.5-pro"]
 
 
-class EvaluationType(str, Enum):
+class EvaluationType(StrEnum):
     """Type of evaluation dataset/run."""
 
     TEXT = "text"
+    ASSESSMENT = "assessment"
     STT = "stt"
     TTS = "tts"
 

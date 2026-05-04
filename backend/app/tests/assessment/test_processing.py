@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.assessment.processing import (
+from app.crud.assessment.processing import (
     _get_batch_provider,
     _sanitize_json_output,
+    check_and_process_assessment,
     parse_assessment_output,
     poll_all_pending_assessments,
-    check_and_process_assessment,
 )
 
 
@@ -163,7 +163,7 @@ class TestParseAssessmentOutputGoogle:
         from unittest.mock import patch
 
         with patch(
-            "app.assessment.processing.extract_text_from_response_dict",
+            "app.crud.assessment.processing.extract_text_from_response_dict",
             return_value="gemini output",
         ):
             raw = [
@@ -190,7 +190,7 @@ class TestParseAssessmentOutputGoogle:
         from unittest.mock import patch
 
         with patch(
-            "app.assessment.processing.extract_text_from_response_dict",
+            "app.crud.assessment.processing.extract_text_from_response_dict",
             return_value="",
         ):
             raw = [{"key": "row_0", "response": {"candidates": []}, "error": None}]
@@ -202,7 +202,7 @@ class TestParseAssessmentOutputGoogle:
         from unittest.mock import patch
 
         with patch(
-            "app.assessment.processing.extract_text_from_response_dict",
+            "app.crud.assessment.processing.extract_text_from_response_dict",
             return_value="out",
         ):
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
@@ -225,8 +225,8 @@ class TestGetBatchProvider:
         session = MagicMock()
         mock_client = MagicMock()
         with patch(
-            "app.assessment.processing.get_openai_client", return_value=mock_client
-        ), patch("app.assessment.processing.OpenAIBatchProvider") as mock_cls:
+            "app.crud.assessment.processing.get_openai_client", return_value=mock_client
+        ), patch("app.crud.assessment.processing.OpenAIBatchProvider") as mock_cls:
             _get_batch_provider(
                 session=session,
                 provider_name="openai",
@@ -238,8 +238,8 @@ class TestGetBatchProvider:
     def test_google_provider_returned(self) -> None:
         session = MagicMock()
         mock_gemini = MagicMock()
-        with patch("app.assessment.processing.GeminiClient") as mock_cls, patch(
-            "app.assessment.processing.GeminiBatchProvider"
+        with patch("app.crud.assessment.processing.GeminiClient") as mock_cls, patch(
+            "app.crud.assessment.processing.GeminiBatchProvider"
         ) as mock_batch_cls:
             mock_cls.from_credentials.return_value = mock_gemini
             _get_batch_provider(
@@ -257,7 +257,7 @@ class TestPollAllPendingAssessments:
         session = MagicMock()
         expected = {"processed": 2, "failed": 0}
         with patch(
-            "app.assessment.cron.poll_all_pending_assessment_evaluations",
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
             new=AsyncMock(return_value=expected),
         ):
             result = await poll_all_pending_assessments(session=session)
@@ -287,19 +287,20 @@ class TestCheckAndProcessAssessment:
         batch_job.id = 99
 
         with patch(
-            "app.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.processing.poll_batch_status",
+            "app.crud.assessment.processing.poll_batch_status",
             return_value={
                 "request_counts": {"failed": 3, "completed": 0, "total": 3},
                 "error_file_id": "err-1",
             },
         ), patch(
-            "app.assessment.processing.update_assessment_run_status"
+            "app.crud.assessment.processing.update_assessment_run_status"
         ), patch(
-            "app.assessment.processing.recompute_assessment_status"
+            "app.crud.assessment.processing.recompute_assessment_status"
         ):
             result = await check_and_process_assessment(run=run, session=session)
 
@@ -317,11 +318,12 @@ class TestCheckAndProcessAssessment:
         batch_job.id = 99
 
         with patch(
-            "app.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.processing.poll_batch_status",
+            "app.crud.assessment.processing.poll_batch_status",
             return_value={"request_counts": {"failed": 0, "completed": 1, "total": 1}},
         ):
             result = await check_and_process_assessment(run=run, session=session)
@@ -339,25 +341,26 @@ class TestCheckAndProcessAssessment:
         batch_job.id = 99
 
         with patch(
-            "app.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.processing.poll_batch_status",
+            "app.crud.assessment.processing.poll_batch_status",
             return_value={},
         ), patch(
-            "app.assessment.processing.download_batch_results",
+            "app.crud.assessment.processing.download_batch_results",
             return_value=[{"custom_id": "row_0"}],
         ), patch(
-            "app.assessment.processing.upload_batch_results_to_object_store",
+            "app.crud.assessment.processing.upload_batch_results_to_object_store",
             return_value="s3://results",
         ), patch(
-            "app.assessment.processing.parse_assessment_output",
+            "app.crud.assessment.processing.parse_assessment_output",
             return_value=[{"row_id": "row_0", "error": None}],
         ), patch(
-            "app.assessment.processing.update_assessment_run_status"
+            "app.crud.assessment.processing.update_assessment_run_status"
         ), patch(
-            "app.assessment.processing.recompute_assessment_status"
+            "app.crud.assessment.processing.recompute_assessment_status"
         ):
             result = await check_and_process_assessment(run=run, session=session)
 
@@ -373,15 +376,16 @@ class TestCheckAndProcessAssessment:
         batch_job.error_message = "provider failed"
 
         with patch(
-            "app.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.processing.poll_batch_status", return_value={}
+            "app.crud.assessment.processing.poll_batch_status", return_value={}
         ), patch(
-            "app.assessment.processing.update_assessment_run_status"
+            "app.crud.assessment.processing.update_assessment_run_status"
         ), patch(
-            "app.assessment.processing.recompute_assessment_status"
+            "app.crud.assessment.processing.recompute_assessment_status"
         ):
             result = await check_and_process_assessment(run=run, session=session)
 
@@ -397,11 +401,12 @@ class TestCheckAndProcessAssessment:
         batch_job.provider_status = "in_progress"
 
         with patch(
-            "app.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.processing.poll_batch_status", return_value={}
+            "app.crud.assessment.processing.poll_batch_status", return_value={}
         ):
             result = await check_and_process_assessment(run=run, session=session)
 
@@ -414,8 +419,10 @@ class TestCheckAndProcessAssessment:
         run.batch_job_id = None
 
         with patch(
-            "app.assessment.processing.update_assessment_run_status"
-        ) as update_run, patch("app.assessment.processing.recompute_assessment_status"):
+            "app.crud.assessment.processing.update_assessment_run_status"
+        ) as update_run, patch(
+            "app.crud.assessment.processing.recompute_assessment_status"
+        ):
             result = await check_and_process_assessment(run=run, session=session)
 
         assert result["action"] == "failed"

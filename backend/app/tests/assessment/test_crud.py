@@ -7,11 +7,12 @@ from uuid import UUID
 
 import pytest
 
-from app.assessment.crud import (
+from app.crud.assessment import (
     AssessmentRunCounts,
     build_run_stats,
     compute_run_counts,
     create_assessment,
+    create_assessment_dataset,
     create_assessment_run,
     derive_aggregate_error,
     derive_assessment_status,
@@ -23,6 +24,7 @@ from app.assessment.crud import (
     recompute_assessment_status,
     update_assessment_run_status,
 )
+from app.models.stt_evaluation import EvaluationType
 
 
 def _counts(total=0, pending=0, processing=0, completed=0, failed=0):
@@ -69,6 +71,23 @@ class TestCrudBasicQueries:
 
 
 class TestCrudWrites:
+    def test_create_assessment_dataset_uses_assessment_type(self) -> None:
+        session = MagicMock()
+        result = create_assessment_dataset(
+            session=session,
+            name="dataset",
+            description="desc",
+            dataset_metadata={"total_items_count": 2},
+            object_store_url="s3://datasets/file.csv",
+            organization_id=1,
+            project_id=1,
+        )
+
+        assert result.type == EvaluationType.ASSESSMENT.value
+        session.add.assert_called_once()
+        session.commit.assert_called_once()
+        session.refresh.assert_called_once()
+
     def test_create_assessment_success(self) -> None:
         session = MagicMock()
         result = create_assessment(

@@ -10,11 +10,6 @@ from typing import Any
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.assessment.crud import (
-    recompute_assessment_status,
-    update_assessment_run_status,
-)
-from app.assessment.models import Assessment, AssessmentRun
 from app.core.batch import (
     BATCH_KEY,
     GeminiBatchProvider,
@@ -26,7 +21,12 @@ from app.core.batch import (
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
+from app.crud.assessment import (
+    recompute_assessment_status,
+    update_assessment_run_status,
+)
 from app.crud.job import get_batch_job
+from app.models.assessment import Assessment, AssessmentRun
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_openai_client
 
@@ -476,6 +476,6 @@ async def check_and_process_assessment(
 
 async def poll_all_pending_assessments(session: Session) -> dict[str, Any]:
     """Backward-compatible wrapper for parent-first assessment polling."""
-    from app.assessment.cron import poll_all_pending_assessment_evaluations
+    from app.crud.assessment.cron import poll_all_pending_assessment_evaluations
 
     return await poll_all_pending_assessment_evaluations(session=session)

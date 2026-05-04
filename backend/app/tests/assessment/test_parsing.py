@@ -2,9 +2,7 @@
 
 import json
 
-import pytest
-
-from app.assessment.utils.parsing import parse_stored_results, usage_totals
+from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
 
 
 class TestParseStoredResults:

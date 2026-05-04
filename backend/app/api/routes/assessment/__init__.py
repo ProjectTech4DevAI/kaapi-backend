@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.permissions import require_feature
-from app.assessment.routes import assessments, datasets, runs
+from app.api.routes.assessment import assessments, datasets, runs
 from app.core.feature_flags import FeatureFlag
 
 router = APIRouter(

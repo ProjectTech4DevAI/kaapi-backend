@@ -5,17 +5,17 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.assessment.crud import (
+from app.crud.assessment import (
     compute_run_counts,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.assessment.models import Assessment, AssessmentRun
-from app.assessment.processing import (
+from app.crud.assessment.processing import (
     check_and_process_assessment,
     format_assessment_failure_message,
 )
+from app.models.assessment import Assessment, AssessmentRun
 
 logger = logging.getLogger(__name__)
 

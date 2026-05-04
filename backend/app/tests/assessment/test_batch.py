@@ -1,14 +1,14 @@
 """Tests for assessment/batch.py provider routing in submit_assessment_batch."""
 
+import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import io
 import pytest
 from openpyxl import Workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.assessment.batch import (
+from app.crud.assessment.batch import (
     _build_text_prompt,
     _decode_base64_prefix,
     _guess_image_mime_from_base64,
@@ -24,7 +24,7 @@ from app.assessment.batch import (
     build_openai_jsonl,
     submit_assessment_batch,
 )
-from app.assessment.models import AssessmentAttachment
+from app.models.assessment import AssessmentAttachment
 
 
 def _make_run() -> MagicMock:
@@ -63,15 +63,15 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch._load_dataset_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
-                "app.assessment.batch.map_kaapi_to_openai_params",
+                "app.crud.assessment.batch.map_kaapi_to_openai_params",
                 return_value=({}, []),
             ) as map_params,
             patch(
-                "app.assessment.batch.build_openai_jsonl",
+                "app.crud.assessment.batch.build_openai_jsonl",
                 return_value=[{"custom_id": "row_0"}],
             ),
             patch(
@@ -79,11 +79,11 @@ class TestSubmitAssessmentBatchProviderRouting:
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assessment.batch.OpenAIBatchProvider",
+                "app.crud.assessment.batch.OpenAIBatchProvider",
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assessment.batch.start_batch_job",
+                "app.crud.assessment.batch.start_batch_job",
                 return_value=batch_job,
             ) as start_batch,
         ):
@@ -125,15 +125,15 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch._load_dataset_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
-                "app.assessment.batch.map_kaapi_to_openai_params",
+                "app.crud.assessment.batch.map_kaapi_to_openai_params",
                 return_value=({"model": "gpt-4.1-mini"}, []),
             ) as map_params,
             patch(
-                "app.assessment.batch.build_openai_jsonl",
+                "app.crud.assessment.batch.build_openai_jsonl",
                 return_value=[{"custom_id": "row_0"}],
             ),
             patch(
@@ -141,11 +141,11 @@ class TestSubmitAssessmentBatchProviderRouting:
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assessment.batch.OpenAIBatchProvider",
+                "app.crud.assessment.batch.OpenAIBatchProvider",
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assessment.batch.start_batch_job",
+                "app.crud.assessment.batch.start_batch_job",
                 return_value=batch_job,
             ),
         ):
@@ -181,15 +181,15 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch._load_dataset_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
-                "app.assessment.batch.map_kaapi_to_google_params",
+                "app.crud.assessment.batch.map_kaapi_to_google_params",
                 return_value=({"model": "gemini-2.5-pro"}, []),
             ) as map_params,
             patch(
-                "app.assessment.batch.build_google_jsonl",
+                "app.crud.assessment.batch.build_google_jsonl",
                 return_value=[{"key": "row_0"}],
             ),
             patch("app.core.batch.client.GeminiClient") as gemini_cls,
@@ -198,7 +198,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assessment.batch.start_batch_job",
+                "app.crud.assessment.batch.start_batch_job",
                 return_value=batch_job,
             ) as start_batch,
         ):
@@ -239,9 +239,9 @@ class TestBatchDatasetParsing:
 
         expected = [{"question": "q1"}]
         with (
-            patch("app.assessment.batch.get_cloud_storage", return_value=storage),
+            patch("app.crud.assessment.batch.get_cloud_storage", return_value=storage),
             patch(
-                "app.assessment.batch._parse_excel_rows",
+                "app.crud.assessment.batch._parse_excel_rows",
                 return_value=expected,
             ) as parse_excel,
         ):
@@ -263,7 +263,7 @@ class TestBatchDatasetParsing:
         stream_body.read.return_value = b"legacy-xls-content"
         storage.stream.return_value = stream_body
 
-        with patch("app.assessment.batch.get_cloud_storage", return_value=storage):
+        with patch("app.crud.assessment.batch.get_cloud_storage", return_value=storage):
             with pytest.raises(ValueError, match="Legacy Excel format"):
                 _load_dataset_rows(session=session, dataset=dataset)
 
@@ -288,7 +288,9 @@ class TestBatchDatasetParsing:
     def test_parse_excel_rows_returns_empty_when_sheet_missing(self) -> None:
         fake_wb = MagicMock()
         fake_wb.active = None
-        with patch("app.assessment.batch.openpyxl.load_workbook", return_value=fake_wb):
+        with patch(
+            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+        ):
             assert _parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
@@ -297,13 +299,15 @@ class TestBatchDatasetParsing:
         fake_ws.iter_rows.return_value = iter([])
         fake_wb = MagicMock()
         fake_wb.active = fake_ws
-        with patch("app.assessment.batch.openpyxl.load_workbook", return_value=fake_wb):
+        with patch(
+            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+        ):
             assert _parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
     def test_parse_excel_rows_invalid_file_exception_re_raises(self) -> None:
         with patch(
-            "app.assessment.batch.openpyxl.load_workbook",
+            "app.crud.assessment.batch.openpyxl.load_workbook",
             side_effect=InvalidFileException("bad xlsx"),
         ):
             with pytest.raises(InvalidFileException):
@@ -311,7 +315,7 @@ class TestBatchDatasetParsing:
 
     def test_parse_excel_rows_unexpected_exception_raises_value_error(self) -> None:
         with patch(
-            "app.assessment.batch.openpyxl.load_workbook",
+            "app.crud.assessment.batch.openpyxl.load_workbook",
             side_effect=RuntimeError("boom"),
         ):
             with pytest.raises(ValueError, match="Failed to parse XLSX dataset rows"):

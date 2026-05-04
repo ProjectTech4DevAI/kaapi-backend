@@ -1,6 +1,6 @@
 """Assessment utility functions."""
 
-from app.assessment.utils.export import (
+from app.services.assessment.utils.export import (
     build_assessment_results_response,
     build_export_response,
     build_json_export_rows,
@@ -8,7 +8,7 @@ from app.assessment.utils.export import (
     serialize_export_rows,
     sort_export_rows,
 )
-from app.assessment.utils.parsing import (
+from app.services.assessment.utils.parsing import (
     parse_stored_results,
     usage_totals,
 )

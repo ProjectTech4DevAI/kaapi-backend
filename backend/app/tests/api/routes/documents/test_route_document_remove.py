@@ -8,7 +8,6 @@ from openai_responses import OpenAIMock
 from sqlmodel import Session, select
 
 from app.models import Document
-from app.models.config.config import ConfigTag
 from app.tests.utils.document import (
     DocumentMaker,
     DocumentStore,
@@ -88,26 +87,3 @@ class TestDocumentRouteRemove:
             response = crawler.delete(route.append(next(maker)))
 
             assert response.is_error
-
-    @openai_responses.mock()
-    @patch("app.api.routes.documents.get_openai_client")
-    def test_explicit_default_tag_allows_default_document(
-        self,
-        mock_get_openai_client: Any,
-        db: Session,
-        route: Route,
-        crawler: WebCrawler,
-    ) -> None:
-        openai_mock = OpenAIMock()
-        with openai_mock.router:
-            client = OpenAI(api_key="sk-test-key")
-            mock_get_openai_client.return_value = client
-
-            store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
-            document = store.put()
-
-            response = crawler.delete(
-                Route("", tag=ConfigTag.DEFAULT.value).append(document)
-            )
-
-            assert response.is_success

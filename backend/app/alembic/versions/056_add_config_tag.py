@@ -1,4 +1,4 @@
-"""add tag column to config and document tables
+"""add tag column to config table
 
 Revision ID: 056
 Revises: 055
@@ -59,20 +59,6 @@ def upgrade():
         """
     )
 
-    op.add_column(
-        "document",
-        sa.Column(
-            "tag",
-            config_tag,
-            nullable=False,
-            server_default=DEFAULT_TAG_SERVER_DEFAULT,
-            comment=(
-                "Tag classifying the document: "
-                "'default' for general use, 'ASSESSMENT' for documents used in assessments. "
-            ),
-        ),
-    )
-
     with op.get_context().autocommit_block():
         op.create_index(
             "idx_config_project_id_tag_active",
@@ -82,29 +68,15 @@ def upgrade():
             postgresql_where=sa.text("deleted_at IS NULL"),
             postgresql_concurrently=True,
         )
-        op.create_index(
-            "idx_document_project_id_tag_active",
-            "document",
-            ["project_id", "tag", sa.text("inserted_at DESC")],
-            unique=False,
-            postgresql_where=sa.text("is_deleted IS FALSE"),
-            postgresql_concurrently=True,
-        )
 
 
 def downgrade():
     with op.get_context().autocommit_block():
-        op.drop_index(
-            "idx_document_project_id_tag_active",
-            table_name="document",
-            postgresql_concurrently=True,
-        )
         op.drop_index(
             "idx_config_project_id_tag_active",
             table_name="config",
             postgresql_concurrently=True,
         )
 
-    op.drop_column("document", "tag")
     op.drop_column("config", "tag")
     sa.Enum(name="config_tag").drop(op.get_bind(), checkfirst=True)

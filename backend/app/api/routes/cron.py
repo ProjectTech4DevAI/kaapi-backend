@@ -65,7 +65,7 @@ async def evaluation_cron_job(
         result = await process_all_pending_evaluations(session=session)
 
         try:
-            from app.assessment.cron import (
+            from app.crud.assessment.cron import (
                 poll_all_pending_assessment_evaluations,
             )
 

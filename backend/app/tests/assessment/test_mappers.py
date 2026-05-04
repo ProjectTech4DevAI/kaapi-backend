@@ -2,9 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from app.assessment.mappers import (
+from app.services.assessment.mappers import (
     _ensure_openai_strict_schema,
     _strip_additional_properties,
     map_kaapi_to_google_params,
@@ -102,7 +100,7 @@ class TestStripAdditionalProperties:
 class TestMapKaapiToOpenAIParams:
     def _call(self, params: dict, supports_reasoning: bool = False):
         with patch(
-            "app.assessment.mappers.is_reasoning_model",
+            "app.services.assessment.mappers.is_reasoning_model",
             return_value=supports_reasoning,
         ):
             return map_kaapi_to_openai_params(session=MagicMock(), kaapi_params=params)
@@ -178,7 +176,7 @@ class TestMapKaapiToGoogleParams:
         mock_schema = MagicMock()
         mock_schema.model_dump.return_value = {}
         with patch(
-            "app.assessment.mappers.genai_transformers.t_schema",
+            "app.services.assessment.mappers.genai_transformers.t_schema",
             return_value=mock_schema,
         ):
             return map_kaapi_to_google_params(params)
@@ -239,10 +237,10 @@ class TestConvertJsonSchemaToGoogle:
         mock_result = MagicMock()
         mock_result.model_dump.return_value = {"properties": {"score": {}}}
         with patch(
-            "app.assessment.mappers.genai_transformers.t_schema",
+            "app.services.assessment.mappers.genai_transformers.t_schema",
             return_value=mock_result,
         ):
-            from app.assessment.mappers import _convert_json_schema_to_google
+            from app.services.assessment.mappers import _convert_json_schema_to_google
 
             return _convert_json_schema_to_google(schema)
 
@@ -264,7 +262,7 @@ class TestConvertJsonSchemaToGoogle:
 class TestOpenAIResponseFormat:
     def _call(self, params: dict):
         with patch(
-            "app.assessment.mappers.is_reasoning_model",
+            "app.services.assessment.mappers.is_reasoning_model",
             return_value=False,
         ):
             return map_kaapi_to_openai_params(session=MagicMock(), kaapi_params=params)

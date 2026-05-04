@@ -12,15 +12,15 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
-from app.assessment.batch import _load_dataset_rows
-from app.assessment.models import Assessment, AssessmentExportRow, AssessmentRun
-from app.assessment.processing import parse_assessment_output
-from app.assessment.utils.parsing import parse_stored_results, usage_totals
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
+from app.crud.assessment.batch import _load_dataset_rows
+from app.crud.assessment.processing import parse_assessment_output
 from app.crud.job import get_batch_job
+from app.models.assessment import Assessment, AssessmentExportRow, AssessmentRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
 from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
@@ -312,8 +312,8 @@ def _load_parsed_results_for_run(
     # 2. Fallback: download directly from batch provider
     if batch_job.provider_output_file_id:
         try:
-            from app.assessment.processing import _get_batch_provider
             from app.core.batch import download_batch_results
+            from app.crud.assessment.processing import _get_batch_provider
 
             provider = _get_batch_provider(
                 session=session,

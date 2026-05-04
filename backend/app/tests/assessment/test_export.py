@@ -3,12 +3,9 @@
 import json
 from datetime import datetime
 from unittest.mock import MagicMock, patch
-from uuid import UUID
 
-import pytest
-
-from app.assessment.models import AssessmentExportRow
-from app.assessment.utils.export import (
+from app.models.assessment import AssessmentExportRow
+from app.services.assessment.utils.export import (
     _drop_empty_columns,
     _expand_input_columns,
     _expand_output_columns,
@@ -200,7 +197,7 @@ class TestSerializeExportRows:
     def test_csv_contains_all_rows(self) -> None:
         rows = self._make_rows()
         payload, _ = serialize_export_rows(rows, "csv")
-        lines = [l for l in payload.decode("utf-8").splitlines() if l.strip()]
+        lines = [line for line in payload.decode("utf-8").splitlines() if line.strip()]
         assert len(lines) == 3  # header + 2 data rows
 
     def test_json_with_no_output(self) -> None:
@@ -300,11 +297,11 @@ class TestBuildJsonExportRows:
 
 class TestBuildExportResponse:
     def test_returns_streaming_response_with_disposition(self) -> None:
-        from app.assessment.utils.export import build_export_response
+        from app.services.assessment.utils.export import build_export_response
 
         rows = [_make_row(output=json.dumps({"score": 3}))]
         with patch(
-            "app.assessment.utils.export.generate_timestamped_filename",
+            "app.services.assessment.utils.export.generate_timestamped_filename",
             return_value="export_2024.csv",
         ):
             response = build_export_response(rows, "csv", "my experiment")
@@ -313,11 +310,11 @@ class TestBuildExportResponse:
         assert "export_2024.csv" in response.headers["content-disposition"]
 
     def test_json_format_returns_json_response(self) -> None:
-        from app.assessment.utils.export import build_export_response
+        from app.services.assessment.utils.export import build_export_response
 
         rows = [_make_row(output='{"score": 5}')]
         with patch(
-            "app.assessment.utils.export.generate_timestamped_filename",
+            "app.services.assessment.utils.export.generate_timestamped_filename",
             return_value="export_2024.json",
         ):
             response = build_export_response(rows, "json", "exp")
@@ -372,7 +369,8 @@ class TestLoadParsedResultsForRun:
         mock_storage.stream.return_value = mock_body
 
         with patch(
-            "app.assessment.utils.export.get_cloud_storage", return_value=mock_storage
+            "app.services.assessment.utils.export.get_cloud_storage",
+            return_value=mock_storage,
         ):
             result = _load_parsed_results_for_run(
                 session=session, run=run, batch_job=batch_job
@@ -387,7 +385,7 @@ class TestLoadParsedResultsForRun:
         batch_job = self._make_batch_job(provider_output_file_id=None)
 
         with patch(
-            "app.assessment.utils.export.get_cloud_storage",
+            "app.services.assessment.utils.export.get_cloud_storage",
             side_effect=Exception("S3 down"),
         ):
             result = _load_parsed_results_for_run(
@@ -414,10 +412,11 @@ class TestLoadParsedResultsForRun:
             }
         ]
         with patch(
-            "app.assessment.utils.export.get_cloud_storage",
+            "app.services.assessment.utils.export.get_cloud_storage",
             side_effect=Exception("S3 down"),
         ), patch(
-            "app.assessment.processing._get_batch_provider", return_value=MagicMock()
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
         ), patch(
             "app.core.batch.download_batch_results", return_value=raw
         ):
@@ -439,7 +438,8 @@ class TestLoadParsedResultsForRun:
         mock_storage.stream.return_value = mock_body
 
         with patch(
-            "app.assessment.utils.export.get_cloud_storage", return_value=mock_storage
+            "app.services.assessment.utils.export.get_cloud_storage",
+            return_value=mock_storage,
         ):
             result = _load_parsed_results_for_run(
                 session=session, run=run, batch_job=batch_job
@@ -492,7 +492,8 @@ class TestLoadDatasetRowsForRun:
         dataset.object_store_url = "s3://bucket/ds.csv"
         session.get.return_value = dataset
         with patch(
-            "app.assessment.utils.export._load_dataset_rows", return_value=[{"q": "hi"}]
+            "app.services.assessment.utils.export._load_dataset_rows",
+            return_value=[{"q": "hi"}],
         ):
             result = _load_dataset_rows_for_run(
                 session=session,
@@ -532,7 +533,9 @@ class TestLoadExportRowsForRun:
     def test_batch_job_not_found_returns_empty(self) -> None:
         session = MagicMock()
         run = self._make_run()
-        with patch("app.assessment.utils.export.get_batch_job", return_value=None):
+        with patch(
+            "app.services.assessment.utils.export.get_batch_job", return_value=None
+        ):
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
@@ -542,9 +545,10 @@ class TestLoadExportRowsForRun:
         session = MagicMock()
         run = self._make_run()
         with patch(
-            "app.assessment.utils.export.get_batch_job", return_value=MagicMock()
+            "app.services.assessment.utils.export.get_batch_job",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.utils.export._load_parsed_results_for_run",
+            "app.services.assessment.utils.export._load_parsed_results_for_run",
             return_value=None,
         ):
             result = load_export_rows_for_run(
@@ -568,12 +572,14 @@ class TestLoadExportRowsForRun:
             }
         ]
         with patch(
-            "app.assessment.utils.export.get_batch_job", return_value=MagicMock()
+            "app.services.assessment.utils.export.get_batch_job",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.utils.export._load_parsed_results_for_run",
+            "app.services.assessment.utils.export._load_parsed_results_for_run",
             return_value=parsed,
         ), patch(
-            "app.assessment.utils.export._load_dataset_rows_for_run", return_value=[]
+            "app.services.assessment.utils.export._load_dataset_rows_for_run",
+            return_value=[],
         ):
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
@@ -598,12 +604,14 @@ class TestLoadExportRowsForRun:
             }
         ]
         with patch(
-            "app.assessment.utils.export.get_batch_job", return_value=MagicMock()
+            "app.services.assessment.utils.export.get_batch_job",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.utils.export._load_parsed_results_for_run",
+            "app.services.assessment.utils.export._load_parsed_results_for_run",
             return_value=parsed,
         ), patch(
-            "app.assessment.utils.export._load_dataset_rows_for_run", return_value=[]
+            "app.services.assessment.utils.export._load_dataset_rows_for_run",
+            return_value=[],
         ):
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
@@ -627,12 +635,13 @@ class TestLoadExportRowsForRun:
         ]
         dataset_rows = [{"q": "first"}, {"q": "second"}]
         with patch(
-            "app.assessment.utils.export.get_batch_job", return_value=MagicMock()
+            "app.services.assessment.utils.export.get_batch_job",
+            return_value=MagicMock(),
         ), patch(
-            "app.assessment.utils.export._load_parsed_results_for_run",
+            "app.services.assessment.utils.export._load_parsed_results_for_run",
             return_value=parsed,
         ), patch(
-            "app.assessment.utils.export._load_dataset_rows_for_run",
+            "app.services.assessment.utils.export._load_dataset_rows_for_run",
             return_value=dataset_rows,
         ):
             result = load_export_rows_for_run(

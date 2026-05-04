@@ -154,7 +154,6 @@ def execute_job(
             source_doc_id = source_doc.id
             source_doc_fname = source_doc.fname
             source_doc_object_store_url = source_doc.object_store_url
-            source_doc_tag = source_doc.tag
 
             storage = get_cloud_storage(session=db, project_id=project_id)
 
@@ -192,7 +191,6 @@ def execute_job(
                 fname=tmp_out.name,
                 object_store_url=str(dest),
                 source_document_id=source_doc_id,
-                tag=source_doc_tag,
             )
             created = DocumentCrud(db, project_id).update(new_doc)
 

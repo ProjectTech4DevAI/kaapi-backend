@@ -27,7 +27,6 @@ from app.models import (
     TransformationJobInfo,
     TransformedDocumentPublic,
 )
-from app.models.config.config import ConfigTag
 from app.services.collections.helpers import MAX_DOC_SIZE_MB, pick_service_for_documennt
 from app.services.documents.helpers import (
     build_document_schema,
@@ -80,16 +79,9 @@ def list_docs(
     include_url: bool = Query(
         False, description="Include a signed URL to access each document"
     ),
-    tag: ConfigTag | None = Query(
-        None,
-        description=(
-            "Optional tag filter. Omit to return general documents only "
-            "(tag 'default')."
-        ),
-    ),
 ):
     crud = DocumentCrud(session, current_user.project_.id)
-    documents, has_more = crud.read_many(skip, limit, tag=tag)
+    documents, has_more = crud.read_many(skip, limit)
 
     storage = (
         get_cloud_storage(session=session, project_id=current_user.project_.id)
@@ -116,23 +108,17 @@ async def upload_doc(
     session: SessionDep,
     current_user: AuthContextDep,
     src: UploadFile = File(...),
-    target_format: str | None = Form(
+    target_format: str
+    | None = Form(
         None,
         description="Desired output format for the uploaded document",
     ),
-    transformer: str | None = Form(
+    transformer: str
+    | None = Form(
         None, description="Name of the transformer to apply when converting."
     ),
-    callback_url: str | None = Form(
-        None, description="URL to call to report doc transformation status"
-    ),
-    tag: ConfigTag | None = Form(
-        None,
-        description=(
-            "Optional tag for classifying this document. "
-            "Omit to store 'default'; set 'ASSESSMENT' for assessment use."
-        ),
-    ),
+    callback_url: str
+    | None = Form(None, description="URL to call to report doc transformation status"),
 ):
     if callback_url:
         validate_callback_url(callback_url)
@@ -167,7 +153,6 @@ async def upload_doc(
         fname=src.filename,
         file_size_kb=file_size_kb,
         object_store_url=str(object_store_url),
-        tag=tag or ConfigTag.DEFAULT,
     )
     source_document = crud.update(document)
 
@@ -205,12 +190,6 @@ def remove_doc(
     session: SessionDep,
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to delete"),
-    tag: ConfigTag | None = Query(
-        None,
-        description=(
-            "Optional tag scope. Omit to use general documents only (tag 'default')."
-        ),
-    ),
 ):
     client = get_openai_client(
         session, current_user.organization_.id, current_user.project_.id
@@ -220,13 +199,13 @@ def remove_doc(
     v_crud = OpenAIVectorStoreCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
     c_crud = CollectionCrud(session, current_user.project_.id)
-    document = d_crud.read_one(doc_id, tag=tag)
+    document = d_crud.read_one(doc_id)
 
     remote = pick_service_for_documennt(
         session, doc_id, a_crud, v_crud
     )  # assistant crud or vector store crud
     c_crud.delete(document, remote)
-    d_crud.delete(doc_id, tag=tag)
+    d_crud.delete(doc_id)
 
     return APIResponse.success_response(
         Message(message="Document Deleted Successfully")
@@ -243,12 +222,6 @@ def permanent_delete_doc(
     session: SessionDep,
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to permanently delete"),
-    tag: ConfigTag | None = Query(
-        None,
-        description=(
-            "Optional tag scope. Omit to use general documents only (tag 'default')."
-        ),
-    ),
 ):
     client = get_openai_client(
         session, current_user.organization_.id, current_user.project_.id
@@ -259,7 +232,7 @@ def permanent_delete_doc(
     c_crud = CollectionCrud(session, current_user.project_.id)
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
 
-    document = d_crud.read_one(doc_id, tag=tag)
+    document = d_crud.read_one(doc_id)
 
     remote = pick_service_for_documennt(
         session, doc_id, a_crud, v_crud
@@ -267,7 +240,7 @@ def permanent_delete_doc(
     c_crud.delete(document, remote)
 
     storage.delete(document.object_store_url)
-    d_crud.delete(doc_id, tag=tag)
+    d_crud.delete(doc_id)
 
     return APIResponse.success_response(
         Message(message="Document permanently deleted successfully")
@@ -287,15 +260,9 @@ def doc_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
-    tag: ConfigTag | None = Query(
-        None,
-        description=(
-            "Optional tag scope. Omit to use general documents only (tag 'default')."
-        ),
-    ),
 ):
     crud = DocumentCrud(session, current_user.project_.id)
-    document = crud.read_one(doc_id, tag=tag)
+    document = crud.read_one(doc_id)
 
     storage = (
         get_cloud_storage(session=session, project_id=current_user.project_.id)

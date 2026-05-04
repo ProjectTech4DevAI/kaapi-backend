@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.assessment.cron import (
+from app.crud.assessment.cron import (
     _log_config_progress,
     poll_all_pending_assessment_evaluations,
 )
@@ -97,13 +97,13 @@ class TestPollAllPendingAssessmentEvaluations:
         run.status = "completed"
 
         with patch(
-            "app.assessment.cron.get_assessment_runs_for_assessment",
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.assessment.cron.recompute_assessment_status",
+            "app.crud.assessment.cron.recompute_assessment_status",
             return_value=refreshed,
         ), patch(
-            "app.assessment.cron.check_and_process_assessment", new=AsyncMock()
+            "app.crud.assessment.cron.check_and_process_assessment", new=AsyncMock()
         ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
@@ -119,10 +119,10 @@ class TestPollAllPendingAssessmentEvaluations:
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
-            "app.assessment.cron.get_assessment_runs_for_assessment",
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.assessment.cron.check_and_process_assessment",
+            "app.crud.assessment.cron.check_and_process_assessment",
             new=AsyncMock(
                 return_value={
                     "action": "processed",
@@ -144,16 +144,16 @@ class TestPollAllPendingAssessmentEvaluations:
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
-            "app.assessment.cron.get_assessment_runs_for_assessment",
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.assessment.cron.check_and_process_assessment",
+            "app.crud.assessment.cron.check_and_process_assessment",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ), patch(
-            "app.assessment.cron.update_assessment_run_status",
+            "app.crud.assessment.cron.update_assessment_run_status",
             side_effect=RuntimeError("cleanup-failed"),
         ), patch(
-            "app.assessment.cron.recompute_assessment_status",
+            "app.crud.assessment.cron.recompute_assessment_status",
         ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
@@ -168,15 +168,15 @@ class TestPollAllPendingAssessmentEvaluations:
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
-            "app.assessment.cron.get_assessment_runs_for_assessment",
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.assessment.cron.check_and_process_assessment",
+            "app.crud.assessment.cron.check_and_process_assessment",
             new=AsyncMock(side_effect=RuntimeError("gemini quota exceeded")),
         ), patch(
-            "app.assessment.cron.update_assessment_run_status",
+            "app.crud.assessment.cron.update_assessment_run_status",
         ) as update_run, patch(
-            "app.assessment.cron.recompute_assessment_status",
+            "app.crud.assessment.cron.recompute_assessment_status",
         ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
