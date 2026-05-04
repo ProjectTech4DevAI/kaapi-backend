@@ -1,16 +1,18 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, HTTPException, Path
 
-from app.api.deps import SessionDep, AuthContextDep
-from app.crud.config import ConfigCrud, ConfigVersionCrud
-from app.models import (
-    ConfigVersionUpdate,
-    ConfigVersionPublic,
-    Message,
-    ConfigVersionItems,
-)
-from app.utils import APIResponse, load_description
+from fastapi import APIRouter, Depends, Path, Query
+
+from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.crud.config import ConfigVersionCrud
+from app.models import (
+    ConfigVersionItems,
+    ConfigVersionPublic,
+    ConfigVersionUpdate,
+    Message,
+)
+from app.models.config.config import ConfigTag
+from app.utils import APIResponse, load_description
 
 router = APIRouter()
 
@@ -27,6 +29,12 @@ def create_version(
     version_create: ConfigVersionUpdate,
     current_user: AuthContextDep,
     session: SessionDep,
+    tag: ConfigTag | None = Query(
+        None,
+        description=(
+            "Optional tag scope. Omit to use general configs only (tag 'default')."
+        ),
+    ),
 ):
     """
     Create a new version for an existing configuration.
@@ -36,7 +44,10 @@ def create_version(
     Type is inherited from existing config and cannot be changed.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project_.id, config_id=config_id
+        session=session,
+        project_id=current_user.project_.id,
+        config_id=config_id,
+        tag=tag,
     )
     version = version_crud.create_or_raise(version_create=version_create)
 
@@ -58,13 +69,22 @@ def list_versions(
     session: SessionDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
+    tag: ConfigTag | None = Query(
+        None,
+        description=(
+            "Optional tag scope. Omit to use general configs only (tag 'default')."
+        ),
+    ),
 ):
     """
     List all versions for a specific configuration.
     Ordered by version number in descending order.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project_.id, config_id=config_id
+        session=session,
+        project_id=current_user.project_.id,
+        config_id=config_id,
+        tag=tag,
     )
     versions = version_crud.read_all(
         skip=skip,
@@ -89,12 +109,21 @@ def get_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
+    tag: ConfigTag | None = Query(
+        None,
+        description=(
+            "Optional tag scope. Omit to use general configs only (tag 'default')."
+        ),
+    ),
 ):
     """
     Get a specific version of a config.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project_.id, config_id=config_id
+        session=session,
+        project_id=current_user.project_.id,
+        config_id=config_id,
+        tag=tag,
     )
     version = version_crud.exists_or_raise(version_number=version_number)
     return APIResponse.success_response(
@@ -116,12 +145,21 @@ def delete_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
+    tag: ConfigTag | None = Query(
+        None,
+        description=(
+            "Optional tag scope. Omit to use general configs only (tag 'default')."
+        ),
+    ),
 ):
     """
     Delete a specific version of a config.
     """
     version_crud = ConfigVersionCrud(
-        session=session, project_id=current_user.project_.id, config_id=config_id
+        session=session,
+        project_id=current_user.project_.id,
+        config_id=config_id,
+        tag=tag,
     )
     version_crud.delete_or_raise(version_number=version_number)
 

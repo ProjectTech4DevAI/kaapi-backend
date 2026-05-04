@@ -1,13 +1,15 @@
 import logging
 from uuid import UUID
 
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, and_, select
 
-from app.models import Document
-from app.core.util import now
 from app.core.exception_handlers import HTTPException
+from app.core.util import now
+from app.models import Document
+from app.models.config.config import ConfigTag
 
 logger = logging.getLogger(__name__)
+_TAG_SCOPE_UNSET = object()
 
 
 class DocumentCrud:
@@ -15,14 +17,21 @@ class DocumentCrud:
         self.session = session
         self.project_id = project_id
 
-    def read_one(self, doc_id: UUID) -> Document:
-        statement = select(Document).where(
-            and_(
-                Document.id == doc_id,
-                Document.project_id == self.project_id,
-                Document.is_deleted.is_(False),
+    def read_one(
+        self, doc_id: UUID, tag: ConfigTag | None | object = _TAG_SCOPE_UNSET
+    ) -> Document:
+        filters = [
+            Document.id == doc_id,
+            Document.project_id == self.project_id,
+            Document.is_deleted.is_(False),
+        ]
+
+        if tag is not _TAG_SCOPE_UNSET:
+            filters.append(
+                self._tag_scope_filter(tag if isinstance(tag, ConfigTag) else None)
             )
-        )
+
+        statement = select(Document).where(and_(*filters))
 
         result = self.session.exec(statement).one_or_none()
         if result is None:
@@ -37,9 +46,14 @@ class DocumentCrud:
         self,
         skip: int | None = None,
         limit: int | None = None,
+        tag: ConfigTag | None = None,
     ) -> tuple[list[Document], bool]:
         statement = select(Document).where(
-            and_(Document.project_id == self.project_id, Document.is_deleted.is_(False))
+            and_(
+                Document.project_id == self.project_id,
+                Document.is_deleted.is_(False),
+                self._tag_scope_filter(tag),
+            )
         )
         statement = statement.order_by(Document.inserted_at.desc())
 
@@ -76,6 +90,11 @@ class DocumentCrud:
 
         return documents, has_more
 
+    def exists_in_tag_scope_or_raise(
+        self, doc_id: UUID, tag: ConfigTag | None = None
+    ) -> Document:
+        return self.read_one(doc_id=doc_id, tag=tag)
+
     def read_each(self, doc_ids: list[UUID]):
         statement = select(Document).where(
             and_(
@@ -92,7 +111,7 @@ class DocumentCrud:
                 raise ValueError(
                     f"Requested atleast {requested_count} document retrieved {retrieved_count}"
                 )
-            except ValueError as err:
+            except ValueError:
                 logger.error(
                     f"[DocumentCrud.read_each] Mismatch in retrieved documents | {{'project_id': {self.project_id}, 'requested_count': {requested_count}, 'retrieved_count': {retrieved_count}}}",
                     exc_info=True,
@@ -105,10 +124,7 @@ class DocumentCrud:
         if not document.project_id:
             document.project_id = self.project_id
         elif document.project_id != self.project_id:
-            error = "Invalid document ownership: project={} attempter={}".format(
-                self.project_id,
-                document.project_id,
-            )
+            error = f"Invalid document ownership: project={self.project_id} attempter={document.project_id}"
             try:
                 raise PermissionError(error)
             except PermissionError as err:
@@ -118,6 +134,8 @@ class DocumentCrud:
                 )
                 raise
         document.updated_at = now()
+        if document.tag is None:
+            document.tag = ConfigTag.DEFAULT
 
         self.session.add(document)
         self.session.commit()
@@ -128,8 +146,8 @@ class DocumentCrud:
 
         return document
 
-    def delete(self, doc_id: UUID):
-        document = self.read_one(doc_id)
+    def delete(self, doc_id: UUID, tag: ConfigTag | None | object = _TAG_SCOPE_UNSET):
+        document = self.read_one(doc_id, tag=tag)
         document.is_deleted = True
         document.deleted_at = now()
         document.updated_at = now()
@@ -139,3 +157,6 @@ class DocumentCrud:
             f"[DocumentCrud.delete] Document deleted successfully | {{'doc_id': '{doc_id}', 'project_id': {self.project_id}}}"
         )
         return updated_document
+
+    def _tag_scope_filter(self, tag: ConfigTag | None):
+        return Document.tag == (tag or ConfigTag.DEFAULT)

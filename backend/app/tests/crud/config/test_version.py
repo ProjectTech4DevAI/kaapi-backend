@@ -1,15 +1,16 @@
 from uuid import uuid4
 
 import pytest
-from sqlmodel import Session
 from fastapi import HTTPException
+from sqlmodel import Session
 
-from app.models import ConfigVersionUpdate, ConfigBlob
-from app.models.llm.request import NativeCompletionConfig
 from app.crud.config import ConfigVersionCrud
+from app.models import ConfigBlob, ConfigVersionUpdate
+from app.models.config.config import ConfigTag
+from app.models.llm.request import NativeCompletionConfig
 from app.tests.utils.test_data import (
-    create_test_project,
     create_test_config,
+    create_test_project,
     create_test_version,
 )
 
@@ -504,3 +505,57 @@ def test_read_all_versions_config_not_found(db: Session) -> None:
         HTTPException, match=f"config with id '{non_existent_config_id}' not found"
     ):
         version_crud.read_all()
+
+
+def test_read_all_versions_with_no_tag_scope_allows_default_config(
+    db: Session,
+) -> None:
+    """Test API tag scope allows default config versions when tag is omitted."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db,
+        project_id=config.project_id,
+        config_id=config.id,
+        tag=None,
+    )
+
+    versions = version_crud.read_all()
+
+    assert len(versions) == 1
+    assert versions[0].version == 1
+
+
+def test_read_all_versions_with_explicit_default_tag_allows_default_config(
+    db: Session,
+) -> None:
+    """Test explicit default tag scope allows default config versions."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db,
+        project_id=config.project_id,
+        config_id=config.id,
+        tag=ConfigTag.DEFAULT,
+    )
+
+    versions = version_crud.read_all()
+
+    assert len(versions) == 1
+    assert versions[0].version == 1
+
+
+def test_read_all_versions_with_explicit_tag_allows_matching_config(
+    db: Session,
+) -> None:
+    """Test explicit tag scope allows matching tagged config versions."""
+    config = create_test_config(db, tag=ConfigTag.DEFAULT)
+    version_crud = ConfigVersionCrud(
+        session=db,
+        project_id=config.project_id,
+        config_id=config.id,
+        tag=ConfigTag.DEFAULT,
+    )
+
+    versions = version_crud.read_all()
+
+    assert len(versions) == 1
+    assert versions[0].version == 1

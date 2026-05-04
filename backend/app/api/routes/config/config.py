@@ -1,18 +1,19 @@
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import SessionDep, AuthContextDep
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.crud.config import ConfigCrud
 from app.models import (
     ConfigCreate,
-    ConfigUpdate,
     ConfigPublic,
+    ConfigUpdate,
     ConfigWithVersion,
     Message,
 )
 from app.models.config.config import ConfigTag
 from app.utils import APIResponse, load_description
-from app.api.permissions import Permission, require_permission
 
 router = APIRouter()
 
@@ -55,12 +56,12 @@ def list_configs(
     query: str | None = Query(None, description="search query"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag
-    | None = Query(
+    tag: ConfigTag | None = Query(
         None,
         description=(
-            "Optional tag filter. Omit to return all configs (default behavior). "
-            "Supported values: 'default', 'assessment'. NULL/None means untagged (legacy)."
+            "Optional tag filter. Omit to return general configs only "
+            "(tag 'default'). "
+            "Supported values: 'default', 'ASSESSMENT'."
         ),
     ),
 ) -> APIResponse[list[ConfigPublic]]:
@@ -70,9 +71,12 @@ def list_configs(
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
     configs, has_more = config_crud.read_all(
-        query=query, skip=skip, limit=limit, tag=tag
+        query=query,
+        skip=skip,
+        limit=limit,
+        tag=tag,
     )
-    return APIResponse.success_response(data=configs, metadata=dict(has_more=has_more))
+    return APIResponse.success_response(data=configs, metadata={"has_more": has_more})
 
 
 @router.get(

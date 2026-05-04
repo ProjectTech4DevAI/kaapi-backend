@@ -1,32 +1,32 @@
-import tempfile
-import shutil
-import time
 import logging
+import shutil
+import tempfile
+import time
 from pathlib import Path
-from uuid import uuid4, UUID
+from uuid import UUID, uuid4
 
-from fastapi import UploadFile
-from tenacity import retry, wait_exponential, stop_after_attempt
-from sqlmodel import Session
 from asgi_correlation_id import correlation_id
+from fastapi import UploadFile
+from sqlmodel import Session
 from starlette.datastructures import Headers
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.celery.utils import start_doctransform_job
+from app.core.cloud import get_cloud_storage
+from app.core.db import engine
 from app.crud.document.doc_transformation_job import DocTransformationJobCrud
 from app.crud.document.document import DocumentCrud
 from app.models import (
-    Document,
-    DocTransformJobUpdate,
-    TransformationStatus,
-    DocTransformationJobPublic,
-    TransformedDocumentPublic,
     DocTransformationJob,
+    DocTransformationJobPublic,
+    DocTransformJobUpdate,
+    Document,
     Project,
+    TransformationStatus,
+    TransformedDocumentPublic,
 )
-from app.core.cloud import get_cloud_storage
-from app.celery.utils import start_doctransform_job
-from app.utils import send_callback, get_webhook_secret, APIResponse
-from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
-from app.core.db import engine
+from app.services.doctransform.registry import FORMAT_TO_EXTENSION, convert_document
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ def execute_job(
     callback_url: str | None,
     task_instance,
 ):
+    _ = task_instance
     start_time = time.time()
     tmp_dir: Path | None = None
 
@@ -153,6 +154,7 @@ def execute_job(
             source_doc_id = source_doc.id
             source_doc_fname = source_doc.fname
             source_doc_object_store_url = source_doc.object_store_url
+            source_doc_tag = source_doc.tag
 
             storage = get_cloud_storage(session=db, project_id=project_id)
 
@@ -190,6 +192,7 @@ def execute_job(
                 fname=tmp_out.name,
                 object_store_url=str(dest),
                 source_document_id=source_doc_id,
+                tag=source_doc_tag,
             )
             created = DocumentCrud(db, project_id).update(new_doc)
 
