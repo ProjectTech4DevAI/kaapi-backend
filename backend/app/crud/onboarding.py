@@ -2,6 +2,7 @@ import logging
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.core.feature_flags.constants import FeatureFlag as FeatureFlagKey
 from app.core.security import encrypt_credentials, get_password_hash
 from app.crud import (
     api_key_manager,
@@ -13,6 +14,7 @@ from app.crud.user_project import add_user_to_project
 from app.models import (
     APIKey,
     Credential,
+    FeatureFlag,
     OnboardingRequest,
     OnboardingResponse,
     Organization,
@@ -76,6 +78,15 @@ def onboard_project(
     project = Project.model_validate(project_create)
     session.add(project)
     session.flush()
+
+    session.add(
+        FeatureFlag(
+            key=FeatureFlagKey.ASSESSMENT,
+            organization_id=organization.id,
+            project_id=project.id,
+            enabled=False,
+        )
+    )
 
     user = get_user_by_email(session=session, email=onboard_in.email)
     if not user:

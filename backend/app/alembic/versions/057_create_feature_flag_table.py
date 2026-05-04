@@ -29,7 +29,7 @@ def upgrade():
         ),
         sa.Column(
             "key",
-            sa.Enum("DEFAULT", "ASSESSMENT", name="featureflagkey"),
+            sa.Enum("ASSESSMENT", name="featureflagkey"),
             nullable=False,
             comment="Feature flag key",
         ),
@@ -99,44 +99,15 @@ def upgrade():
             f"""
             INSERT INTO feature_flag
                 (key, organization_id, project_id, enabled, inserted_at, updated_at)
-            SELECT '{FeatureFlagKeyEnum.DEFAULT.value}'::featureflagkey,
-                   p.organization_id, p.id, TRUE, NOW(), NOW()
+            SELECT '{FeatureFlagKeyEnum.ASSESSMENT.value}'::featureflagkey,
+                   p.organization_id, p.id, FALSE, NOW(), NOW()
             FROM project p
-            """
-        )
-    )
-
-    op.execute(
-        sa.text(
-            f"""
-            CREATE OR REPLACE FUNCTION seed_default_feature_flag()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                INSERT INTO feature_flag
-                    (key, organization_id, project_id, enabled, inserted_at, updated_at)
-                VALUES
-                    ('{FeatureFlagKeyEnum.DEFAULT.value}'::featureflagkey,
-                     NEW.organization_id, NEW.id, TRUE, NOW(), NOW());
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            CREATE TRIGGER trg_seed_default_feature_flag
-            AFTER INSERT ON project
-            FOR EACH ROW EXECUTE FUNCTION seed_default_feature_flag();
             """
         )
     )
 
 
 def downgrade():
-    op.execute(sa.text("DROP TRIGGER IF EXISTS trg_seed_default_feature_flag ON project"))
-    op.execute(sa.text("DROP FUNCTION IF EXISTS seed_default_feature_flag()"))
     op.drop_index("uq_feature_flag_key_org_project", table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_organization_id"), table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_key"), table_name="feature_flag")

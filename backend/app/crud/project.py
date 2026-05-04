@@ -1,11 +1,10 @@
 import logging
 from typing import List, Optional
-from datetime import datetime, timezone
 from sqlmodel import Session, select
 from fastapi import HTTPException
 
-from app.models import Project, ProjectCreate, Organization
 from app.core.util import now
+from app.models import Project, ProjectCreate, Organization
 
 logger = logging.getLogger(__name__)
 
