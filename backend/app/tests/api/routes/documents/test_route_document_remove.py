@@ -1,10 +1,10 @@
-from typing import Any
 from unittest.mock import patch
+from typing import Any
 
-import openai_responses
 import pytest
-from openai import OpenAI
+import openai_responses
 from openai_responses import OpenAIMock
+from openai import OpenAI
 from sqlmodel import Session, select
 
 from app.models import Document

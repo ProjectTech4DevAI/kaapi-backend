@@ -56,7 +56,8 @@ def list_configs(
     query: str | None = Query(None, description="search query"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag | None = Query(
+    tag: ConfigTag
+    | None = Query(
         None,
         description=(
             "Optional tag filter. Omit to return general configs only "

@@ -1,25 +1,25 @@
-import mimetypes
 import os
+import mimetypes
+from typing import Any
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
-from unittest.mock import patch
 from urllib.parse import urlparse
+from unittest.mock import patch, MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 from moto import mock_aws
 from sqlmodel import Session, select
+from fastapi.testclient import TestClient
 
 from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.models import Document
-from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.document import (
     Route,
     WebCrawler,
     httpx_to_standard,
 )
+from app.tests.utils.auth import TestAuthContext
 
 
 class WebUploader(WebCrawler):
@@ -291,7 +291,9 @@ class TestDocumentRouteUpload:
         mock_job_id = "12345678-1234-5678-9abc-123456789012"
         mock_start_job.return_value = mock_job_id
 
-        httpx_to_standard(uploader.put(route, pdf_scratch, target_format="markdown"))
+        response = httpx_to_standard(
+            uploader.put(route, pdf_scratch, target_format="markdown")
+        )
 
         mock_start_job.assert_called_once()
         args, kwargs = mock_start_job.call_args

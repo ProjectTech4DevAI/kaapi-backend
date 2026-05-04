@@ -1,43 +1,43 @@
 from sqlmodel import Session
 
-from app.core.providers import Provider
-from app.crud import (
-    APIKeyCrud,
-    create_fine_tuning_job,
-    create_model_evaluation,
-    create_organization,
-    create_project,
-    set_creds_for_org,
-)
-from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models import (
+    Organization,
+    Project,
     APIKeyCreateResponse,
-    Config,
-    ConfigBlob,
-    ConfigCreate,
-    ConfigVersion,
-    ConfigVersionUpdate,
     Credential,
+    OrganizationCreate,
+    ProjectCreate,
+    ConfigBlob,
     CredsCreate,
-    EvaluationDataset,
-    Fine_Tuning,
     FineTuningJobCreate,
+    Fine_Tuning,
     ModelEvaluation,
     ModelEvaluationBase,
     ModelEvaluationStatus,
-    Organization,
-    OrganizationCreate,
-    Project,
-    ProjectCreate,
+    Config,
+    ConfigCreate,
+    ConfigVersion,
+    ConfigVersionUpdate,
+    EvaluationDataset,
 )
 from app.models.config.config import ConfigTag
-from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
+from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
+from app.crud import (
+    create_organization,
+    create_project,
+    set_creds_for_org,
+    create_fine_tuning_job,
+    create_model_evaluation,
+    APIKeyCrud,
+)
+from app.crud.config import ConfigCrud, ConfigVersionCrud
+from app.core.providers import Provider
 from app.tests.utils.user import create_random_user
 from app.tests.utils.utils import (
+    random_lower_string,
     generate_random_string,
     get_document,
     get_project,
-    random_lower_string,
 )
 
 
@@ -324,8 +324,7 @@ def create_test_version(
     """
     if config_blob is None:
         # Fetch the latest version to maintain type consistency
-        from sqlmodel import and_, select
-
+        from sqlmodel import select, and_
         from app.models import ConfigVersion
 
         stmt = (
