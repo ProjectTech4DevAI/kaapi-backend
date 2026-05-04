@@ -191,17 +191,6 @@ def handle_job_error(
     chain_id: UUID | None = None,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
-    if callback_url:
-        webhook_secret = get_webhook_secret(project_id, organization_id)
-        with tracer.start_as_current_span("llm.send_callback") as cb_span:
-            cb_span.set_attribute("callback.url", callback_url)
-            cb_span.set_attribute("callback.status", "failure")
-            send_callback(
-                callback_url=callback_url,
-                data=callback_response.model_dump(),
-                webhook_secret=webhook_secret,
-            )
-
     with Session(engine) as session:
         JobCrud(session=session).update(
             job_id=job_id,
@@ -224,6 +213,17 @@ def handle_job_error(
                     f"chain_id={chain_id}",
                     exc_info=True,
                 )
+
+    if callback_url:
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        with tracer.start_as_current_span("llm.send_callback") as cb_span:
+            cb_span.set_attribute("callback.url", callback_url)
+            cb_span.set_attribute("callback.status", "failure")
+            send_callback(
+                callback_url=callback_url,
+                data=callback_response.model_dump(),
+                webhook_secret=webhook_secret,
+            )
 
     return callback_response.model_dump()
 

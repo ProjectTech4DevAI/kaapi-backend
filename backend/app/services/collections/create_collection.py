@@ -322,7 +322,7 @@ def execute_job(
                 )
 
         except (Timeout, SoftTimeLimitExceeded) as err:
-            timeout_err = TimeoutError(f"Task exceeded soft time limit")
+            timeout_err = TimeoutError("Task exceeded soft time limit")
             logger.error(
                 "[create_collection.execute_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
                 job_id,

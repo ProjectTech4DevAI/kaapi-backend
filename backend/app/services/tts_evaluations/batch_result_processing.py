@@ -242,7 +242,7 @@ def execute_tts_result_processing(
             }
 
         except (Timeout, SoftTimeLimitExceeded) as err:
-            timeout_err = TimeoutError(f"Task exceeded soft time limit")
+            timeout_err = TimeoutError("Task exceeded soft time limit")
             logger.error(
                 f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
             )

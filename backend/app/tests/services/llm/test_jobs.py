@@ -221,6 +221,98 @@ class TestHandleJobError:
 
             assert "Callback service unavailable" in str(exc_info.value)
 
+    def test_handle_job_error_with_chain_id_updates_chain_status(self, db: Session):
+        """Test that chain status is updated to FAILED when chain_id is provided."""
+        from app.models.llm.request import ChainStatus
+
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        chain_id = uuid4()
+        callback_response = APIResponse.failure_response(error="Chain failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch("app.services.llm.jobs.update_llm_chain_status") as mock_update_chain,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=chain_id,
+            )
+
+        mock_update_chain.assert_called_once_with(
+            db,
+            chain_id=chain_id,
+            status=ChainStatus.FAILED,
+            error="Chain failed",
+        )
+
+    def test_handle_job_error_without_chain_id_skips_chain_update(self, db: Session):
+        """Test that update_llm_chain_status is not called when chain_id is None."""
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        callback_response = APIResponse.failure_response(error="Job failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch("app.services.llm.jobs.update_llm_chain_status") as mock_update_chain,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=None,
+            )
+
+        mock_update_chain.assert_not_called()
+
+    def test_handle_job_error_chain_update_failure_is_swallowed(self, db: Session):
+        """Test that an exception from update_llm_chain_status doesn't propagate."""
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        chain_id = uuid4()
+        callback_response = APIResponse.failure_response(error="Chain failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch(
+                "app.services.llm.jobs.update_llm_chain_status",
+                side_effect=Exception("DB error updating chain"),
+            ),
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            # Should not raise — the exception is caught and logged
+            result = handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=chain_id,
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "Chain failed"
+
 
 class TestExecuteJob:
     """Test suite for execute_job."""

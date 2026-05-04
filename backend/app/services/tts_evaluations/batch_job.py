@@ -128,7 +128,7 @@ def execute_batch_submission(
             return batch_result
 
         except (Timeout, SoftTimeLimitExceeded) as err:
-            timeout_err = TimeoutError(f"Task exceeded soft time limit")
+            timeout_err = TimeoutError("Task exceeded soft time limit")
             logger.error(
                 f"[execute_batch_submission] TTS batch submission timed out | run_id={run_id}"
             )

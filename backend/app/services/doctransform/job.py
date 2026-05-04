@@ -276,7 +276,7 @@ def execute_job(
             send_callback(callback_url, success_payload, webhook_secret=webhook_secret)
 
     except (Timeout, SoftTimeLimitExceeded) as err:
-        timeout_err = TimeoutError(f"Task exceeded soft time limit")
+        timeout_err = TimeoutError("Task exceeded soft time limit")
         logger.error(
             "[doc_transform.execute_job] Timed Out | job_id=%s",
             job_uuid,
