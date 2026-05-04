@@ -79,11 +79,13 @@ class TestCrudWrites:
             description="desc",
             dataset_metadata={"total_items_count": 2},
             object_store_url="s3://datasets/file.csv",
+            langfuse_dataset_id="langfuse-dataset",
             organization_id=1,
             project_id=1,
         )
 
         assert result.type == EvaluationType.ASSESSMENT.value
+        assert result.langfuse_dataset_id == "langfuse-dataset"
         session.add.assert_called_once()
         session.commit.assert_called_once()
         session.refresh.assert_called_once()
