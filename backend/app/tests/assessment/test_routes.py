@@ -9,28 +9,26 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.assessment.models import AssessmentCreate, AssessmentExportRow
-from app.assessment.routes.assessments import (
-    _build_assessment_public,
+from app.api.routes.assessment.assessments import (
     export_assessment_results,
     get_assessment,
     list_assessments,
     retry_assessment,
 )
-from app.assessment.routes.datasets import (
+from app.api.routes.assessment.datasets import (
     _dataset_to_response,
     delete_dataset,
     get_dataset,
     list_datasets,
 )
-from app.assessment.routes.runs import (
+from app.api.routes.assessment.runs import (
     create_assessment_runs,
     export_assessment_run_results,
     get_assessment_run,
     list_assessment_runs,
     retry_assessment_run,
 )
-
+from app.models.assessment import AssessmentCreate, AssessmentExportRow
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -121,7 +119,7 @@ class TestRouteHelpers:
 class TestDatasetRoutes:
     def test_list_datasets(self) -> None:
         with patch(
-            "app.assessment.routes.datasets.list_evaluation_datasets",
+            "app.api.routes.assessment.datasets.list_assessment_datasets",
             return_value=[_dataset()],
         ):
             resp = list_datasets(session=MagicMock(), auth_context=_auth_context())
@@ -130,7 +128,8 @@ class TestDatasetRoutes:
 
     def test_get_dataset_not_found(self) -> None:
         with patch(
-            "app.assessment.routes.datasets.get_dataset_by_id", return_value=None
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
+            return_value=None,
         ):
             with pytest.raises(HTTPException, match="not found"):
                 get_dataset(1, session=MagicMock(), auth_context=_auth_context())
@@ -139,10 +138,10 @@ class TestDatasetRoutes:
         storage = MagicMock()
         storage.get_signed_url.return_value = "signed-url"
         with patch(
-            "app.assessment.routes.datasets.get_dataset_by_id",
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
             return_value=_dataset(),
         ), patch(
-            "app.assessment.routes.datasets.get_cloud_storage", return_value=storage
+            "app.api.routes.assessment.datasets.get_cloud_storage", return_value=storage
         ):
             resp = get_dataset(
                 7,
@@ -156,19 +155,20 @@ class TestDatasetRoutes:
 
     def test_delete_dataset_success_and_error(self) -> None:
         with patch(
-            "app.assessment.routes.datasets.get_dataset_by_id",
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
             return_value=_dataset(),
         ), patch(
-            "app.assessment.routes.datasets.delete_dataset_crud", return_value=None
+            "app.api.routes.assessment.datasets.delete_assessment_dataset",
+            return_value=None,
         ):
             resp = delete_dataset(7, session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
 
         with patch(
-            "app.assessment.routes.datasets.get_dataset_by_id",
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
             return_value=_dataset(),
         ), patch(
-            "app.assessment.routes.datasets.delete_dataset_crud",
+            "app.api.routes.assessment.datasets.delete_assessment_dataset",
             return_value="cannot delete",
         ):
             with pytest.raises(HTTPException, match="cannot delete"):
@@ -198,7 +198,9 @@ class TestRunRoutes:
             num_configs=1,
             runs=[],
         )
-        with patch("app.assessment.routes.runs.start_assessment", return_value=result):
+        with patch(
+            "app.api.routes.assessment.runs.start_assessment", return_value=result
+        ):
             resp = create_assessment_runs(
                 request, session=MagicMock(), auth_context=_auth_context()
             )
@@ -214,10 +216,10 @@ class TestRunRoutes:
             runs=[],
         )
         with patch(
-            "app.assessment.routes.assessments.get_assessment_by_id",
+            "app.api.routes.assessment.assessments.get_assessment_by_id",
             return_value=_assessment(),
         ), patch(
-            "app.assessment.routes.assessments.retry_assessment_service",
+            "app.api.routes.assessment.assessments.retry_assessment_service",
             return_value=result,
         ):
             resp = retry_assessment(
@@ -226,10 +228,10 @@ class TestRunRoutes:
         assert resp.success is True
 
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=_run(),
         ), patch(
-            "app.assessment.routes.runs.retry_run",
+            "app.api.routes.assessment.runs.retry_run",
             return_value=result,
         ):
             resp = retry_assessment_run(
@@ -245,10 +247,10 @@ class TestAssessmentAndRunRoutes:
     def test_list_and_get_assessments(self) -> None:
         public_stub = MagicMock()
         with patch(
-            "app.assessment.routes.assessments.list_assessments_crud",
+            "app.api.routes.assessment.assessments.list_assessments_crud",
             return_value=[_assessment()],
         ), patch(
-            "app.assessment.routes.assessments._build_assessment_public",
+            "app.api.routes.assessment.assessments._build_assessment_public",
             return_value=public_stub,
         ):
             resp = list_assessments(
@@ -259,10 +261,10 @@ class TestAssessmentAndRunRoutes:
         assert len(resp.data or []) == 1
 
         with patch(
-            "app.assessment.routes.assessments.get_assessment_by_id",
+            "app.api.routes.assessment.assessments.get_assessment_by_id",
             return_value=_assessment(),
         ), patch(
-            "app.assessment.routes.assessments._build_assessment_public",
+            "app.api.routes.assessment.assessments._build_assessment_public",
             return_value=public_stub,
         ):
             resp = get_assessment(
@@ -273,7 +275,7 @@ class TestAssessmentAndRunRoutes:
         assert resp.success is True
 
         with patch(
-            "app.assessment.routes.assessments.get_assessment_by_id",
+            "app.api.routes.assessment.assessments.get_assessment_by_id",
             return_value=None,
         ):
             with pytest.raises(HTTPException, match="not found"):
@@ -282,10 +284,10 @@ class TestAssessmentAndRunRoutes:
     def test_list_and_get_runs(self) -> None:
         public_stub = MagicMock()
         with patch(
-            "app.assessment.routes.runs.list_runs",
+            "app.api.routes.assessment.runs.list_runs",
             return_value=[_run()],
         ), patch(
-            "app.assessment.routes.runs._build_run_public",
+            "app.api.routes.assessment.runs._build_run_public",
             return_value=public_stub,
         ):
             resp = list_assessment_runs(
@@ -294,10 +296,10 @@ class TestAssessmentAndRunRoutes:
         assert resp.success is True
 
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=_run(),
         ), patch(
-            "app.assessment.routes.runs._build_run_public",
+            "app.api.routes.assessment.runs._build_run_public",
             return_value=public_stub,
         ):
             resp = get_assessment_run(
@@ -306,7 +308,7 @@ class TestAssessmentAndRunRoutes:
         assert resp.success is True
 
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=None,
         ):
             with pytest.raises(HTTPException, match="not found"):
@@ -322,13 +324,13 @@ class TestExportRoutes:
     def test_export_assessment_results_delegates_to_util(self) -> None:
         """Parent export route delegates JSON/single-file/ZIP packaging to utils."""
         with patch(
-            "app.assessment.routes.assessments.get_assessment_by_id",
+            "app.api.routes.assessment.assessments.get_assessment_by_id",
             return_value=_assessment(),
         ), patch(
-            "app.assessment.routes.assessments.get_assessment_runs_for_assessment",
+            "app.api.routes.assessment.assessments.get_assessment_runs_for_assessment",
             return_value=[_run()],
         ), patch(
-            "app.assessment.routes.assessments.build_assessment_results_response",
+            "app.api.routes.assessment.assessments.build_assessment_results_response",
             return_value="stub-response",
         ) as build:
             result = export_assessment_results(
@@ -343,19 +345,19 @@ class TestExportRoutes:
     def test_export_assessment_run_results_json_and_file(self) -> None:
         run = _run()
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=run,
         ), patch(
-            "app.assessment.routes.runs.get_assessment_by_id",
+            "app.api.routes.assessment.runs.get_assessment_by_id",
             return_value=_assessment(),
         ), patch(
-            "app.assessment.routes.runs.load_export_rows_for_run",
+            "app.api.routes.assessment.runs.load_export_rows_for_run",
             return_value=[_row()],
         ), patch(
-            "app.assessment.routes.runs.sort_export_rows",
+            "app.api.routes.assessment.runs.sort_export_rows",
             side_effect=lambda rows: rows,
         ), patch(
-            "app.assessment.routes.runs.build_json_export_rows",
+            "app.api.routes.assessment.runs.build_json_export_rows",
             return_value=[{"x": 1}],
         ):
             json_resp = export_assessment_run_results(
@@ -367,19 +369,19 @@ class TestExportRoutes:
         assert json_resp.success is True
 
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=run,
         ), patch(
-            "app.assessment.routes.runs.get_assessment_by_id",
+            "app.api.routes.assessment.runs.get_assessment_by_id",
             return_value=_assessment(),
         ), patch(
-            "app.assessment.routes.runs.load_export_rows_for_run",
+            "app.api.routes.assessment.runs.load_export_rows_for_run",
             return_value=[_row()],
         ), patch(
-            "app.assessment.routes.runs.sort_export_rows",
+            "app.api.routes.assessment.runs.sort_export_rows",
             side_effect=lambda rows: rows,
         ), patch(
-            "app.assessment.routes.runs.build_export_response",
+            "app.api.routes.assessment.runs.build_export_response",
             return_value=StreamingResponse(iter([b"x"])),
         ):
             file_resp = export_assessment_run_results(
@@ -392,7 +394,7 @@ class TestExportRoutes:
 
     def test_export_not_found(self) -> None:
         with patch(
-            "app.assessment.routes.assessments.get_assessment_by_id",
+            "app.api.routes.assessment.assessments.get_assessment_by_id",
             return_value=None,
         ):
             with pytest.raises(HTTPException, match="not found"):
@@ -402,7 +404,7 @@ class TestExportRoutes:
                     auth_context=_auth_context(),
                 )
         with patch(
-            "app.assessment.routes.runs.get_run_by_id",
+            "app.api.routes.assessment.runs.get_run_by_id",
             return_value=None,
         ):
             with pytest.raises(HTTPException, match="not found"):
@@ -420,16 +422,18 @@ class TestBuildAssessmentResultsResponse:
     """Verify the extracted util builds the right shape for json / single-file / zip."""
 
     def test_json_returns_apiresponse(self) -> None:
-        from app.assessment.utils.export import build_assessment_results_response
+        from app.services.assessment.utils.export import (
+            build_assessment_results_response,
+        )
 
         with patch(
-            "app.assessment.utils.export.load_export_rows_for_run",
+            "app.services.assessment.utils.export.load_export_rows_for_run",
             return_value=[_row()],
         ), patch(
-            "app.assessment.utils.export.sort_export_rows",
+            "app.services.assessment.utils.export.sort_export_rows",
             side_effect=lambda rows: rows,
         ), patch(
-            "app.assessment.utils.export.build_json_export_rows",
+            "app.services.assessment.utils.export.build_json_export_rows",
             return_value=[{"x": 1}],
         ):
             resp = build_assessment_results_response(
@@ -441,7 +445,9 @@ class TestBuildAssessmentResultsResponse:
         assert resp.success is True
 
     def test_csv_multi_run_returns_zip(self) -> None:
-        from app.assessment.utils.export import build_assessment_results_response
+        from app.services.assessment.utils.export import (
+            build_assessment_results_response,
+        )
 
         run1 = _run()
         run2 = _run()
@@ -449,16 +455,16 @@ class TestBuildAssessmentResultsResponse:
         run2.config_version = 2
 
         with patch(
-            "app.assessment.utils.export.load_export_rows_for_run",
+            "app.services.assessment.utils.export.load_export_rows_for_run",
             side_effect=[[_row(run_id=22)], [_row(run_id=23)]],
         ), patch(
-            "app.assessment.utils.export.sort_export_rows",
+            "app.services.assessment.utils.export.sort_export_rows",
             side_effect=lambda rows: rows,
         ), patch(
-            "app.assessment.utils.export.serialize_export_rows",
+            "app.services.assessment.utils.export.serialize_export_rows",
             return_value=(b"csv", "text/csv"),
         ), patch(
-            "app.assessment.utils.export.generate_timestamped_filename",
+            "app.services.assessment.utils.export.generate_timestamped_filename",
             return_value="out.zip",
         ):
             resp = build_assessment_results_response(

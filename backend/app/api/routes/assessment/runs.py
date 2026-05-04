@@ -8,29 +8,35 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.assessment.crud import (
+from app.crud.assessment import (
     get_assessment_by_id,
+)
+from app.crud.assessment import (
     get_assessment_run_by_id as get_run_by_id,
+)
+from app.crud.assessment import (
     list_assessment_runs as list_runs,
 )
-from app.assessment.models import (
+from app.models.assessment import (
     Assessment,
     AssessmentCreate,
     AssessmentResponse,
     AssessmentRun,
     AssessmentRunPublic,
 )
-from app.assessment.service import (
+from app.models.evaluation import EvaluationDataset
+from app.services.assessment.service import (
     retry_assessment_run as retry_run,
+)
+from app.services.assessment.service import (
     start_assessment,
 )
-from app.assessment.utils import (
+from app.services.assessment.utils import (
     build_export_response,
     build_json_export_rows,
     load_export_rows_for_run,
     sort_export_rows,
 )
-from app.models.evaluation import EvaluationDataset
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)

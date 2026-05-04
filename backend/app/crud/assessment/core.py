@@ -6,13 +6,13 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from app.assessment.models import (
+from app.core.util import now
+from app.models.assessment import (
     Assessment,
     AssessmentRun,
     AssessmentRunCounts,
     AssessmentRunStat,
 )
-from app.core.util import now
 
 logger = logging.getLogger(__name__)
 

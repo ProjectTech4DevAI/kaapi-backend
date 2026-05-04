@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 import pytest
@@ -14,7 +14,6 @@ from sqlmodel import Session, select
 from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.models import Document
-from app.models.config.config import ConfigTag
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.document import (
     Route,
@@ -30,7 +29,6 @@ class WebUploader(WebCrawler):
         scratch: Path,
         target_format: str = None,
         transformer: str = None,
-        tag: str | None = None,
     ):
         (mtype, _) = mimetypes.guess_type(str(scratch))
         files = {"src": (str(scratch), scratch.open("rb"), mtype)}
@@ -40,8 +38,6 @@ class WebUploader(WebCrawler):
             data["target_format"] = target_format
         if transformer:
             data["transformer"] = transformer
-        if tag:
-            data["tag"] = tag
 
         return self.client.post(
             str(route),
@@ -155,25 +151,6 @@ class TestDocumentRouteUpload:
         assert response.data["transformation_job"] is None
         assert "id" in response.data
         assert "fname" in response.data
-
-    def test_upload_with_tag_sets_document_tag(
-        self,
-        db: Session,
-        route: Route,
-        scratch: Path,
-        uploader: WebUploader,
-    ) -> None:
-        aws = AmazonCloudStorageClient()
-        aws.create()
-
-        response = httpx_to_standard(
-            uploader.put(route, scratch, tag=ConfigTag.DEFAULT.value)
-        )
-        doc_id = response.data["id"]
-        statement = select(Document).where(Document.id == doc_id)
-        result = db.exec(statement).one()
-
-        assert result.tag == ConfigTag.DEFAULT
 
     @patch("app.services.doctransform.job.start_job")
     def test_upload_with_transformation(
@@ -314,9 +291,7 @@ class TestDocumentRouteUpload:
         mock_job_id = "12345678-1234-5678-9abc-123456789012"
         mock_start_job.return_value = mock_job_id
 
-        response = httpx_to_standard(
-            uploader.put(route, pdf_scratch, target_format="markdown")
-        )
+        httpx_to_standard(uploader.put(route, pdf_scratch, target_format="markdown"))
 
         mock_start_job.assert_called_once()
         args, kwargs = mock_start_job.call_args

@@ -30,7 +30,9 @@ from app.api.routes import (
     users,
     utils,
 )
-from app.assessment import routes as assessment_routes
+from app.api.routes import (
+    assessment as assessment_routes,
+)
 from app.core.config import settings
 
 api_router = APIRouter()

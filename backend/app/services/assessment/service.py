@@ -7,15 +7,18 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session
 
-from app.assessment.batch import submit_assessment_batch
-from app.assessment.crud import (
+from app.crud.assessment import (
     create_assessment,
     create_assessment_run,
+    get_assessment_dataset_by_id,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.assessment.models import (
+from app.crud.assessment.batch import submit_assessment_batch
+from app.crud.config import ConfigCrud
+from app.crud.evaluations.core import resolve_evaluation_config
+from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentConfigRef,
@@ -24,9 +27,6 @@ from app.assessment.models import (
     AssessmentRun,
     AssessmentRunSummary,
 )
-from app.crud.config import ConfigCrud
-from app.crud.evaluations import get_dataset_by_id
-from app.crud.evaluations.core import resolve_evaluation_config
 from app.models.config.config import ConfigTag
 from app.services.llm.providers.registry import LLMProvider
 
@@ -103,7 +103,7 @@ def start_assessment(
         f"org_id={organization_id}"
     )
 
-    dataset = get_dataset_by_id(
+    dataset = get_assessment_dataset_by_id(
         session=session,
         dataset_id=request.dataset_id,
         organization_id=organization_id,

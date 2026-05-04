@@ -7,14 +7,14 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
-from app.assessment.models import AssessmentConfigRef, AssessmentCreate
-from app.assessment.service import (
+from app.models.assessment import AssessmentConfigRef, AssessmentCreate
+from app.models.config.config import ConfigTag
+from app.services.assessment.service import (
     _build_retry_request,
     retry_assessment,
     retry_assessment_run,
     start_assessment,
 )
-from app.models.config.config import ConfigTag
 
 
 def _make_request(provider_config_id: UUID) -> AssessmentCreate:
@@ -58,14 +58,17 @@ def _assessment_config_crud_patch():
         id=UUID("00000000-0000-0000-0000-000000000001"),
         tag=ConfigTag.ASSESSMENT,
     )
-    return patch("app.assessment.service.ConfigCrud", return_value=crud)
+    return patch("app.services.assessment.service.ConfigCrud", return_value=crud)
 
 
 class TestStartAssessment:
     def test_dataset_not_found(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        with patch("app.assessment.service.get_dataset_by_id", return_value=None):
+        with patch(
+            "app.services.assessment.service.get_assessment_dataset_by_id",
+            return_value=None,
+        ):
             with pytest.raises(HTTPException, match="not found"):
                 start_assessment(
                     session=session,
@@ -79,11 +82,11 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         with (
             patch(
-                "app.assessment.service.get_dataset_by_id",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
                 return_value=_make_dataset(),
             ),
             patch(
-                "app.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_evaluation_config",
                 return_value=(None, "missing"),
             ),
             _assessment_config_crud_patch(),
@@ -103,14 +106,16 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.assessment.service.get_dataset_by_id",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
                 return_value=_make_dataset(),
             ),
             patch(
-                "app.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_evaluation_config",
                 return_value=(config_blob, None),
             ),
-            patch("app.assessment.service.create_assessment") as create_assessment,
+            patch(
+                "app.services.assessment.service.create_assessment"
+            ) as create_assessment,
             _assessment_config_crud_patch(),
         ):
             with pytest.raises(
@@ -139,28 +144,31 @@ class TestStartAssessment:
         batch_job.total_items = 3
 
         with (
-            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
             patch(
-                "app.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=dataset,
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
                 return_value=(config_blob, None),
             ),
             patch(
-                "app.assessment.service.create_assessment",
+                "app.services.assessment.service.create_assessment",
                 return_value=assessment,
             ),
             patch(
-                "app.assessment.service.create_assessment_run",
+                "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
             patch(
-                "app.assessment.service.submit_assessment_batch",
+                "app.services.assessment.service.submit_assessment_batch",
                 return_value=batch_job,
             ) as submit_batch,
             patch(
-                "app.assessment.service.update_assessment_run_status",
+                "app.services.assessment.service.update_assessment_run_status",
                 return_value=run,
             ),
-            patch("app.assessment.service.recompute_assessment_status"),
+            patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
             response = start_assessment(
@@ -188,28 +196,31 @@ class TestStartAssessment:
         batch_job.total_items = 3
 
         with (
-            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
             patch(
-                "app.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=dataset,
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
                 return_value=(config_blob, None),
             ),
             patch(
-                "app.assessment.service.create_assessment",
+                "app.services.assessment.service.create_assessment",
                 return_value=assessment,
             ),
             patch(
-                "app.assessment.service.create_assessment_run",
+                "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ) as create_run,
             patch(
-                "app.assessment.service.submit_assessment_batch",
+                "app.services.assessment.service.submit_assessment_batch",
                 return_value=batch_job,
             ) as submit_batch,
             patch(
-                "app.assessment.service.update_assessment_run_status",
+                "app.services.assessment.service.update_assessment_run_status",
                 return_value=run,
             ),
-            patch("app.assessment.service.recompute_assessment_status"),
+            patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
             response = start_assessment(
@@ -243,11 +254,13 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.assessment.service.get_dataset_by_id",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
                 return_value=_make_dataset(),
             ),
-            patch("app.assessment.service.ConfigCrud", return_value=crud),
-            patch("app.assessment.service.resolve_evaluation_config") as resolve,
+            patch("app.services.assessment.service.ConfigCrud", return_value=crud),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config"
+            ) as resolve,
         ):
             with pytest.raises(
                 HTTPException,
@@ -277,28 +290,31 @@ class TestStartAssessment:
         )
 
         with (
-            patch("app.assessment.service.get_dataset_by_id", return_value=dataset),
             patch(
-                "app.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=dataset,
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
                 return_value=(config_blob, None),
             ),
             patch(
-                "app.assessment.service.create_assessment",
+                "app.services.assessment.service.create_assessment",
                 return_value=assessment,
             ),
             patch(
-                "app.assessment.service.create_assessment_run",
+                "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
             patch(
-                "app.assessment.service.submit_assessment_batch",
+                "app.services.assessment.service.submit_assessment_batch",
                 side_effect=RuntimeError("submit failed"),
             ),
             patch(
-                "app.assessment.service.update_assessment_run_status",
+                "app.services.assessment.service.update_assessment_run_status",
                 return_value=run,
             ) as update_run,
-            patch("app.assessment.service.recompute_assessment_status"),
+            patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
             response = start_assessment(
@@ -369,14 +385,18 @@ class TestRetryHelpers:
 
         with (
             patch(
-                "app.assessment.service.get_assessment_runs_for_assessment",
+                "app.services.assessment.service.get_assessment_runs_for_assessment",
                 return_value=[run],
             ),
-            patch("app.assessment.service.start_assessment", return_value=result),
+            patch(
+                "app.services.assessment.service.start_assessment", return_value=result
+            ),
         ):
             resp = retry_assessment(session, assessment, 1, 1)
         assert resp.assessment_id == 1
 
-        with patch("app.assessment.service.start_assessment", return_value=result):
+        with patch(
+            "app.services.assessment.service.start_assessment", return_value=result
+        ):
             resp2 = retry_assessment_run(session, run, 1, 1)
         assert resp2.assessment_id == 1

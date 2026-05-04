@@ -6,14 +6,16 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.assessment.dataset import upload_dataset as upload_assessment_dataset
-from app.assessment.models import AssessmentDatasetResponse
-from app.assessment.validators import validate_dataset_file
 from app.core.cloud import get_cloud_storage
-from app.crud.evaluations import get_dataset_by_id
-from app.crud.evaluations import list_datasets as list_evaluation_datasets
-from app.crud.evaluations.dataset import delete_dataset as delete_dataset_crud
+from app.crud.assessment.dataset import (
+    delete_assessment_dataset,
+    get_assessment_dataset_by_id,
+    list_assessment_datasets,
+)
+from app.models.assessment import AssessmentDatasetResponse
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.dataset import upload_dataset as upload_assessment_dataset
+from app.services.assessment.validators import validate_dataset_file
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,7 @@ def list_datasets(
     offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
 ) -> APIResponse[list[AssessmentDatasetResponse]]:
     """List assessment datasets."""
-    datasets = list_evaluation_datasets(
+    datasets = list_assessment_datasets(
         session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -111,7 +113,7 @@ def get_dataset(
     ),
 ) -> APIResponse[AssessmentDatasetResponse]:
     """Get a specific assessment dataset."""
-    dataset = get_dataset_by_id(
+    dataset = get_assessment_dataset_by_id(
         session=session,
         dataset_id=dataset_id,
         organization_id=auth_context.organization_.id,
@@ -147,7 +149,7 @@ def delete_dataset(
     auth_context: AuthContextDep,
 ) -> APIResponse[dict]:
     """Delete an assessment dataset."""
-    dataset = get_dataset_by_id(
+    dataset = get_assessment_dataset_by_id(
         session=session,
         dataset_id=dataset_id,
         organization_id=auth_context.organization_.id,
@@ -160,7 +162,7 @@ def delete_dataset(
         )
 
     dataset_name = dataset.name
-    error = delete_dataset_crud(session=session, dataset=dataset)
+    error = delete_assessment_dataset(session=session, dataset=dataset)
     if error:
         raise HTTPException(status_code=400, detail=error)
 

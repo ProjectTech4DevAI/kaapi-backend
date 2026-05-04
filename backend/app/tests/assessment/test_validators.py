@@ -5,7 +5,7 @@ import io
 import pytest
 from fastapi import UploadFile
 
-from app.assessment.validators import MAX_FILE_SIZE, validate_dataset_file
+from app.services.assessment.validators import MAX_FILE_SIZE, validate_dataset_file
 
 
 def _make_upload(

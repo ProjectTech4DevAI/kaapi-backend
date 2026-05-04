@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.assessment.dataset import (
+from app.services.assessment.dataset import (
     _count_csv_rows,
     _count_excel_rows,
     _count_rows,
@@ -36,7 +36,7 @@ class TestCountRows:
         assert _count_csv_rows(b"a,b\n1,2\n\n3,4\n") == 2
 
     def test_count_rows_csv_and_xlsx(self) -> None:
-        with patch("app.assessment.dataset._count_excel_rows", return_value=5):
+        with patch("app.services.assessment.dataset._count_excel_rows", return_value=5):
             assert _count_rows(b"x", ".xlsx") == 5
         assert _count_rows(b"a,b\n1,2\n", ".csv") == 1
 
@@ -45,9 +45,9 @@ class TestUploadDataset:
     def test_invalid_xlsx_returns_422(self) -> None:
         session = MagicMock()
         with patch(
-            "app.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
+            "app.services.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
         ), patch(
-            "app.assessment.dataset._count_rows",
+            "app.services.assessment.dataset._count_rows",
             side_effect=InvalidFileException("bad xlsx"),
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -66,9 +66,9 @@ class TestUploadDataset:
     def test_count_rows_value_error_returns_422(self) -> None:
         session = MagicMock()
         with patch(
-            "app.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
+            "app.services.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
         ), patch(
-            "app.assessment.dataset._count_rows",
+            "app.services.assessment.dataset._count_rows",
             side_effect=ValueError("Legacy Excel format (.xls) is not supported."),
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -87,9 +87,9 @@ class TestUploadDataset:
     def test_count_rows_unexpected_error_returns_generic_422(self) -> None:
         session = MagicMock()
         with patch(
-            "app.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
+            "app.services.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
         ), patch(
-            "app.assessment.dataset._count_rows",
+            "app.services.assessment.dataset._count_rows",
             side_effect=RuntimeError("unexpected"),
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -110,12 +110,12 @@ class TestUploadDataset:
         created = MagicMock()
         created.id = 9
         with patch(
-            "app.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
-        ), patch("app.assessment.dataset._count_rows", return_value=2), patch(
-            "app.assessment.dataset._upload_file_to_object_store",
+            "app.services.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
+        ), patch("app.services.assessment.dataset._count_rows", return_value=2), patch(
+            "app.services.assessment.dataset._upload_file_to_object_store",
             return_value="s3://datasets/file.csv",
         ), patch(
-            "app.assessment.dataset.create_evaluation_dataset",
+            "app.services.assessment.dataset.create_assessment_dataset",
             return_value=created,
         ) as create_ds:
             result = upload_dataset(
@@ -129,13 +129,14 @@ class TestUploadDataset:
             )
         assert result.id == 9
         create_ds.assert_called_once()
+        assert create_ds.call_args.kwargs["dataset_metadata"]["total_items_count"] == 2
 
     def test_upload_dataset_object_store_failure_returns_500(self) -> None:
         session = MagicMock()
         with patch(
-            "app.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
-        ), patch("app.assessment.dataset._count_rows", return_value=1), patch(
-            "app.assessment.dataset._upload_file_to_object_store",
+            "app.services.assessment.dataset.sanitize_dataset_name", return_value="ds-1"
+        ), patch("app.services.assessment.dataset._count_rows", return_value=1), patch(
+            "app.services.assessment.dataset._upload_file_to_object_store",
             return_value=None,
         ):
             with pytest.raises(HTTPException) as exc_info:

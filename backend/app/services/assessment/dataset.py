@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename, upload_to_object_store
-from app.crud.evaluations import create_evaluation_dataset
+from app.crud.assessment.dataset import create_assessment_dataset
 from app.models.evaluation import EvaluationDataset
 from app.services.evaluations.validators import sanitize_dataset_name
 
@@ -190,7 +190,7 @@ def upload_dataset(
         "total_items_count": row_count,
     }
 
-    dataset = create_evaluation_dataset(
+    dataset = create_assessment_dataset(
         session=session,
         name=dataset_name,
         description=description,

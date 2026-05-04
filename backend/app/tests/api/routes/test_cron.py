@@ -29,7 +29,7 @@ def test_evaluation_cron_job_success(
         "app.api.routes.cron.process_all_pending_evaluations",
         new=AsyncMock(return_value=mock_result),
     ), patch(
-        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
         new=AsyncMock(
             return_value={"processed": 0, "failed": 0, "still_processing": 0}
         ),
@@ -64,7 +64,7 @@ def test_evaluation_cron_job_no_pending(
         "app.api.routes.cron.process_all_pending_evaluations",
         new=AsyncMock(return_value=mock_result),
     ), patch(
-        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
         new=AsyncMock(
             return_value={"processed": 0, "failed": 0, "still_processing": 0}
         ),
@@ -104,7 +104,7 @@ def test_evaluation_cron_job_with_failures(
         "app.api.routes.cron.process_all_pending_evaluations",
         new=AsyncMock(return_value=mock_result),
     ), patch(
-        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
         new=AsyncMock(
             return_value={"processed": 0, "failed": 0, "still_processing": 0}
         ),
@@ -139,7 +139,7 @@ def test_evaluation_cron_job_merges_assessment_totals(
         "app.api.routes.cron.process_all_pending_evaluations",
         new=AsyncMock(return_value=mock_result),
     ), patch(
-        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
         new=AsyncMock(return_value=assessment_result),
     ):
         response = client.get(
@@ -173,7 +173,7 @@ def test_evaluation_cron_job_assessment_polling_failure(
         "app.api.routes.cron.process_all_pending_evaluations",
         new=AsyncMock(return_value=mock_result),
     ), patch(
-        "app.assessment.cron.poll_all_pending_assessment_evaluations",
+        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
         new=AsyncMock(side_effect=RuntimeError("assessment poll failure")),
     ):
         response = client.get(

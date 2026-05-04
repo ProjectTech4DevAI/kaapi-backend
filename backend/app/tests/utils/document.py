@@ -1,6 +1,6 @@
-from collections.abc import Generator
 import functools as ft
 import itertools as it
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +15,6 @@ from sqlmodel import Session, delete
 from app.core.config import settings
 from app.crud.project import get_project_by_id
 from app.models import Document, DocumentPublic, Project
-from app.models.config.config import ConfigTag
 from app.tests.utils.auth import TestAuthContext
 from app.utils import APIResponse
 
@@ -30,7 +29,6 @@ class DocumentMaker:
     def __init__(self, project_id: int, session: Session):
         self.project_id = project_id
         self.session = session
-        self.tag: ConfigTag | None = ConfigTag.DEFAULT
         self.project: Project = get_project_by_id(
             session=self.session, project_id=self.project_id
         )
@@ -50,7 +48,6 @@ class DocumentMaker:
             fname=f"{doc_id}.xyz",
             object_store_url=object_store_url,
             is_deleted=False,
-            tag=self.tag,
         )
 
 
@@ -69,23 +66,19 @@ class DocumentStore:
     def project(self) -> Project:
         return self.documents.project
 
-    def put(self, tag: ConfigTag | None = ConfigTag.DEFAULT) -> Document:
-        self.documents.tag = tag
+    def put(self) -> Document:
         doc = next(self.documents)
-        self.documents.tag = ConfigTag.DEFAULT
         self.db.add(doc)
         self.db.commit()
         self.db.refresh(doc)
         return doc
 
-    def extend(
-        self, n: int, tag: ConfigTag | None = ConfigTag.DEFAULT
-    ) -> Generator[Document, None, None]:
+    def extend(self, n: int) -> Generator[Document, None, None]:
         for _ in range(n):
-            yield self.put(tag=tag)
+            yield self.put()
 
-    def fill(self, n: int, tag: ConfigTag | None = ConfigTag.DEFAULT) -> list[Document]:
-        return list(self.extend(n, tag=tag))
+    def fill(self, n: int) -> list[Document]:
+        return list(self.extend(n))
 
 
 class Route:
