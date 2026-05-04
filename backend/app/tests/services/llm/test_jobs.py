@@ -1413,7 +1413,7 @@ class TestExecuteChainJob:
             mock_executor_class.return_value.run.side_effect = Timeout(300)
             mock_handle_error.return_value = {
                 "success": False,
-                "error": "Chain job exceeded soft time limit",
+                "error": "Task exceeded soft time limit",
             }
 
             with pytest.raises(Timeout):
@@ -1423,7 +1423,7 @@ class TestExecuteChainJob:
         _, kwargs = mock_handle_error.call_args
         assert kwargs["chain_id"] == chain_id
         callback_response = mock_handle_error.call_args.args[2]
-        assert callback_response.error == "Chain job exceeded soft time limit"
+        assert callback_response.error == "Task exceeded soft time limit"
 
     def test_timeout_with_callback_sends_failure_payload(self, chain_request_data):
         chain_id = uuid4()
@@ -1449,7 +1449,7 @@ class TestExecuteChainJob:
             mock_executor_class.return_value.run.side_effect = Timeout(300)
             mock_handle_error.return_value = {
                 "success": False,
-                "error": "Chain job exceeded soft time limit",
+                "error": "Task exceeded soft time limit",
             }
 
             with pytest.raises(Timeout):
@@ -1458,7 +1458,7 @@ class TestExecuteChainJob:
         mock_handle_error.assert_called_once()
         call_args = mock_handle_error.call_args
         assert call_args.args[1] == "https://example.com/chain-callback"
-        assert call_args.args[2].error == "Chain job exceeded soft time limit"
+        assert call_args.args[2].error == "Task exceeded soft time limit"
         assert call_args.kwargs["chain_id"] == chain_id
 
 
