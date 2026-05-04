@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from opentelemetry import trace
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
@@ -246,10 +247,8 @@ def execute_job(
                     webhook_secret=webhook_secret,
                 )
 
-        except Timeout as err:
-            timeout_err = TimeoutError(
-                f"[execute_job] Collection deletion exceeded soft time limit: {err}"
-            )
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError(f"Task exceeded soft time limit")
             logger.error(
                 "[delete_collection.execute_job] Collection Deletion Timed Out | "
                 "{'collection_id': '%s', 'job_id': '%s'}",

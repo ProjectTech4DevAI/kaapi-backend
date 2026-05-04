@@ -3,6 +3,7 @@
 import logging
 
 from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -98,10 +99,8 @@ def execute_batch_submission(
 
             return batch_result
 
-        except Timeout as err:
-            timeout_err = TimeoutError(
-                f"[execute_batch_submission] STT batch submission exceeded soft time limit: {err}"
-            )
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError(f"Task exceeded soft time limit")
             logger.error(
                 f"[execute_batch_submission] STT batch submission timed out | run_id={run_id}"
             )

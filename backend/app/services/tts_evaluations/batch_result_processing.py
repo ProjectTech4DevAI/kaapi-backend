@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlmodel import Session, select
 
 from app.core.batch import BATCH_KEY, GeminiBatchProvider, GeminiClient
@@ -240,10 +241,8 @@ def execute_tts_result_processing(
                 "run_status": final_status,
             }
 
-        except Timeout as err:
-            timeout_err = TimeoutError(
-                f"[execute_tts_result_processing] TTS result processing exceeded soft time limit: {err}"
-            )
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError(f"Task exceeded soft time limit")
             logger.error(
                 f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
             )

@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from sqlmodel import Session
+from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from asgi_correlation_id import correlation_id
 
@@ -320,10 +321,8 @@ def execute_job(
                     webhook_secret=webhook_secret,
                 )
 
-        except Timeout as err:
-            timeout_err = TimeoutError(
-                f"[execute_job] Task exceeded soft time limit of {err.seconds}s"
-            )
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError(f"Task exceeded soft time limit")
             logger.error(
                 "[create_collection.execute_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
                 job_id,

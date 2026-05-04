@@ -3,6 +3,8 @@ import logging
 from asyncio import Runner, wait_for
 from pathlib import Path
 from pyzerox import zerox
+from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.services.doctransform.transformer import Transformer
 
@@ -33,6 +35,8 @@ class ZeroxTransformer(Transformer):
                         timeout=10 * 60,  # 10 minutes
                     )
                 )
+        except (Timeout, SoftTimeLimitExceeded):
+            raise
         except TimeoutError:
             logger.error(
                 f"ZeroxTransformer timed out for {input_path} (model={self.model})"

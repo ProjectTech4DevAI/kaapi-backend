@@ -6,6 +6,7 @@ from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
+from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
@@ -836,12 +837,12 @@ def execute_job(
                 project_id=project_id,
             )
 
-        except Timeout:
+        except (Timeout, SoftTimeLimitExceeded):
             logger.error(
                 f"[execute_job] LLM job timed out | job_id={job_uuid}, task_id={task_id}"
             )
             callback_response = APIResponse.failure_response(
-                error="LLM job exceeded soft time limit",
+                error="Task exceeded soft time limit",
                 metadata=request.request_metadata,
             )
             handle_job_error(
@@ -966,12 +967,12 @@ def execute_chain_job(
             executor = ChainExecutor(chain=chain, context=context, request=request)
             return executor.run()
 
-        except Timeout as err:
+        except (Timeout, SoftTimeLimitExceeded) as err:
             logger.error(
                 f"[execute_chain_job] Chain job timed out | job_id={job_uuid}, task_id={task_id}"
             )
             callback_response = APIResponse.failure_response(
-                error="Chain job exceeded soft time limit",
+                error="Task exceeded soft time limit",
                 metadata=request.request_metadata,
             )
             handle_job_error(

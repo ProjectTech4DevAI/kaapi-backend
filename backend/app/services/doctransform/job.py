@@ -7,6 +7,7 @@ from uuid import uuid4, UUID
 
 from fastapi import UploadFile
 from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from tenacity import retry, wait_exponential, stop_after_attempt
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
@@ -274,10 +275,8 @@ def execute_job(
         if callback_url:
             send_callback(callback_url, success_payload, webhook_secret=webhook_secret)
 
-    except Timeout as err:
-        timeout_err = TimeoutError(
-            f"[execute_job] Document transformation exceeded soft time limit: {err}"
-        )
+    except (Timeout, SoftTimeLimitExceeded) as err:
+        timeout_err = TimeoutError(f"Task exceeded soft time limit")
         logger.error(
             "[doc_transform.execute_job] Timed Out | job_id=%s",
             job_uuid,
