@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
+from app.models.config.config import ConfigTag
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_project
 
@@ -146,6 +147,65 @@ def test_list_configs(
     config_names = [c["name"] for c in data["data"]]
     for config in created_configs:
         assert config.name in config_names
+
+
+def test_list_configs_without_tag_returns_default_configs(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test default config list returns default configs."""
+    implicit_default_config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="api-implicit-default-config",
+    )
+    default_config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="api-default-config",
+        tag=ConfigTag.DEFAULT,
+    )
+
+    response = client.get(
+        f"{settings.API_V1_STR}/configs/",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 200
+    config_names = [c["name"] for c in response.json()["data"]]
+    assert implicit_default_config.name in config_names
+    assert default_config.name in config_names
+
+
+def test_list_configs_with_explicit_tag_returns_matching_tag(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test explicit config tag query returns matching tagged configs."""
+    default_config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="api-default-config",
+        tag=ConfigTag.DEFAULT,
+    )
+    implicit_default_config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="api-implicit-default-config",
+    )
+
+    response = client.get(
+        f"{settings.API_V1_STR}/configs/",
+        headers={"X-API-KEY": user_api_key.key},
+        params={"tag": ConfigTag.DEFAULT.value},
+    )
+
+    assert response.status_code == 200
+    config_names = [c["name"] for c in response.json()["data"]]
+    assert default_config.name in config_names
+    assert implicit_default_config.name in config_names
 
 
 def test_list_configs_with_pagination(

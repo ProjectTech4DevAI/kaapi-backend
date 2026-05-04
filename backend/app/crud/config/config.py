@@ -1,10 +1,10 @@
 import logging
 from uuid import UUID
-from typing import Tuple
 
-from sqlmodel import Session, select, and_
 from fastapi import HTTPException
+from sqlmodel import Session, and_, select
 
+from app.core.util import now
 from app.models import (
     Config,
     ConfigCreate,
@@ -12,7 +12,6 @@ from app.models import (
     ConfigVersion,
 )
 from app.models.config.config import ConfigTag
-from app.core.util import now
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class ConfigCrud:
 
     def create_or_raise(
         self, config_create: ConfigCreate
-    ) -> Tuple[Config, ConfigVersion]:
+    ) -> tuple[Config, ConfigVersion]:
         """
         Create a new configuration with an initial version.
         """
@@ -39,7 +38,7 @@ class ConfigCrud:
                 name=config_create.name,
                 description=config_create.description,
                 project_id=self.project_id,
-                tag=config_create.tag,
+                tag=config_create.tag or ConfigTag.DEFAULT,
             )
 
             self.session.add(config)
@@ -74,7 +73,7 @@ class ConfigCrud:
             )
             raise HTTPException(
                 status_code=500,
-                detail=f"Unexpected error occurred: failed to create config",
+                detail="Unexpected error occurred: failed to create config",
             )
 
     def read_one(self, config_id: UUID) -> Config | None:
@@ -102,8 +101,7 @@ class ConfigCrud:
         if query:
             filters.append(Config.name.ilike(f"{query}%"))
 
-        if tag is not None:
-            filters.append(Config.tag == tag)
+        filters.append(self._tag_scope_filter(tag))
 
         statement = (
             select(Config)
@@ -160,6 +158,29 @@ class ConfigCrud:
             )
 
         return config
+
+    def exists_in_tag_scope_or_raise(
+        self, config_id: UUID, tag: ConfigTag | None = None
+    ) -> Config:
+        statement = select(Config).where(
+            and_(
+                Config.id == config_id,
+                Config.project_id == self.project_id,
+                Config.deleted_at.is_(None),
+                self._tag_scope_filter(tag),
+            )
+        )
+        config = self.session.exec(statement).one_or_none()
+        if config is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"config with id '{config_id}' not found",
+            )
+
+        return config
+
+    def _tag_scope_filter(self, tag: ConfigTag | None):
+        return Config.tag == (tag or ConfigTag.DEFAULT)
 
     def _check_unique_name_or_raise(self, name: str) -> None:
         if self._read_by_name(name):

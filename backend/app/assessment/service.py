@@ -128,21 +128,20 @@ def start_assessment(
 
     resolved_configs = []
     for cfg in request.configs:
-        # Bare assessment-tag check: reject configs explicitly tagged for non-assessment
-        # use. NULL (legacy/untagged) configs are still accepted to preserve
-        # backward compatibility with assessments created before tagging existed.
+        # Assessment runs must use configs explicitly tagged for assessment use.
         parent_config = config_crud.read_one(cfg.config_id)
-        if (
-            parent_config is not None
-            and parent_config.tag is not None
-            and parent_config.tag != ConfigTag.ASSESSMENT
-        ):
+        if parent_config is not None and parent_config.tag != ConfigTag.ASSESSMENT:
+            tag_value = (
+                parent_config.tag.value
+                if parent_config.tag is not None
+                else ConfigTag.DEFAULT.value
+            )
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} has tag '{parent_config.tag.value}' "
+                    f"Config {cfg.config_id} has tag '{tag_value}' "
                     f"and cannot be used for assessment. "
-                    f"Only configs tagged 'ASSESSMENT' (or untagged) are allowed."
+                    f"Only configs tagged 'ASSESSMENT' are allowed."
                 ),
             )
 

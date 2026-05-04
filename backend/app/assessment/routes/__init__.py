@@ -1,8 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.assessment.routes import assessments, datasets, runs
 
-router = APIRouter(prefix="/assessment", tags=["Assessment"])
+router = APIRouter(
+    prefix="/assessment",
+    tags=["Assessment"]
+)
 
 router.include_router(datasets.router)
 router.include_router(assessments.router)

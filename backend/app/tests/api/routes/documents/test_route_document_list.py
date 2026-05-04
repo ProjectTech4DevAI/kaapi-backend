@@ -1,6 +1,7 @@
 import pytest
 from sqlmodel import Session
 
+from app.models.config.config import ConfigTag
 from app.tests.utils.document import (
     DocumentComparator,
     DocumentStore,
@@ -54,6 +55,38 @@ class TestDocumentRouteList:
         (target,) = response.data
 
         assert source == target
+
+    def test_no_tag_returns_default_documents(
+        self,
+        db: Session,
+        route: QueryRoute,
+        crawler: WebCrawler,
+    ) -> None:
+        store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
+        implicit_default_doc = store.put()
+        default_doc = store.put(tag=ConfigTag.DEFAULT)
+
+        response = httpx_to_standard(crawler.get(route))
+        ids = [item["id"] for item in response.data]
+
+        assert str(implicit_default_doc.id) in ids
+        assert str(default_doc.id) in ids
+
+    def test_explicit_tag_returns_matching_documents(
+        self,
+        db: Session,
+        route: QueryRoute,
+        crawler: WebCrawler,
+    ) -> None:
+        store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
+        implicit_default_doc = store.put()
+        default_doc = store.put(tag=ConfigTag.DEFAULT)
+
+        response = httpx_to_standard(crawler.get(route.pushq("tag", "default")))
+        ids = [item["id"] for item in response.data]
+
+        assert str(default_doc.id) in ids
+        assert str(implicit_default_doc.id) in ids
 
     def test_negative_skip_produces_error(
         self,

@@ -1,19 +1,19 @@
-from enum import Enum
-from uuid import UUID, uuid4
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-from sqlmodel import Field, SQLModel, Index, text
 from pydantic import field_validator
+from sqlalchemy.dialects import postgresql
+from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 from app.models.llm.request import ConfigBlob
+
 from .version import ConfigVersionPublic
 
 
-class ConfigTag(str, Enum):
+class ConfigTag(StrEnum):
     """Config classification tag."""
 
     DEFAULT = "default"
@@ -63,6 +63,13 @@ class Config(ConfigBase, table=True):
             "updated_at",
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "idx_config_project_id_tag_active",
+            "project_id",
+            "tag",
+            text("updated_at DESC"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: UUID = Field(
@@ -78,14 +85,15 @@ class Config(ConfigBase, table=True):
         sa_column_kwargs={"comment": "Reference to the project"},
     )
 
-    tag: ConfigTag | None = Field(
-        default=None,
+    tag: ConfigTag = Field(
+        default=ConfigTag.DEFAULT,
         sa_column=sa.Column(
             _CONFIG_TAG_PG_ENUM,
-            nullable=True,
+            nullable=False,
+            server_default=sa.text("'default'::config_tag"),
             comment=(
-                "Optional tag classifying the config: 'default' for general use, "
-                "'ASSESSMENT' for assessment UI picker; NULL means untagged."
+                "Tag classifying the config: 'default' for general use, "
+                "'ASSESSMENT' for assessment use."
             ),
         ),
     )
@@ -121,11 +129,10 @@ class ConfigCreate(ConfigBase):
         description="Optional message describing the changes in this version",
     )
     tag: ConfigTag | None = Field(
-        default=None,
+        default=ConfigTag.DEFAULT,
         description=(
-            "Optional tag for classifying this config. "
-            "Omit (NULL) for untagged/general-purpose; set 'ASSESSMENT' to surface "
-            "the config in the Assessment UI picker."
+            "Optional tag for classifying this config. Omit to store 'default'; "
+            "set 'ASSESSMENT' for assessment use."
         ),
     )
 

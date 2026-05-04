@@ -2,6 +2,7 @@ import pytest
 from sqlmodel import Session
 
 from app.crud import DocumentCrud
+from app.models.config.config import ConfigTag
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
 
@@ -26,6 +27,31 @@ class TestDatabaseReadMany:
         crud = DocumentCrud(db, store.project.id)
         docs, _ = crud.read_many()
         assert len(docs) == self._ndocs
+
+    def test_no_tag_scope_includes_default_documents(
+        self,
+        db: Session,
+        store: DocumentStore,
+    ) -> None:
+        store.fill(1, tag=ConfigTag.DEFAULT)
+
+        crud = DocumentCrud(db, store.project.id)
+        docs, _ = crud.read_many()
+
+        assert len(docs) == self._ndocs + 1
+
+    def test_explicit_default_tag_scope_returns_default_documents(
+        self,
+        db: Session,
+        store: DocumentStore,
+    ) -> None:
+        default_doc = store.put(tag=ConfigTag.DEFAULT)
+
+        crud = DocumentCrud(db, store.project.id)
+        docs, _ = crud.read_many(tag=ConfigTag.DEFAULT)
+
+        assert len(docs) == self._ndocs + 1
+        assert default_doc.id in [doc.id for doc in docs]
 
     def test_deleted_docs_are_excluded(
         self,

@@ -14,6 +14,7 @@ from app.assessment.service import (
     retry_assessment_run,
     start_assessment,
 )
+from app.models.config.config import ConfigTag
 
 
 def _make_request(provider_config_id: UUID) -> AssessmentCreate:
@@ -47,15 +48,15 @@ def _make_run() -> MagicMock:
     return run
 
 
-def _untagged_config_crud_patch():
+def _assessment_config_crud_patch():
     """Patch ConfigCrud so the bare tag-check in start_assessment short-circuits.
 
-    Returns a config whose ``tag`` is None — i.e. legacy/untagged — which the
-    check accepts.
+    Returns a config tagged for assessment use, which the check accepts.
     """
     crud = MagicMock()
     crud.read_one.return_value = SimpleNamespace(
-        id=UUID("00000000-0000-0000-0000-000000000001"), tag=None
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        tag=ConfigTag.ASSESSMENT,
     )
     return patch("app.assessment.service.ConfigCrud", return_value=crud)
 
@@ -85,7 +86,7 @@ class TestStartAssessment:
                 "app.assessment.service.resolve_evaluation_config",
                 return_value=(None, "missing"),
             ),
-            _untagged_config_crud_patch(),
+            _assessment_config_crud_patch(),
         ):
             with pytest.raises(HTTPException, match="Failed to resolve config"):
                 start_assessment(
@@ -110,7 +111,7 @@ class TestStartAssessment:
                 return_value=(config_blob, None),
             ),
             patch("app.assessment.service.create_assessment") as create_assessment,
-            _untagged_config_crud_patch(),
+            _assessment_config_crud_patch(),
         ):
             with pytest.raises(
                 HTTPException, match="not supported for batch assessment"
@@ -160,7 +161,7 @@ class TestStartAssessment:
                 return_value=run,
             ),
             patch("app.assessment.service.recompute_assessment_status"),
-            _untagged_config_crud_patch(),
+            _assessment_config_crud_patch(),
         ):
             response = start_assessment(
                 session=session,
@@ -209,7 +210,7 @@ class TestStartAssessment:
                 return_value=run,
             ),
             patch("app.assessment.service.recompute_assessment_status"),
-            _untagged_config_crud_patch(),
+            _assessment_config_crud_patch(),
         ):
             response = start_assessment(
                 session=session,
@@ -231,8 +232,6 @@ class TestStartAssessment:
 
     def test_rejects_default_tagged_config(self) -> None:
         """Configs explicitly tagged 'default' must be rejected for assessment."""
-        from app.models.config.config import ConfigTag
-
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
 
@@ -300,7 +299,7 @@ class TestStartAssessment:
                 return_value=run,
             ) as update_run,
             patch("app.assessment.service.recompute_assessment_status"),
-            _untagged_config_crud_patch(),
+            _assessment_config_crud_patch(),
         ):
             response = start_assessment(
                 session=session,
