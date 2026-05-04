@@ -1,11 +1,11 @@
 import logging
 from uuid import UUID
 
-from sqlmodel import Session, and_, select
+from sqlmodel import Session, select, and_
 
-from app.core.exception_handlers import HTTPException
-from app.core.util import now
 from app.models import Document
+from app.core.util import now
+from app.core.exception_handlers import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +39,7 @@ class DocumentCrud:
         limit: int | None = None,
     ) -> tuple[list[Document], bool]:
         statement = select(Document).where(
-            and_(
-                Document.project_id == self.project_id,
-                Document.is_deleted.is_(False),
-            )
+            and_(Document.project_id == self.project_id, Document.is_deleted.is_(False))
         )
         statement = statement.order_by(Document.inserted_at.desc())
 
@@ -95,7 +92,7 @@ class DocumentCrud:
                 raise ValueError(
                     f"Requested atleast {requested_count} document retrieved {retrieved_count}"
                 )
-            except ValueError:
+            except ValueError as err:
                 logger.error(
                     f"[DocumentCrud.read_each] Mismatch in retrieved documents | {{'project_id': {self.project_id}, 'requested_count': {requested_count}, 'retrieved_count': {retrieved_count}}}",
                     exc_info=True,
@@ -108,7 +105,10 @@ class DocumentCrud:
         if not document.project_id:
             document.project_id = self.project_id
         elif document.project_id != self.project_id:
-            error = f"Invalid document ownership: project={self.project_id} attempter={document.project_id}"
+            error = "Invalid document ownership: project={} attempter={}".format(
+                self.project_id,
+                document.project_id,
+            )
             try:
                 raise PermissionError(error)
             except PermissionError as err:

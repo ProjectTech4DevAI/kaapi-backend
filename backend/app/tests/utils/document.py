@@ -1,22 +1,21 @@
-import functools as ft
 import itertools as it
-from collections.abc import Generator
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any
-from urllib.parse import ParseResult, urlunparse
+import functools as ft
+from typing import Any, Generator
 from uuid import UUID
+from pathlib import Path
+from datetime import datetime
+from dataclasses import dataclass
+from urllib.parse import ParseResult, urlunparse
 
-from fastapi.testclient import TestClient
 from httpx import Response
 from sqlmodel import Session, delete
+from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.crud.project import get_project_by_id
 from app.models import Document, DocumentPublic, Project
-from app.tests.utils.auth import TestAuthContext
 from app.utils import APIResponse
+from app.tests.utils.auth import TestAuthContext
 
 from .utils import SequentialUuidGenerator
 
