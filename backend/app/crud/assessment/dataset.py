@@ -89,7 +89,7 @@ def get_assessment_dataset_by_id(
     dataset_id: int,
     organization_id: int,
     project_id: int,
-) -> EvaluationDataset | None:
+) -> EvaluationDataset:
     """Fetch an assessment dataset by ID, scoped to organization and project."""
     statement = (
         select(EvaluationDataset)
@@ -98,7 +98,13 @@ def get_assessment_dataset_by_id(
         .where(EvaluationDataset.project_id == project_id)
         .where(EvaluationDataset.type == EvaluationType.ASSESSMENT.value)
     )
-    return session.exec(statement).first()
+    dataset = session.exec(statement).first()
+    if not dataset:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dataset {dataset_id} not found or not accessible",
+        )
+    return dataset
 
 
 def list_assessment_datasets(

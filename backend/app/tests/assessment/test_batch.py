@@ -10,19 +10,21 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from app.crud.assessment.batch import (
     _build_text_prompt,
-    _decode_base64_prefix,
-    _guess_image_mime_from_base64,
-    _guess_image_mime_from_url,
     _load_dataset_rows,
     _parse_excel_rows,
-    _resolve_attachment_values,
-    _resolve_image_mime_and_payload,
-    _split_attachment_urls,
-    _split_data_url,
-    _to_direct_attachment_url,
     build_google_jsonl,
     build_openai_jsonl,
     submit_assessment_batch,
+)
+from app.services.assessment.utils.attachments import (
+    _decode_base64_prefix,
+    _guess_image_mime_from_base64,
+    _guess_image_mime_from_url,
+    resolve_attachment_values,
+    resolve_image_mime_and_payload,
+    split_attachment_urls,
+    split_data_url,
+    to_direct_attachment_url,
 )
 from app.models.assessment import AssessmentAttachment
 
@@ -333,22 +335,22 @@ class TestBatchHelpers:
         assert concatenated.endswith("\nContext")
 
     def test_split_and_direct_urls(self) -> None:
-        urls = _split_attachment_urls(" https://a.com\nhttps://b.com , https://c.com ")
+        urls = split_attachment_urls(" https://a.com\nhttps://b.com , https://c.com ")
         assert urls == ["https://a.com", "https://b.com", "https://c.com"]
-        image_url = _to_direct_attachment_url(
+        image_url = to_direct_attachment_url(
             "https://drive.google.com/file/d/abc123/view?usp=sharing", "image"
         )
         assert "googleusercontent.com" in image_url
-        pdf_url = _to_direct_attachment_url(
+        pdf_url = to_direct_attachment_url(
             "https://drive.google.com/open?id=abc123", "pdf"
         )
         assert "drive.google.com/uc" in pdf_url
 
     def test_data_url_and_mime_guessers(self) -> None:
-        mime, payload = _split_data_url("data:image/png;base64,AAAA")
+        mime, payload = split_data_url("data:image/png;base64,AAAA")
         assert mime == "image/png"
         assert payload == "AAAA"
-        none_mime, raw = _split_data_url("rawbase64")
+        none_mime, raw = split_data_url("rawbase64")
         assert none_mime is None
         assert raw == "rawbase64"
         assert _guess_image_mime_from_url("https://x/y/file.jpeg") == "image/jpeg"
@@ -359,17 +361,17 @@ class TestBatchHelpers:
         assert _guess_image_mime_from_base64(png_head) == "image/png"
         assert _decode_base64_prefix("###") == b""
 
-    def test_resolve_image_mime_and_payload(self) -> None:
-        mime, payload = _resolve_image_mime_and_payload("https://x/y/file.webp", "url")
+    def testresolve_image_mime_and_payload(self) -> None:
+        mime, payload = resolve_image_mime_and_payload("https://x/y/file.webp", "url")
         assert mime == "image/webp"
         assert payload.endswith("file.webp")
-        mime2, payload2 = _resolve_image_mime_and_payload(
+        mime2, payload2 = resolve_image_mime_and_payload(
             "data:image/jpeg;base64,AAAA", "base64"
         )
         assert mime2 == "image/jpeg"
         assert payload2 == "AAAA"
 
-    def test_resolve_attachment_values(self) -> None:
+    def testresolve_attachment_values(self) -> None:
         image_url_att = AssessmentAttachment(column="img", type="image", format="url")
         image_b64_att = AssessmentAttachment(
             column="img", type="image", format="base64"
@@ -377,20 +379,20 @@ class TestBatchHelpers:
         pdf_url_att = AssessmentAttachment(column="pdf", type="pdf", format="url")
         pdf_b64_att = AssessmentAttachment(column="pdf", type="pdf", format="base64")
 
-        values = _resolve_attachment_values(
+        values = resolve_attachment_values(
             "https://example.com/a.png,https://example.com/b.png", image_url_att
         )
         assert len(values) == 2
         assert values[0]["type"] == "input_image"
 
-        values = _resolve_attachment_values("data:image/png;base64,AAAA", image_b64_att)
+        values = resolve_attachment_values("data:image/png;base64,AAAA", image_b64_att)
         assert values[0]["image_url"].startswith("data:image/png;base64,")
 
-        values = _resolve_attachment_values("https://example.com/a.pdf", pdf_url_att)
+        values = resolve_attachment_values("https://example.com/a.pdf", pdf_url_att)
         assert values[0]["type"] == "input_file"
         assert "file_url" in values[0]
 
-        values = _resolve_attachment_values(
+        values = resolve_attachment_values(
             "data:application/pdf;base64,AAAA", pdf_b64_att
         )
         assert values[0]["file_data"].startswith("data:application/pdf;base64,")

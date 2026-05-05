@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 from app.services.assessment.mappers import (
     _ensure_openai_strict_schema,
     _strip_additional_properties,
-    map_kaapi_to_google_params,
-    map_kaapi_to_openai_params,
+    map_kaapi_to_google_assessment_params,
+    map_kaapi_to_openai_assessment_params,
     normalize_llm_text,
 )
 
@@ -103,7 +103,7 @@ class TestMapKaapiToOpenAIParams:
             "app.services.assessment.mappers.is_reasoning_model",
             return_value=supports_reasoning,
         ):
-            return map_kaapi_to_openai_params(session=MagicMock(), kaapi_params=params)
+            return map_kaapi_to_openai_assessment_params(session=MagicMock(), kaapi_params=params)
 
     def test_basic_model_passed_through(self) -> None:
         result, warnings = self._call({"model": "gpt-4o"})
@@ -179,10 +179,10 @@ class TestMapKaapiToGoogleParams:
             "app.services.assessment.mappers.genai_transformers.t_schema",
             return_value=mock_schema,
         ):
-            return map_kaapi_to_google_params(params)
+            return map_kaapi_to_google_assessment_params(params)
 
     def test_missing_model_returns_warning(self) -> None:
-        result, warnings = map_kaapi_to_google_params({})
+        result, warnings = map_kaapi_to_google_assessment_params({})
         assert result == {}
         assert any("model" in w for w in warnings)
 
@@ -265,7 +265,7 @@ class TestOpenAIResponseFormat:
             "app.services.assessment.mappers.is_reasoning_model",
             return_value=False,
         ):
-            return map_kaapi_to_openai_params(session=MagicMock(), kaapi_params=params)
+            return map_kaapi_to_openai_assessment_params(session=MagicMock(), kaapi_params=params)
 
     def test_non_text_response_format_sets_text_field(self) -> None:
         result, _ = self._call({"model": "gpt-4o", "response_format": "json_object"})

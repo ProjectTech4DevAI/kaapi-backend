@@ -3,8 +3,10 @@
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+
+from sqlmodel import Session
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -14,8 +16,6 @@ from app.crud.assessment import (
     derive_aggregate_error,
     get_assessment_by_id,
     get_assessment_runs_for_assessment,
-)
-from app.crud.assessment import (
     list_assessments as list_assessments_crud,
 )
 from app.models.assessment import (
@@ -34,7 +34,7 @@ router = APIRouter()
 
 
 def _build_assessment_public(
-    session: SessionDep,
+    session: Session,
     assessment: Assessment,
 ) -> AssessmentPublic:
     """Build AssessmentPublic with derived counts and run_stats."""
@@ -78,11 +78,6 @@ def retry_assessment(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-    if not assessment:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment {assessment_id} not found or not accessible",
-        )
 
     result = retry_assessment_service(
         session=session,
@@ -116,7 +111,7 @@ def list_assessments(
     )
 
     return APIResponse.success_response(
-        data=[_build_assessment_public(session, a) for a in assessments]
+        data=[_build_assessment_public(session, assessment) for assessment in assessments]
     )
 
 
@@ -139,12 +134,6 @@ def get_assessment(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-
-    if not assessment:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment {assessment_id} not found or not accessible",
-        )
 
     return APIResponse.success_response(
         data=_build_assessment_public(session, assessment)
@@ -171,11 +160,6 @@ def export_assessment_results(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-    if not assessment:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment {assessment_id} not found or not accessible",
-        )
 
     runs = get_assessment_runs_for_assessment(
         session=session, assessment_id=assessment_id

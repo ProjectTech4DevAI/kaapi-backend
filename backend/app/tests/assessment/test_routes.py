@@ -276,7 +276,7 @@ class TestAssessmentAndRunRoutes:
 
         with patch(
             "app.api.routes.assessment.assessments.get_assessment_by_id",
-            return_value=None,
+            side_effect=HTTPException(status_code=404, detail="Assessment 10 not found or not accessible"),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 get_assessment(10, session=MagicMock(), auth_context=_auth_context())
@@ -309,7 +309,7 @@ class TestAssessmentAndRunRoutes:
 
         with patch(
             "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=None,
+            side_effect=HTTPException(status_code=404, detail="Assessment run 22 not found or not accessible"),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 get_assessment_run(
@@ -395,7 +395,7 @@ class TestExportRoutes:
     def test_export_not_found(self) -> None:
         with patch(
             "app.api.routes.assessment.assessments.get_assessment_by_id",
-            return_value=None,
+            side_effect=HTTPException(status_code=404, detail="Assessment 10 not found or not accessible"),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 export_assessment_results(
@@ -405,7 +405,7 @@ class TestExportRoutes:
                 )
         with patch(
             "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=None,
+            side_effect=HTTPException(status_code=404, detail="Assessment run 22 not found or not accessible"),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 export_assessment_run_results(

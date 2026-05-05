@@ -3,18 +3,14 @@
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.assessment import (
     get_assessment_by_id,
-)
-from app.crud.assessment import (
     get_assessment_run_by_id as get_run_by_id,
-)
-from app.crud.assessment import (
     list_assessment_runs as list_runs,
 )
 from app.models.assessment import (
@@ -50,6 +46,12 @@ def _build_run_public(
 ) -> AssessmentRunPublic:
     """Build AssessmentRunPublic with parent-derived experiment/dataset info."""
     parent = session.get(Assessment, run.assessment_id)
+    if parent is None:
+        logger.warning(
+            "[_build_run_public] Parent assessment %s not found for run %s",
+            run.assessment_id,
+            run.id,
+        )
     dataset = session.get(EvaluationDataset, parent.dataset_id) if parent else None
     return AssessmentRunPublic(
         id=run.id,
@@ -81,10 +83,10 @@ def create_assessment_runs(
 ) -> APIResponse[AssessmentResponse]:
     """Submit an assessment and create one child run per config."""
     logger.info(
-        f"[create_assessment_runs] Assessment run submission | "
-        f"experiment={request.experiment_name} | "
-        f"dataset_id={request.dataset_id} | "
-        f"configs={len(request.configs)}"
+        "[create_assessment_runs] Assessment run submission | experiment=%s | dataset_id=%s | configs=%s",
+        request.experiment_name,
+        request.dataset_id,
+        len(request.configs),
     )
 
     result = start_assessment(
@@ -115,11 +117,6 @@ def retry_assessment_run(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-    if not run:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment run {run_id} not found or not accessible",
-        )
 
     result = retry_run(
         session=session,
@@ -177,12 +174,6 @@ def get_assessment_run(
         project_id=auth_context.project_.id,
     )
 
-    if not run:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment run {run_id} not found or not accessible",
-        )
-
     return APIResponse.success_response(data=_build_run_public(session, run))
 
 
@@ -205,11 +196,6 @@ def export_assessment_run_results(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-    if not run:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Assessment run {run_id} not found or not accessible",
-        )
 
     assessment = get_assessment_by_id(
         session=session,

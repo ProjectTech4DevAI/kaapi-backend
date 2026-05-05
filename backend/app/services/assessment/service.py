@@ -96,11 +96,11 @@ def start_assessment(
     and kicks off batch processing for each.
     """
     logger.info(
-        f"[start_assessment] Starting | "
-        f"experiment={request.experiment_name} | "
-        f"dataset_id={request.dataset_id} | "
-        f"configs={len(request.configs)} | "
-        f"org_id={organization_id}"
+        "[start_assessment] Starting | experiment=%s | dataset_id=%s | configs=%s | org_id=%s",
+        request.experiment_name,
+        request.dataset_id,
+        len(request.configs),
+        organization_id,
     )
 
     dataset = get_assessment_dataset_by_id(
@@ -109,17 +109,12 @@ def start_assessment(
         organization_id=organization_id,
         project_id=project_id,
     )
-    if not dataset:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Dataset {request.dataset_id} not found or not accessible",
-        )
 
     assessment_input: dict[str, Any] = {
         "prompt_template": request.prompt_template,
         "system_instruction": request.system_instruction,
         "text_columns": request.text_columns,
-        "attachments": [a.model_dump() for a in request.attachments],
+        "attachments": [att.model_dump() for att in request.attachments],
     }
     if request.output_schema:
         assessment_input["output_schema"] = request.output_schema
@@ -181,56 +176,62 @@ def start_assessment(
     )
 
     runs: list[AssessmentRun] = []
-    for cfg, config_blob in resolved_configs:
-        run = create_assessment_run(
-            session=session,
-            assessment_id=assessment.id,
-            config_id=cfg.config_id,
-            config_version=cfg.config_version,
-            assessment_input=assessment_input,
-        )
-
-        try:
-            batch_job = submit_assessment_batch(
+    try:
+        for cfg, config_blob in resolved_configs:
+            run = create_assessment_run(
                 session=session,
-                run=run,
-                assessment=assessment,
-                dataset=dataset,
-                config_blob=config_blob,
+                assessment_id=assessment.id,
+                config_id=cfg.config_id,
+                config_version=cfg.config_version,
                 assessment_input=assessment_input,
-                organization_id=organization_id,
-                project_id=project_id,
             )
 
-            run = update_assessment_run_status(
-                session=session,
-                run=run,
-                status="processing",
-                batch_job_id=batch_job.id,
-                total_items=batch_job.total_items,
-            )
-            recompute_assessment_status(session=session, assessment_id=assessment.id)
+            try:
+                batch_job = submit_assessment_batch(
+                    session=session,
+                    run=run,
+                    assessment=assessment,
+                    dataset=dataset,
+                    config_blob=config_blob,
+                    assessment_input=assessment_input,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
 
-        except Exception as e:
-            logger.error(
-                f"[start_assessment] Failed to submit batch for run {run.id}: {e}",
-                exc_info=True,
-            )
-            run = update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message="Batch submission failed. Please try again or contact support.",
-            )
-            recompute_assessment_status(session=session, assessment_id=assessment.id)
+                run = update_assessment_run_status(
+                    session=session,
+                    run=run,
+                    status="processing",
+                    batch_job_id=batch_job.id,
+                    total_items=batch_job.total_items,
+                )
 
-        runs.append(run)
+            except Exception as e:
+                logger.error(
+                    "[start_assessment] Failed to submit batch for run %s: %s",
+                    run.id,
+                    e,
+                    exc_info=True,
+                )
+                run = update_assessment_run_status(
+                    session=session,
+                    run=run,
+                    status="failed",
+                    error_message="Batch submission failed. Please try again or contact support.",
+                )
+
+            runs.append(run)
+    except Exception:
+        recompute_assessment_status(session=session, assessment_id=assessment.id)
+        raise
 
     recompute_assessment_status(session=session, assessment_id=assessment.id)
 
     logger.info(
-        f"[start_assessment] Created assessment {assessment.id} with {len(runs)} runs | "
-        f"run_ids={[r.id for r in runs]}"
+        "[start_assessment] Created assessment %s with %s runs | run_ids=%s",
+        assessment.id,
+        len(runs),
+        [run.id for run in runs],
     )
 
     return AssessmentResponse(
@@ -241,13 +242,13 @@ def start_assessment(
         num_configs=len(runs),
         runs=[
             AssessmentRunSummary(
-                run_id=r.id,
-                assessment_id=r.assessment_id,
-                config_id=str(r.config_id),
-                config_version=r.config_version,
-                status=r.status,
+                run_id=completed_run.id,
+                assessment_id=completed_run.assessment_id,
+                config_id=str(completed_run.config_id),
+                config_version=completed_run.config_version,
+                status=completed_run.status,
             )
-            for r in runs
+            for completed_run in runs
         ],
     )
 
@@ -282,7 +283,7 @@ def retry_assessment_run(
     project_id: int,
 ) -> AssessmentResponse:
     """Create a new assessment using the same inputs as a single child run."""
-    parent = run.assessment or session.get(Assessment, run.assessment_id)
+    parent = session.get(Assessment, run.assessment_id)
     if not parent:
         raise HTTPException(
             status_code=404,

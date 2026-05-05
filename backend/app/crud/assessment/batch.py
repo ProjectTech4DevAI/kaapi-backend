@@ -4,14 +4,10 @@ Builds provider-specific JSONL files from dataset rows + config,
 then submits them via the core batch infrastructure.
 """
 
-import base64
-import binascii
 import csv
 import io
 import logging
-import re
 from typing import Any
-from urllib.parse import urlparse
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
@@ -29,26 +25,20 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
-    map_kaapi_to_google_params,
-    map_kaapi_to_openai_params,
+    map_kaapi_to_google_assessment_params,
+    map_kaapi_to_openai_assessment_params,
     normalize_llm_text,
+)
+from app.services.assessment.utils.attachments import (
+    resolve_attachment_values,
+    resolve_image_mime_and_payload,
+    split_attachment_urls,
+    split_data_url,
+    to_direct_attachment_url,
 )
 from app.services.llm.providers.registry import LLMProvider
 
 logger = logging.getLogger(__name__)
-
-_IMAGE_MIME_BY_EXT = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-    ".bmp": "image/bmp",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-    ".heic": "image/heic",
-    ".heif": "image/heif",
-}
 
 
 def _load_dataset_rows(
@@ -112,15 +102,16 @@ def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
             return []
 
         columns = [
-            str(h) if h is not None else f"col_{i}" for i, h in enumerate(header)
+            str(col_header) if col_header is not None else f"col_{idx}"
+            for idx, col_header in enumerate(header)
         ]
         result = []
         for row in rows_iter:
             if row and any(cell is not None for cell in row):
                 row_dict = {
-                    columns[i]: str(cell) if cell is not None else ""
-                    for i, cell in enumerate(row)
-                    if i < len(columns)
+                    columns[idx]: str(cell) if cell is not None else ""
+                    for idx, cell in enumerate(row)
+                    if idx < len(columns)
                 }
                 result.append(row_dict)
 
@@ -164,163 +155,6 @@ def _build_text_prompt(
     return "\n".join(parts)
 
 
-def _split_attachment_urls(value: str) -> list[str]:
-    """Split comma/newline separated attachment URLs from a single dataset cell."""
-    return [part.strip() for part in re.split(r"[\n,]+", value) if part.strip()]
-
-
-def _to_direct_attachment_url(url: str, attachment_type: str) -> str:
-    """Normalize share-page attachment URLs into provider-fetchable direct URLs.
-
-    This currently handles common Google Drive share URL shapes. The file must
-    still be publicly accessible to the model provider.
-    """
-    url = url.strip()
-    file_id = None
-
-    match = re.match(r"https://drive\.google\.com/file/d/([^/]+)", url)
-    if match:
-        file_id = match.group(1)
-
-    if not file_id:
-        match = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url)
-        if match and (
-            "drive.google.com" in url or "drive.usercontent.google.com" in url
-        ):
-            file_id = match.group(1)
-
-    if not file_id:
-        return url
-
-    if attachment_type == "image":
-        return f"https://lh3.googleusercontent.com/d/{file_id}"
-
-    return f"https://drive.google.com/uc?export=download&id={file_id}"
-
-
-def _split_data_url(value: str) -> tuple[str | None, str]:
-    """Return (mime_type, base64_payload) for a data URL; otherwise (None, value)."""
-    match = re.match(
-        r"^data:([^;]+);base64,(.+)$",
-        value.strip(),
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if not match:
-        return None, value.strip()
-    return match.group(1).strip().lower(), match.group(2).strip()
-
-
-def _guess_image_mime_from_url(url: str) -> str | None:
-    path = urlparse(url).path or ""
-    for ext, mime in _IMAGE_MIME_BY_EXT.items():
-        if path.lower().endswith(ext):
-            return mime
-    return None
-
-
-def _decode_base64_prefix(payload: str, max_chars: int = 256) -> bytes | None:
-    compact = re.sub(r"\s+", "", payload)
-    if not compact:
-        return None
-    sample = compact[:max_chars]
-    padding = "=" * (-len(sample) % 4)
-    try:
-        return base64.b64decode(sample + padding, validate=False)
-    except (binascii.Error, ValueError):
-        return None
-
-
-def _guess_image_mime_from_base64(payload: str) -> str | None:
-    blob = _decode_base64_prefix(payload)
-    if not blob:
-        return None
-    if blob.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if blob.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if blob.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if blob.startswith(b"BM"):
-        return "image/bmp"
-    if len(blob) >= 12 and blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
-        return "image/webp"
-    if blob.startswith((b"II*\x00", b"MM\x00*")):
-        return "image/tiff"
-    return None
-
-
-def _resolve_image_mime_and_payload(
-    value: str,
-    format_type: str,
-) -> tuple[str, str]:
-    """Resolve image mime type and raw base64 payload (for base64 format)."""
-    if format_type == "url":
-        return _guess_image_mime_from_url(value) or "image/png", value
-
-    data_url_mime, payload = _split_data_url(value)
-    if data_url_mime and data_url_mime.startswith("image/"):
-        return data_url_mime, payload
-
-    return _guess_image_mime_from_base64(payload) or "image/png", payload
-
-
-def _resolve_attachment_values(
-    value: str,
-    att: AssessmentAttachment,
-) -> list[dict[str, Any]]:
-    """Convert one dataset cell into one or more OpenAI-style input objects."""
-    value = value.strip()
-    if not value:
-        return []
-
-    if att.format == "url":
-        values = _split_attachment_urls(value)
-    else:
-        values = [value]
-
-    resolved: list[dict[str, Any]] = []
-    for item_value in values:
-        normalized_value = (
-            _to_direct_attachment_url(item_value, att.type)
-            if att.format == "url"
-            else item_value
-        )
-
-        if att.type == "image":
-            if att.format == "url":
-                resolved.append({"type": "input_image", "image_url": normalized_value})
-            else:
-                mime_type, payload = _resolve_image_mime_and_payload(
-                    normalized_value,
-                    "base64",
-                )
-                resolved.append(
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:{mime_type};base64,{payload}",
-                    }
-                )
-        elif att.type == "pdf":
-            if att.format == "url":
-                resolved.append(
-                    {
-                        "type": "input_file",
-                        "file_url": normalized_value,
-                    }
-                )
-            else:
-                _, payload = _split_data_url(normalized_value)
-                resolved.append(
-                    {
-                        "type": "input_file",
-                        "file_data": f"data:application/pdf;base64,{payload}",
-                        "filename": "document.pdf",
-                    }
-                )
-
-    return resolved
-
-
 def build_openai_jsonl(
     rows: list[dict[str, str]],
     text_columns: list[str],
@@ -352,10 +186,10 @@ def build_openai_jsonl(
         # Attachments
         for att in attachments:
             cell_value = row.get(att.column, "")
-            input_parts.extend(_resolve_attachment_values(cell_value, att))
+            input_parts.extend(resolve_attachment_values(cell_value, att))
 
         if not input_parts:
-            logger.warning(f"[build_openai_jsonl] Skipping empty row | idx={idx}")
+            logger.warning("[build_openai_jsonl] Skipping empty row | idx=%s", idx)
             continue
 
         # Build body from mapped params
@@ -411,19 +245,19 @@ def build_google_jsonl(
                 continue
 
             cell_values = (
-                _split_attachment_urls(cell_value)
+                split_attachment_urls(cell_value)
                 if att.format == "url"
                 else [cell_value]
             )
 
             for item_value in cell_values:
                 normalized_value = (
-                    _to_direct_attachment_url(item_value, att.type)
+                    to_direct_attachment_url(item_value, att.type)
                     if att.format == "url"
                     else item_value
                 )
                 if att.type == "image":
-                    mime_type, payload = _resolve_image_mime_and_payload(
+                    mime_type, payload = resolve_image_mime_and_payload(
                         normalized_value,
                         att.format,
                     )
@@ -460,13 +294,13 @@ def build_google_jsonl(
                             {
                                 "inlineData": {
                                     "mimeType": "application/pdf",
-                                    "data": _split_data_url(normalized_value)[1],
+                                    "data": split_data_url(normalized_value)[1],
                                 }
                             }
                         )
 
         if not parts:
-            logger.warning(f"[build_google_jsonl] Skipping empty row | idx={idx}")
+            logger.warning("[build_google_jsonl] Skipping empty row | idx=%s", idx)
             continue
 
         system_instruction = google_params.get("instructions")
@@ -543,9 +377,10 @@ def submit_assessment_batch(
         raise ValueError(f"Dataset {dataset.id} has no rows")
 
     logger.info(
-        f"[submit_assessment_batch] Building JSONL | "
-        f"run_id={run.id} | rows={len(rows)} | "
-        f"provider={config_blob.completion.provider}"
+        "[submit_assessment_batch] Building JSONL | run_id=%s | rows=%s | provider=%s",
+        run.id,
+        len(rows),
+        config_blob.completion.provider,
     )
 
     # Determine provider and build params
@@ -564,12 +399,12 @@ def submit_assessment_batch(
     base_provider = provider_name.replace("-native", "")
 
     if base_provider == LLMProvider.OPENAI:
-        mapped_params, warnings = map_kaapi_to_openai_params(
+        mapped_params, warnings = map_kaapi_to_openai_assessment_params(
             session=session,
             kaapi_params=params,
         )
         if warnings:
-            logger.info(f"[submit_assessment_batch] Mapper warnings: {warnings}")
+            logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
 
         jsonl_data = build_openai_jsonl(
             rows=rows,
@@ -607,9 +442,9 @@ def submit_assessment_batch(
         )
 
     elif base_provider == LLMProvider.GOOGLE:
-        mapped_params, warnings = map_kaapi_to_google_params(params)
+        mapped_params, warnings = map_kaapi_to_google_assessment_params(params)
         if warnings:
-            logger.info(f"[submit_assessment_batch] Mapper warnings: {warnings}")
+            logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
 
         jsonl_data = build_google_jsonl(
             rows=rows,
@@ -655,9 +490,11 @@ def submit_assessment_batch(
         )
 
     logger.info(
-        f"[submit_assessment_batch] Submitted batch | "
-        f"run_id={run.id} | batch_job_id={batch_job.id} | "
-        f"provider={base_provider} | items={len(jsonl_data)}"
+        "[submit_assessment_batch] Submitted batch | run_id=%s | batch_job_id=%s | provider=%s | items=%s",
+        run.id,
+        batch_job.id,
+        base_provider,
+        len(jsonl_data),
     )
 
     return batch_job

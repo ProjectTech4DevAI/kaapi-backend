@@ -120,11 +120,6 @@ def get_dataset(
         project_id=auth_context.project_.id,
     )
 
-    if not dataset:
-        raise HTTPException(
-            status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
-        )
-
     signed_url = None
     if include_signed_url and dataset.object_store_url:
         storage = get_cloud_storage(
@@ -155,11 +150,6 @@ def delete_dataset(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-
-    if not dataset:
-        raise HTTPException(
-            status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
-        )
 
     dataset_name = dataset.name
     error = delete_assessment_dataset(session=session, dataset=dataset)
