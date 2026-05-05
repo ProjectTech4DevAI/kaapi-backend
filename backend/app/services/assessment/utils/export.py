@@ -14,7 +14,6 @@ from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
-from app.crud.assessment.batch import _load_dataset_rows
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.job import get_batch_job
 from app.models.assessment import Assessment, AssessmentExportRow, AssessmentRun
@@ -358,6 +357,8 @@ def _load_dataset_rows_for_run(
                 run.id,
             )
             return []
+        from app.crud.assessment.batch import _load_dataset_rows
+
         return _load_dataset_rows(session, dataset)
     except Exception as exc:
         logger.warning(
