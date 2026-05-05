@@ -730,6 +730,8 @@ def execute_llm_call(
         error_message = error or "Unknown error occurred"
         return BlockResult(error=error_message, llm_call_id=llm_call_id)
 
+    except (Timeout, SoftTimeLimitExceeded):
+        raise
     except Exception as e:
         logger.error(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",

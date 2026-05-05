@@ -153,26 +153,6 @@ def run_create_collection_job(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
-@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_collection_batch_job")
-def run_collection_batch_job(
-    self: celery.Task, project_id: int, job_id: str, trace_id: str, **kwargs: Any
-) -> None:
-    from app.services.collections.create_collection import execute_job
-
-    _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
-    )
-
-
-@celery_app.task(bind=True, queue="low_priority", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_delete_collection_job")
 def run_delete_collection_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
