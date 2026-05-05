@@ -4,6 +4,7 @@ import time
 import sentry_sdk
 from fastapi import Request, Response
 from opentelemetry import trace
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger("http_request_logger")
 
@@ -13,10 +14,10 @@ class StripTrailingSlashMiddleware:
     Rewrite '/foo/' to '/foo' before routing so both forms hit the same handler.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             path = scope["path"]
             if len(path) > 1 and path.endswith("/"):
