@@ -106,8 +106,40 @@ def upgrade():
         )
     )
 
+    op.execute(
+        sa.text(
+            f"""
+            CREATE OR REPLACE FUNCTION seed_default_feature_flag()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                INSERT INTO feature_flag
+                    (key, organization_id, project_id, enabled, inserted_at, updated_at)
+                VALUES
+                    ('{FeatureFlagKeyEnum.ASSESSMENT.value}'::featureflagkey,
+                     NEW.organization_id, NEW.id, FALSE, NOW(), NOW());
+                RETURN NEW;
+            END;
+            $$;
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            CREATE TRIGGER trg_seed_default_feature_flag
+            AFTER INSERT ON project
+            FOR EACH ROW
+            EXECUTE FUNCTION seed_default_feature_flag();
+            """
+        )
+    )
+
 
 def downgrade():
+    op.execute("DROP TRIGGER IF EXISTS trg_seed_default_feature_flag ON project")
+    op.execute("DROP FUNCTION IF EXISTS seed_default_feature_flag()")
     op.drop_index("uq_feature_flag_key_org_project", table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_organization_id"), table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_key"), table_name="feature_flag")
