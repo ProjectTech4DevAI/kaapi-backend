@@ -21,7 +21,7 @@ def test_evaluate_model(
     body = {"fine_tuning_ids": [fine_tuned[0].id]}
 
     resp = client.post(
-        "/api/v1/model_evaluation/evaluate_models/",
+        "/api/v1/model_evaluation/evaluate_models",
         json=body,
         headers=user_api_key_header,
     )
@@ -44,7 +44,7 @@ def test_evaluate_model_finetuning_not_found(
     body = {"fine_tuning_ids": [invalid_fine_tune_id]}
 
     response = client.post(
-        "/api/v1/model_evaluation/evaluate_models/",
+        "/api/v1/model_evaluation/evaluate_models",
         json=body,
         headers=user_api_key_header,
     )
