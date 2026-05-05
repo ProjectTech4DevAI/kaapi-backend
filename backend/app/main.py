@@ -25,7 +25,7 @@ from app.load_env import load_environment
 
 # Load environment variables
 load_environment()
-configure_logging()
+configure_logging(service_name=settings.BACKEND_SERVICE_NAME)
 
 
 if settings.SENTRY_DSN:
@@ -52,7 +52,7 @@ if settings.SENTRY_DSN:
         ],
     )
 
-setup_telemetry()
+setup_telemetry(service_name=settings.BACKEND_SERVICE_NAME)
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:

@@ -6,6 +6,9 @@ from asgi_correlation_id import correlation_id
 from fastapi import Request, Response
 from opentelemetry import trace
 
+from app.core.config import settings
+from app.core.logger import log_service_name
+
 logger = logging.getLogger("http_request_logger")
 
 
@@ -20,6 +23,14 @@ def _resolve_http_route(request: Request) -> str:
 
 
 async def http_request_logger(request: Request, call_next) -> Response:
+    if request.url.path.startswith(f"{settings.API_V1_STR}/cron/"):
+        with log_service_name(settings.CRON_SERVICE_NAME):
+            return await _log_http_request(request, call_next)
+
+    return await _log_http_request(request, call_next)
+
+
+async def _log_http_request(request: Request, call_next) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
