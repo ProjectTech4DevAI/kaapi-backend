@@ -67,7 +67,10 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         with patch(
             "app.services.assessment.service.get_assessment_dataset_by_id",
-            return_value=None,
+            side_effect=HTTPException(
+                status_code=404,
+                detail="Dataset 7 not found or not accessible",
+            ),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 start_assessment(

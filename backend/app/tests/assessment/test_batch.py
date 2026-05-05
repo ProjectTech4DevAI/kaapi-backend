@@ -16,6 +16,7 @@ from app.crud.assessment.batch import (
     build_openai_jsonl,
     submit_assessment_batch,
 )
+from app.models.assessment import AssessmentAttachment
 from app.services.assessment.utils.attachments import (
     _decode_base64_prefix,
     _guess_image_mime_from_base64,
@@ -26,7 +27,6 @@ from app.services.assessment.utils.attachments import (
     split_data_url,
     to_direct_attachment_url,
 )
-from app.models.assessment import AssessmentAttachment
 
 
 def _make_run() -> MagicMock:

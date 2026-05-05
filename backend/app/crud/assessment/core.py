@@ -290,12 +290,15 @@ def recompute_assessment_status(
     Counters and run_stats are derived on-read; only `status` is persisted so
     cron's `WHERE status IN (...)` filter remains index-friendly.
     """
-    statement = select(Assessment).where(Assessment.id == assessment_id)
-    if organization_id is not None:
-        statement = statement.where(Assessment.organization_id == organization_id)
-    if project_id is not None:
-        statement = statement.where(Assessment.project_id == project_id)
-    assessment = session.exec(statement).first()
+    if organization_id is None and project_id is None:
+        assessment = session.get(Assessment, assessment_id)
+    else:
+        statement = select(Assessment).where(Assessment.id == assessment_id)
+        if organization_id is not None:
+            statement = statement.where(Assessment.organization_id == organization_id)
+        if project_id is not None:
+            statement = statement.where(Assessment.project_id == project_id)
+        assessment = session.exec(statement).first()
     if not assessment:
         raise ValueError(f"Assessment {assessment_id} not found")
 
