@@ -77,7 +77,29 @@ class CollectionJob(SQLModel, table=True):
     documents: list[str] | None = Field(
         default=None,
         sa_column=Column(
-            JSON, nullable=True, comment="List of documents given to make collection"
+            JSON, nullable=True, comment="List of document IDs given to make collection"
+        ),
+    )
+    total_batches: int | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "Total number of batches the documents are split into"
+        },
+    )
+    current_batch_number: int | None = Field(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "Which batch is currently being processed (1-indexed)"
+        },
+    )
+    documents_uploaded: list[str] | None = Field(
+        default=None,
+        sa_column=Column(
+            JSON,
+            nullable=True,
+            comment="List of document IDs successfully uploaded so far",
         ),
     )
 
@@ -139,6 +161,9 @@ class CollectionJobUpdate(SQLModel):
     collection_id: UUID | None = None
     total_size_mb: float | None = None
     trace_id: str | None = None
+    total_batches: int | None = None
+    current_batch_number: int | None = None
+    documents_uploaded: list[str] | None = None
 
 
 ##Response models

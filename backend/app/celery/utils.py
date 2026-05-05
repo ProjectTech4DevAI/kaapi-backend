@@ -85,6 +85,24 @@ def start_doctransform_job(
     return task_id
 
 
+def start_create_collection_setup_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_create_collection_setup_job
+
+    task_id = _enqueue_with_trace_context(
+        run_create_collection_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_create_collection_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
 def start_create_collection_job(
     project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:

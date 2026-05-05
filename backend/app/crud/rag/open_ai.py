@@ -1,6 +1,7 @@
 import json
 import logging
 import functools as ft
+import time
 from io import BytesIO
 from typing import Iterable
 
@@ -148,6 +149,58 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 raise InterruptedError(error_msg)
 
             yield from docs
+
+    def update_batch(
+        self,
+        vector_store_id: str,
+        docs: list[Document],
+    ) -> tuple[list[Document], list[Document]]:
+        """
+        Attach a batch of documents to the vector store via a single upload_and_poll call.
+
+        All docs must have provider_file_id set before calling this method.
+        Returns (succeeded, failed) — failed docs should be retried in the next batch.
+        """
+        succeeded: list[Document] = []
+        failed: list[Document] = []
+
+        if not docs:
+            return succeeded, failed
+
+        try:
+            _t0 = time.monotonic()
+            batch = self.client.vector_stores.file_batches.upload_and_poll(
+                vector_store_id=vector_store_id,
+                files=[],
+                file_ids=[doc.openai_file_id for doc in docs],
+            )
+            logger.info(
+                f"[OpenAIVectorStoreCrud.update_batch] Batch upload_and_poll duration | "
+                f"{{'vector_store_id': '{vector_store_id}', 'duration_s': {time.monotonic() - _t0:.3f}, "
+                f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
+            )
+            if batch.file_counts.failed == 0:
+                succeeded.extend(docs)
+            else:
+                # Can't identify which specific files failed — retry all of them
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update_batch] Batch had failures, marking all for retry | "
+                    f"{{'vector_store_id': '{vector_store_id}', 'failed_count': {batch.file_counts.failed}}}"
+                )
+                failed.extend(docs)
+        except OpenAIError as err:
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update_batch] Batch attach failed | "
+                f"{{'vector_store_id': '{vector_store_id}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            failed.extend(docs)
+
+        logger.info(
+            f"[OpenAIVectorStoreCrud.update_batch] Batch complete | "
+            f"{{'vector_store_id': '{vector_store_id}', 'succeeded': {len(succeeded)}, 'failed': {len(failed)}}}"
+        )
+        return succeeded, failed
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:
