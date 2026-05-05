@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import SessionDep
 from app.core.config import settings
-from app.core.logger import log_service_name
 from app.crud.evaluations import process_all_pending_evaluations_sync
 
 logger = logging.getLogger(__name__)
@@ -59,25 +58,24 @@ def evaluation_cron_job(
     Hidden from Swagger documentation.
     Requires authentication via FIRST_SUPERUSER credentials.
     """
-    with log_service_name(settings.CRON_SERVICE_NAME):
-        logger.info("[evaluation_cron_job] Cron job invoked")
+    logger.info("[evaluation_cron_job] Cron job invoked")
 
-        try:
-            result = process_all_pending_evaluations_sync(session=session)
+    try:
+        result = process_all_pending_evaluations_sync(session=session)
 
-            logger.info(
-                f"[evaluation_cron_job] Completed: "
-                f"processed={result.get('total_processed', 0)}, "
-                f"failed={result.get('total_failed', 0)}, "
-                f"still_processing={result.get('total_still_processing', 0)}"
-            )
+        logger.info(
+            f"[evaluation_cron_job] Completed: "
+            f"processed={result.get('total_processed', 0)}, "
+            f"failed={result.get('total_failed', 0)}, "
+            f"still_processing={result.get('total_still_processing', 0)}"
+        )
 
-            return result
+        return result
 
-        except Exception as e:
-            logger.error(
-                f"[evaluation_cron_job] Error executing cron job: {e}",
-                exc_info=True,
-            )
-            sentry_sdk.capture_exception(e)
-            raise
+    except Exception as e:
+        logger.error(
+            f"[evaluation_cron_job] Error executing cron job: {e}",
+            exc_info=True,
+        )
+        sentry_sdk.capture_exception(e)
+        raise
