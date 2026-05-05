@@ -103,7 +103,9 @@ class TestMapKaapiToOpenAIParams:
             "app.services.assessment.mappers.is_reasoning_model",
             return_value=supports_reasoning,
         ):
-            return map_kaapi_to_openai_assessment_params(session=MagicMock(), kaapi_params=params)
+            return map_kaapi_to_openai_assessment_params(
+                session=MagicMock(), kaapi_params=params
+            )
 
     def test_basic_model_passed_through(self) -> None:
         result, warnings = self._call({"model": "gpt-4o"})
@@ -265,7 +267,9 @@ class TestOpenAIResponseFormat:
             "app.services.assessment.mappers.is_reasoning_model",
             return_value=False,
         ):
-            return map_kaapi_to_openai_assessment_params(session=MagicMock(), kaapi_params=params)
+            return map_kaapi_to_openai_assessment_params(
+                session=MagicMock(), kaapi_params=params
+            )
 
     def test_non_text_response_format_sets_text_field(self) -> None:
         result, _ = self._call({"model": "gpt-4o", "response_format": "json_object"})

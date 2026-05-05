@@ -111,7 +111,9 @@ def list_assessments(
     )
 
     return APIResponse.success_response(
-        data=[_build_assessment_public(session, assessment) for assessment in assessments]
+        data=[
+            _build_assessment_public(session, assessment) for assessment in assessments
+        ]
     )
 
 

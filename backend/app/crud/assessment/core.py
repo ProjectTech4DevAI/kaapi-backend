@@ -228,7 +228,9 @@ def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
     return AssessmentRunCounts(
         total=len(runs),
         pending=sum(1 for run in runs if run.status == "pending"),
-        processing=sum(1 for run in runs if run.status in {"processing", "in_progress"}),
+        processing=sum(
+            1 for run in runs if run.status in {"processing", "in_progress"}
+        ),
         completed=sum(1 for run in runs if run.status == "completed"),
         failed=sum(1 for run in runs if run.status == "failed"),
     )
