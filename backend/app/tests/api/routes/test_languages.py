@@ -12,7 +12,7 @@ def test_list_languages(
 ) -> None:
     """Test retrieving list of all active languages."""
     response = client.get(
-        f"{settings.API_V1_STR}/languages/",
+        f"{settings.API_V1_STR}/languages",
         headers=superuser_token_headers,
     )
 
@@ -31,7 +31,7 @@ def test_list_languages_with_pagination(
 ) -> None:
     """Test retrieving languages with pagination parameters."""
     response = client.get(
-        f"{settings.API_V1_STR}/languages/?skip=0&limit=5",
+        f"{settings.API_V1_STR}/languages?skip=0&limit=5",
         headers=superuser_token_headers,
     )
 
@@ -84,7 +84,7 @@ def test_list_languages_with_api_key(
 ) -> None:
     """Test retrieving languages using API key authentication."""
     response = client.get(
-        f"{settings.API_V1_STR}/languages/",
+        f"{settings.API_V1_STR}/languages",
         headers=superuser_api_key_header,
     )
 
@@ -115,7 +115,7 @@ def test_get_language_with_api_key(
 
 def test_list_languages_unauthorized(client: TestClient) -> None:
     """Test that listing languages without authentication returns 401."""
-    response = client.get(f"{settings.API_V1_STR}/languages/")
+    response = client.get(f"{settings.API_V1_STR}/languages")
 
     assert response.status_code == 401
 

@@ -32,7 +32,7 @@ def test_create_new_project(
     )
 
     response = client.post(
-        f"{settings.API_V1_STR}/projects/",
+        f"{settings.API_V1_STR}/projects",
         json=project_data.dict(),
         headers=superuser_token_headers,
     )
@@ -52,7 +52,7 @@ def test_create_new_project(
 # Test retrieving projects
 def test_read_projects(db: Session, superuser_token_headers: dict[str, str]) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/projects/", headers=superuser_token_headers
+        f"{settings.API_V1_STR}/projects", headers=superuser_token_headers
     )
     assert response.status_code == 200
     response_data = response.json()
@@ -68,7 +68,7 @@ def test_read_projects_has_more(
     create_test_project(db)
 
     response = client.get(
-        f"{settings.API_V1_STR}/projects/?skip=0&limit=1",
+        f"{settings.API_V1_STR}/projects?skip=0&limit=1",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200
@@ -77,7 +77,7 @@ def test_read_projects_has_more(
     assert response_data["metadata"]["has_more"] is True
 
     response = client.get(
-        f"{settings.API_V1_STR}/projects/?skip=0&limit=100",
+        f"{settings.API_V1_STR}/projects?skip=0&limit=100",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200
