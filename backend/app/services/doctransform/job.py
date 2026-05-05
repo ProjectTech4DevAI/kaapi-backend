@@ -1,32 +1,32 @@
-import logging
-import shutil
 import tempfile
+import shutil
 import time
+import logging
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4, UUID
 
-from asgi_correlation_id import correlation_id
 from fastapi import UploadFile
+from tenacity import retry, wait_exponential, stop_after_attempt
 from sqlmodel import Session
+from asgi_correlation_id import correlation_id
 from starlette.datastructures import Headers
-from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.celery.utils import start_doctransform_job
-from app.core.cloud import get_cloud_storage
-from app.core.db import engine
 from app.crud.document.doc_transformation_job import DocTransformationJobCrud
 from app.crud.document.document import DocumentCrud
 from app.models import (
-    DocTransformationJob,
-    DocTransformationJobPublic,
-    DocTransformJobUpdate,
     Document,
-    Project,
+    DocTransformJobUpdate,
     TransformationStatus,
+    DocTransformationJobPublic,
     TransformedDocumentPublic,
+    DocTransformationJob,
+    Project,
 )
-from app.services.doctransform.registry import FORMAT_TO_EXTENSION, convert_document
-from app.utils import APIResponse, get_webhook_secret, send_callback
+from app.core.cloud import get_cloud_storage
+from app.celery.utils import start_doctransform_job
+from app.utils import send_callback, get_webhook_secret, APIResponse
+from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
+from app.core.db import engine
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,6 @@ def execute_job(
     callback_url: str | None,
     task_instance,
 ):
-    _ = task_instance
     start_time = time.time()
     tmp_dir: Path | None = None
 

@@ -210,9 +210,6 @@ def update_assessment_run_status(
     return run
 
 
-# ---------- Derived aggregates ----------
-
-
 def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
     """Aggregate child run statuses into counters."""
     return AssessmentRunCounts(
