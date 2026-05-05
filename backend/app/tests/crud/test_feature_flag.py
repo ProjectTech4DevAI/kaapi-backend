@@ -1,3 +1,5 @@
+import pytest
+from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.core.feature_flags import is_enabled, resolve_all_flags
@@ -27,7 +29,7 @@ class TestCreateFeatureFlag:
         assert flag.project_id == project.id
         assert flag.enabled is True
 
-    def test_returns_none_on_duplicate(self, db: Session) -> None:
+    def test_raises_on_duplicate(self, db: Session) -> None:
         project = create_test_project(db)
         create_feature_flag(
             session=db,
@@ -36,14 +38,14 @@ class TestCreateFeatureFlag:
             project_id=project.id,
             enabled=True,
         )
-        duplicate = create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=False,
-        )
-        assert duplicate is None
+        with pytest.raises(HTTPException, match="Feature flag already exists"):
+            create_feature_flag(
+                session=db,
+                key="ASSESSMENT",
+                organization_id=project.organization_id,
+                project_id=project.id,
+                enabled=False,
+            )
 
     def test_same_key_different_projects_can_coexist(self, db: Session) -> None:
         from app.crud import create_project
@@ -97,16 +99,16 @@ class TestUpdateFeatureFlag:
         assert updated is not None
         assert updated.enabled is False
 
-    def test_returns_none_when_not_found(self, db: Session) -> None:
+    def test_raises_when_not_found(self, db: Session) -> None:
         project = create_test_project(db)
-        result = update_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
-        assert result is None
+        with pytest.raises(HTTPException, match="Feature flag not found"):
+            update_feature_flag(
+                session=db,
+                key="ASSESSMENT",
+                organization_id=project.organization_id,
+                project_id=project.id,
+                enabled=True,
+            )
 
     def test_updates_only_correct_project(self, db: Session) -> None:
         from app.crud import create_project
@@ -157,23 +159,22 @@ class TestDeleteFeatureFlag:
             project_id=project.id,
             enabled=True,
         )
-        deleted = delete_feature_flag(
+        delete_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project.organization_id,
             project_id=project.id,
         )
-        assert deleted is True
 
-    def test_returns_false_when_not_found(self, db: Session) -> None:
+    def test_raises_when_not_found(self, db: Session) -> None:
         project = create_test_project(db)
-        result = delete_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-        )
-        assert result is False
+        with pytest.raises(HTTPException, match="Feature flag not found"):
+            delete_feature_flag(
+                session=db,
+                key="ASSESSMENT",
+                organization_id=project.organization_id,
+                project_id=project.id,
+            )
 
     def test_flag_not_accessible_after_delete(self, db: Session) -> None:
         project = create_test_project(db)
@@ -252,12 +253,15 @@ class TestIsEnabled:
             project_id=project.id,
             enabled=True,
         )
-        assert is_enabled(
-            session=db,
-            flag="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-        ) is True
+        assert (
+            is_enabled(
+                session=db,
+                flag="ASSESSMENT",
+                organization_id=project.organization_id,
+                project_id=project.id,
+            )
+            is True
+        )
 
     def test_returns_false_when_flag_disabled(self, db: Session) -> None:
         project = create_test_project(db)
@@ -268,12 +272,15 @@ class TestIsEnabled:
             project_id=project.id,
             enabled=False,
         )
-        assert is_enabled(
-            session=db,
-            flag="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-        ) is False
+        assert (
+            is_enabled(
+                session=db,
+                flag="ASSESSMENT",
+                organization_id=project.organization_id,
+                project_id=project.id,
+            )
+            is False
+        )
 
 
 class TestResolveAllFlags:

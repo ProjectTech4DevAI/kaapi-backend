@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
@@ -13,8 +13,7 @@ from app.crud.feature_flag import (
     list_feature_flags,
     update_feature_flag,
 )
-from app.crud.organization import validate_organization
-from app.crud.project import validate_project_belongs_to_organization
+from app.crud.project import validate_project
 from app.models import (
     FeatureFlagCreate,
     FeatureFlagDelete,
@@ -27,128 +26,102 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Features"])
 
+
 @router.post(
     "/feature-flags",
     description=load_description("features/create_flag.md"),
-    response_model=FeatureFlagPublic,
+    response_model=APIResponse[FeatureFlagPublic],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def create_feature_flag_route(
     session: SessionDep,
     payload: FeatureFlagCreate,
-) -> FeatureFlagPublic:
-    validate_organization(session=session, org_id=payload.organization_id)
-    validate_project_belongs_to_organization(
-        session=session,
-        project_id=payload.project_id,
-        organization_id=payload.organization_id,
-    )
+) -> APIResponse[FeatureFlagPublic]:
+    project = validate_project(session=session, project_id=payload.project_id)
     created = create_feature_flag(
         session=session,
         key=payload.key,
-        organization_id=payload.organization_id,
+        organization_id=project.organization_id,
         project_id=payload.project_id,
         enabled=payload.enabled,
     )
-    if created is None:
-        raise HTTPException(status_code=409, detail="Feature flag already exists")
     logger.info(
-        f"[create_feature_flag_route] Created flag={payload.key} "
-        f"enabled={payload.enabled} org={payload.organization_id} project={payload.project_id}"
+        "[create_feature_flag_route] Created flag=%s enabled=%s project=%s",
+        payload.key,
+        payload.enabled,
+        payload.project_id,
     )
-    return created
+    return APIResponse.success_response(data=created)
 
 
 @router.get(
     "/feature-flags",
     description=load_description("features/list_flags.md"),
-    response_model=list[FeatureFlagPublic],
+    response_model=APIResponse[list[FeatureFlagPublic]],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def get_feature_flags(
     session: SessionDep,
-    feature_key: FeatureFlag | None = Query(
+    project_id: int = Query(..., description="Project ID"),
+    feature_key: FeatureFlag
+    | None = Query(
         default=None,
         alias="key",
         description="Feature flag key to filter by",
     ),
-    organization_id: int | None = None,
-    project_id: int | None = None,
-) -> list[FeatureFlagPublic]:
-    if project_id is not None and organization_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="organization_id is required when project_id is set",
-        )
-    if organization_id is not None:
-        validate_organization(session=session, org_id=organization_id)
-    if project_id is not None:
-        assert organization_id is not None
-        validate_project_belongs_to_organization(
-            session=session,
-            project_id=project_id,
-            organization_id=organization_id,
-        )
-    return list_feature_flags(
+) -> APIResponse[list[FeatureFlagPublic]]:
+    project = validate_project(session=session, project_id=project_id)
+    flags = list_feature_flags(
         session=session,
         key=feature_key.value if feature_key is not None else None,
-        organization_id=organization_id,
+        organization_id=project.organization_id,
         project_id=project_id,
     )
+    return APIResponse.success_response(data=flags)
+
 
 @router.patch(
     "/feature-flags",
     description=load_description("features/update_flag.md"),
-    response_model=FeatureFlagPublic,
+    response_model=APIResponse[FeatureFlagPublic],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def patch_feature_flag(
     session: SessionDep,
     payload: FeatureFlagUpdate,
-) -> FeatureFlagPublic:
-    validate_organization(session=session, org_id=payload.organization_id)
-    validate_project_belongs_to_organization(
-        session=session,
-        project_id=payload.project_id,
-        organization_id=payload.organization_id,
-    )
+) -> APIResponse[FeatureFlagPublic]:
+    project = validate_project(session=session, project_id=payload.project_id)
     updated = update_feature_flag(
         session=session,
         key=payload.key,
-        organization_id=payload.organization_id,
+        organization_id=project.organization_id,
         project_id=payload.project_id,
         enabled=payload.enabled,
     )
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Feature flag not found")
     logger.info(
-        f"[patch_feature_flag] Updated flag={payload.key} "
-        f"enabled={payload.enabled} org={payload.organization_id} project={payload.project_id}"
+        "[patch_feature_flag] Updated flag=%s enabled=%s project=%s",
+        payload.key,
+        payload.enabled,
+        payload.project_id,
     )
-    return updated
+    return APIResponse.success_response(data=updated)
 
 
 @router.delete(
     "/feature-flags",
     description=load_description("features/delete_flag.md"),
+    response_model=APIResponse[dict[str, bool]],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def remove_feature_flag(
     session: SessionDep,
     payload: FeatureFlagDelete,
-) -> dict[str, bool]:
-    validate_organization(session=session, org_id=payload.organization_id)
-    validate_project_belongs_to_organization(
-        session=session,
-        project_id=payload.project_id,
-        organization_id=payload.organization_id,
-    )
-    deleted = delete_feature_flag(
+) -> APIResponse[dict[str, bool]]:
+    project = validate_project(session=session, project_id=payload.project_id)
+    delete_feature_flag(
         session=session,
         key=payload.key,
-        organization_id=payload.organization_id,
+        organization_id=project.organization_id,
         project_id=payload.project_id,
     )
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Feature flag not found")
-    return {"deleted": True}
+    return APIResponse.success_response(data={"deleted": True})

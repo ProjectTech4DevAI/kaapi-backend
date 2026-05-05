@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -41,7 +42,7 @@ def create_feature_flag(
     organization_id: int,
     project_id: int,
     enabled: bool,
-) -> FeatureFlagModel | None:
+) -> FeatureFlagModel:
     feature_flag = get_feature_flag(
         session=session,
         key=key,
@@ -49,7 +50,7 @@ def create_feature_flag(
         project_id=project_id,
     )
     if feature_flag is not None:
-        return None
+        raise HTTPException(status_code=409, detail="Feature flag already exists")
 
     feature_flag = FeatureFlagModel(
         key=key,
@@ -70,7 +71,7 @@ def update_feature_flag(
     organization_id: int,
     project_id: int,
     enabled: bool,
-) -> FeatureFlagModel | None:
+) -> FeatureFlagModel:
     feature_flag = get_feature_flag(
         session=session,
         key=key,
@@ -78,7 +79,7 @@ def update_feature_flag(
         project_id=project_id,
     )
     if feature_flag is None:
-        return None
+        raise HTTPException(status_code=404, detail="Feature flag not found")
 
     feature_flag.enabled = enabled
     feature_flag.updated_at = now()
@@ -94,7 +95,7 @@ def delete_feature_flag(
     key: str,
     organization_id: int,
     project_id: int,
-) -> bool:
+) -> None:
     feature_flag = get_feature_flag(
         session=session,
         key=key,
@@ -102,11 +103,10 @@ def delete_feature_flag(
         project_id=project_id,
     )
     if feature_flag is None:
-        return False
+        raise HTTPException(status_code=404, detail="Feature flag not found")
 
     session.delete(feature_flag)
     session.commit()
-    return True
 
 
 def list_feature_flags(

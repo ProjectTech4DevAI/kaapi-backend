@@ -1,6 +1,8 @@
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -27,8 +29,9 @@ def test_create_feature_flag_success(
         "project_id": 1,
         "enabled": True,
     }
-    with patch("app.api.routes.features.validate_organization"), patch(
-        "app.api.routes.features.validate_project_belongs_to_organization"
+    with patch(
+        "app.api.routes.features.validate_project",
+        return_value=SimpleNamespace(organization_id=1),
     ), patch(
         "app.api.routes.features.create_feature_flag",
         return_value=_flag_dict(True),
@@ -40,8 +43,9 @@ def test_create_feature_flag_success(
         )
     assert response.status_code == 200
     body = response.json()
-    assert body["key"] == "ASSESSMENT"
-    assert body["enabled"] is True
+    assert body["success"] is True
+    assert body["data"]["key"] == "ASSESSMENT"
+    assert body["data"]["enabled"] is True
 
 
 def test_create_feature_flag_conflict(
@@ -53,9 +57,16 @@ def test_create_feature_flag_conflict(
         "project_id": 1,
         "enabled": True,
     }
-    with patch("app.api.routes.features.validate_organization"), patch(
-        "app.api.routes.features.validate_project_belongs_to_organization"
-    ), patch("app.api.routes.features.create_feature_flag", return_value=None):
+    with patch(
+        "app.api.routes.features.validate_project",
+        return_value=SimpleNamespace(organization_id=1),
+    ), patch(
+        "app.api.routes.features.create_feature_flag",
+        side_effect=HTTPException(
+            status_code=409,
+            detail="Feature flag already exists",
+        ),
+    ):
         response = client.post(
             f"{settings.API_V1_STR}/feature-flags",
             headers=superuser_token_headers,
@@ -67,26 +78,22 @@ def test_create_feature_flag_conflict(
 def test_list_feature_flags_validation_and_success(
     client: TestClient, superuser_token_headers: dict[str, str]
 ) -> None:
-    bad = client.get(
-        f"{settings.API_V1_STR}/feature-flags?project_id=1",
-        headers=superuser_token_headers,
-    )
-    assert bad.status_code == 400
-
-    with patch("app.api.routes.features.validate_organization"), patch(
-        "app.api.routes.features.validate_project_belongs_to_organization"
+    with patch(
+        "app.api.routes.features.validate_project",
+        return_value=SimpleNamespace(organization_id=1),
     ), patch(
         "app.api.routes.features.list_feature_flags",
         return_value=[_flag_dict(True)],
     ):
         ok = client.get(
-            f"{settings.API_V1_STR}/feature-flags?key=ASSESSMENT&organization_id=1&project_id=1",
+            f"{settings.API_V1_STR}/feature-flags?key=ASSESSMENT&project_id=1",
             headers=superuser_token_headers,
         )
     assert ok.status_code == 200
     body = ok.json()
-    assert len(body) == 1
-    assert body[0]["key"] == "ASSESSMENT"
+    assert body["success"] is True
+    assert len(body["data"]) == 1
+    assert body["data"][0]["key"] == "ASSESSMENT"
 
 
 def test_patch_and_delete_feature_flag(
@@ -98,8 +105,9 @@ def test_patch_and_delete_feature_flag(
         "project_id": 1,
         "enabled": False,
     }
-    with patch("app.api.routes.features.validate_organization"), patch(
-        "app.api.routes.features.validate_project_belongs_to_organization"
+    with patch(
+        "app.api.routes.features.validate_project",
+        return_value=SimpleNamespace(organization_id=1),
     ), patch(
         "app.api.routes.features.update_feature_flag",
         return_value=_flag_dict(False),
@@ -110,11 +118,14 @@ def test_patch_and_delete_feature_flag(
             json=payload,
         )
     assert patch_resp.status_code == 200
-    assert patch_resp.json()["enabled"] is False
+    patch_body = patch_resp.json()
+    assert patch_body["success"] is True
+    assert patch_body["data"]["enabled"] is False
 
-    with patch("app.api.routes.features.validate_organization"), patch(
-        "app.api.routes.features.validate_project_belongs_to_organization"
-    ), patch("app.api.routes.features.delete_feature_flag", return_value=True):
+    with patch(
+        "app.api.routes.features.validate_project",
+        return_value=SimpleNamespace(organization_id=1),
+    ), patch("app.api.routes.features.delete_feature_flag"):
         delete_resp = client.request(
             "DELETE",
             f"{settings.API_V1_STR}/feature-flags",
@@ -122,4 +133,6 @@ def test_patch_and_delete_feature_flag(
             json={k: payload[k] for k in ("key", "organization_id", "project_id")},
         )
     assert delete_resp.status_code == 200
-    assert delete_resp.json()["deleted"] is True
+    body = delete_resp.json()
+    assert body["success"] is True
+    assert body["data"]["deleted"] is True

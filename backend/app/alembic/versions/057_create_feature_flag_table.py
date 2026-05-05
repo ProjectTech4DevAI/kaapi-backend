@@ -66,11 +66,13 @@ def upgrade():
         sa.ForeignKeyConstraint(
             ["organization_id"],
             ["organization.id"],
+            name="fk_feature_flag_organization_id",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["project.id"],
+            name="fk_feature_flag_project_id",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -85,6 +87,12 @@ def upgrade():
         op.f("ix_feature_flag_organization_id"),
         "feature_flag",
         ["organization_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_feature_flag_project_id"),
+        "feature_flag",
+        ["project_id"],
         unique=False,
     )
     op.create_index(
@@ -141,6 +149,7 @@ def downgrade():
     op.execute("DROP TRIGGER IF EXISTS trg_seed_default_feature_flag ON project")
     op.execute("DROP FUNCTION IF EXISTS seed_default_feature_flag()")
     op.drop_index("uq_feature_flag_key_org_project", table_name="feature_flag")
+    op.drop_index(op.f("ix_feature_flag_project_id"), table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_organization_id"), table_name="feature_flag")
     op.drop_index(op.f("ix_feature_flag_key"), table_name="feature_flag")
     op.drop_table("feature_flag")

@@ -66,18 +66,16 @@ class FeatureFlag(FeatureFlagBase, table=True):
 
 class FeatureFlagCreate(SQLModel):
     key: FeatureFlagKeyEnum
-    organization_id: int
     project_id: int
     enabled: bool
 
 
 class FeatureFlagUpdate(FeatureFlagCreate):
-    """Same fields as FeatureFlagCreate; subclassed so the OpenAPI schema keeps a distinct name."""
+    """Same fields as FeatureFlagCreate; distinct name for OpenAPI schema."""
 
 
 class FeatureFlagDelete(SQLModel):
     key: FeatureFlagKeyEnum
-    organization_id: int
     project_id: int
 
 
