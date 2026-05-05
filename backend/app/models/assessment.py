@@ -165,9 +165,6 @@ class AssessmentRun(SQLModel, table=True):
     )
 
 
-# ---------- Run-count aggregate (derived on read) ----------
-
-
 class AssessmentRunCounts(BaseModel):
     """Derived counters for a parent assessment, computed from its child runs."""
 
@@ -188,9 +185,6 @@ class AssessmentRunStat(BaseModel):
     total_items: int
     error_message: str | None
     updated_at: datetime | None
-
-
-# ---------- Public response models ----------
 
 
 class AssessmentPublic(BaseModel):
@@ -232,9 +226,6 @@ class AssessmentRunPublic(BaseModel):
     )
     inserted_at: datetime
     updated_at: datetime
-
-
-# ---------- LLM param + request schemas ----------
 
 
 class AssessmentTextLLMParams(TextLLMParams):
