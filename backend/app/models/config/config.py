@@ -150,9 +150,7 @@ class ConfigUpdate(SQLModel):
     )
     tag: ConfigTag | None = Field(
         default=None,
-        description=(
-            "Optional tag for classifying this config. "
-        ),
+        description=("Optional tag for classifying this config. "),
     )
 
 
