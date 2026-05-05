@@ -12,6 +12,8 @@ from .auth import (
     AuthContext,
     GoogleAuthRequest,
     GoogleAuthResponse,
+    InviteTokenPayload,
+    MagicLinkRequest,
     SelectProjectRequest,
     Token,
     TokenPayload,

@@ -57,6 +57,30 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
 
+    # Frontend URL for magic links
+    FRONTEND_HOST: str = "http://localhost:3000"
+
+    # Invitation token expiry (default 24 hours)
+    INVITE_TOKEN_EXPIRE_HOURS: int = 24
+
+    # Magic link login token expiry (default 15 minutes)
+    MAGIC_LINK_TOKEN_EXPIRE_MINUTES: int = 15
+
+    # SMTP / Email
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_TLS: bool = True
+    SMTP_SSL: bool = False
+    EMAILS_FROM_EMAIL: str = ""
+    EMAILS_FROM_NAME: str = ""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def emails_enabled(self) -> bool:
+        return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
@@ -111,6 +135,8 @@ class Settings(BaseSettings):
         return f"{self.AWS_S3_BUCKET_PREFIX}-{self.ENVIRONMENT}"
 
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "kaapi-backend"
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
@@ -129,6 +155,12 @@ class Settings(BaseSettings):
     # callback timeouts and limits
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10
+
+    # Evaluation cron invocation interval (minutes). In staging/production the
+    # endpoint is triggered by AWS EventBridge on this cadence; locally it can
+    # be driven by scripts/python/invoke-cron.py. The Sentry cron monitor reads
+    # this same value so its expected schedule stays aligned with the trigger.
+    CRON_INTERVAL_MINUTES: int = 5
 
     @computed_field  # type: ignore[prop-decorator]
     @property

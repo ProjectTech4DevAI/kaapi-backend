@@ -74,4 +74,6 @@ def execute_job(
             callback_url=request_data.callback_url,
             callback_response=response,
             request_dict=request_data.model_dump(),
+            organization_id=organization_id,
+            project_id=project_id,
         )

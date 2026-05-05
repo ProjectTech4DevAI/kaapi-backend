@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Tuple
 
 import jwt
+from jwt.exceptions import InvalidTokenError
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -67,31 +68,58 @@ def get_fernet() -> Fernet:
     return _fernet
 
 
+def encode_jwt_token(
+    subject: str | Any,
+    token_type: str,
+    expires_delta: timedelta,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    """Encode a JWT with standard `exp`, `nbf`, `sub`, and `type` claims.
+
+    Any additional claims (e.g. `org_id`, `project_id`) can be passed via
+    `extra_claims` and are merged into the payload before signing.
+    """
+    now = datetime.now(timezone.utc)
+    to_encode: dict[str, Any] = {
+        "exp": now + expires_delta,
+        "nbf": now,
+        "sub": str(subject),
+        "type": token_type,
+    }
+    if extra_claims:
+        to_encode.update({k: v for k, v in extra_claims.items() if v is not None})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_jwt_token(
+    token: str, expected_type: str | None = None
+) -> dict[str, Any] | None:
+    """Decode and verify a JWT. Returns the payload or None if invalid.
+
+    If `expected_type` is given, the token's `type` claim must match.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except InvalidTokenError:
+        return None
+    if expected_type is not None and payload.get("type") != expected_type:
+        return None
+    return payload
+
+
 def create_access_token(
     subject: str | Any,
     expires_delta: timedelta,
     organization_id: int | None = None,
     project_id: int | None = None,
 ) -> str:
-    """
-    Create a JWT access token.
-
-    Args:
-        subject: The subject of the token (typically user ID)
-        expires_delta: Token expiration time delta
-        organization_id: Optional organization ID to embed in the token
-        project_id: Optional project ID to embed in the token
-
-    Returns:
-        str: Encoded JWT token
-    """
-    expire = datetime.now(timezone.utc) + expires_delta
-    to_encode: dict[str, Any] = {"exp": expire, "sub": str(subject), "type": "access"}
-    if organization_id is not None:
-        to_encode["org_id"] = organization_id
-    if project_id is not None:
-        to_encode["project_id"] = project_id
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    """Create a JWT access token."""
+    return encode_jwt_token(
+        subject=subject,
+        token_type="access",
+        expires_delta=expires_delta,
+        extra_claims={"org_id": organization_id, "project_id": project_id},
+    )
 
 
 def create_refresh_token(
@@ -100,25 +128,13 @@ def create_refresh_token(
     organization_id: int | None = None,
     project_id: int | None = None,
 ) -> str:
-    """
-    Create a JWT refresh token.
-
-    Args:
-        subject: The subject of the token (typically user ID)
-        expires_delta: Token expiration time delta
-        organization_id: Optional organization ID to embed in the token
-        project_id: Optional project ID to embed in the token
-
-    Returns:
-        str: Encoded JWT refresh token
-    """
-    expire = datetime.now(timezone.utc) + expires_delta
-    to_encode: dict[str, Any] = {"exp": expire, "sub": str(subject), "type": "refresh"}
-    if organization_id is not None:
-        to_encode["org_id"] = organization_id
-    if project_id is not None:
-        to_encode["project_id"] = project_id
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    """Create a JWT refresh token."""
+    return encode_jwt_token(
+        subject=subject,
+        token_type="refresh",
+        expires_delta=expires_delta,
+        extra_claims={"org_id": organization_id, "project_id": project_id},
+    )
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

@@ -1,12 +1,73 @@
 import logging
 
 from celery import Celery
-from celery.signals import task_failure, task_postrun, task_prerun, worker_process_init
+from celery.signals import (
+    worker_init,
+    task_failure,
+    task_postrun,
+    task_prerun,
+    worker_process_init,
+)
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.core.logger import configure_logging
+from app.core.sentry_filters import before_send_transaction_filter
+
+configure_logging(service_name="kaapi-celery")
 
 logger = logging.getLogger(__name__)
+_telemetry_initialized = False
+_sentry_initialized = False
+_flush_hook_registered = False
+
+
+def _initialize_worker_observability() -> None:
+    global _telemetry_initialized, _sentry_initialized, _flush_hook_registered
+
+    if settings.SENTRY_DSN and not _sentry_initialized:
+        import sentry_sdk
+        from sentry_sdk.integrations.celery import CeleryIntegration
+        from sentry_sdk.integrations.httpx import HttpxIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=str(settings.SENTRY_DSN),
+            environment=settings.ENVIRONMENT,
+            release=settings.API_VERSION,
+            instrumenter="otel",
+            traces_sample_rate=1.0,
+            enable_logs=True,
+            before_send_transaction=before_send_transaction_filter,
+            integrations=[
+                LoggingIntegration(
+                    level=logging.INFO,
+                    sentry_logs_level=logging.INFO,
+                ),
+            ],
+            disabled_integrations=[
+                CeleryIntegration(),
+                SqlalchemyIntegration(),
+                HttpxIntegration(),
+            ],
+        )
+        _sentry_initialized = True
+
+    if not _telemetry_initialized:
+        from app.core.telemetry import flush_telemetry, setup_telemetry
+
+        setup_telemetry(service_name="kaapi-celery")
+
+        if not _flush_hook_registered:
+
+            @task_postrun.connect(weak=False)
+            def _flush_otel_after_task(**_: object) -> None:
+                flush_telemetry()
+
+            _flush_hook_registered = True
+
+        _telemetry_initialized = True
 
 
 @task_prerun.connect
@@ -68,16 +129,22 @@ def log_pool_status_failure(
 
 
 @worker_process_init.connect
-def warm_llm_modules(**_) -> None:
-    """Import LLM service modules in each worker process right after fork.
+def initialize_worker_process(**_) -> None:
+    """Initialize each forked Celery worker process.
 
-    This runs once per worker before any task arrives, so LLM calls
-    (the most latency-sensitive path) never pay a cold-import penalty.
-    The main process is unaffected, keeping overall memory low.
+    - Initialize Sentry so task transactions, errors, and logs ship to Sentry.
+    - Set up OpenTelemetry so Celery tasks emit spans bridged into Sentry.
+    - Pre-import LLM modules so first-call latency doesn't pay a cold-import cost.
     """
+    _initialize_worker_observability()
+
     import app.services.llm.jobs  # noqa: F401
 
-    logger.info("[warm_llm_modules] LLM modules pre-loaded in worker process")
+
+@worker_init.connect
+def initialize_worker(**_) -> None:
+    """Initialize worker observability for non-prefork pools (e.g. gevent)."""
+    _initialize_worker_observability()
 
 
 # Create Celery instance

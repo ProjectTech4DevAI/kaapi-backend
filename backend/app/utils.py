@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import base64
 import functools as ft
+import hashlib
+import hmac
 import ipaddress
+import json
 import logging
 import tempfile
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 import requests
 import socket
@@ -14,10 +18,8 @@ import socket
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
-import jwt
 import emails
 from jinja2 import Template
-from jwt.exceptions import InvalidTokenError
 from fastapi import HTTPException
 from langfuse import Langfuse
 import openai
@@ -184,27 +186,56 @@ def generate_new_account_email(
     return EmailData(html_content=html_content, subject=subject)
 
 
-def generate_password_reset_token(email: str) -> str:
-    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
-    now = datetime.now(timezone.utc)
-    expires = now + delta
-    exp = expires.timestamp()
-    encoded_jwt = jwt.encode(
-        {"exp": exp, "nbf": now, "sub": email},
-        settings.SECRET_KEY,
-        algorithm=security.ALGORITHM,
+def generate_invite_email(
+    *,
+    email_to: str,
+    project_name: str,
+    organization_name: str,
+    invite_token: str,
+) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    subject = f"{app_name} - You've been invited to {project_name}"
+    link = f"{settings.FRONTEND_HOST}/invite?token={invite_token}"
+    html_content = render_email_template(
+        template_name="invite_user.html",
+        context={
+            "app_name": app_name,
+            "project_name": project_name,
+            "organization_name": organization_name,
+            "link": link,
+            "valid_days": settings.INVITE_TOKEN_EXPIRE_HOURS // 24,
+        },
     )
-    return encoded_jwt
+    return EmailData(html_content=html_content, subject=subject)
+
+
+def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    subject = f"{app_name} - Sign in to your account"
+    link = f"{settings.FRONTEND_HOST}/verify?token={magic_link_token}"
+    html_content = render_email_template(
+        template_name="magic_link_login.html",
+        context={
+            "app_name": app_name,
+            "email": email_to,
+            "link": link,
+            "valid_minutes": settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
+def generate_password_reset_token(email: str) -> str:
+    return security.encode_jwt_token(
+        subject=email,
+        token_type="password_reset",
+        expires_delta=timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS),
+    )
 
 
 def verify_password_reset_token(token: str) -> str | None:
-    try:
-        decoded_token = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
-        )
-        return str(decoded_token["sub"])
-    except InvalidTokenError:
-        return None
+    payload = security.decode_jwt_token(token, expected_type="password_reset")
+    return str(payload["sub"]) if payload and "sub" in payload else None
 
 
 def mask_string(value: str, mask_char: str = "*") -> str:
@@ -383,7 +414,60 @@ def validate_callback_url(url: str) -> None:
         raise ValueError(f"Error validating callback URL: {str(e)}") from e
 
 
-def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
+def sign_webhook_payload(
+    secret: str, raw_body: bytes, timestamp_ms: int | None = None
+) -> tuple[str, int]:
+    """
+    Generate an HMAC-SHA256 signature for a webhook payload.
+
+    Signing string format: "<timestamp_ms>.<raw_body>"
+    The receiver must reconstruct the exact same signing string to verify.
+
+    Args:
+        secret: Shared HMAC secret (pre-registered by the receiver).
+        raw_body: Exact bytes that will be sent in the HTTP body.
+        timestamp_ms: Unix timestamp in milliseconds. Generated if not provided.
+
+    Returns:
+        (hex_signature, timestamp_ms)
+    """
+    if timestamp_ms is None:
+        timestamp_ms = int(time.time() * 1000)
+
+    signing_string = f"{timestamp_ms}.".encode() + raw_body
+    signature = hmac.new(
+        secret.encode(),
+        signing_string,
+        hashlib.sha256,
+    ).hexdigest()
+    return signature, timestamp_ms
+
+
+def get_webhook_secret(
+    project_id: int | None, organization_id: int | None
+) -> str | None:
+    """Look up the configured webhook signing secret for this project, or None."""
+    if project_id is None or organization_id is None:
+        return None
+    # Imported lazily: app.core.db pulls in app.crud, which imports app.utils,
+    # so a top-level import here would deadlock module initialization.
+    from app.core.db import engine
+
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
+def send_callback(
+    callback_url: str,
+    data: dict[str, Any],
+    webhook_secret: str | None = None,
+) -> bool:
     """
     Send results to the callback URL (synchronously) with SSRF protection.
 
@@ -395,10 +479,13 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     - DNS rebinding protection
     - Redirect following disabled
     - Strict timeouts
+    - Optional HMAC-SHA256 signing when webhook_secret is provided
 
     Args:
         callback_url: The HTTPS URL to send the callback to
         data: The JSON data to send in the POST request
+        webhook_secret: If provided, sign the request with HMAC-SHA256 and
+            attach X-Webhook-Signature / X-Webhook-Timestamp headers.
 
     Returns:
         bool: True if callback succeeded, False otherwise
@@ -408,14 +495,21 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     except ValueError as ve:
         logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
-
     try:
+        raw_body = json.dumps(data, separators=(",", ":")).encode()
+        headers = {"Content-Type": "application/json"}
+
+        if webhook_secret:
+            signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
+            headers["X-Webhook-Signature"] = signature
+            headers["X-Webhook-Timestamp"] = str(timestamp_ms)
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
             response = session.post(
                 callback_url,
-                json=data,
+                data=raw_body,
+                headers=headers,
                 timeout=(
                     settings.CALLBACK_CONNECT_TIMEOUT,
                     settings.CALLBACK_READ_TIMEOUT,
