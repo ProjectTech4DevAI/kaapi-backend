@@ -11,12 +11,6 @@ logger = logging.getLogger("http_request_logger")
 class StripTrailingSlashMiddleware:
     """
     Rewrite '/foo/' to '/foo' before routing so both forms hit the same handler.
-
-    Why: removing trailing slashes from declared routes would break clients
-    that don't follow 307 redirects on POST/PUT/DELETE or that drop the
-    Authorization header across redirects. This middleware preserves the
-    trailing-slash form during the deprecation window — to be removed once
-    integrators have migrated.
     """
 
     def __init__(self, app):
