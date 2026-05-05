@@ -187,7 +187,7 @@ def test_get_conversations_by_project_success(db: Session) -> None:
     assert len(conversations) >= 3
     for conversation in conversations:
         assert conversation.project_id == project.id
-        assert conversation.is_deleted is False
+        assert conversation.deleted_at is None
 
 
 def test_get_conversations_by_project_with_pagination(db: Session) -> None:
@@ -253,7 +253,6 @@ def test_delete_conversation_success(db: Session) -> None:
 
     assert deleted_conversation is not None
     assert deleted_conversation.id == conversation.id
-    assert deleted_conversation.is_deleted is True
     assert deleted_conversation.deleted_at is not None
 
 
@@ -764,7 +763,6 @@ def test_response_id_validation_pattern(db: Session) -> None:
     assert conversation.assistant_id == conversation_data.assistant_id
     assert conversation.project_id == project.id
     assert conversation.organization_id == organization.id
-    assert conversation.is_deleted is False
     assert conversation.deleted_at is None
 
 

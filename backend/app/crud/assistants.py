@@ -24,7 +24,7 @@ def get_assistant_by_id(
         and_(
             Assistant.assistant_id == assistant_id,
             Assistant.project_id == project_id,
-            Assistant.is_deleted == False,
+            Assistant.deleted_at.is_(None),
         )
     )
     return session.exec(statement).first()
@@ -43,7 +43,7 @@ def get_assistants_by_project(
         select(Assistant)
         .where(
             Assistant.project_id == project_id,
-            Assistant.is_deleted == False,
+            Assistant.deleted_at.is_(None),
         )
         .offset(skip)
         .limit(limit)
@@ -272,7 +272,6 @@ def delete_assistant(
         )
         raise HTTPException(status_code=404, detail="Assistant not found.")
 
-    existing_assistant.is_deleted = True
     existing_assistant.deleted_at = now()
     session.add(existing_assistant)
     session.commit()

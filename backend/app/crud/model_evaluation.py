@@ -154,14 +154,14 @@ def fetch_active_model_evals(
 ) -> list["ModelEvaluation"]:
     """
     Return all ACTIVE model evaluations for the given document & project.
-    Active = status != failed AND is_deleted is false.
+    Active = status != failed AND not soft-deleted.
     """
     stmt = (
         select(ModelEvaluation)
         .where(
             ModelEvaluation.fine_tuning_id == fine_tuning_id,
             ModelEvaluation.project_id == project_id,
-            ModelEvaluation.is_deleted.is_(False),
+            ModelEvaluation.deleted_at.is_(None),
             ModelEvaluation.status != "failed",
         )
         .order_by(ModelEvaluation.inserted_at.desc())

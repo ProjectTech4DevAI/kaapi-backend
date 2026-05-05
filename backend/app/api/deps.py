@@ -117,7 +117,7 @@ def _authenticate_with_jwt(session: Session, token: str) -> AuthContext:
                     and_(
                         APIKey.user_id == user.id,
                         APIKey.project_id == project.id,
-                        APIKey.is_deleted.is_(False),
+                        APIKey.deleted_at.is_(None),
                     )
                 )
                 .limit(1)

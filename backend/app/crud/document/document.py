@@ -20,7 +20,7 @@ class DocumentCrud:
             and_(
                 Document.id == doc_id,
                 Document.project_id == self.project_id,
-                Document.is_deleted.is_(False),
+                Document.deleted_at.is_(None),
             )
         )
 
@@ -39,7 +39,7 @@ class DocumentCrud:
         limit: int | None = None,
     ) -> tuple[list[Document], bool]:
         statement = select(Document).where(
-            and_(Document.project_id == self.project_id, Document.is_deleted.is_(False))
+            and_(Document.project_id == self.project_id, Document.deleted_at.is_(None))
         )
         statement = statement.order_by(Document.inserted_at.desc())
 
@@ -81,7 +81,7 @@ class DocumentCrud:
             and_(
                 Document.project_id == self.project_id,
                 Document.id.in_(doc_ids),
-                Document.is_deleted.is_(False),
+                Document.deleted_at.is_(None),
             )
         )
         results = self.session.exec(statement).all()
@@ -130,7 +130,6 @@ class DocumentCrud:
 
     def delete(self, doc_id: UUID):
         document = self.read_one(doc_id)
-        document.is_deleted = True
         document.deleted_at = now()
         document.updated_at = now()
 
