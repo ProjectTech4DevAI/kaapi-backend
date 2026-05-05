@@ -38,7 +38,7 @@ class ConfigCrud:
                 name=config_create.name,
                 description=config_create.description,
                 project_id=self.project_id,
-                tag=config_create.tag or ConfigTag.DEFAULT,
+                tag=config_create.tag,
             )
 
             self.session.add(config)
@@ -91,7 +91,7 @@ class ConfigCrud:
         query: str | None,
         skip: int = 0,
         limit: int = 100,
-        tag: ConfigTag | None = None,
+        tag: ConfigTag = ConfigTag.DEFAULT,
     ) -> tuple[list[Config], bool]:
         filters = [
             Config.project_id == self.project_id,
@@ -160,7 +160,7 @@ class ConfigCrud:
         return config
 
     def exists_in_tag_scope_or_raise(
-        self, config_id: UUID, tag: ConfigTag | None = None
+        self, config_id: UUID, tag: ConfigTag = ConfigTag.DEFAULT
     ) -> Config:
         statement = select(Config).where(
             and_(
@@ -179,8 +179,8 @@ class ConfigCrud:
 
         return config
 
-    def _tag_scope_filter(self, tag: ConfigTag | None):
-        return Config.tag == (tag or ConfigTag.DEFAULT)
+    def _tag_scope_filter(self, tag: ConfigTag):
+        return Config.tag == tag
 
     def _check_unique_name_or_raise(self, name: str) -> None:
         if self._read_by_name(name):

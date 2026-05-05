@@ -21,7 +21,6 @@ from app.models.llm.request import ConfigBlob
 from .config import ConfigCrud
 
 logger = logging.getLogger(__name__)
-_TAG_SCOPE_UNSET = object()
 
 
 class ConfigVersionCrud:
@@ -34,7 +33,7 @@ class ConfigVersionCrud:
         session: Session,
         config_id: UUID,
         project_id: int,
-        tag: ConfigTag | None | object = _TAG_SCOPE_UNSET,
+        tag: ConfigTag = ConfigTag.DEFAULT,
     ):
         self.session = session
         self.project_id = project_id
@@ -253,12 +252,9 @@ class ConfigVersionCrud:
     def _config_exists_or_raise(self, config_id: UUID) -> Config:
         """Check if a config exists in the project."""
         config_crud = ConfigCrud(session=self.session, project_id=self.project_id)
-        if self.tag is _TAG_SCOPE_UNSET:
-            return config_crud.exists_or_raise(config_id)
-
         return config_crud.exists_in_tag_scope_or_raise(
             config_id=config_id,
-            tag=self.tag if isinstance(self.tag, ConfigTag) else None,
+            tag=self.tag,
         )
 
     def _validate_config_type_unchanged(

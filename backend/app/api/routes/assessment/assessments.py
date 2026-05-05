@@ -1,4 +1,4 @@
-"""Parent-assessment endpoints (one row per experiment)."""
+"""Parent-assessment endpoints"""
 
 import logging
 from typing import Any, Literal

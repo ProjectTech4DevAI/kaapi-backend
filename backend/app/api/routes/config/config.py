@@ -56,12 +56,11 @@ def list_configs(
     query: str | None = Query(None, description="search query"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag
-    | None = Query(
-        None,
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
         description=(
-            "Optional tag filter. Omit to return general configs only "
-            "(tag 'default'). "
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs. "
             "Supported values: 'default', 'ASSESSMENT'."
         ),
     ),

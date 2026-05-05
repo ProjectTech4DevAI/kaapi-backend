@@ -128,7 +128,7 @@ class ConfigCreate(ConfigBase):
         max_length=512,
         description="Optional message describing the changes in this version",
     )
-    tag: ConfigTag | None = Field(
+    tag: ConfigTag = Field(
         default=ConfigTag.DEFAULT,
         description=(
             "Optional tag for classifying this config. Omit to store 'default'; "
@@ -152,7 +152,6 @@ class ConfigUpdate(SQLModel):
         default=None,
         description=(
             "Optional tag for classifying this config. "
-            "Currently set-only; omitting it leaves the existing tag untouched."
         ),
     )
 

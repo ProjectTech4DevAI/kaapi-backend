@@ -507,16 +507,15 @@ def test_read_all_versions_config_not_found(db: Session) -> None:
         version_crud.read_all()
 
 
-def test_read_all_versions_with_no_tag_scope_allows_default_config(
+def test_read_all_versions_without_tag_uses_default_scope(
     db: Session,
 ) -> None:
-    """Test API tag scope allows default config versions when tag is omitted."""
+    """Test omitted tag scope allows default config versions."""
     config = create_test_config(db)
     version_crud = ConfigVersionCrud(
         session=db,
         project_id=config.project_id,
         config_id=config.id,
-        tag=None,
     )
 
     versions = version_crud.read_all()
