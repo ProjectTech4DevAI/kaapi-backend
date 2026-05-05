@@ -14,7 +14,6 @@ from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
-from app.crud.assessment.batch import _load_dataset_rows
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.job import get_batch_job
 from app.models.assessment import Assessment, AssessmentExportRow, AssessmentRun
@@ -49,10 +48,10 @@ def _expand_input_columns(
     for row in row_payload:
         input_data = row.get("input_data")
         if isinstance(input_data, dict):
-            for k in input_data:
-                if k not in seen_keys:
-                    seen_keys[k] = None
-                    input_keys.append(k)
+            for input_key in input_data:
+                if input_key not in seen_keys:
+                    seen_keys[input_key] = None
+                    input_keys.append(input_key)
 
     if not input_keys:
         for row in row_payload:
@@ -61,11 +60,11 @@ def _expand_input_columns(
 
     reserved_fields = set(AssessmentExportRow.model_fields.keys()) - {"input_data"}
     key_map: dict[str, str] = {}
-    for k in input_keys:
-        col = f"input_{k}" if k in reserved_fields else k
-        key_map[k] = col
+    for input_key in input_keys:
+        col = f"input_{input_key}" if input_key in reserved_fields else input_key
+        key_map[input_key] = col
 
-    collisions = {k: v for k, v in key_map.items() if k != v}
+    collisions = {key: value for key, value in key_map.items() if key != value}
     if collisions:
         logger.warning(
             "[_expand_input_columns] Input dataset columns conflict with reserved "
@@ -77,12 +76,12 @@ def _expand_input_columns(
     for row in row_payload:
         input_data = row.pop("input_data", None) or {}
         new_row = {}
-        for k in input_keys:
-            new_row[key_map[k]] = input_data.get(k)
+        for input_key in input_keys:
+            new_row[key_map[input_key]] = input_data.get(input_key)
         new_row.update(row)
         expanded.append(new_row)
 
-    return expanded, [key_map[k] for k in input_keys]
+    return expanded, [key_map[input_key] for input_key in input_keys]
 
 
 def _drop_empty_columns(
@@ -101,7 +100,7 @@ def _drop_empty_columns(
     if len(non_empty_fields) == len(fieldnames):
         return rows, fieldnames
 
-    pruned = [{k: row.get(k) for k in non_empty_fields} for row in rows]
+    pruned = [{field: row.get(field) for field in non_empty_fields} for row in rows]
     return pruned, non_empty_fields
 
 
@@ -117,9 +116,9 @@ def _expand_output_columns(
     row_payload, input_col_names = _expand_input_columns(row_payload)
 
     base_fields = [
-        f
-        for f in AssessmentExportRow.model_fields.keys()
-        if f not in ("output", "input_data")
+        field
+        for field in AssessmentExportRow.model_fields.keys()
+        if field not in ("output", "input_data")
     ]
 
     parsed_outputs: list[dict[str, Any] | None] = []
@@ -149,27 +148,27 @@ def _expand_output_columns(
             continue
 
         parsed_outputs.append(parsed)
-        for k in parsed:
-            if k not in seen_keys:
-                seen_keys[k] = None
-                output_keys.append(k)
+        for output_key in parsed:
+            if output_key not in seen_keys:
+                seen_keys[output_key] = None
+                output_keys.append(output_key)
 
     if not output_keys:
         # Keep original layout with output as a single column
         fieldnames = input_col_names + list(AssessmentExportRow.model_fields.keys())
-        fieldnames = [f for f in fieldnames if f != "input_data"]
+        fieldnames = [field for field in fieldnames if field != "input_data"]
         return row_payload, fieldnames
 
     # Build expanded rows
     expanded: list[dict[str, Any]] = []
     for row, parsed in zip(row_payload, parsed_outputs, strict=True):
-        new_row = {k: v for k, v in row.items() if k != "output"}
+        new_row = {col: val for col, val in row.items() if col != "output"}
         if parsed:
-            for k in output_keys:
-                new_row[k] = parsed.get(k)
+            for output_key in output_keys:
+                new_row[output_key] = parsed.get(output_key)
         else:
-            for k in output_keys:
-                new_row[k] = None
+            for output_key in output_keys:
+                new_row[output_key] = None
             if row.get("output") is not None:
                 new_row["output_raw"] = row.get("output")
         expanded.append(new_row)
@@ -224,11 +223,11 @@ def serialize_export_rows(
 
     # XLSX shows input columns + output columns only (no metadata fields).
     metadata_fields = {
-        f
-        for f in AssessmentExportRow.model_fields.keys()
-        if f not in ("output", "input_data")
+        field
+        for field in AssessmentExportRow.model_fields.keys()
+        if field not in ("output", "input_data")
     }
-    excel_fields = [f for f in fieldnames if f not in metadata_fields]
+    excel_fields = [field for field in fieldnames if field not in metadata_fields]
     if not excel_fields:
         excel_fields = ["output"]
 
@@ -273,7 +272,7 @@ def build_export_response(
 
 
 def _load_parsed_results_for_run(
-    session: Any,
+    session: Session,
     run: AssessmentRun,
     batch_job: BatchJob,
 ) -> list[dict[str, Any]] | None:
@@ -342,7 +341,7 @@ def _load_parsed_results_for_run(
 
 
 def _load_dataset_rows_for_run(
-    session: Any,
+    session: Session,
     run: AssessmentRun,
     assessment: Assessment,
 ) -> list[dict[str, str]]:
@@ -358,6 +357,8 @@ def _load_dataset_rows_for_run(
                 run.id,
             )
             return []
+        from app.crud.assessment.batch import _load_dataset_rows
+
         return _load_dataset_rows(session, dataset)
     except Exception as exc:
         logger.warning(
@@ -369,7 +370,7 @@ def _load_dataset_rows_for_run(
 
 
 def load_export_rows_for_run(
-    session: Any,
+    session: Session,
     run: AssessmentRun,
     assessment: Assessment | None = None,
 ) -> list[AssessmentExportRow]:
@@ -403,6 +404,12 @@ def load_export_rows_for_run(
         batch_job=batch_job,
     )
     if parsed_results is None:
+        return []
+
+    if not parsed_results:
+        logger.warning(
+            "[load_export_rows_for_run] Parsed results empty for run id=%s", run.id
+        )
         return []
 
     dataset_rows = _load_dataset_rows_for_run(session, run, assessment)

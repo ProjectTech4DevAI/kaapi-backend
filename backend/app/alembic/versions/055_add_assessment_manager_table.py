@@ -82,11 +82,13 @@ def upgrade():
         sa.ForeignKeyConstraint(
             ["organization_id"],
             ["organization.id"],
+            name="fk_assessment_organization_id",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["project.id"],
+            name="fk_assessment_project_id",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),

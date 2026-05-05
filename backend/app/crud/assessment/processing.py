@@ -247,9 +247,17 @@ def parse_assessment_output(
                     }
                 )
 
+        else:
+            logger.error(
+                "[parse_assessment_output] Unknown provider '%s' for row_id=%s — skipping",
+                provider_name,
+                row_id,
+            )
+
     logger.info(
-        f"[parse_assessment_output] Parsed {len(results)} results | "
-        f"provider={provider_name}"
+        "[parse_assessment_output] Parsed %s results | provider=%s",
+        len(results),
+        provider_name,
     )
     return results
 
@@ -365,12 +373,18 @@ async def check_and_process_assessment(
                     session=session, batch_job=batch_job, results=raw_results
                 )
             except Exception as e:
-                logger.warning(f"{log_prefix} Object store upload failed: {e}")
+                logger.error(
+                    "%s Object store upload failed — results may be unrecoverable "
+                    "if the provider deletes the output file before next poll: %s",
+                    log_prefix,
+                    e,
+                    exc_info=True,
+                )
 
             # Parse results
             parsed = parse_assessment_output(raw_results, batch_job.provider)
-            error_count = sum(1 for r in parsed if r.get("error"))
-            success_count = sum(1 for r in parsed if not r.get("error"))
+            error_count = sum(1 for result in parsed if result.get("error"))
+            success_count = sum(1 for result in parsed if not result.get("error"))
 
             # Update run status
             error_msg = f"{error_count} item(s) failed" if error_count > 0 else None

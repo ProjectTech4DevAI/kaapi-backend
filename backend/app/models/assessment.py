@@ -183,8 +183,8 @@ class AssessmentRunStat(BaseModel):
     config_version: int | None
     status: str
     total_items: int
-    error_message: str | None
-    updated_at: datetime | None
+    error_message: str | None = None
+    updated_at: datetime | None = None
 
 
 class AssessmentPublic(BaseModel):
@@ -216,7 +216,7 @@ class AssessmentRunPublic(BaseModel):
     config_version: int
     status: str
     total_items: int
-    error_message: str | None
+    error_message: str | None = None
     input: dict[str, Any] | None = Field(
         None,
         description=(
@@ -245,8 +245,8 @@ class AssessmentAttachment(BaseModel):
     """Attachment column configuration."""
 
     column: str = Field(..., description="Column name containing the attachment data")
-    type: str = Field(..., description="Attachment type: 'image' or 'pdf'")
-    format: str = Field(..., description="Data format: 'url' or 'base64'")
+    type: Literal["image", "pdf"] = Field(..., description="Attachment type")
+    format: Literal["url", "base64"] = Field(..., description="Data format")
 
 
 class AssessmentConfigRef(BaseModel):
@@ -304,7 +304,7 @@ class AssessmentResponse(BaseModel):
     assessment_id: int
     experiment_name: str
     dataset_id: int
-    dataset_name: str
+    dataset_name: str | None
     num_configs: int
     runs: list[AssessmentRunSummary]
 

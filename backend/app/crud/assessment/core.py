@@ -4,6 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -56,7 +57,7 @@ def get_assessment_by_id(
     assessment_id: int,
     organization_id: int,
     project_id: int,
-) -> Assessment | None:
+) -> Assessment:
     """Get a specific parent assessment row."""
     statement = (
         select(Assessment)
@@ -64,7 +65,13 @@ def get_assessment_by_id(
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
     )
-    return session.exec(statement).first()
+    assessment = session.exec(statement).first()
+    if not assessment:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assessment {assessment_id} not found or not accessible",
+        )
+    return assessment
 
 
 def list_assessments(
@@ -127,7 +134,7 @@ def get_assessment_run_by_id(
     run_id: int,
     organization_id: int,
     project_id: int,
-) -> AssessmentRun | None:
+) -> AssessmentRun:
     """Get a specific assessment run by ID, scoped via parent organization/project."""
     statement = (
         select(AssessmentRun)
@@ -136,7 +143,13 @@ def get_assessment_run_by_id(
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
     )
-    return session.exec(statement).first()
+    run = session.exec(statement).first()
+    if not run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Assessment run {run_id} not found or not accessible",
+        )
+    return run
 
 
 def get_assessment_runs_for_assessment(
@@ -214,10 +227,12 @@ def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
     """Aggregate child run statuses into counters."""
     return AssessmentRunCounts(
         total=len(runs),
-        pending=sum(1 for r in runs if r.status == "pending"),
-        processing=sum(1 for r in runs if r.status in {"processing", "in_progress"}),
-        completed=sum(1 for r in runs if r.status == "completed"),
-        failed=sum(1 for r in runs if r.status == "failed"),
+        pending=sum(1 for run in runs if run.status == "pending"),
+        processing=sum(
+            1 for run in runs if run.status in {"processing", "in_progress"}
+        ),
+        completed=sum(1 for run in runs if run.status == "completed"),
+        failed=sum(1 for run in runs if run.status == "failed"),
     )
 
 
@@ -245,15 +260,15 @@ def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
     """Build per-run summary entries for embedding in parent responses."""
     return [
         AssessmentRunStat(
-            run_id=r.id,
-            config_id=str(r.config_id) if r.config_id else None,
-            config_version=r.config_version,
-            status=r.status,
-            total_items=r.total_items,
-            error_message=r.error_message,
-            updated_at=r.updated_at,
+            run_id=run.id,
+            config_id=str(run.config_id) if run.config_id else None,
+            config_version=run.config_version,
+            status=run.status,
+            total_items=run.total_items,
+            error_message=run.error_message,
+            updated_at=run.updated_at,
         )
-        for r in runs
+        for run in runs
     ]
 
 
@@ -267,13 +282,20 @@ def derive_aggregate_error(counts: AssessmentRunCounts) -> str | None:
 def recompute_assessment_status(
     session: Session,
     assessment_id: int,
+    organization_id: int | None = None,
+    project_id: int | None = None,
 ) -> Assessment:
     """Recompute the parent's `status` from its child runs.
 
     Counters and run_stats are derived on-read; only `status` is persisted so
     cron's `WHERE status IN (...)` filter remains index-friendly.
     """
-    assessment = session.get(Assessment, assessment_id)
+    statement = select(Assessment).where(Assessment.id == assessment_id)
+    if organization_id is not None:
+        statement = statement.where(Assessment.organization_id == organization_id)
+    if project_id is not None:
+        statement = statement.where(Assessment.project_id == project_id)
+    assessment = session.exec(statement).first()
     if not assessment:
         raise ValueError(f"Assessment {assessment_id} not found")
 

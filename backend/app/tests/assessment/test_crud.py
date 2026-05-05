@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 
 from app.crud.assessment import (
     AssessmentRunCounts,
@@ -63,6 +64,22 @@ class TestCrudBasicQueries:
         assert list_assessments(session, 1, 1, 10, 0) == ["a1", "a2"]
         assert get_assessment_run_by_id(session, 1, 1, 1) == "assessment"
         assert list_assessment_runs(session, 1, 1, None, 10, 0) == ["a1", "a2"]
+
+    def test_get_assessment_by_id_not_found(self) -> None:
+        session = MagicMock()
+        session.exec.return_value.first.return_value = None
+        with pytest.raises(HTTPException) as exc_info:
+            get_assessment_by_id(session, 99, 1, 1)
+        assert exc_info.value.status_code == 404
+        assert "99" in exc_info.value.detail
+
+    def test_get_assessment_run_by_id_not_found(self) -> None:
+        session = MagicMock()
+        session.exec.return_value.first.return_value = None
+        with pytest.raises(HTTPException) as exc_info:
+            get_assessment_run_by_id(session, 99, 1, 1)
+        assert exc_info.value.status_code == 404
+        assert "99" in exc_info.value.detail
 
     def test_get_assessment_runs_for_assessment(self) -> None:
         session = MagicMock()

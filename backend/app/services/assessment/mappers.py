@@ -91,10 +91,13 @@ def _convert_json_schema_to_google(schema: dict) -> dict:
     return google_schema
 
 
-def map_kaapi_to_openai_params(
+def map_kaapi_to_openai_assessment_params(
     session: Session, kaapi_params: dict
 ) -> tuple[dict, list[str]]:
-    """Map Kaapi-abstracted parameters to OpenAI API parameters.
+    """Map Kaapi-abstracted parameters to OpenAI batch assessment API parameters.
+
+    Extends the base LLM mapper with structured output schema support via
+    ``output_schema`` → ``text.format.json_schema`` (strict mode).
 
     Returns:
         Tuple of (OpenAI API params dict, list of warning strings)
@@ -183,7 +186,7 @@ def map_kaapi_to_openai_params(
     return openai_params, warnings
 
 
-def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_google_assessment_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
     Returns:
