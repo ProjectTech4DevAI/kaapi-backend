@@ -46,9 +46,7 @@ class Assessment(SQLModel, table=True):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the evaluation dataset"},
     )
-    status: Literal[
-        "pending", "processing", "completed", "completed_with_errors", "failed"
-    ] = SQLField(
+    status: str = SQLField(
         default="pending",
         sa_column_kwargs={
             "comment": (
@@ -107,7 +105,7 @@ class AssessmentRun(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Version of the config used"},
     )
-    status: Literal["pending", "processing", "completed", "failed"] = SQLField(
+    status: str = SQLField(
         default="pending",
         sa_column_kwargs={
             "comment": "Run status: pending, processing, completed, failed"
