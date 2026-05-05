@@ -243,7 +243,7 @@ def create_test_config(
     description: str | None = None,
     config_blob: ConfigBlob | None = None,
     use_kaapi_schema: bool = False,
-    tag: ConfigTag | None = ConfigTag.DEFAULT,
+    tag: ConfigTag = ConfigTag.DEFAULT,
 ) -> Config:
     """
     Creates and returns a test configuration with an initial version.
@@ -257,7 +257,7 @@ def create_test_config(
         description: Config description
         config_blob: Config blob (creates default if None)
         use_kaapi_schema: If True, creates Kaapi-format config; if False, creates native format
-        tag: Optional config classification tag. Defaults to `default`.
+        tag: Config classification tag. Defaults to `default`.
     """
     if project_id is None:
         project = create_test_project(db)

@@ -29,11 +29,11 @@ def create_version(
     version_create: ConfigVersionUpdate,
     current_user: AuthContextDep,
     session: SessionDep,
-    tag: ConfigTag
-    | None = Query(
-        None,
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
         description=(
-            "Optional tag scope. Omit to use general configs only (tag 'default')."
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs."
         ),
     ),
 ):
@@ -70,11 +70,11 @@ def list_versions(
     session: SessionDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag
-    | None = Query(
-        None,
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
         description=(
-            "Optional tag scope. Omit to use general configs only (tag 'default')."
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs."
         ),
     ),
 ):
@@ -111,11 +111,11 @@ def get_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag
-    | None = Query(
-        None,
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
         description=(
-            "Optional tag scope. Omit to use general configs only (tag 'default')."
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs."
         ),
     ),
 ):
@@ -148,11 +148,11 @@ def delete_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag
-    | None = Query(
-        None,
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
         description=(
-            "Optional tag scope. Omit to use general configs only (tag 'default')."
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs."
         ),
     ),
 ):

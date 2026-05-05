@@ -150,6 +150,7 @@ def start_assessment(
             config_id=cfg.config_id,
             config_version=cfg.config_version,
             project_id=project_id,
+            tag=ConfigTag.ASSESSMENT,
         )
         if error or config_blob is None:
             raise HTTPException(
