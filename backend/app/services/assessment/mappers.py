@@ -91,7 +91,7 @@ def _convert_json_schema_to_google(schema: dict) -> dict:
     return google_schema
 
 
-def map_kaapi_to_openai_assessment_params(
+def map_kaapi_to_openai_params(
     session: Session, kaapi_params: dict
 ) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI batch assessment API parameters.
@@ -186,7 +186,7 @@ def map_kaapi_to_openai_assessment_params(
     return openai_params, warnings
 
 
-def map_kaapi_to_google_assessment_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
     Returns:

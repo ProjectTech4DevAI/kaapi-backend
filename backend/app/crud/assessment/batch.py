@@ -25,8 +25,8 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
-    map_kaapi_to_google_assessment_params,
-    map_kaapi_to_openai_assessment_params,
+    map_kaapi_to_google_params,
+    map_kaapi_to_openai_params,
     normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
@@ -399,7 +399,7 @@ def submit_assessment_batch(
     base_provider = provider_name.replace("-native", "")
 
     if base_provider == LLMProvider.OPENAI:
-        mapped_params, warnings = map_kaapi_to_openai_assessment_params(
+        mapped_params, warnings = map_kaapi_to_openai_params(
             session=session,
             kaapi_params=params,
         )
@@ -442,7 +442,7 @@ def submit_assessment_batch(
         )
 
     elif base_provider == LLMProvider.GOOGLE:
-        mapped_params, warnings = map_kaapi_to_google_assessment_params(params)
+        mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
 

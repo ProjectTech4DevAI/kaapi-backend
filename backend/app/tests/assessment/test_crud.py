@@ -18,6 +18,7 @@ from app.crud.assessment import (
     derive_aggregate_error,
     derive_assessment_status,
     get_assessment_by_id,
+    get_assessment_dataset_by_id,
     get_assessment_run_by_id,
     get_assessment_runs_for_assessment,
     list_assessment_runs,
@@ -78,6 +79,19 @@ class TestCrudBasicQueries:
         session.exec.return_value.first.return_value = None
         with pytest.raises(HTTPException) as exc_info:
             get_assessment_run_by_id(session, 99, 1, 1)
+        assert exc_info.value.status_code == 404
+        assert "99" in exc_info.value.detail
+
+    def test_get_assessment_dataset_by_id_not_found(self) -> None:
+        session = MagicMock()
+        session.exec.return_value.first.return_value = None
+        with pytest.raises(HTTPException) as exc_info:
+            get_assessment_dataset_by_id(
+                session=session,
+                dataset_id=99,
+                organization_id=1,
+                project_id=1,
+            )
         assert exc_info.value.status_code == 404
         assert "99" in exc_info.value.detail
 

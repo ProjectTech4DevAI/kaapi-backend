@@ -129,7 +129,10 @@ class TestDatasetRoutes:
     def test_get_dataset_not_found(self) -> None:
         with patch(
             "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=None,
+            side_effect=HTTPException(
+                status_code=404,
+                detail="Dataset 1 not found or not accessible",
+            ),
         ):
             with pytest.raises(HTTPException, match="not found"):
                 get_dataset(1, session=MagicMock(), auth_context=_auth_context())

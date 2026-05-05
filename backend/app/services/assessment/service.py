@@ -283,7 +283,9 @@ def retry_assessment_run(
     project_id: int,
 ) -> AssessmentResponse:
     """Create a new assessment using the same inputs as a single child run."""
-    parent = session.get(Assessment, run.assessment_id)
+    parent = getattr(run, "assessment", None) or session.get(
+        Assessment, run.assessment_id
+    )
     if not parent:
         raise HTTPException(
             status_code=404,

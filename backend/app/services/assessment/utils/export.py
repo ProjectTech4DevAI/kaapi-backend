@@ -25,6 +25,15 @@ from app.utils import APIResponse
 logger = logging.getLogger(__name__)
 
 
+def _load_dataset_rows(
+    session: Session,
+    dataset: EvaluationDataset,
+) -> list[dict[str, str]]:
+    from app.crud.assessment.batch import _load_dataset_rows as load_dataset_rows
+
+    return load_dataset_rows(session, dataset)
+
+
 def _safe_filename_part(value: str) -> str:
     """Build a filesystem-safe filename component."""
     sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
@@ -357,8 +366,6 @@ def _load_dataset_rows_for_run(
                 run.id,
             )
             return []
-        from app.crud.assessment.batch import _load_dataset_rows
-
         return _load_dataset_rows(session, dataset)
     except Exception as exc:
         logger.warning(
