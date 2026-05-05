@@ -347,9 +347,11 @@ class TestDatasetUploadDuplication:
 
         assert response.status_code == 422
         response_data = response.json()
-        # Check that the error mentions validation and minimum value
-        assert "error" in response_data
-        assert "greater than or equal to 1" in response_data["error"]
+        assert response_data["errors"]
+        assert any(
+            "greater than or equal to 1" in e["message"]
+            for e in response_data["errors"]
+        )
 
     def test_upload_with_duplication_factor_above_maximum(
         self,
@@ -372,9 +374,10 @@ class TestDatasetUploadDuplication:
 
         assert response.status_code == 422
         response_data = response.json()
-        # Check that the error mentions validation and maximum value
-        assert "error" in response_data
-        assert "less than or equal to 5" in response_data["error"]
+        assert response_data["errors"]
+        assert any(
+            "less than or equal to 5" in e["message"] for e in response_data["errors"]
+        )
 
     def test_upload_with_duplication_factor_boundary_minimum(
         self,
@@ -727,6 +730,65 @@ class TestBatchEvaluationJSONLBuilding:
             assert request_dict["custom_id"] == f"item{i}"
             assert request_dict["body"]["input"] == f"Question {i}"
             assert request_dict["body"]["model"] == "gpt-4o"
+
+    def test_build_batch_jsonl_temperature_included_when_explicitly_set(self) -> None:
+        """When temperature is explicitly set, it should appear in the JSONL body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        config = TextLLMParams(model="gpt-4o", temperature=0.5)
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" in jsonl_data[0]["body"]
+        assert jsonl_data[0]["body"]["temperature"] == 0.5
+
+    def test_build_batch_jsonl_temperature_excluded_when_not_set(self) -> None:
+        """When temperature is not explicitly set, it should NOT appear in the JSONL body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        # Only model provided — temperature not in model_fields_set
+        config = TextLLMParams(model="gpt-4o")
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" not in jsonl_data[0]["body"]
+
+    def test_build_batch_jsonl_temperature_zero_included_when_explicitly_set(
+        self,
+    ) -> None:
+        """When temperature is explicitly set to 0.0, it should still appear in the body."""
+        dataset_items = [
+            {
+                "id": "item1",
+                "input": {"question": "Test question"},
+                "expected_output": {"answer": "Test answer"},
+                "metadata": {},
+            }
+        ]
+
+        config = TextLLMParams(model="gpt-4o", temperature=0.0)
+
+        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+
+        assert len(jsonl_data) == 1
+        assert "temperature" in jsonl_data[0]["body"]
+        assert jsonl_data[0]["body"]["temperature"] == 0.0
 
 
 class TestGetEvaluationRunStatus:
@@ -1375,6 +1437,71 @@ class TestGetDataset:
             "detail", response_data.get("error", str(response_data))
         )
         assert "not found" in error_str.lower() or "not accessible" in error_str.lower()
+
+    def test_default_no_signed_url(
+        self,
+        db: Session,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that signed_url is not included by default."""
+        dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        response = client.get(
+            f"/api/v1/evaluations/datasets/{dataset.id}",
+            headers={"X-API-KEY": user_api_key.key},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"].get("signed_url") is None
+
+    def test_include_signed_url(
+        self,
+        db: Session,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that signed_url is returned when requested."""
+        dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        with patch("app.api.routes.evaluations.dataset.get_cloud_storage") as mock:
+            mock.return_value.get_signed_url.return_value = "https://signed.url"
+            response = client.get(
+                f"/api/v1/evaluations/datasets/{dataset.id}",
+                headers={"X-API-KEY": user_api_key.key},
+                params={"include_signed_url": True},
+            )
+        assert response.json()["data"]["signed_url"] == "https://signed.url"
+
+    def test_no_object_store_url_skips_signing(
+        self,
+        db: Session,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        """Test that signing is skipped when dataset has no object_store_url."""
+        dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        dataset.object_store_url = None
+        db.add(dataset)
+        db.commit()
+
+        with patch("app.api.routes.evaluations.dataset.get_cloud_storage") as mock:
+            response = client.get(
+                f"/api/v1/evaluations/datasets/{dataset.id}",
+                headers={"X-API-KEY": user_api_key.key},
+                params={"include_signed_url": True},
+            )
+            mock.assert_not_called()
+        assert response.json()["data"].get("signed_url") is None
 
 
 class TestDeleteDataset:

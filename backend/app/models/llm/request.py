@@ -9,6 +9,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
+from app.models.llm.constants import (
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+    SUPPORTED_MODELS,
+    SUPPORTED_VOICES,
+)
 
 
 # Speech-to-Speech Model Enums
@@ -59,9 +66,9 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
-    model: str
+    model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
-    input_language: str | None = None
+    input_language: str | None = "auto"
     output_language: str | None = None
     response_format: Literal["text"] | None = Field(
         None,
@@ -69,16 +76,16 @@ class STTLLMParams(SQLModel):
     )
     temperature: float | None = Field(
         default=None,
-        ge=0.0,
+        ge=0.01,  # sarvam minimum 0.01
         le=2.0,
         description="Temperature parameter (not supported by all STT providers)",
     )
 
 
 class TTSLLMParams(SQLModel):
-    model: str
-    voice: str
-    language: str
+    model: str = DEFAULT_TTS_MODEL
+    voice: str = DEFAULT_TTS_VOICE
+    language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
@@ -219,7 +226,9 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal["openai-native", "google-native", "sarvamai-native"] = Field(
+    provider: Literal[
+        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+    ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -239,8 +248,8 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai"] = Field(
-        ..., description="LLM provider (openai, google, sarvamai)"
+    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
+        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
     )
 
     type: Literal["text", "stt", "tts"] = Field(
@@ -260,8 +269,54 @@ class KaapiCompletionConfig(SQLModel):
             "tts": TTSLLMParams,
         }
         model_class = param_models[self.type]
+
+        provider = self.provider
+        provider_was_auto_assigned = False
+        if self.type in ("stt", "tts") and provider is None:
+            self.provider = "google"
+            provider = self.provider
+            provider_was_auto_assigned = True
+
+        user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
+
+        if provider is not None:
+            key = (provider, self.type)
+
+            allowed_models = SUPPORTED_MODELS.get(key)
+            if allowed_models and validated.model not in allowed_models:
+                if provider_was_auto_assigned:
+                    raise ValueError(
+                        f"Model '{validated.model}' is not supported. "
+                        f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires models: {allowed_models}. "
+                        f"Either specify a supported model or explicitly set 'provider' to match your model."
+                    )
+                else:
+                    raise ValueError(
+                        f"Model '{validated.model}' is not supported for provider='{provider}' type='{self.type}'. "
+                        f"Allowed: {allowed_models}"
+                    )
+
+            if self.type == "tts":
+                # voice = self.params.get("voice")
+                voice = validated.voice
+                allowed_voices = SUPPORTED_VOICES.get(key)
+                if allowed_voices and voice and voice not in allowed_voices:
+                    if provider_was_auto_assigned:
+                        raise ValueError(
+                            f"Voice '{voice}' is not supported. "
+                            f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires voices: {allowed_voices}. "
+                            f"Either specify a supported voice or explicitly set 'provider' to match your voice."
+                        )
+                    else:
+                        raise ValueError(
+                            f"Voice '{voice}' is not supported for provider='{provider}'. "
+                            f"Allowed: {allowed_voices}"
+                        )
+
         self.params = validated.model_dump(exclude_none=True)
+        if not user_provided_temperature:
+            self.params.pop("temperature", None)
         return self
 
 
@@ -420,6 +475,11 @@ class LlmCall(SQLModel, table=True):
             "idx_llm_call_conversation_id",
             "conversation_id",
             postgresql_where=text("conversation_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
+        Index(
+            "idx_llm_call_chain_id",
+            "chain_id",
+            postgresql_where=text("chain_id IS NOT NULL"),
         ),
     )
 
@@ -637,10 +697,10 @@ class LLMChainRequest(SQLModel):
 class ChainStatus(str, Enum):
     """Status of an LLM chain execution."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    FAILED = "failed"
-    COMPLETED = "completed"
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    COMPLETED = "COMPLETED"
 
 
 class LlmChain(SQLModel, table=True):

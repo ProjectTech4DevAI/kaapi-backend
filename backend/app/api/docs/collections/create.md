@@ -3,6 +3,10 @@ pipeline:
 
 * Create a vector store from the document IDs you received after uploading your
   documents through the Documents module.
+* Documents are automatically batched when creating the vector store to optimize
+  the upload process for large document sets. A new batch is created when either
+  the cumulative size reaches 30 MB of documents given to upload to a vector store
+  or the document count reaches 200 files in a batch, whichever limit is hit first.
 * [Deprecated] Attach the Vector Store to an OpenAI
   [Assistant](https://platform.openai.com/docs/api-reference/assistants). Use
   parameters in the request body relevant to an Assistant to flesh out

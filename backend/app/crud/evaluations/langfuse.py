@@ -209,7 +209,7 @@ def update_traces_with_cosine_scores(
         try:
             langfuse.score(
                 trace_id=trace_id,
-                name="cosine_similarity",
+                name="Cosine Similarity",
                 value=cosine_score,
                 comment=(
                     "Cosine similarity between generated output and "
@@ -410,71 +410,97 @@ def fetch_trace_scores_from_langfuse(
             f"[fetch_trace_scores_from_langfuse] Found traces | count={len(trace_ids)}"
         )
 
-        # 3. Fetch trace details with scores for each trace
+        # 3. Fetch trace details with scores concurrently
         traces: list[TraceData] = []
         # Track score aggregations by name: {name: {"data_type": str, "values": list}}
         score_aggregations: dict[str, dict[str, Any]] = {}
 
-        for trace_id in trace_ids:
-            try:
-                trace = langfuse.api.trace.get(trace_id)
-                trace_data: TraceData = {
-                    "trace_id": trace_id,
-                    "question": "",
-                    "llm_answer": "",
-                    "ground_truth_answer": "",
-                    "question_id": "",
-                    "scores": [],
-                }
+        # Circuit breaker: abort early if too many consecutive failures
+        max_consecutive_failures = 5
+        consecutive_failures = 0
+        total_failures = 0
 
-                # Get question from input
-                if trace.input:
-                    if isinstance(trace.input, dict):
-                        trace_data["question"] = trace.input.get("question", "")
-                    elif isinstance(trace.input, str):
-                        trace_data["question"] = trace.input
+        def _fetch_single_trace(trace_id: str) -> TraceData | None:
+            """Fetch a single trace from Langfuse and extract its data."""
+            trace = langfuse.api.trace.get(trace_id)
+            trace_data: TraceData = {
+                "trace_id": trace_id,
+                "question": "",
+                "llm_answer": "",
+                "ground_truth_answer": "",
+                "question_id": "",
+                "scores": [],
+            }
 
-                # Get answer from output
-                if trace.output:
-                    if isinstance(trace.output, dict):
-                        trace_data["llm_answer"] = trace.output.get("answer", "")
-                    elif isinstance(trace.output, str):
-                        trace_data["llm_answer"] = trace.output
+            # Get question from input
+            if trace.input:
+                if isinstance(trace.input, dict):
+                    trace_data["question"] = trace.input.get("question", "")
+                elif isinstance(trace.input, str):
+                    trace_data["question"] = trace.input
 
-                # Get ground truth and question_id from metadata
-                if trace.metadata and isinstance(trace.metadata, dict):
-                    trace_data["ground_truth_answer"] = trace.metadata.get(
-                        "ground_truth", ""
-                    )
-                    trace_data["question_id"] = trace.metadata.get("question_id", "")
+            # Get answer from output
+            if trace.output:
+                if isinstance(trace.output, dict):
+                    trace_data["llm_answer"] = trace.output.get("answer", "")
+                elif isinstance(trace.output, str):
+                    trace_data["llm_answer"] = trace.output
 
-                # Add scores from this trace
-                if trace.scores:
-                    for score in trace.scores:
-                        score_name = score.name
-                        score_value = score.value
-                        score_comment = score.comment
-                        # Get data_type from Langfuse score, default to NUMERIC
-                        data_type = getattr(score, "data_type", None) or "NUMERIC"
+            # Get ground truth and question_id from metadata
+            if trace.metadata and isinstance(trace.metadata, dict):
+                trace_data["ground_truth_answer"] = trace.metadata.get(
+                    "ground_truth", ""
+                )
+                trace_data["question_id"] = trace.metadata.get("question_id", "")
 
-                        # Build score entry for trace
-                        # Round numeric values to 2 decimal places
-                        if data_type != "CATEGORICAL" and isinstance(
-                            score_value, (int, float)
-                        ):
-                            score_value = round(float(score_value), 2)
+            # Add scores from this trace
+            if trace.scores:
+                for score in trace.scores:
+                    score_name = score.name
+                    score_value = score.value
+                    score_comment = score.comment
+                    # Get data_type from Langfuse score, default to NUMERIC
+                    data_type = getattr(score, "data_type", None) or "NUMERIC"
 
-                        score_entry: TraceScore = {
-                            "name": score_name,
-                            "value": score_value,
-                            "data_type": data_type,
-                        }
-                        if score_comment:
-                            score_entry["comment"] = score_comment
+                    # Build score entry for trace
+                    # Round numeric values to 2 decimal places
+                    if data_type != "CATEGORICAL" and isinstance(
+                        score_value, (int, float)
+                    ):
+                        score_value = round(float(score_value), 2)
 
-                        trace_data["scores"].append(score_entry)
+                    score_entry: TraceScore = {
+                        "name": score_name,
+                        "value": score_value,
+                        "data_type": data_type,
+                    }
+                    if score_comment:
+                        score_entry["comment"] = score_comment
 
-                        # Aggregate for summary calculation
+                    trace_data["scores"].append(score_entry)
+
+            return trace_data
+
+        max_workers = min(5, max(1, len(trace_ids)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_trace_id = {
+                executor.submit(_fetch_single_trace, tid): tid for tid in trace_ids
+            }
+
+            for future in as_completed(future_to_trace_id):
+                trace_id = future_to_trace_id[future]
+                try:
+                    trace_data = future.result()
+                    if trace_data is None:
+                        continue
+
+                    consecutive_failures = 0
+
+                    # Aggregate scores for summary calculation
+                    for score_entry in trace_data["scores"]:
+                        score_name = score_entry["name"]
+                        score_value = score_entry["value"]
+                        data_type = score_entry["data_type"]
                         if score_value is not None:
                             if score_name not in score_aggregations:
                                 score_aggregations[score_name] = {
@@ -483,37 +509,41 @@ def fetch_trace_scores_from_langfuse(
                                 }
                             score_aggregations[score_name]["values"].append(score_value)
 
-                traces.append(trace_data)
+                    traces.append(trace_data)
 
-            except Exception as e:
-                logger.warning(
-                    f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
-                    f"trace_id={trace_id} | error={e}"
-                )
-                continue
+                except Exception as e:
+                    consecutive_failures += 1
+                    total_failures += 1
+                    logger.warning(
+                        f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
+                        f"trace_id={trace_id} | error={e}"
+                    )
 
-        # 4. Identify complete scores (all traces must have the score)
-        total_traces = len(traces)
-        complete_score_names = {
-            name
-            for name, data in score_aggregations.items()
-            if len(data["values"]) == total_traces
-        }
+                    if consecutive_failures >= max_consecutive_failures:
+                        # Cancel remaining futures
+                        for f in future_to_trace_id:
+                            f.cancel()
+                        logger.error(
+                            f"[fetch_trace_scores_from_langfuse] Circuit breaker triggered | "
+                            f"consecutive_failures={consecutive_failures} | "
+                            f"total_failures={total_failures} | "
+                            f"total_traces={len(trace_ids)}"
+                        )
+                        raise RuntimeError(
+                            f"Langfuse API unavailable: {consecutive_failures} consecutive "
+                            f"trace fetches failed. Aborting to prevent prolonged outage."
+                        )
 
-        # 5. Filter trace scores to only include complete scores
-        for trace in traces:
-            trace["scores"] = [
-                score
-                for score in trace["scores"]
-                if score["name"] in complete_score_names
-            ]
+        # If more than half of traces failed, treat as a Langfuse outage
+        if total_failures > 0 and total_failures > len(trace_ids) // 2:
+            raise RuntimeError(
+                f"Langfuse API degraded: {total_failures}/{len(trace_ids)} trace "
+                f"fetches failed. Try again later."
+            )
 
-        # 6. Calculate summary scores (only for complete scores)
+        # 4. Calculate summary scores for all scores that have at least one value
         summary_scores = []
         for score_name, agg_data in score_aggregations.items():
-            if score_name not in complete_score_names:
-                continue
-
             data_type = agg_data["data_type"]
             values = agg_data["values"]
 
@@ -552,7 +582,7 @@ def fetch_trace_scores_from_langfuse(
 
         logger.info(
             f"[fetch_trace_scores_from_langfuse] Successfully fetched scores | "
-            f"total_traces={len(traces)} | complete_scores={list(complete_score_names)}"
+            f"total_traces={len(traces)} | score_names={list(score_aggregations.keys())}"
         )
 
         return result

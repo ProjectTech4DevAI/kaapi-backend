@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl, model_validator, model_serializer
-from sqlalchemy import UniqueConstraint, Index, text
+from sqlalchemy import Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.core.util import now
@@ -39,12 +39,10 @@ class Collection(SQLModel, table=True):
         description="Unique identifier for the collection",
         sa_column_kwargs={"comment": "Unique identifier for the collection"},
     )
-    provider: ProviderType = (
-        Field(
-            nullable=False,
-            description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
-            sa_column_kwargs={"comment": "LLM provider used for this collection"},
-        ),
+    provider: ProviderType = Field(
+        nullable=False,
+        description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
+        sa_column_kwargs={"comment": "LLM provider used for this collection"},
     )
     llm_service_id: str = Field(
         nullable=False,
@@ -101,14 +99,6 @@ class CollectionOptions(SQLModel):
     )
     documents: list[UUID] = Field(
         description="List of document IDs",
-    )
-    batch_size: int = Field(
-        default=1,
-        description=(
-            "Number of documents to send to OpenAI in a single "
-            "transaction. See the `file_ids` parameter in the "
-            "vector store [create batch](https://platform.openai.com/docs/api-reference/vector-stores-file-batches/createBatch)."
-        ),
     )
 
     def model_post_init(self, __context: Any):

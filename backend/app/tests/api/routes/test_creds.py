@@ -50,7 +50,7 @@ def test_read_provider_credential_not_found(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test reading credentials for non-existent provider returns 404."""
+    """Test reading credentials for non-existent provider returns null."""
     client.delete(
         f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
         headers={"X-API-KEY": user_api_key.key},
@@ -61,8 +61,8 @@ def test_read_provider_credential_not_found(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 404
-    assert "Provider credentials not found" in response.json()["error"]
+    assert response.status_code == 200
+    assert response.json()["data"] is None
 
 
 def test_update_credentials(
@@ -100,7 +100,11 @@ def test_update_credentials(
     )
     assert verify_response.status_code == 200
     verify_data = verify_response.json().get("data", verify_response.json())
-    assert verify_data["api_key"] == new_api_key
+    # Sensitive fields are masked in GET responses
+    assert verify_data["api_key"] != new_api_key
+    assert "*" in verify_data["api_key"]
+    assert verify_data["api_key"].startswith("sk-")
+    assert verify_data["api_key"].endswith(new_api_key[-4:])
 
 
 def test_create_credential(
@@ -138,7 +142,11 @@ def test_create_credential(
     data = create_response.json()["data"]
     assert len(data) == 1
     assert data[0]["provider"] == Provider.OPENAI.value
-    assert data[0]["credential"]["api_key"] == api_key
+    # Sensitive fields are masked in API responses
+    assert data[0]["credential"]["api_key"] != api_key
+    assert "*" in data[0]["credential"]["api_key"]
+    assert data[0]["credential"]["api_key"].startswith("sk-")
+    assert data[0]["credential"]["api_key"].endswith(api_key[-4:])
 
 
 def test_credential_encryption(
@@ -163,12 +171,12 @@ def test_credential_encryption(
     assert decrypted_creds["api_key"].startswith("sk-")
 
 
-def test_update_nonexistent_provider_returns_404(
+def test_update_nonexistent_provider_upserts(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test updating credentials for non-existent provider."""
-    # Delete OpenAI first
+    """Test that updating a non-existent provider creates it (upsert behavior)."""
+    # Delete OpenAI first so no credential exists for the provider
     client.delete(
         f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
         headers={"X-API-KEY": user_api_key.key},
@@ -188,8 +196,10 @@ def test_update_nonexistent_provider_returns_404(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 404
-    assert "Credentials not found" in response.json()["error"]
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    assert data[0]["provider"] == Provider.OPENAI.value
 
 
 def test_create_ignores_mismatched_ids(
@@ -269,7 +279,8 @@ def test_delete_all_credentials(
         f"{settings.API_V1_STR}/credentials/",
         headers={"X-API-KEY": user_api_key.key},
     )
-    assert get_response.status_code == 404
+    assert get_response.status_code == 200
+    assert get_response.json()["data"] == []
 
 
 def test_delete_all_when_none_exist_returns_404(
@@ -288,3 +299,251 @@ def test_delete_all_when_none_exist_returns_404(
     )
 
     assert response.status_code == 404
+
+
+def test_delete_provider_credential(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test deleting a specific provider's credentials."""
+    # First verify the credential exists
+    get_response = client.get(
+        f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+    assert get_response.status_code == 200
+
+    # Delete the credential
+    response = client.delete(
+        f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+    assert (
+        response_data["data"]["message"] == "Provider credentials removed successfully"
+    )
+
+    # Verify it's deleted (endpoint returns null when provider credential is missing)
+    verify_response = client.get(
+        f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+    assert verify_response.status_code == 200
+    assert verify_response.json()["data"] is None
+
+
+def test_delete_provider_credential_not_found(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test deleting a provider credential that doesn't exist."""
+    # Delete if exists
+    client.delete(
+        f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # Try to delete again
+    response = client.delete(
+        f"{settings.API_V1_STR}/credentials/provider/{Provider.OPENAI.value}",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_provider_credential_invalid_provider(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test deleting credentials with invalid provider name."""
+    response = client.delete(
+        f"{settings.API_V1_STR}/credentials/provider/invalid_provider",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # ValueError from validate_provider is caught and converted to HTTPException(400)
+    assert response.status_code == 400
+    assert "Unsupported provider" in response.json()["error"]
+
+
+def test_read_provider_credential_invalid_provider(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test reading credentials with invalid provider name."""
+    response = client.get(
+        f"{settings.API_V1_STR}/credentials/provider/invalid_provider",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # ValueError from validate_provider is caught and converted to HTTPException(400)
+    assert response.status_code == 400
+    assert "Unsupported provider" in response.json()["error"]
+
+
+def test_create_credential_missing_credential_field(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating credentials without the credential field."""
+    credential_data = {
+        "organization_id": user_api_key.organization_id,
+        "project_id": user_api_key.project_id,
+        "is_active": True,
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/credentials/",
+        json=credential_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 400  # Validation error
+
+
+def test_create_credential_empty_credential_dict(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating credentials with empty credential dictionary."""
+    credential_data = {
+        "organization_id": user_api_key.organization_id,
+        "project_id": user_api_key.project_id,
+        "is_active": True,
+        "credential": {},
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/credentials/",
+        json=credential_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 400  # Should fail to create credentials
+
+
+def test_update_credential_missing_provider_field(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test updating credentials without provider field."""
+    update_data = {
+        "credential": {
+            "api_key": "sk-test123",
+            "model": "gpt-4",
+        },
+    }
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/credentials/",
+        json=update_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # FastAPI Pydantic validation catches missing required field before route handler runs
+    assert response.status_code == 422
+
+
+def test_update_credential_missing_credential_field(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test updating credentials without credential field."""
+    update_data = {
+        "provider": Provider.OPENAI.value,
+    }
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/credentials/",
+        json=update_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # FastAPI Pydantic validation catches missing required field before route handler runs
+    assert response.status_code == 422
+
+
+def test_update_credential_empty_credential(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test updating credentials with empty credential object."""
+    update_data = {
+        "provider": Provider.OPENAI.value,
+        "credential": {},
+    }
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/credentials/",
+        json=update_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    # Should still update but with empty credential
+    assert response.status_code in [200, 400]  # Depends on implementation
+
+
+def test_read_credentials_when_none_exist(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test reading credentials when none exist returns an empty list."""
+    # Delete all credentials first
+    client.delete(
+        f"{settings.API_V1_STR}/credentials/",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    response = client.get(
+        f"{settings.API_V1_STR}/credentials/",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+
+
+def test_create_multiple_providers_at_once(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating credentials for multiple providers in a single request."""
+    # Delete all credentials first
+    client.delete(
+        f"{settings.API_V1_STR}/credentials/",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    credential_data = {
+        "organization_id": user_api_key.organization_id,
+        "project_id": user_api_key.project_id,
+        "is_active": True,
+        "credential": {
+            Provider.OPENAI.value: {
+                "api_key": "sk-" + generate_random_string(),
+                "model": "gpt-4",
+                "temperature": 0.7,
+            },
+            Provider.LANGFUSE.value: {
+                "secret_key": "sk-lf-" + generate_random_string(),
+                "public_key": "pk-lf-" + generate_random_string(),
+                "host": "https://cloud.langfuse.com",
+            },
+        },
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/credentials/",
+        json=credential_data,
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 2
+    providers = [cred["provider"] for cred in data]
+    assert Provider.OPENAI.value in providers
+    assert Provider.LANGFUSE.value in providers

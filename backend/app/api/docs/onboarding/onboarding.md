@@ -13,9 +13,14 @@
 ---
 
 ## 👤 User Handling
-- If `email` does **not exist**, a new user is created and linked to the project.
-- If the user already exists, they are simply attached to the project.
+**Fields:**
+- `email` (required): User's email address
+- `password` (optional): Password for the primary user (must be at least 8 characters)
+- `username` (optional): Full name of the primary user
 
+**Behavior:**
+- If `email` does not exist, a new user is created and linked to the project.
+- If the user already exists, they are simply attached to the project.
 ---
 
 ## 🔑 Credentials (Optional)
@@ -25,8 +30,9 @@
 - We’ve also included a list of the providers currently supported by kaapi.
 
    ### Supported Providers
-   - **LLM:** openai
+   - **LLM:** openai, google, sarvamai
    - **Observability:** langfuse
+   - **Audio:** elevenlabs
 
    ### Example: For sending multiple credentials -
    ```
@@ -37,8 +43,23 @@
        }
      },
      {
+       "google": {
+         "api_key": "AIzaSy..."
+       }
+     },
+     {
+       "sarvamai": {
+         "api_key": "sarvam-..."
+       }
+     },
+     {
+       "elevenlabs": {
+         "api_key": "sk_..."
+       }
+     },
+     {
        "langfuse": {
-         "public_key": "pk-lf-...",
+         "public_key": "pk-lf-....",
          "secret_key": "sk-lf-...",
          "host": "https://cloud.langfuse.com"
        }

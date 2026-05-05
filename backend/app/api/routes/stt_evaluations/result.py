@@ -29,7 +29,7 @@ router = APIRouter()
     description=load_description("stt_evaluation/update_feedback.md"),
 )
 def update_result_feedback(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     result_id: int,
     feedback: STTFeedbackUpdate = Body(...),
@@ -41,7 +41,7 @@ def update_result_feedback(
     )
 
     result = update_human_feedback(
-        session=_session,
+        session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -77,13 +77,13 @@ def update_result_feedback(
     description=load_description("stt_evaluation/get_result.md"),
 )
 def get_result(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     result_id: int,
 ) -> APIResponse[STTResultPublic]:
     """Get an STT result by ID."""
     result = get_stt_result_by_id(
-        session=_session,
+        session=session,
         result_id=result_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,

@@ -601,4 +601,5 @@ def test_threads_start_missing_question(
     assert response.status_code == 422  # Unprocessable Entity (FastAPI will raise 422)
     error_response = response.json()
     assert error_response["success"] is False
-    assert "question" in error_response["error"]
+    assert error_response["errors"]
+    assert any("question" in e["field"] for e in error_response["errors"])

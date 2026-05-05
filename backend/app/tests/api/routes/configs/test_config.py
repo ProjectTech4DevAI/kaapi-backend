@@ -22,7 +22,7 @@ def test_create_config_success(
                 "provider": "openai",
                 "type": "text",
                 "params": {
-                    "model": "gpt-4",
+                    "model": "gpt-4o",
                     "temperature": 0.8,
                     "max_tokens": 2000,
                 },
@@ -51,7 +51,7 @@ def test_create_config_success(
     assert data["data"]["version"]["config_blob"]["completion"]["type"] == "text"
     assert (
         data["data"]["version"]["config_blob"]["completion"]["params"]["model"]
-        == "gpt-4"
+        == "gpt-4o"
     )
     assert (
         data["data"]["version"]["config_blob"]["completion"]["params"]["temperature"]
@@ -100,7 +100,7 @@ def test_create_config_duplicate_name_fails(
             "completion": {
                 "provider": "openai",
                 "type": "text",
-                "params": {"model": "gpt-4"},
+                "params": {"model": "gpt-4o"},
             }
         },
         "commit_message": "Initial",
@@ -141,6 +141,7 @@ def test_list_configs(
     assert data["success"] is True
     assert isinstance(data["data"], list)
     assert len(data["data"]) >= 3
+    assert "has_more" in data["metadata"]
 
     config_names = [c["name"] for c in data["data"]]
     for config in created_configs:
@@ -453,3 +454,28 @@ def test_configs_isolated_by_project(
     # Verify we only get configs from user's project
     for config_data in data["data"]:
         assert config_data["project_id"] == user_api_key.project_id
+
+
+def test_list_configs_with_query(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test listing configs filtered by query param."""
+    create_test_config(db=db, project_id=user_api_key.project_id, name="search-alpha")
+    create_test_config(db=db, project_id=user_api_key.project_id, name="search-beta")
+    create_test_config(db=db, project_id=user_api_key.project_id, name="other-config")
+
+    response = client.get(
+        f"{settings.API_V1_STR}/configs/",
+        headers={"X-API-KEY": user_api_key.key},
+        params={"query": "search"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    returned_names = [c["name"] for c in data["data"]]
+    assert "search-alpha" in returned_names
+    assert "search-beta" in returned_names
+    assert all("search" in name for name in returned_names)
+    assert "other-config" not in returned_names

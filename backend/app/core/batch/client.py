@@ -1,4 +1,4 @@
-"""Gemini client wrapper for STT evaluation."""
+"""Gemini client wrapper for credential management."""
 
 import logging
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 from google import genai
 from sqlmodel import Session
 
-from app.core.exception_handlers import HTTPException
+from fastapi import HTTPException
 from app.crud.credentials import get_provider_credential
 
 logger = logging.getLogger(__name__)

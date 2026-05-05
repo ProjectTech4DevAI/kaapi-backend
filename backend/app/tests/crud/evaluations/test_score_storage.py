@@ -49,11 +49,9 @@ class TestSaveScoreS3Upload:
         assert mock_upload.call_args.kwargs["results"] == [{"trace_id": "t1"}]
 
         # Verify DB gets summary only, not traces
-        call_kwargs = mock_update.call_args.kwargs
-        assert call_kwargs["score"] == {
-            "summary_scores": [{"name": "accuracy", "avg": 0.9}]
-        }
-        assert call_kwargs["score_trace_url"] == "s3://bucket/traces.json"
+        update = mock_update.call_args.kwargs["update"]
+        assert update.score == {"summary_scores": [{"name": "accuracy", "avg": 0.9}]}
+        assert update.score_trace_url == "s3://bucket/traces.json"
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
     @patch("app.crud.evaluations.core.get_evaluation_run_by_id")
@@ -82,9 +80,9 @@ class TestSaveScoreS3Upload:
         save_score(eval_run_id=100, organization_id=1, project_id=1, score=score)
 
         # Full score stored in DB as fallback
-        call_kwargs = mock_update.call_args.kwargs
-        assert call_kwargs["score"] == score
-        assert call_kwargs["score_trace_url"] is None
+        update = mock_update.call_args.kwargs["update"]
+        assert update.score == score
+        assert update.score_trace_url is None
 
     @patch("app.crud.evaluations.core.update_evaluation_run")
     @patch("app.crud.evaluations.core.get_evaluation_run_by_id")

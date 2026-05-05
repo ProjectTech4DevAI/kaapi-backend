@@ -3,84 +3,197 @@ Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
 from celery.result import AsyncResult
+from opentelemetry.propagate import inject
 
 from app.celery.celery_app import celery_app
-from app.celery.tasks.job_execution import (
-    execute_high_priority_task,
-    execute_low_priority_task,
-)
 
 logger = logging.getLogger(__name__)
 
 
-def start_high_priority_job(
-    function_path: str, project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+def _enqueue_with_trace_context(task, **kwargs) -> str:
+    """Publish Celery task with explicit trace context headers."""
+    otel_headers: dict[str, str] = {}
+    inject(otel_headers)
+    celery_headers = dict(otel_headers)
+    celery_headers["otel"] = otel_headers
+    async_result = task.apply_async(kwargs=kwargs, headers=celery_headers)
+    return async_result.id
+
+
+def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs) -> str:
+    from app.celery.tasks.job_execution import run_llm_job
+
+    task_id = _enqueue_with_trace_context(
+        run_llm_job, project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    )
+    logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task_id}")
+    return task_id
+
+
+def start_llm_chain_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:
-    """
-    Start a high priority job using Celery.
+    from app.celery.tasks.job_execution import run_llm_chain_job
 
-    Args:
-        function_path: Import path to the execute_job function (e.g., "app.services.doctransform.service.execute_job")
-        project_id: ID of the project executing the job
-        job_id: ID of the job (should already exist in database)
-        trace_id: Trace/correlation ID to preserve context across Celery tasks
-        **kwargs: Additional arguments to pass to the execute_job function
-
-    Returns:
-        Celery task ID (different from job_id)
-    """
-    task = execute_high_priority_task.delay(
-        function_path=function_path,
+    task_id = _enqueue_with_trace_context(
+        run_llm_chain_job,
         project_id=project_id,
         job_id=job_id,
         trace_id=trace_id,
         **kwargs,
     )
+    logger.info(
+        f"[start_llm_chain_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
 
-    logger.info(f"Started high priority job {job_id} with Celery task {task.id}")
-    return task.id
 
-
-def start_low_priority_job(
-    function_path: str, project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+def start_response_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:
-    """
-    Start a low priority job using Celery.
+    from app.celery.tasks.job_execution import run_response_job
 
-    Args:
-        function_path: Import path to the execute_job function (e.g., "app.services.doctransform.service.execute_job")
-        project_id: ID of the project executing the job
-        job_id: ID of the job (should already exist in database)
-        trace_id: Trace/correlation ID to preserve context across Celery tasks
-        **kwargs: Additional arguments to pass to the execute_job function
-
-    Returns:
-        Celery task ID (different from job_id)
-    """
-    task = execute_low_priority_task.delay(
-        function_path=function_path,
+    task_id = _enqueue_with_trace_context(
+        run_response_job,
         project_id=project_id,
         job_id=job_id,
         trace_id=trace_id,
         **kwargs,
     )
+    logger.info(f"[start_response_job] Started job {job_id} with Celery task {task_id}")
+    return task_id
 
-    logger.info(f"Started low priority job {job_id} with Celery task {task.id}")
-    return task.id
+
+def start_doctransform_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_doctransform_job
+
+    task_id = _enqueue_with_trace_context(
+        run_doctransform_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_doctransform_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_create_collection_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_create_collection_job
+
+    task_id = _enqueue_with_trace_context(
+        run_create_collection_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_create_collection_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_delete_collection_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_delete_collection_job
+
+    task_id = _enqueue_with_trace_context(
+        run_delete_collection_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_delete_collection_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_stt_batch_submission(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_stt_batch_submission
+
+    task_id = _enqueue_with_trace_context(
+        run_stt_batch_submission,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_stt_batch_submission] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_stt_metric_computation(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_stt_metric_computation
+
+    task_id = _enqueue_with_trace_context(
+        run_stt_metric_computation,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_stt_metric_computation] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_tts_batch_submission(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_tts_batch_submission
+
+    task_id = _enqueue_with_trace_context(
+        run_tts_batch_submission,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_tts_batch_submission] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_tts_result_processing(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_tts_result_processing
+
+    task_id = _enqueue_with_trace_context(
+        run_tts_result_processing,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_tts_result_processing] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
 
 
 def get_task_status(task_id: str) -> Dict[str, Any]:
-    """
-    Get the status of a Celery task.
-
-    Args:
-        task_id: Celery task ID
-
-    Returns:
-        Dictionary with task status information
-    """
     result = AsyncResult(task_id)
     return {
         "task_id": task_id,
@@ -91,20 +204,10 @@ def get_task_status(task_id: str) -> Dict[str, Any]:
 
 
 def revoke_task(task_id: str, terminate: bool = False) -> bool:
-    """
-    Revoke (cancel) a Celery task.
-
-    Args:
-        task_id: Celery task ID
-        terminate: Whether to terminate the task if it's already running
-
-    Returns:
-        True if task was revoked successfully
-    """
     try:
         celery_app.control.revoke(task_id, terminate=terminate)
-        logger.info(f"Revoked task {task_id}")
+        logger.info(f"[revoke_task] Revoked task {task_id}")
         return True
     except Exception as e:
-        logger.error(f"Failed to revoke task {task_id}: {e}")
+        logger.error(f"[revoke_task] Failed to revoke task {task_id}: {e}")
         return False

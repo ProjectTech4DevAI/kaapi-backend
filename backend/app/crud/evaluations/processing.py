@@ -27,8 +27,10 @@ from app.core.batch import (
 )
 from app.core.batch.base import BATCH_KEY
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import update_evaluation_run, resolve_model_from_config
+from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
+from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
+    EMBEDDING_MODEL,
     calculate_average_similarity,
     parse_embedding_results,
     start_embedding_batch,
@@ -37,11 +39,80 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
-from app.crud.job import get_batch_job
-from app.models import EvaluationRun
+from app.crud.job import get_batch_job, update_batch_job
+from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_batch_error_message(
+    provider: OpenAIBatchProvider,
+    error_file_id: str,
+    batch_job: BatchJob,
+    session: Session,
+) -> str:
+    """
+    Download the error file from OpenAI, parse JSONL entries, and extract
+    the most common error message. Updates batch_job.error_message.
+
+    Args:
+        provider: OpenAI batch provider instance
+        error_file_id: OpenAI error file ID
+        batch_job: BatchJob to update with error message
+        session: Database session
+
+    Returns:
+        Human-readable error message with the top error and counts
+    """
+    try:
+        error_content = provider.download_file(error_file_id)
+        lines = error_content.strip().split("\n")
+
+        error_counts: dict[str, int] = {}
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                message = (
+                    entry.get("response", {})
+                    .get("body", {})
+                    .get("error", {})
+                    .get("message", "Unknown error")
+                )
+                error_counts[message] = error_counts.get(message, 0) + 1
+            except json.JSONDecodeError:
+                continue
+
+        if error_counts:
+            top_error = max(error_counts, key=error_counts.get)
+            top_count = error_counts[top_error]
+            total = sum(error_counts.values())
+            error_msg = f"{top_error} ({top_count}/{total} requests)"
+        else:
+            error_msg = "Batch completed with errors but could not parse error file"
+
+    except Exception as e:
+        logger.error(
+            f"[_extract_batch_error_message] Failed to extract errors | batch_job_id={batch_job.id} | {e}",
+            exc_info=True,
+        )
+        error_msg = (
+            f"Batch completed with all requests failed (error_file_id: {error_file_id})"
+        )
+
+    # Update batch_job with extracted error message (outside try/except
+    # so persistence failures propagate to the caller)
+    batch_job_update = BatchJobUpdate(error_message=error_msg)
+    update_batch_job(
+        session=session, batch_job=batch_job, batch_job_update=batch_job_update
+    )
+
+    logger.info(
+        f"[_extract_batch_error_message] Extracted error | batch_job_id={batch_job.id} | {error_msg}"
+    )
+
+    return error_msg
 
 
 def parse_evaluation_output(
@@ -263,6 +334,20 @@ async def process_completed_evaluation(
         # Use model stored at creation time for cost tracking
         model = resolve_model_from_config(session=session, eval_run=eval_run)
 
+        # Aggregate response generation cost
+        attach_cost(
+            session=session,
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            response_model=model,
+            response_results=results,
+        )
+        update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(cost=eval_run.cost),
+        )
+
         trace_id_mapping = create_langfuse_dataset_run(
             langfuse=langfuse,
             dataset_name=eval_run.dataset_name,
@@ -298,8 +383,10 @@ async def process_completed_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="completed",
-                error_message=f"Embeddings failed: {str(e)}",
+                update=EvaluationRunUpdate(
+                    status="completed",
+                    error_message=f"Embeddings failed: {str(e)}",
+                ),
             )
 
         logger.info(
@@ -317,8 +404,10 @@ async def process_completed_evaluation(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Processing failed: {str(e)}",
+            ),
         )
 
 
@@ -392,7 +481,7 @@ async def process_completed_embedding_batch(
         eval_run.score = {
             "summary_scores": [
                 {
-                    "name": "cosine_similarity",
+                    "name": "Cosine Similarity",
                     "avg": round(float(similarity_stats["cosine_similarity_avg"]), 2),
                     "std": round(float(similarity_stats["cosine_similarity_std"]), 2),
                     "total_pairs": similarity_stats["total_pairs"],
@@ -419,9 +508,24 @@ async def process_completed_embedding_batch(
                     exc_info=True,
                 )
 
-        # Step 7: Mark evaluation as completed
+        # Step 7: Accumulate embedding cost onto existing response cost
+        attach_cost(
+            session=session,
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_raw_results=raw_results,
+        )
+
+        # Step 8: Mark evaluation as completed
         eval_run = update_evaluation_run(
-            session=session, eval_run=eval_run, status="completed", score=eval_run.score
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(
+                status="completed",
+                score=eval_run.score,
+                cost=eval_run.cost,
+            ),
         )
 
         logger.info(
@@ -439,8 +543,10 @@ async def process_completed_embedding_batch(
         return update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="completed",
-            error_message=f"Embedding processing failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="completed",
+                error_message=f"Embedding processing failed: {str(e)}",
+            ),
         )
 
 
@@ -524,8 +630,10 @@ async def check_and_process_evaluation(
                     eval_run = update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="completed",
-                        error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        update=EvaluationRunUpdate(
+                            status="completed",
+                            error_message=f"Embedding batch failed: {embedding_batch_job.error_message}",
+                        ),
                     )
 
                     return {
@@ -560,7 +668,9 @@ async def check_and_process_evaluation(
 
         # IMPORTANT: Poll OpenAI to get the latest status before checking
         provider = OpenAIBatchProvider(client=openai_client)
-        poll_batch_status(session=session, provider=provider, batch_job=batch_job)
+        status_result = poll_batch_status(
+            session=session, provider=provider, batch_job=batch_job
+        )
 
         # Refresh batch_job to get the updated provider_status
         session.refresh(batch_job)
@@ -568,6 +678,41 @@ async def check_and_process_evaluation(
 
         # Handle different provider statuses
         if provider_status == "completed":
+            # Check if batch completed but all requests failed
+            # (output_file_id is absent, error_file_id is present)
+            if not status_result.get(
+                "provider_output_file_id", batch_job.provider_output_file_id
+            ) and status_result.get("error_file_id"):
+                error_msg = _extract_batch_error_message(
+                    provider=provider,
+                    error_file_id=status_result["error_file_id"],
+                    batch_job=batch_job,
+                    session=session,
+                )
+
+                eval_run = update_evaluation_run(
+                    session=session,
+                    eval_run=eval_run,
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=error_msg,
+                    ),
+                )
+
+                logger.error(
+                    f"[check_and_process_evaluation] {log_prefix} Batch completed with all requests failed | {error_msg}"
+                )
+
+                return {
+                    "run_id": eval_run.id,
+                    "run_name": eval_run.run_name,
+                    "previous_status": previous_status,
+                    "current_status": "failed",
+                    "provider_status": provider_status,
+                    "action": "failed",
+                    "error": error_msg,
+                }
+
             # Process the completed evaluation
             await process_completed_evaluation(
                 eval_run=eval_run,
@@ -592,8 +737,10 @@ async def check_and_process_evaluation(
             eval_run = update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
-                status="failed",
-                error_message=error_msg,
+                update=EvaluationRunUpdate(
+                    status="failed",
+                    error_message=error_msg,
+                ),
             )
 
             logger.error(
@@ -631,8 +778,10 @@ async def check_and_process_evaluation(
         update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            status="failed",
-            error_message=f"Checking failed: {str(e)}",
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Checking failed: {str(e)}",
+            ),
         )
 
         return {
@@ -724,8 +873,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=http_exc.detail,
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=http_exc.detail,
+                        ),
                     )
 
                     all_results.append(
@@ -765,8 +916,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     update_evaluation_run(
                         session=session,
                         eval_run=eval_run,
-                        status="failed",
-                        error_message=f"Check failed: {str(e)}",
+                        update=EvaluationRunUpdate(
+                            status="failed",
+                            error_message=f"Check failed: {str(e)}",
+                        ),
                     )
 
                     all_results.append(
@@ -788,8 +941,10 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                 update_evaluation_run(
                     session=session,
                     eval_run=eval_run,
-                    status="failed",
-                    error_message=f"Project processing failed: {str(e)}",
+                    update=EvaluationRunUpdate(
+                        status="failed",
+                        error_message=f"Project processing failed: {str(e)}",
+                    ),
                 )
 
                 all_results.append(

@@ -1,5 +1,5 @@
-"""Gemini integration for STT evaluation."""
+"""Gemini integration — re-exports from app.core.batch for backwards compatibility."""
 
-from .client import GeminiClient
+from app.core.batch.client import GeminiClient, GeminiClientError
 
-__all__ = ["GeminiClient"]
+__all__ = ["GeminiClient", "GeminiClientError"]

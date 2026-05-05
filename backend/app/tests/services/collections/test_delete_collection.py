@@ -1,6 +1,7 @@
 from unittest.mock import patch, MagicMock
 from uuid import uuid4, UUID
 
+import pytest
 from sqlmodel import Session
 
 from app.models.collection import DeletionRequest
@@ -23,7 +24,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     req = DeletionRequest(collection_id=created_collection.id)
 
     with patch(
-        "app.services.collections.delete_collection.start_low_priority_job"
+        "app.services.collections.delete_collection.start_delete_collection_job"
     ) as mock_schedule:
         mock_schedule.return_value = "fake-task-id"
 
@@ -58,10 +59,6 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
 
         mock_schedule.assert_called_once()
         kwargs = mock_schedule.call_args.kwargs
-        assert (
-            kwargs["function_path"]
-            == "app.services.collections.delete_collection.execute_job"
-        )
         assert kwargs["project_id"] == project.id
         assert kwargs["organization_id"] == project.organization_id
         assert kwargs["job_id"] == str(job.id)
@@ -178,15 +175,16 @@ def test_execute_job_delete_failure_marks_job_failed(
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id)
 
-        execute_job(
-            request=req.model_dump(mode="json"),
-            project_id=project.id,
-            organization_id=project.organization_id,
-            task_id=str(task_id),
-            job_id=str(job.id),
-            collection_id=str(collection.id),
-            task_instance=None,
-        )
+        with pytest.raises(Exception, match="Remote deletion failed"):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(task_id),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
 
         failed_job = CollectionJobCrud(db, project.id).read_one(job.id)
         assert failed_job.task_id == str(task_id)
@@ -335,15 +333,16 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
         task_id = uuid4()
         req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
 
-        execute_job(
-            request=req.model_dump(mode="json"),
-            project_id=project.id,
-            organization_id=project.organization_id,
-            task_id=str(task_id),
-            job_id=str(job.id),
-            collection_id=str(collection.id),
-            task_instance=None,
-        )
+        with pytest.raises(Exception, match="Remote deletion failed"):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(task_id),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
 
         failed_job = CollectionJobCrud(db, project.id).read_one(job.id)
         assert failed_job.task_id == str(task_id)
@@ -369,3 +368,134 @@ def test_execute_job_delete_remote_failure_with_callback_sends_failure_payload(
         assert payload_arg["data"]["status"] == CollectionJobStatus.FAILED
         assert payload_arg["data"]["collection"]["id"] == str(collection.id)
         assert UUID(payload_arg["data"]["job_id"]) == job.id
+
+
+@patch("app.services.collections.delete_collection.get_llm_provider")
+def test_execute_job_local_delete_failure_after_remote_success_marks_failed(
+    mock_get_llm_provider: MagicMock, db
+) -> None:
+    """
+    When provider.delete() succeeds but the local CollectionCrud.delete_by_id fails:
+    - job should be marked FAILED with error_message set
+    - exception is re-raised
+    - provider.delete was already called (remote resource is gone)
+    """
+    project = get_project(db)
+
+    collection = get_vector_store_collection(
+        db, project, vector_store_id="vs_local_fail"
+    )
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.DELETE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=collection.id,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.delete = MagicMock()
+    mock_get_llm_provider.return_value = mock_provider
+
+    with patch(
+        "app.services.collections.delete_collection.Session"
+    ) as SessionCtor, patch(
+        "app.services.collections.delete_collection.CollectionCrud"
+    ) as MockCollectionCrud:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        collection_crud_instance = MockCollectionCrud.return_value
+        collection_crud_instance.read_one.return_value = collection
+        collection_crud_instance.delete_by_id.side_effect = Exception(
+            "Local DB delete failed"
+        )
+
+        task_id = uuid4()
+        req = DeletionRequest(collection_id=collection.id)
+
+        with pytest.raises(Exception, match="Local DB delete failed"):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(task_id),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
+
+        failed_job = CollectionJobCrud(db, project.id).read_one(job.id)
+        assert failed_job.task_id == str(task_id)
+        assert failed_job.status == CollectionJobStatus.FAILED
+        assert (
+            failed_job.error_message
+            and "Local DB delete failed" in failed_job.error_message
+        )
+
+        mock_provider.delete.assert_called_once_with(collection)
+        collection_crud_instance.delete_by_id.assert_called_once_with(collection.id)
+
+
+@patch("app.services.collections.delete_collection.get_llm_provider")
+def test_execute_job_provider_factory_failure_marks_job_failed(
+    mock_get_llm_provider: MagicMock, db
+) -> None:
+    """
+    When get_llm_provider itself raises (e.g. missing credentials):
+    - job should be marked FAILED with error_message set
+    - provider.delete is never called
+    - local collection is not deleted
+    """
+    project = get_project(db)
+
+    collection = get_vector_store_collection(
+        db, project, vector_store_id="vs_provider_fail"
+    )
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.DELETE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=collection.id,
+    )
+
+    mock_get_llm_provider.side_effect = Exception("Provider credentials missing")
+
+    with patch(
+        "app.services.collections.delete_collection.Session"
+    ) as SessionCtor, patch(
+        "app.services.collections.delete_collection.CollectionCrud"
+    ) as MockCollectionCrud:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        collection_crud_instance = MockCollectionCrud.return_value
+        collection_crud_instance.read_one.return_value = collection
+
+        task_id = uuid4()
+        req = DeletionRequest(collection_id=collection.id)
+
+        with pytest.raises(Exception, match="Provider credentials missing"):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(task_id),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
+
+        failed_job = CollectionJobCrud(db, project.id).read_one(job.id)
+        assert failed_job.task_id == str(task_id)
+        assert failed_job.status == CollectionJobStatus.FAILED
+        assert (
+            failed_job.error_message
+            and "Provider credentials missing" in failed_job.error_message
+        )
+
+        collection_crud_instance.delete_by_id.assert_not_called()
+        mock_get_llm_provider.assert_called_once()

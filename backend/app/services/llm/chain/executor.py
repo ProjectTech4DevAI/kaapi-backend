@@ -13,7 +13,7 @@ from app.models.llm.request import (
 from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class ChainExecutor:
         self._chain = chain
         self._context = context
         self._request = request
+        self._webhook_secret: str | None = None
 
     def run(self) -> dict:
         """Execute the full chain lifecycle. Returns serialized APIResponse."""
@@ -60,24 +61,29 @@ class ChainExecutor:
                 status=ChainStatus.RUNNING,
             )
 
+        self._webhook_secret = get_webhook_secret(
+            self._context.project_id, self._context.organization_id
+        )
+
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
-        with Session(engine) as session:
-            if result.success:
-                final = LLMChainResponse(
-                    response=result.response.response,
-                    usage=result.usage,
-                    provider_raw_response=result.response.provider_raw_response,
+        if result.success:
+            final = LLMChainResponse(
+                response=result.response.response,
+                usage=result.usage,
+                provider_raw_response=result.response.provider_raw_response,
+            )
+            callback_response = APIResponse.success_response(
+                data=final, metadata=self._request.request_metadata
+            )
+            if self._request.callback_url:
+                send_callback(
+                    callback_url=str(self._request.callback_url),
+                    data=callback_response.model_dump(),
+                    webhook_secret=self._webhook_secret,
                 )
-                callback_response = APIResponse.success_response(
-                    data=final, metadata=self._request.request_metadata
-                )
-                if self._request.callback_url:
-                    send_callback(
-                        callback_url=str(self._request.callback_url),
-                        data=callback_response.model_dump(),
-                    )
+            with Session(engine) as session:
                 JobCrud(session).update(
                     job_id=self._context.job_id,
                     job_update=JobUpdate(status=JobStatus.SUCCESS),
@@ -89,9 +95,9 @@ class ChainExecutor:
                     output=result.response.response.output.model_dump(),
                     total_usage=self._context.aggregated_usage.model_dump(),
                 )
-                return callback_response.model_dump()
-            else:
-                return self._handle_error(result.error)
+            return callback_response.model_dump()
+        else:
+            return self._handle_error(result.error)
 
     def _handle_error(self, error: str) -> dict:
         callback_response = APIResponse.failure_response(
@@ -103,13 +109,14 @@ class ChainExecutor:
             f"chain_id={self._context.chain_id}, job_id={self._context.job_id}, error={error}"
         )
 
-        with Session(engine) as session:
-            if self._request.callback_url:
-                send_callback(
-                    callback_url=str(self._request.callback_url),
-                    data=callback_response.model_dump(),
-                )
+        if self._request.callback_url:
+            send_callback(
+                callback_url=str(self._request.callback_url),
+                data=callback_response.model_dump(),
+                webhook_secret=self._webhook_secret,
+            )
 
+        with Session(engine) as session:
             update_llm_chain_status(
                 session,
                 chain_id=self._context.chain_id,
@@ -166,6 +173,7 @@ class ChainExecutor:
             send_callback(
                 callback_url=str(self._request.callback_url),
                 data=callback_data.model_dump(),
+                webhook_secret=self._webhook_secret,
             )
             logger.info(
                 f"[_send_intermediate_callback] Sent intermediate callback | "

@@ -12,11 +12,13 @@ class JobCrud:
     def __init__(self, session: Session):
         self.session = session
 
-    def create(self, job_type: JobType, trace_id: str | None = None) -> Job:
-        new_job = Job(
-            job_type=job_type,
-            trace_id=trace_id,
-        )
+    def create(
+        self,
+        job_type: JobType,
+        trace_id: str | None = None,
+        project_id: int | None = None,
+    ) -> Job:
+        new_job = Job(job_type=job_type, trace_id=trace_id, project_id=project_id)
         self.session.add(new_job)
         self.session.commit()
         self.session.refresh(new_job)
@@ -38,5 +40,10 @@ class JobCrud:
 
         return job
 
-    def get(self, job_id: UUID) -> Job | None:
-        return self.session.get(Job, job_id)
+    def get(self, job_id: UUID, project_id: int) -> Job | None:
+        job = self.session.get(Job, job_id)
+        if job is None:
+            return None
+        if job.project_id not in (None, project_id):
+            return None
+        return job

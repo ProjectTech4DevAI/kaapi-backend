@@ -20,10 +20,11 @@ from app.models import (
     DocTransformationJobPublic,
     TransformedDocumentPublic,
     DocTransformationJob,
+    Project,
 )
 from app.core.cloud import get_cloud_storage
-from app.celery.utils import start_low_priority_job
-from app.utils import send_callback, APIResponse
+from app.celery.utils import start_doctransform_job
+from app.utils import send_callback, get_webhook_secret, APIResponse
 from app.services.doctransform.registry import convert_document, FORMAT_TO_EXTENSION
 from app.core.db import engine
 
@@ -43,12 +44,11 @@ def start_job(
     job_crud.update(job_id, DocTransformJobUpdate(trace_id=trace_id))
     job = job_crud.read_one(job_id)
 
-    task_id = start_low_priority_job(
-        function_path="app.services.doctransform.job.execute_job",
+    task_id = start_doctransform_job(
         project_id=project_id,
         job_id=str(job.id),
-        source_document_id=str(job.source_document_id),
         trace_id=trace_id,
+        source_document_id=str(job.source_document_id),
         transformer_name=transformer_name,
         target_format=target_format,
         callback_url=callback_url,
@@ -118,10 +118,17 @@ def execute_job(
     tmp_dir: Path | None = None
 
     job_for_payload = None  # keep latest job snapshot for payloads
+    webhook_secret: str | None = None
 
     try:
         job_uuid = UUID(job_id)
         source_uuid = UUID(source_document_id)
+
+        if callback_url:
+            with Session(engine) as db:
+                project = db.get(Project, project_id)
+            if project is not None:
+                webhook_secret = get_webhook_secret(project_id, project.organization_id)
 
         logger.info(
             "[doc_transform.execute_job] started | job_id=%s | transformer=%s | target=%s | project_id=%s",
@@ -223,7 +230,7 @@ def execute_job(
         )
 
         if callback_url:
-            send_callback(callback_url, success_payload)
+            send_callback(callback_url, success_payload, webhook_secret=webhook_secret)
 
     except Exception as e:
         logger.error(
@@ -252,7 +259,9 @@ def execute_job(
         if callback_url and job_for_payload:
             try:
                 failure_payload = build_failure_payload(job_for_payload, str(e))
-                send_callback(callback_url, failure_payload)
+                send_callback(
+                    callback_url, failure_payload, webhook_secret=webhook_secret
+                )
             except Exception as cb_error:
                 logger.error(
                     "[doc_transform.execute_job] callback failed | job_id=%s | error=%s",

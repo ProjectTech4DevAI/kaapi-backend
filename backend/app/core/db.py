@@ -1,6 +1,7 @@
 from sqlmodel import Session, create_engine, select
 
 from app import crud
+from app.core.telemetry import instrument_db_engine
 from app.models import User, UserCreate
 
 
@@ -11,9 +12,16 @@ def get_engine():
 
     # Configure connection pool settings
     # For testing, we need more connections since tests run in parallel
-    pool_size = 20 if settings.ENVIRONMENT == "development" else 5
-    max_overflow = 30 if settings.ENVIRONMENT == "development" else 10
+    pool_size = 5
+    max_overflow = 10
 
+    if settings.ENVIRONMENT == "development":
+        pool_size = 20
+        max_overflow = 30
+    elif settings.ENVIRONMENT == "staging":
+        pool_size = 16
+        # test it out
+        max_overflow = 0
     return create_engine(
         str(settings.SQLALCHEMY_DATABASE_URI),
         pool_size=pool_size,
@@ -25,6 +33,7 @@ def get_engine():
 
 # Create a default engine for backward compatibility
 engine = get_engine()
+instrument_db_engine(engine)
 
 
 # make sure all SQLModel models are imported (app.models) before initializing DB

@@ -3,15 +3,33 @@ from unittest.mock import patch
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 from app.core.config import settings
 from app.tests.utils.auth import TestAuthContext
-from app.models import CollectionJobStatus
+from app.models import CollectionJobStatus, Document
 from app.models.collection import CreationRequest
 
 
 def _extract_metadata(body: dict) -> dict | None:
     return body.get("metadata") or body.get("meta")
+
+
+def _create_test_document(
+    db: Session, project_id: int, file_size: float = 1
+) -> Document:
+    """Helper to create a test document."""
+    doc = Document(
+        id=uuid4(),
+        fname="test_document.txt",
+        object_store_url="s3://test-bucket/test_document.txt",
+        project_id=project_id,
+        file_size_kb=file_size,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return doc
 
 
 @patch("app.api.routes.collections.create_service.start_job")
@@ -20,13 +38,16 @@ def test_collection_creation_with_assistant_calls_start_job_and_returns_job(
     client: TestClient,
     user_api_key_header: dict[str, str],
     user_api_key: TestAuthContext,
+    db: Session,
 ) -> None:
+    # Create a test document in the database
+    doc = _create_test_document(db, user_api_key.project_id, file_size=2)
+
     creation_data = CreationRequest(
         model="gpt-4o",
         instructions="string",
         temperature=0.000001,
-        documents=[UUID("f3e86a17-1e6f-41ec-b020-5b08eebef928")],
-        batch_size=1,
+        documents=[doc.id],
         callback_url=None,
     )
 
@@ -67,11 +88,14 @@ def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_f
     client: TestClient,
     user_api_key_header: dict[str, str],
     user_api_key: TestAuthContext,
+    db: Session,
 ) -> None:
+    # Create a test document in the database
+    doc = _create_test_document(db, user_api_key.project_id, file_size=5)
+
     creation_data = CreationRequest(
         temperature=0.000001,
-        documents=[str(uuid4())],
-        batch_size=1,
+        documents=[doc.id],
         callback_url=None,
     )
 
@@ -103,13 +127,18 @@ def test_collection_creation_vector_only_adds_metadata_and_sets_with_assistant_f
 
 
 def test_collection_creation_vector_only_request_validation_error(
-    client: TestClient, user_api_key_header: dict[str, str]
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+    user_api_key: TestAuthContext,
+    db: Session,
 ) -> None:
+    # Create a test document in the database
+    doc = _create_test_document(db, user_api_key.project_id)
+
     payload = {
         "model": "gpt-4o",
         "temperature": 0.000001,
-        "documents": [str(uuid4())],
-        "batch_size": 1,
+        "documents": [str(doc.id)],
         "callback_url": None,
     }
 
@@ -124,7 +153,9 @@ def test_collection_creation_vector_only_request_validation_error(
     assert body["success"] is False
     assert body["data"] is None
     assert body["metadata"] is None
-    assert (
+    assert body["errors"]
+    assert any(
         "To create an Assistant, provide BOTH 'model' and 'instructions'"
-        in body["error"]
+        in e["message"]
+        for e in body["errors"]
     )

@@ -90,3 +90,31 @@ def test_delete_organization(
         headers=superuser_token_headers,
     )
     assert response.status_code == 404
+
+
+# Test pagination has_more metadata
+def test_read_organizations_has_more(
+    db: Session, superuser_token_headers: dict[str, str]
+) -> None:
+    # Create 2 orgs and request with limit=1 to trigger has_more=True
+    create_test_organization(db)
+    create_test_organization(db)
+
+    response = client.get(
+        f"{settings.API_V1_STR}/organizations/?skip=0&limit=1",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert "metadata" in response_data
+    assert response_data["metadata"]["has_more"] is True
+
+    # Request all with large limit to verify has_more=False
+    response = client.get(
+        f"{settings.API_V1_STR}/organizations/?skip=0&limit=100",
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+    response_data = response.json()
+    assert "metadata" in response_data
+    assert response_data["metadata"]["has_more"] is False

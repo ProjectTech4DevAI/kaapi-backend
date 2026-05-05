@@ -10,15 +10,17 @@ from app.core.cloud import get_cloud_storage
 from app.crud.file import get_files_by_ids
 from app.crud.language import get_language_by_id
 from app.crud.stt_evaluations import (
+    get_samples_by_dataset_id,
     get_stt_dataset_by_id,
     list_stt_datasets,
-    get_samples_by_dataset_id,
+    update_stt_sample,
 )
 from app.models.stt_evaluation import (
     STTDatasetCreate,
     STTDatasetPublic,
     STTDatasetWithSamples,
     STTSamplePublic,
+    STTSampleUpdate,
 )
 from app.services.stt_evaluations.dataset import upload_stt_dataset
 from app.utils import APIResponse, load_description
@@ -36,23 +38,17 @@ router = APIRouter()
     description=load_description("stt_evaluation/create_dataset.md"),
 )
 def create_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_create: STTDatasetCreate = Body(...),
 ) -> APIResponse[STTDatasetPublic]:
     """Create an STT evaluation dataset."""
-    # Validate language_id if provided
+    # Validate language_id
     if dataset_create.language_id is not None:
-        language = get_language_by_id(
-            session=_session, language_id=dataset_create.language_id
-        )
-        if not language:
-            raise HTTPException(
-                status_code=400, detail="Invalid language_id: language not found"
-            )
+        get_language_by_id(session=session, language_id=dataset_create.language_id)
 
     dataset, samples = upload_stt_dataset(
-        session=_session,
+        session=session,
         name=dataset_create.name,
         samples=dataset_create.samples,
         organization_id=auth_context.organization_.id,
@@ -87,14 +83,14 @@ def create_dataset(
     description=load_description("stt_evaluation/list_datasets.md"),
 )
 def list_datasets(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(50, ge=1, le=100, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> APIResponse[list[STTDatasetPublic]]:
     """List STT evaluation datasets."""
     datasets, total = list_stt_datasets(
-        session=_session,
+        session=session,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         limit=limit,
@@ -115,7 +111,7 @@ def list_datasets(
     description=load_description("stt_evaluation/get_dataset.md"),
 )
 def get_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     dataset_id: int,
     include_samples: bool = Query(True, description="Include samples in response"),
@@ -127,7 +123,7 @@ def get_dataset(
 ) -> APIResponse[STTDatasetWithSamples]:
     """Get an STT evaluation dataset."""
     dataset = get_stt_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -141,7 +137,7 @@ def get_dataset(
 
     if include_samples:
         sample_records = get_samples_by_dataset_id(
-            session=_session,
+            session=session,
             dataset_id=dataset_id,
             org_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
@@ -152,7 +148,7 @@ def get_dataset(
         # Fetch file records to get object_store_url
         file_ids = [s.file_id for s in sample_records]
         file_records = get_files_by_ids(
-            session=_session,
+            session=session,
             file_ids=file_ids,
             organization_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
@@ -162,21 +158,15 @@ def get_dataset(
         storage = None
         if include_signed_url:
             storage = get_cloud_storage(
-                session=_session, project_id=auth_context.project_.id
+                session=session, project_id=auth_context.project_.id
             )
 
-        samples = []
         for s in sample_records:
             signed_url = None
-            if include_signed_url and storage and s.file_id in file_map:
-                try:
-                    signed_url = storage.get_signed_url(
-                        file_map.get(s.file_id).object_store_url
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[get_dataset] Failed to generate signed URL for file_id {s.file_id}: {e}"
-                    )
+            if storage and s.file_id in file_map:
+                signed_url = storage.get_signed_url(
+                    file_map[s.file_id].object_store_url
+                )
 
             samples.append(
                 STTSamplePublic(
@@ -213,4 +203,51 @@ def get_dataset(
             samples=samples,
         ),
         metadata={"samples_total": samples_total},
+    )
+
+
+@router.patch(
+    "/samples/{sample_id}",
+    response_model=APIResponse[STTSamplePublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    summary="Update STT sample",
+    description=load_description("stt_evaluation/update_sample.md"),
+)
+def update_sample(
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    sample_id: int,
+    sample_update: STTSampleUpdate = Body(...),
+) -> APIResponse[STTSamplePublic]:
+    """Update an STT sample's language and/or ground truth."""
+    logger.info(f"[update_sample] Updating sample | " f"sample_id: {sample_id}")
+
+    if sample_update.language_id is not None:
+        get_language_by_id(session=session, language_id=sample_update.language_id)
+
+    sample = update_stt_sample(
+        session=session,
+        sample_id=sample_id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+        language_id=sample_update.language_id,
+        ground_truth=sample_update.ground_truth,
+    )
+
+    if not sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    return APIResponse.success_response(
+        data=STTSamplePublic(
+            id=sample.id,
+            file_id=sample.file_id,
+            language_id=sample.language_id,
+            ground_truth=sample.ground_truth,
+            sample_metadata=sample.sample_metadata,
+            dataset_id=sample.dataset_id,
+            organization_id=sample.organization_id,
+            project_id=sample.project_id,
+            inserted_at=sample.inserted_at,
+            updated_at=sample.updated_at,
+        )
     )

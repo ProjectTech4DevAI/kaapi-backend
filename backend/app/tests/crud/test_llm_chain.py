@@ -35,7 +35,7 @@ class TestCreateLlmChain:
         assert chain.id is not None
         assert chain.job_id == job.id
         assert chain.project_id == project.id
-        assert chain.status == ChainStatus.PENDING
+        assert chain.status == ChainStatus.PENDING.value
         assert chain.total_blocks == 3
         assert chain.number_of_blocks_processed == 0
         assert chain.input == "Test input"

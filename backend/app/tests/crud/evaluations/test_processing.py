@@ -1,21 +1,22 @@
-from typing import Any
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, select
 
+from app.core.util import now
+from app.crud.evaluations.core import create_evaluation_run
 from app.crud.evaluations.processing import (
+    _extract_batch_error_message,
     check_and_process_evaluation,
     parse_evaluation_output,
+    poll_all_pending_evaluations,
     process_completed_embedding_batch,
     process_completed_evaluation,
-    poll_all_pending_evaluations,
 )
-from app.models import BatchJob, Organization, Project, EvaluationDataset, EvaluationRun
-from app.tests.utils.test_data import create_test_evaluation_dataset, create_test_config
-from app.crud.evaluations.core import create_evaluation_run
-from app.core.util import now
+from app.models import BatchJob, EvaluationDataset, EvaluationRun, Organization, Project
+from app.models.batch_job import BatchJobType
+from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
 
 class TestParseEvaluationOutput:
@@ -300,7 +301,7 @@ class TestProcessCompletedEvaluation:
             provider="openai",
             provider_batch_id="batch_abc123",
             provider_status="completed",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -355,7 +356,11 @@ class TestProcessCompletedEvaluation:
                     "body": {
                         "id": "resp_123",
                         "output": "Answer 1",
-                        "usage": {"total_tokens": 10},
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "total_tokens": 150,
+                        },
                     }
                 },
             }
@@ -394,6 +399,20 @@ class TestProcessCompletedEvaluation:
         mock_fetch_dataset.assert_called_once()
         mock_create_langfuse.assert_called_once()
         mock_start_embedding.assert_called_once()
+
+        # Cost tracking: response cost should be aggregated and persisted.
+        db.refresh(result)
+        assert result.cost is not None
+        assert "response" in result.cost
+        response_cost = result.cost["response"]
+        assert response_cost["model"] == "gpt-4o"
+        assert response_cost["input_tokens"] == 100
+        assert response_cost["output_tokens"] == 50
+        assert response_cost["total_tokens"] == 150
+        assert response_cost["cost_usd"] > 0
+        assert result.cost["total_cost_usd"] == response_cost["cost_usd"]
+        # Embedding cost is added later by process_completed_embedding_batch.
+        assert "embedding" not in result.cost
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
@@ -499,7 +518,7 @@ class TestProcessCompletedEmbeddingBatch:
             provider="openai",
             provider_batch_id="batch_embed_123",
             provider_status="completed",
-            job_type="embedding",
+            job_type=BatchJobType.EMBEDDING,
             total_items=4,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -545,7 +564,31 @@ class TestProcessCompletedEmbeddingBatch:
         eval_run_with_embedding_batch,
     ):
         """Test successfully processing completed embedding batch."""
-        mock_download.return_value = []
+        # Pre-populate eval_run.cost with a response entry to verify that the
+        # embedding stage merges (not overwrites) existing cost data.
+        eval_run_with_embedding_batch.cost = {
+            "response": {
+                "model": "gpt-4o",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "cost_usd": 0.000375,
+            },
+            "total_cost_usd": 0.000375,
+        }
+        db.add(eval_run_with_embedding_batch)
+        db.commit()
+        db.refresh(eval_run_with_embedding_batch)
+
+        # Raw results carry the usage payload that _build_embedding_cost_entry reads.
+        mock_download.return_value = [
+            {
+                "custom_id": "trace_123",
+                "response": {
+                    "body": {"usage": {"prompt_tokens": 200, "total_tokens": 200}}
+                },
+            }
+        ]
         mock_parse.return_value = [
             {
                 "item_id": "item1",
@@ -579,10 +622,26 @@ class TestProcessCompletedEmbeddingBatch:
         assert "summary_scores" in result.score
         summary_scores = result.score["summary_scores"]
         cosine_score = next(
-            (s for s in summary_scores if s["name"] == "cosine_similarity"), None
+            (s for s in summary_scores if s["name"] == "Cosine Similarity"), None
         )
         assert cosine_score is not None
         assert cosine_score["avg"] == 0.95
+
+        # Cost tracking: embedding entry is added, response entry is preserved,
+        # and total_cost_usd is the sum of both.
+        assert result.cost is not None
+        assert "response" in result.cost
+        assert "embedding" in result.cost
+        assert result.cost["response"]["cost_usd"] == 0.000375
+        embedding_cost = result.cost["embedding"]
+        assert embedding_cost["model"] == "text-embedding-3-large"
+        assert embedding_cost["input_tokens"] == 200
+        assert embedding_cost["output_tokens"] == 0
+        assert embedding_cost["total_tokens"] == 200
+        assert embedding_cost["cost_usd"] > 0
+        assert result.cost["total_cost_usd"] == pytest.approx(
+            0.000375 + embedding_cost["cost_usd"]
+        )
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
@@ -652,12 +711,13 @@ class TestCheckAndProcessEvaluation:
             db, project_id=test_dataset.project_id, use_kaapi_schema=True
         )
 
-        # Create batch job
+        # Create batch job with output file (successful completion)
         batch_job = BatchJob(
             provider="openai",
             provider_batch_id="batch_abc",
             provider_status="completed",
-            job_type="evaluation",
+            provider_output_file_id="output-file-123",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,
@@ -687,6 +747,12 @@ class TestCheckAndProcessEvaluation:
         db.refresh(eval_run)
 
         mock_get_batch.return_value = batch_job
+        mock_poll.return_value = {
+            "provider_status": "completed",
+            "provider_output_file_id": "output-file-123",
+            "error_file_id": None,
+            "request_counts": {"total": 2, "completed": 2, "failed": 0},
+        }
         mock_process.return_value = eval_run
 
         mock_openai = MagicMock()
@@ -724,7 +790,7 @@ class TestCheckAndProcessEvaluation:
             provider="openai",
             provider_batch_id="batch_fail",
             provider_status="failed",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             error_message="Provider error",
@@ -755,6 +821,13 @@ class TestCheckAndProcessEvaluation:
         db.refresh(eval_run)
 
         mock_get_batch.return_value = batch_job
+        mock_poll.return_value = {
+            "provider_status": "failed",
+            "provider_output_file_id": None,
+            "error_file_id": None,
+            "error_message": "Provider error",
+            "request_counts": {"total": 2, "completed": 0, "failed": 2},
+        }
 
         mock_openai = MagicMock()
         mock_langfuse = MagicMock()
@@ -770,6 +843,227 @@ class TestCheckAndProcessEvaluation:
         assert result["current_status"] == "failed"
         db.refresh(eval_run)
         assert eval_run.status == "failed"
+
+    @pytest.fixture
+    def all_requests_failed_setup(
+        self, db: Session, test_dataset
+    ) -> tuple[BatchJob, EvaluationRun]:
+        """Create a BatchJob (completed, no output file) and a processing EvaluationRun for the all-requests-failed scenario."""
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
+        batch_job = BatchJob(
+            provider="openai",
+            provider_batch_id="batch_all_fail",
+            provider_status="completed",
+            job_type=BatchJobType.EVALUATION,
+            total_items=9,
+            status="submitted",
+            organization_id=test_dataset.organization_id,
+            project_id=test_dataset.project_id,
+            inserted_at=now(),
+            updated_at=now(),
+        )
+        db.add(batch_job)
+        db.commit()
+        db.refresh(batch_job)
+
+        eval_run = create_evaluation_run(
+            session=db,
+            run_name="test_run_all_fail",
+            dataset_name=test_dataset.name,
+            dataset_id=test_dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=test_dataset.organization_id,
+            project_id=test_dataset.project_id,
+        )
+        eval_run.batch_job_id = batch_job.id
+        eval_run.status = "processing"
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        return batch_job, eval_run
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.get_batch_job")
+    @patch("app.crud.evaluations.processing.poll_batch_status")
+    @patch("app.crud.evaluations.processing.OpenAIBatchProvider")
+    async def test_check_and_process_evaluation_completed_all_requests_failed(
+        self,
+        mock_provider_cls,
+        mock_poll,
+        mock_get_batch,
+        db: Session,
+        all_requests_failed_setup: tuple[BatchJob, EvaluationRun],
+    ):
+        """Test batch completed but all requests failed — both batch_job and eval_run get error_message."""
+        batch_job, eval_run = all_requests_failed_setup
+
+        mock_get_batch.return_value = batch_job
+        mock_poll.return_value = {
+            "provider_status": "completed",
+            "provider_output_file_id": None,
+            "error_file_id": "error-file-abc",
+            "request_counts": {"total": 9, "completed": 0, "failed": 9},
+        }
+
+        # Mock the provider instance returned by OpenAIBatchProvider(client=...)
+        # to return realistic error file content
+        error_lines = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": f"batch_req_{i}",
+                        "custom_id": f"id-{i}",
+                        "response": {
+                            "status_code": 400,
+                            "body": {
+                                "error": {
+                                    "message": "Unsupported parameter: 'temperature' is not supported with this model.",
+                                }
+                            },
+                        },
+                        "error": None,
+                    }
+                )
+                for i in range(9)
+            ]
+        )
+        mock_provider_instance = mock_provider_cls.return_value
+        mock_provider_instance.download_file.return_value = error_lines
+
+        mock_openai = MagicMock()
+        mock_langfuse = MagicMock()
+
+        result = await check_and_process_evaluation(
+            eval_run=eval_run,
+            session=db,
+            openai_client=mock_openai,
+            langfuse=mock_langfuse,
+        )
+
+        assert result["action"] == "failed"
+        assert result["current_status"] == "failed"
+        assert "temperature" in result["error"]
+        assert "(9/9 requests)" in result["error"]
+
+        # Verify eval_run updated with error
+        db.refresh(eval_run)
+        assert eval_run.status == "failed"
+        assert "temperature" in eval_run.error_message
+
+        # Verify batch_job updated with error
+        db.refresh(batch_job)
+        assert "temperature" in batch_job.error_message
+        assert "(9/9 requests)" in batch_job.error_message
+
+
+class TestExtractBatchErrorMessage:
+    """Test extracting error messages from OpenAI error files."""
+
+    def test_single_unique_error(self) -> None:
+        """Test error file where all requests have the same error."""
+        error_lines = []
+        for i in range(5):
+            error_lines.append(
+                json.dumps(
+                    {
+                        "id": f"batch_req_{i}",
+                        "custom_id": f"id-{i}",
+                        "response": {
+                            "status_code": 400,
+                            "body": {
+                                "error": {
+                                    "message": "Unsupported parameter: 'temperature' is not supported with this model.",
+                                    "type": "invalid_request_error",
+                                }
+                            },
+                        },
+                        "error": None,
+                    }
+                )
+            )
+        error_content = "\n".join(error_lines)
+
+        mock_provider = MagicMock()
+        mock_provider.download_file.return_value = error_content
+
+        mock_session = MagicMock()
+        mock_batch_job = MagicMock()
+        mock_batch_job.id = 1
+
+        result = _extract_batch_error_message(
+            provider=mock_provider,
+            error_file_id="error-file-123",
+            batch_job=mock_batch_job,
+            session=mock_session,
+        )
+
+        assert "Unsupported parameter" in result
+        assert "(5/5 requests)" in result
+        mock_provider.download_file.assert_called_once_with("error-file-123")
+
+    def test_multiple_unique_errors_picks_most_common(self) -> None:
+        """Test error file with mixed errors; picks the most frequent one."""
+        error_lines = []
+        # 3 requests with temperature error
+        for i in range(3):
+            error_lines.append(
+                json.dumps(
+                    {
+                        "id": f"batch_req_{i}",
+                        "custom_id": f"id-{i}",
+                        "response": {
+                            "status_code": 400,
+                            "body": {
+                                "error": {
+                                    "message": "Unsupported parameter: 'temperature'",
+                                }
+                            },
+                        },
+                        "error": None,
+                    }
+                )
+            )
+        # 1 request with rate limit error
+        error_lines.append(
+            json.dumps(
+                {
+                    "id": "batch_req_3",
+                    "custom_id": "id-3",
+                    "response": {
+                        "status_code": 429,
+                        "body": {
+                            "error": {
+                                "message": "Rate limit exceeded",
+                            }
+                        },
+                    },
+                    "error": None,
+                }
+            )
+        )
+        error_content = "\n".join(error_lines)
+
+        mock_provider = MagicMock()
+        mock_provider.download_file.return_value = error_content
+
+        mock_session = MagicMock()
+        mock_batch_job = MagicMock()
+        mock_batch_job.id = 1
+
+        result = _extract_batch_error_message(
+            provider=mock_provider,
+            error_file_id="error-file-123",
+            batch_job=mock_batch_job,
+            session=mock_session,
+        )
+
+        assert "Unsupported parameter: 'temperature'" in result
+        assert "(3/4 requests)" in result
 
 
 class TestPollAllPendingEvaluations:
@@ -828,7 +1122,7 @@ class TestPollAllPendingEvaluations:
             provider="openai",
             provider_batch_id="batch_test",
             provider_status="in_progress",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             total_items=2,
             status="submitted",
             organization_id=test_dataset.organization_id,

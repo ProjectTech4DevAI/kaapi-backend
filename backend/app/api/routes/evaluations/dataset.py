@@ -14,6 +14,7 @@ from fastapi import (
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud import get_cloud_storage
 from app.crud.evaluations import (
     get_dataset_by_id,
     list_datasets as list_evaluation_datasets,
@@ -34,16 +35,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/evaluations/datasets", tags=["Evaluation"])
 
 
-def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
+def _dataset_to_response(
+    dataset: EvaluationDataset, signed_url: str | None = None
+) -> DatasetUploadResponse:
     """Convert a dataset model to a DatasetUploadResponse."""
     return DatasetUploadResponse(
         dataset_id=dataset.id,
         dataset_name=dataset.name,
+        description=dataset.description,
         total_items=dataset.dataset_metadata.get("total_items_count", 0),
         original_items=dataset.dataset_metadata.get("original_items_count", 0),
         duplication_factor=dataset.dataset_metadata.get("duplication_factor", 1),
         langfuse_dataset_id=dataset.langfuse_dataset_id,
         object_store_url=dataset.object_store_url,
+        signed_url=signed_url,
     )
 
 
@@ -54,7 +59,7 @@ def _dataset_to_response(dataset: EvaluationDataset) -> DatasetUploadResponse:
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 async def upload_dataset(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     file: UploadFile = File(
         ..., description="CSV file with 'question' and 'answer' columns"
@@ -74,7 +79,7 @@ async def upload_dataset(
 
     # Upload dataset using service
     dataset = upload_evaluation_dataset(
-        session=_session,
+        session=session,
         csv_content=csv_content,
         dataset_name=dataset_name,
         description=description,
@@ -93,7 +98,7 @@ async def upload_dataset(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_datasets(
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(
         default=50, ge=1, le=100, description="Maximum number of datasets to return"
@@ -102,7 +107,7 @@ def list_datasets(
 ) -> APIResponse[list[DatasetUploadResponse]]:
     """List evaluation datasets."""
     datasets = list_evaluation_datasets(
-        session=_session,
+        session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         limit=limit,
@@ -122,8 +127,11 @@ def list_datasets(
 )
 def get_dataset(
     dataset_id: int,
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
+    include_signed_url: bool = Query(
+        False, description="Include signed URL for dataset"
+    ),
 ) -> APIResponse[DatasetUploadResponse]:
     """Get a specific evaluation dataset."""
     logger.info(
@@ -133,7 +141,7 @@ def get_dataset(
     )
 
     dataset = get_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -144,7 +152,16 @@ def get_dataset(
             status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
         )
 
-    return APIResponse.success_response(data=_dataset_to_response(dataset))
+    signed_url = None
+    if include_signed_url and dataset.object_store_url:
+        storage = get_cloud_storage(
+            session=session, project_id=auth_context.project_.id
+        )
+        signed_url = storage.get_signed_url(dataset.object_store_url)
+
+    return APIResponse.success_response(
+        data=_dataset_to_response(dataset, signed_url=signed_url)
+    )
 
 
 @router.delete(
@@ -155,7 +172,7 @@ def get_dataset(
 )
 def delete_dataset(
     dataset_id: int,
-    _session: SessionDep,
+    session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[dict]:
     """Delete an evaluation dataset."""
@@ -166,7 +183,7 @@ def delete_dataset(
     )
 
     dataset = get_dataset_by_id(
-        session=_session,
+        session=session,
         dataset_id=dataset_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -177,7 +194,7 @@ def delete_dataset(
             status_code=404, detail=f"Dataset {dataset_id} not found or not accessible"
         )
     dataset_name = dataset.name
-    error = delete_dataset_crud(session=_session, dataset=dataset)
+    error = delete_dataset_crud(session=session, dataset=dataset)
 
     if error:
         raise HTTPException(status_code=400, detail=error)

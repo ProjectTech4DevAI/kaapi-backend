@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider
+from app.core.providers import mask_credential_fields, validate_provider
 from app.crud.credentials import (
     get_creds_by_org,
     get_provider_credential,
@@ -67,15 +67,13 @@ def read_credential(
         org_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
-    if not creds:
-        raise HTTPException(status_code=404, detail="Credentials not found")
 
     return APIResponse.success_response([cred.to_public() for cred in creds])
 
 
 @router.get(
     "/provider/{provider}",
-    response_model=APIResponse[dict],
+    response_model=APIResponse[dict | None],
     description=load_description("credentials/get_provider.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
@@ -85,7 +83,11 @@ def read_provider_credential(
     provider: str,
     _current_user: AuthContextDep,
 ):
-    provider_enum = validate_provider(provider)
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     credential = get_provider_credential(
         session=session,
         org_id=_current_user.organization_.id,
@@ -93,9 +95,11 @@ def read_provider_credential(
         project_id=_current_user.project_.id,
     )
     if credential is None:
-        raise HTTPException(status_code=404, detail="Provider credentials not found")
+        return APIResponse.success_response(None)
 
-    return APIResponse.success_response(credential)
+    return APIResponse.success_response(
+        mask_credential_fields(provider_enum, credential)
+    )
 
 
 @router.patch(
@@ -143,7 +147,11 @@ def delete_provider_credential(
     provider: str,
     _current_user: AuthContextDep,
 ):
-    provider_enum = validate_provider(provider)
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     remove_provider_credential(
         session=session,
         org_id=_current_user.organization_.id,
@@ -171,6 +179,150 @@ def delete_all_credentials(
         session=session,
         org_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
+    )
+
+    return APIResponse.success_response(
+        {"message": "All credentials deleted successfully"}
+    )
+
+
+@router.get(
+    "/{org_id}/{project_id}",
+    response_model=APIResponse[list[CredsPublic]],
+    description=load_description("credentials/list_by_org_project.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def read_credentials_by_org_project(
+    *,
+    session: SessionDep,
+    org_id: int,
+    project_id: int,
+    _current_user: AuthContextDep,
+):
+    creds = get_creds_by_org(
+        session=session,
+        org_id=org_id,
+        project_id=project_id,
+    )
+
+    return APIResponse.success_response([cred.to_public() for cred in creds])
+
+
+@router.get(
+    "/{org_id}/{project_id}/provider/{provider}",
+    response_model=APIResponse[dict | None],
+    description=load_description("credentials/get_provider_by_org_project.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def read_provider_credential_by_org_project(
+    *,
+    session: SessionDep,
+    org_id: int,
+    project_id: int,
+    provider: str,
+    _current_user: AuthContextDep,
+):
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    credential = get_provider_credential(
+        session=session,
+        org_id=org_id,
+        provider=provider_enum,
+        project_id=project_id,
+    )
+    if credential is None:
+        return APIResponse.success_response(None)
+
+    return APIResponse.success_response(
+        mask_credential_fields(provider_enum, credential)
+    )
+
+
+@router.patch(
+    "/{org_id}/{project_id}",
+    response_model=APIResponse[list[CredsPublic]],
+    description=load_description("credentials/update_by_org_project.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def update_credential_by_org_project(
+    *,
+    session: SessionDep,
+    org_id: int,
+    project_id: int,
+    creds_in: CredsUpdate,
+    _current_user: AuthContextDep,
+):
+    if not creds_in or not creds_in.provider or not creds_in.credential:
+        logger.error(
+            f"[update_credential_by_org_project] Invalid input | organization_id: {org_id}, project_id: {project_id}"
+        )
+        raise HTTPException(
+            status_code=400, detail="Provider and credential must be provided"
+        )
+
+    updated_credential = update_creds_for_org(
+        session=session,
+        org_id=org_id,
+        creds_in=creds_in,
+        project_id=project_id,
+    )
+
+    return APIResponse.success_response(
+        [cred.to_public() for cred in updated_credential]
+    )
+
+
+@router.delete(
+    "/{org_id}/{project_id}/provider/{provider}",
+    response_model=APIResponse[dict],
+    description=load_description("credentials/delete_provider_by_org_project.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def delete_provider_credential_by_org_project(
+    *,
+    session: SessionDep,
+    org_id: int,
+    project_id: int,
+    provider: str,
+    _current_user: AuthContextDep,
+):
+    try:
+        provider_enum = validate_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    remove_provider_credential(
+        session=session,
+        org_id=org_id,
+        provider=provider_enum,
+        project_id=project_id,
+    )
+
+    return APIResponse.success_response(
+        {"message": "Provider credentials removed successfully"}
+    )
+
+
+@router.delete(
+    "/{org_id}/{project_id}",
+    response_model=APIResponse[dict],
+    description=load_description("credentials/delete_all_by_org_project.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def delete_all_credentials_by_org_project(
+    *,
+    session: SessionDep,
+    org_id: int,
+    project_id: int,
+    _current_user: AuthContextDep,
+):
+    remove_creds_for_org(
+        session=session,
+        org_id=org_id,
+        project_id=project_id,
     )
 
     return APIResponse.success_response(

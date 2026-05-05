@@ -18,6 +18,7 @@ from app.core.batch.base import BATCH_KEY
 
 from app.core.batch import OpenAIBatchProvider, start_batch_job
 from app.models import EvaluationRun
+from app.models.batch_job import BatchJobType
 from app.models.llm.request import KaapiLLMParams
 
 logger = logging.getLogger(__name__)
@@ -105,11 +106,11 @@ def build_evaluation_jsonl(
         body: dict[str, Any] = {
             "model": config.model,
             "instructions": config.instructions,
-            "temperature": config.temperature
-            if config.temperature is not None
-            else 0.01,
             "input": question,  # Add input from dataset
         }
+
+        if "temperature" in config.model_fields_set:
+            body["temperature"] = config.temperature
 
         # Add reasoning only if provided
         if config.reasoning:
@@ -188,7 +189,7 @@ def start_evaluation_batch(
             "description": f"Evaluation: {eval_run.run_name}",
             "completion_window": "24h",
             # Store complete config for reference
-            "evaluation_config": config.model_dump(exclude_none=True),
+            "evaluation_config": config.model_dump(exclude_unset=True),
         }
 
         # Step 5: Start batch job using generic infrastructure
@@ -196,7 +197,7 @@ def start_evaluation_batch(
             session=session,
             provider=provider,
             provider_name="openai",
-            job_type="evaluation",
+            job_type=BatchJobType.EVALUATION,
             organization_id=eval_run.organization_id,
             project_id=eval_run.project_id,
             jsonl_data=jsonl_data,

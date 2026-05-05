@@ -12,6 +12,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi import Path as FastPath
+from fastapi import HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -27,8 +28,9 @@ from app.models import (
     DocTransformationJobPublic,
 )
 from app.core.cloud import get_cloud_storage
-from app.services.collections.helpers import pick_service_for_documennt
+from app.services.collections.helpers import pick_service_for_documennt, MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
+    calculate_file_size,
     schedule_transformation,
     pre_transform_validation,
     build_document_schema,
@@ -81,7 +83,7 @@ def list_docs(
     ),
 ):
     crud = DocumentCrud(session, current_user.project_.id)
-    documents = crud.read_many(skip, limit)
+    documents, has_more = crud.read_many(skip, limit)
 
     storage = (
         get_cloud_storage(session=session, project_id=current_user.project_.id)
@@ -94,7 +96,7 @@ def list_docs(
         include_url=include_url,
         storage=storage,
     )
-    return APIResponse.success_response(results)
+    return APIResponse.success_response(results, metadata=dict(has_more=has_more))
 
 
 @router.post(
@@ -129,6 +131,20 @@ async def upload_doc(
         transformer=transformer,
     )
 
+    file_size_kb = calculate_file_size(src)
+    file_size_mb = file_size_kb / 1024
+
+    if file_size_mb > MAX_DOC_SIZE_MB:
+        logger.warning(
+            f"[upload_doc] Document size exceeds limit | "
+            f"{{'filename': '{src.filename}', 'size_mb': {round(file_size_mb, 2)}, 'max_size_mb': {MAX_DOC_SIZE_MB}}}"
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Document size ({round(file_size_mb, 2)} MB) exceeds the maximum allowed size of {MAX_DOC_SIZE_MB} MB. "
+            f"Please upload a smaller file.",
+        )
+
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
     object_store_url = storage.put(src, Path(str(document_id)))
@@ -137,6 +153,7 @@ async def upload_doc(
     document = Document(
         id=document_id,
         fname=src.filename,
+        file_size_kb=file_size_kb,
         object_store_url=str(object_store_url),
     )
     source_document = crud.update(document)

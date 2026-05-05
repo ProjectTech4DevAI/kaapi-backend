@@ -221,6 +221,9 @@ class STTSampleCreate(BaseModel):
     ground_truth: str | None = Field(
         None, description="Reference transcription (optional)"
     )
+    language_id: int | None = Field(
+        None, description="Language ID for this sample (overrides dataset language)"
+    )
 
 
 class STTSamplePublic(BaseModel):
@@ -263,6 +266,13 @@ class STTResultWithSample(STTResultPublic):
     """STT result with embedded sample data."""
 
     sample: STTSamplePublic
+
+
+class STTSampleUpdate(BaseModel):
+    """Request model for updating an STT sample's language and ground truth."""
+
+    language_id: int | None = Field(None, description="Language ID for this sample")
+    ground_truth: str | None = Field(None, description="Reference transcription")
 
 
 class STTFeedbackUpdate(BaseModel):

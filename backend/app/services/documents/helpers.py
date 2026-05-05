@@ -1,7 +1,7 @@
 from typing import Optional, Tuple, Iterable, Union
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 from app.services.doctransform.registry import (
     get_available_transformers,
@@ -21,6 +21,26 @@ from app.models import (
     DocTransformationJobPublic,
     TransformedDocumentPublic,
 )
+
+
+def calculate_file_size(file: UploadFile) -> float:
+    """
+    Calculate the size of an uploaded file in kilobytes.
+
+    Args:
+        file: The uploaded file from FastAPI
+
+    Returns:
+        The size of the file in kilobytes (KB) as a whole number
+    """
+    if file.size:
+        return round(file.size / 1024)
+
+    file.file.seek(0, 2)
+    size_bytes = file.file.tell()
+    file.file.seek(0)
+
+    return round(size_bytes / 1024)
 
 
 def pre_transform_validation(
