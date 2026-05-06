@@ -16,7 +16,7 @@ router = APIRouter(prefix="/apikeys", tags=["API Keys"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=APIResponse[APIKeyCreateResponse],
     status_code=201,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
@@ -44,7 +44,7 @@ def create_api_key_route(
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[list[APIKeyPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     description=load_description("api_keys/list.md"),

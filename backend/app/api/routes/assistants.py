@@ -50,7 +50,7 @@ def ingest_assistant_route(
 
 
 @router.post(
-    "/",
+    "",
     response_model=APIResponse[Assistant],
     status_code=201,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -126,7 +126,7 @@ def get_assistant_route(
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[list[Assistant]],
     summary="List all assistants in the current project",
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

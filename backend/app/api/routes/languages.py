@@ -12,7 +12,7 @@ router = APIRouter(prefix="/languages", tags=["Languages"])
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[LanguagesPublic],
     description=load_description("languages/list.md"),
 )
