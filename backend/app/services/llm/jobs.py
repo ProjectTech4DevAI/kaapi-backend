@@ -840,7 +840,7 @@ def execute_job(
             )
 
         except (Timeout, SoftTimeLimitExceeded):
-            logger.error(
+            logger.warning(
                 f"[execute_job] LLM job timed out | job_id={job_uuid}, task_id={task_id}"
             )
             callback_response = APIResponse.failure_response(
@@ -970,7 +970,7 @@ def execute_chain_job(
             return executor.run()
 
         except (Timeout, SoftTimeLimitExceeded) as err:
-            logger.error(
+            logger.warning(
                 f"[execute_chain_job] Chain job timed out | job_id={job_uuid}, task_id={task_id}"
             )
             callback_response = APIResponse.failure_response(

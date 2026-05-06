@@ -38,7 +38,7 @@ class ZeroxTransformer(Transformer):
         except (Timeout, SoftTimeLimitExceeded):
             raise
         except TimeoutError:
-            logger.error(
+            logger.warning(
                 f"ZeroxTransformer timed out for {input_path} (model={self.model})"
             )
             raise RuntimeError(

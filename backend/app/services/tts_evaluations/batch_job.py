@@ -61,7 +61,7 @@ def execute_batch_submission(
             )
 
             if not run:
-                logger.error(
+                logger.warning(
                     f"[execute_batch_submission] Run not found | run_id: {run_id}"
                 )
                 return {"success": False, "error": "Run not found"}
@@ -74,7 +74,7 @@ def execute_batch_submission(
             )
 
             if not dataset:
-                logger.error(
+                logger.warning(
                     f"[execute_batch_submission] Dataset not found | "
                     f"run_id: {run_id}, dataset_id: {dataset_id}"
                 )
@@ -89,7 +89,7 @@ def execute_batch_submission(
             sample_texts = get_sample_texts_from_dataset(session, dataset, project_id)
 
             if not sample_texts:
-                logger.error(
+                logger.warning(
                     f"[execute_batch_submission] No samples found | "
                     f"run_id: {run_id}, dataset_id: {dataset_id}"
                 )
@@ -129,7 +129,7 @@ def execute_batch_submission(
 
         except (Timeout, SoftTimeLimitExceeded) as err:
             timeout_err = TimeoutError("Task exceeded soft time limit")
-            logger.error(
+            logger.warning(
                 f"[execute_batch_submission] TTS batch submission timed out | run_id={run_id}"
             )
             update_tts_run(

@@ -157,7 +157,7 @@ def execute_metric_computation(
 
         except (Timeout, SoftTimeLimitExceeded) as err:
             timeout_err = TimeoutError("Task exceeded soft time limit")
-            logger.error(
+            logger.warning(
                 f"[execute_metric_computation] STT metric computation timed out | run_id={run_id}"
             )
             update_stt_run(

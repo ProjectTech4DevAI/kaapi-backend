@@ -249,7 +249,7 @@ def execute_job(
 
         except (Timeout, SoftTimeLimitExceeded) as err:
             timeout_err = TimeoutError("Task exceeded soft time limit")
-            logger.error(
+            logger.warning(
                 "[delete_collection.execute_job] Collection Deletion Timed Out | "
                 "{'collection_id': '%s', 'job_id': '%s'}",
                 str(collection_uuid),
