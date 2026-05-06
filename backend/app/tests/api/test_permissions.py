@@ -212,9 +212,7 @@ class TestRequireFeature:
             api_key=api_key_response.key,
         )
 
-        monkeypatch.setattr(
-            "app.core.feature_flags.is_enabled", lambda **kwargs: False
-        )
+        monkeypatch.setattr("app.core.feature_flags.is_enabled", lambda **kwargs: False)
 
         feature_checker = require_feature(FeatureFlag.ASSESSMENT)
 

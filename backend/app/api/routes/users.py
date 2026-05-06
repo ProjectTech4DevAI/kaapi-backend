@@ -117,7 +117,9 @@ def update_password_me(
     return Message(message="Password updated successfully")
 
 
-@router.get("/me", description=load_description("users/get_me.md"), response_model=UserPublic)
+@router.get(
+    "/me", description=load_description("users/get_me.md"), response_model=UserPublic
+)
 def read_user_me(
     session: SessionDep,
     current_user_dep: AuthContextDep,

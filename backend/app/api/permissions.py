@@ -90,11 +90,15 @@ def require_feature(flag: FeatureFlag):
         org_id = auth_context.organization.id if auth_context.organization else None
         project_id = auth_context.project.id if auth_context.project else None
 
-        if org_id is None or project_id is None or not is_enabled(
-            session=session,
-            flag=flag.value,
-            organization_id=org_id,
-            project_id=project_id,
+        if (
+            org_id is None
+            or project_id is None
+            or not is_enabled(
+                session=session,
+                flag=flag.value,
+                organization_id=org_id,
+                project_id=project_id,
+            )
         ):
             raise HTTPException(
                 status_code=403,
