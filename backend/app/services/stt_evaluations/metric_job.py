@@ -119,7 +119,7 @@ def execute_metric_computation(
                     all_scores.append(scores)
                     scored_count += 1
                 except Exception as e:
-                    logger.error(
+                    logger.warning(
                         f"[execute_metric_computation] Metric calculation failed | "
                         f"result_id: {result.id}, error: {e}",
                         exc_info=True,

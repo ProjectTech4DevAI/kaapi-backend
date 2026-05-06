@@ -282,7 +282,7 @@ class ConfigVersionCrud:
             old_type = "text"
 
         if new_type is None:
-            logger.error(
+            logger.warning(
                 f"[ConfigVersionCrud._validate_config_type_unchanged] Missing type field | "
                 f"{{'config_id': '{self.config_id}', 'old_type': {old_type}, 'new_type': {new_type}}}"
             )

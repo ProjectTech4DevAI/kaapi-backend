@@ -93,7 +93,7 @@ def _extract_batch_error_message(
             error_msg = "Batch completed with errors but could not parse error file"
 
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[_extract_batch_error_message] Failed to extract errors | batch_job_id={batch_job.id} | {e}",
             exc_info=True,
         )
@@ -181,7 +181,7 @@ def parse_evaluation_output(
             # Handle errors in batch processing
             if response.get("error"):
                 error_msg = response["error"].get("message", "Unknown error")
-                logger.error(
+                logger.warning(
                     f"[parse_evaluation_output] Item had error | item_id={item_id} | {error_msg}"
                 )
                 generated_output = f"ERROR: {error_msg}"
@@ -503,7 +503,7 @@ async def process_completed_embedding_batch(
                 )
             except Exception as e:
                 # Log error but don't fail the evaluation
-                logger.error(
+                logger.warning(
                     f"[process_completed_embedding_batch] {log_prefix} Failed to update Langfuse traces with scores | {e}",
                     exc_info=True,
                 )
@@ -623,7 +623,7 @@ async def check_and_process_evaluation(
                     }
 
                 elif embedding_status in ["failed", "expired", "cancelled"]:
-                    logger.error(
+                    logger.warning(
                         f"[check_and_process_evaluation] {log_prefix} Embedding batch failed | provider_batch_id={embedding_batch_job.provider_batch_id} | {embedding_batch_job.error_message}"
                     )
                     # Mark as completed without embeddings

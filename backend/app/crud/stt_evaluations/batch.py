@@ -160,7 +160,7 @@ def start_stt_evaluation_batch(
                 gemini_file_names.append(result.file_name)
             else:
                 failed_samples.append((result.sample, result.error))
-                logger.error(
+                logger.warning(
                     f"[start_stt_evaluation_batch] Failed to upload to Gemini | "
                     f"sample_id: {result.sample.id}, error: {result.error}"
                 )

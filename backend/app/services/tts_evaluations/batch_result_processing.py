@@ -185,7 +185,7 @@ def execute_tts_result_processing(
                         processed_count += 1
 
                     except Exception as audio_err:
-                        logger.error(
+                        logger.warning(
                             f"[execute_tts_result_processing] Audio processing failed | "
                             f"result_id={result_id}, error={str(audio_err)}"
                         )
