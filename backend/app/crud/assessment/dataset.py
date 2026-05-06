@@ -46,7 +46,7 @@ def create_assessment_dataset(
         session.refresh(dataset)
     except IntegrityError as e:
         session.rollback()
-        logger.error(
+        logger.warning(
             "[create_assessment_dataset] Dataset name already exists | "
             "name=%s | org_id=%s | project_id=%s",
             name,

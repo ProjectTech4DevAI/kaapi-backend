@@ -82,7 +82,7 @@ class TestDatasetUploadValidation:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -122,7 +122,7 @@ class TestDatasetUploadValidation:
         # The CSV validation happens before any mocked functions are called
         # so this test checks the actual validation logic
         response = client.post(
-            "/api/v1/evaluations/datasets/",
+            "/api/v1/evaluations/datasets",
             files={"file": (filename, file_obj, "text/csv")},
             data={
                 "dataset_name": "test_dataset",
@@ -164,7 +164,7 @@ class TestDatasetUploadValidation:
             filename, file_obj = create_csv_file(csv_with_empty_rows)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -212,7 +212,7 @@ class TestDatasetUploadDuplication:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -256,7 +256,7 @@ class TestDatasetUploadDuplication:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -301,7 +301,7 @@ class TestDatasetUploadDuplication:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset_with_description",
@@ -336,7 +336,7 @@ class TestDatasetUploadDuplication:
         filename, file_obj = create_csv_file(valid_csv_content)
 
         response = client.post(
-            "/api/v1/evaluations/datasets/",
+            "/api/v1/evaluations/datasets",
             files={"file": (filename, file_obj, "text/csv")},
             data={
                 "dataset_name": "test_dataset",
@@ -363,7 +363,7 @@ class TestDatasetUploadDuplication:
         filename, file_obj = create_csv_file(valid_csv_content)
 
         response = client.post(
-            "/api/v1/evaluations/datasets/",
+            "/api/v1/evaluations/datasets",
             files={"file": (filename, file_obj, "text/csv")},
             data={
                 "dataset_name": "test_dataset",
@@ -405,7 +405,7 @@ class TestDatasetUploadDuplication:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -447,7 +447,7 @@ class TestDatasetUploadErrors:
             filename, file_obj = create_csv_file(valid_csv_content)
 
             response = client.post(
-                "/api/v1/evaluations/datasets/",
+                "/api/v1/evaluations/datasets",
                 files={"file": (filename, file_obj, "text/csv")},
                 data={
                     "dataset_name": "test_dataset",
@@ -476,7 +476,7 @@ class TestDatasetUploadErrors:
         filename, file_obj = create_csv_file(invalid_csv)
 
         response = client.post(
-            "/api/v1/evaluations/datasets/",
+            "/api/v1/evaluations/datasets",
             files={"file": (filename, file_obj, "text/csv")},
             data={
                 "dataset_name": "test_dataset",
@@ -502,7 +502,7 @@ class TestDatasetUploadErrors:
         filename, file_obj = create_csv_file(valid_csv_content)
 
         response = client.post(
-            "/api/v1/evaluations/datasets/",
+            "/api/v1/evaluations/datasets",
             files={"file": (filename, file_obj, "text/csv")},
             data={
                 "dataset_name": "test_dataset",
@@ -538,7 +538,7 @@ class TestBatchEvaluation:
 
         # Try to start evaluation with non-existent dataset_id
         response = client.post(
-            "/api/v1/evaluations/",
+            "/api/v1/evaluations",
             json={
                 "experiment_name": "test_evaluation_run",
                 "dataset_id": 99999,  # Non-existent
@@ -561,7 +561,7 @@ class TestBatchEvaluation:
         """Test batch evaluation fails with invalid config_id."""
         # Test with a non-existent config_id (random UUID)
         response = client.post(
-            "/api/v1/evaluations/",
+            "/api/v1/evaluations",
             json={
                 "experiment_name": "test_no_config",
                 "dataset_id": 1,  # Dummy ID, config validation happens first
@@ -585,7 +585,7 @@ class TestBatchEvaluation:
     ):
         """Test batch evaluation requires authentication."""
         response = client.post(
-            "/api/v1/evaluations/",
+            "/api/v1/evaluations",
             json={
                 "experiment_name": "test_evaluation_run",
                 "dataset_id": 1,

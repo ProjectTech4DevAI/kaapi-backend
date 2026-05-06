@@ -32,7 +32,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.get(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=UsersPublic,
     include_in_schema=False,
@@ -44,7 +44,7 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
 
 
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=UserPublic,
     include_in_schema=False,
