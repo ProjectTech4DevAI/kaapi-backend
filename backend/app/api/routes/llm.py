@@ -101,7 +101,7 @@ def llm_call(
             job_id=job.id,
             status=job.status.value,
             message=message,
-            job_inserted_at=job.created_at,
+            job_inserted_at=job.inserted_at,
             job_updated_at=job.updated_at,
         )
 

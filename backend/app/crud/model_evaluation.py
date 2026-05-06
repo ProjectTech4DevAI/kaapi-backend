@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import Float, cast
 from sqlmodel import Session, select
 
 from app.crud import fetch_by_id
@@ -112,28 +113,24 @@ def fetch_eval_by_doc_id(
 def fetch_top_model_by_doc_id(
     session: Session, document_id: UUID, project_id: int
 ) -> ModelEvaluation:
-    query = (
+    mcc_expr = cast(ModelEvaluation.score["mcc_score"].astext, Float)
+
+    stmt = (
         select(ModelEvaluation)
         .where(
             ModelEvaluation.document_id == document_id,
             ModelEvaluation.project_id == project_id,
+            ModelEvaluation.deleted_at.is_(None),
+            ModelEvaluation.score.is_not(None),
+            mcc_expr.is_not(None),
         )
-        .order_by(ModelEvaluation.updated_at.desc())
+        .order_by(mcc_expr.desc())
+        .limit(1)
     )
 
-    model_evals = session.exec(query).all()
+    top_model = session.exec(stmt).first()
 
-    top_model = None
-    highest_mcc = -float("inf")
-
-    for model_eval in model_evals:
-        if model_eval.score is not None:
-            mcc = model_eval.score.get("mcc_score", None)
-            if mcc is not None and mcc > highest_mcc:
-                highest_mcc = mcc
-                top_model = model_eval
-
-    if not top_model:
+    if top_model is None:
         logger.error(
             f"[fetch_top_model_by_doc_id]No model evaluation found with populated score for document_id={document_id}, project_id={project_id}"
         )

@@ -597,7 +597,7 @@ class LlmCall(SQLModel, table=True):
     )
 
     # Timestamps
-    created_at: datetime = Field(
+    inserted_at: datetime = Field(
         default_factory=now,
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the LLM call was created"},

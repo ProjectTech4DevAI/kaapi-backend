@@ -42,6 +42,9 @@ class Job(SQLModel, table=True):
     )
     project_id: int | None = Field(
         default=None,
+        foreign_key="project.id",
+        ondelete="CASCADE",
+        index=True,
         description="Project ID of the project the job belongs to.",
         sa_column_kwargs={"comment": "Project ID of the job's project"},
     )
@@ -65,7 +68,7 @@ class Job(SQLModel, table=True):
     )
 
     # Timestamps
-    created_at: datetime = Field(
+    inserted_at: datetime = Field(
         default_factory=now,
         sa_column_kwargs={"comment": "Timestamp when the job was created"},
     )

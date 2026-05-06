@@ -348,13 +348,13 @@ class EvaluationRun(SQLModel, table=True):
     )
 
     # Timestamps
-    inserted_at: datetime = Field(
+    inserted_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
         description="The timestamp when the evaluation run was started",
         sa_column_kwargs={"comment": "Timestamp when the evaluation run was started"},
     )
-    updated_at: datetime = Field(
+    updated_at: datetime = SQLField(
         default_factory=now,
         nullable=False,
         description="The timestamp when the evaluation run was last updated",

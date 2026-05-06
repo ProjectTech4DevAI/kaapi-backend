@@ -244,7 +244,7 @@ def get_llm_calls_by_job_id(
             LlmCall.project_id == project_id,
             LlmCall.deleted_at.is_(None),
         )
-        .order_by(LlmCall.created_at.desc())
+        .order_by(LlmCall.inserted_at.desc())
     )
 
     return list(session.exec(statement).all())
