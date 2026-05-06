@@ -15,29 +15,24 @@ from app.tests.utils.test_data import create_test_project
 class TestCreateFeatureFlag:
     def test_creates_flag(self, db: Session) -> None:
         project = create_test_project(db)
-        flag = create_feature_flag(
+        # Flag is auto-seeded as disabled by DB trigger; verify it exists with correct shape
+        from app.crud.feature_flag import get_feature_flag
+
+        flag = get_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project.organization_id,
             project_id=project.id,
-            enabled=True,
         )
         assert flag is not None
         assert flag.id is not None
         assert flag.key == "ASSESSMENT"
         assert flag.organization_id == project.organization_id
         assert flag.project_id == project.id
-        assert flag.enabled is True
 
     def test_raises_on_duplicate(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
+        # Auto-seeded flag already exists; creating again must raise 409
         with pytest.raises(HTTPException, match="Feature flag already exists"):
             create_feature_flag(
                 session=db,
@@ -49,6 +44,7 @@ class TestCreateFeatureFlag:
 
     def test_same_key_different_projects_can_coexist(self, db: Session) -> None:
         from app.crud import create_project
+        from app.crud.feature_flag import get_feature_flag
         from app.models import ProjectCreate
 
         project_a = create_test_project(db)
@@ -61,19 +57,18 @@ class TestCreateFeatureFlag:
                 organization_id=project_a.organization_id,
             ),
         )
-        flag_a = create_feature_flag(
+        # Both projects have auto-seeded flags; verify both exist independently
+        flag_a = get_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project_a.organization_id,
             project_id=project_a.id,
-            enabled=True,
         )
-        flag_b = create_feature_flag(
+        flag_b = get_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project_a.organization_id,
             project_id=project_b.id,
-            enabled=False,
         )
         assert flag_a is not None
         assert flag_b is not None
@@ -82,13 +77,7 @@ class TestCreateFeatureFlag:
 class TestUpdateFeatureFlag:
     def test_updates_enabled_state(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
+        # Flag is auto-seeded as disabled; update it directly
         updated = update_feature_flag(
             session=db,
             key="ASSESSMENT",
@@ -101,6 +90,13 @@ class TestUpdateFeatureFlag:
 
     def test_raises_when_not_found(self, db: Session) -> None:
         project = create_test_project(db)
+        # Delete the auto-seeded flag first so update raises 404
+        delete_feature_flag(
+            session=db,
+            key="ASSESSMENT",
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
         with pytest.raises(HTTPException, match="Feature flag not found"):
             update_feature_flag(
                 session=db,
@@ -124,14 +120,15 @@ class TestUpdateFeatureFlag:
                 organization_id=project_a.organization_id,
             ),
         )
-        create_feature_flag(
+        # Both projects have auto-seeded flags; enable both then disable project_b only
+        update_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project_a.organization_id,
             project_id=project_a.id,
             enabled=True,
         )
-        create_feature_flag(
+        update_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project_a.organization_id,
@@ -152,13 +149,7 @@ class TestUpdateFeatureFlag:
 class TestDeleteFeatureFlag:
     def test_deletes_existing_flag(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
+        # Flag is auto-seeded by DB trigger; delete it directly
         delete_feature_flag(
             session=db,
             key="ASSESSMENT",
