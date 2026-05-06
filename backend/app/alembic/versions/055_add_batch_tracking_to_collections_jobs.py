@@ -1,4 +1,4 @@
-"""add batch tracking to collection_job and provider_file_id to document
+"""add batch tracking to collection_jobs
 
 Revision ID: 055
 Revises: 054
