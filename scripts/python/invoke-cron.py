@@ -36,7 +36,7 @@ class EndpointInvoker:
         self.endpoint = ENDPOINT
 
         # Load interval from environment with default of 5 minutes
-        self.interval_minutes = 1
+        self.interval_minutes = int(os.getenv("CRON_INTERVAL_MINUTES", "5"))
         self.interval_seconds = self.interval_minutes * 60
         self.access_token = None
         self.token_expiry = None
