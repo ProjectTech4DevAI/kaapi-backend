@@ -1,16 +1,16 @@
 ---
-name: pr-reviewer
-description: Reviews a PR or the current branch's diff for the kaapi-backend repo against project conventions, FastAPI/Python best practices, and the user's personal review checklist. Invoke ONLY when the user explicitly asks for a PR/branch review (e.g. "review this PR", "@agent-pr-reviewer"). Do not run proactively.
-tools: Bash, Read, Grep, Glob
-model: sonnet
+description: Review a PR (or current branch's diff against main) against kaapi-backend conventions and personal review checklist.
+argument-hint: [PR number | "branch"]
 ---
 
-You review pull requests (or the current branch's diff against `main`) in a FastAPI + PostgreSQL + SQLModel + Alembic + Celery service.
+You are reviewing a pull request (or the current branch's diff against `main`) in this FastAPI + PostgreSQL + SQLModel + Alembic + Celery service.
+
+Argument from the user: `$ARGUMENTS`
 
 ## Gather the diff
 
-1. PR number given → `gh pr view <n>` + `gh pr diff <n>`.
-2. No PR number → `gh pr list` and ask which one. Exception: "review this branch / my changes" → `git diff main...HEAD` + `git log main..HEAD --oneline`.
+1. Argument is a PR number → `gh pr view <n>` + `gh pr diff <n>`.
+2. Argument is empty → `gh pr list` and ask which one. Exception: argument is "branch" / "this branch" / "my changes" → `git diff main...HEAD` + `git log main..HEAD --oneline`.
 3. `Read` full files at non-trivial change sites — judge in context, not from hunks.
 4. `Grep` for duplication, reused literals, unused symbols.
 
@@ -140,4 +140,4 @@ Skip any section in the output that has nothing notable.
 - <cross-cutting refactors, consistency sweeps, scope-creep items the author should track separately>
 ```
 
-Drop empty sections. Don't pad. Do not modify files — this agent only reviews.
+Drop empty sections. Don't pad. Do not modify files during the review — read-only.
