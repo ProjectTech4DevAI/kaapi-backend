@@ -1,3 +1,4 @@
+import base64
 import logging
 import time
 from contextlib import contextmanager
@@ -26,7 +27,12 @@ from app.core.telemetry import (
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
-from app.crud.llm import create_llm_call, serialize_input, update_llm_call_response
+from app.crud.llm import (
+    create_llm_call,
+    serialize_input,
+    update_llm_call_input,
+    update_llm_call_response,
+)
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
 from app.models.llm.request import (
@@ -41,7 +47,15 @@ from app.models.llm.request import (
     TextContent,
     TextInput,
 )
-from app.models.llm.response import LLMCallResponse, LLMResponse, TextOutput, Usage
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.models.llm.response import (
+    AudioOutput,
+    LLMCallResponse,
+    LLMResponse,
+    TextOutput,
+    Usage,
+)
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import (
     list_validators_config,
@@ -553,6 +567,38 @@ def execute_llm_call(
                         error=f"Failed to create LLM call record: {str(e)}"
                     )
 
+            # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
+            # Failures are non-fatal: the job proceeds and the provider still gets the base64.
+            if (
+                isinstance(query.input, AudioInput)
+                and query.input.content.format == "base64"
+                and llm_call_id
+            ):
+                try:
+                    storage = get_cloud_storage(session, project_id)
+                    stt_bytes = base64.b64decode(query.input.content.value)
+                    s3_url = upload_audio_bytes_to_s3(
+                        storage,
+                        stt_bytes,
+                        llm_call_id,
+                        query.input.content.mime_type,
+                        "llm/stt/audio",
+                    )
+                    if s3_url:
+                        update_llm_call_input(session, llm_call_id, s3_url)
+                        logger.info(
+                            f"[execute_llm_call] STT audio uploaded to S3 | llm_call_id={llm_call_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] STT S3 upload failed | llm_call_id={llm_call_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[execute_llm_call] STT S3 upload error, continuing: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
+
             try:
                 provider_instance = get_llm_provider(
                     session=session,
@@ -650,6 +696,41 @@ def execute_llm_call(
                 )
 
         if response:
+            # Upload TTS audio to S3 and replace base64 payload with s3:// URI.
+            # Failures are non-fatal: the job still succeeds with base64 as fallback.
+            tts_output = response.response.output
+            if (
+                isinstance(tts_output, AudioOutput)
+                and tts_output.content.format == "base64"
+                and llm_call_id
+            ):
+                try:
+                    with Session(engine) as s3_session:
+                        storage = get_cloud_storage(s3_session, project_id)
+                    tts_bytes = base64.b64decode(tts_output.content.value)
+                    s3_url = upload_audio_bytes_to_s3(
+                        storage,
+                        tts_bytes,
+                        llm_call_id,
+                        tts_output.content.mime_type,
+                        "llm/tts/audio",
+                    )
+                    if s3_url:
+                        tts_output.content.format = "uri"
+                        tts_output.content.value = s3_url
+                        logger.info(
+                            f"[execute_llm_call] TTS audio uploaded to S3 | llm_call_id={llm_call_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] TTS S3 upload failed, keeping base64 | llm_call_id={llm_call_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[execute_llm_call] TTS S3 upload error, keeping base64: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
+
             with Session(engine) as session:
                 if llm_call_id:
                     with tracer.start_as_current_span(
@@ -802,6 +883,26 @@ def execute_job(
             )
 
             if result.success:
+                # Convert s3:// URI to presigned URL before delivering to client.
+                # On failure keep the s3:// URI rather than failing a completed job.
+                if result.response:
+                    tts_out = result.response.response.output
+                    if (
+                        isinstance(tts_out, AudioOutput)
+                        and tts_out.content.format == "uri"
+                    ):
+                        try:
+                            with Session(engine) as s3_session:
+                                storage = get_cloud_storage(s3_session, project_id)
+                            tts_out.content.value = storage.get_signed_url(
+                                tts_out.content.value, expires_in=3600
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"[execute_job] Failed to generate presigned URL: {e} | job_id={job_uuid}",
+                                exc_info=True,
+                            )
+
                 callback_response = APIResponse.success_response(
                     data=result.response, metadata=result.metadata
                 )

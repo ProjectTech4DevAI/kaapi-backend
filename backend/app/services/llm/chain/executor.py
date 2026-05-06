@@ -2,6 +2,7 @@ import logging
 
 from sqlmodel import Session
 
+from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.crud.jobs import JobCrud
 from app.crud.llm_chain import update_llm_chain_block_completed, update_llm_chain_status
@@ -10,7 +11,11 @@ from app.models.llm.request import (
     ChainStatus,
     LLMChainRequest,
 )
-from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
+from app.models.llm.response import (
+    AudioOutput,
+    IntermediateChainResponse,
+    LLMChainResponse,
+)
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
 from app.utils import APIResponse, get_webhook_secret, send_callback
@@ -65,10 +70,32 @@ class ChainExecutor:
             self._context.project_id, self._context.organization_id
         )
 
+    def _resolve_presigned_url(self, output) -> None:
+        """Replace s3:// URI in AudioOutput with a presigned URL in-place.
+
+        Non-fatal: keeps the s3:// URI if presigning fails rather than failing the job.
+        """
+        if isinstance(output, AudioOutput) and output.content.format == "uri":
+            try:
+                with Session(engine) as session:
+                    storage = get_cloud_storage(session, self._context.project_id)
+                output.content.value = storage.get_signed_url(
+                    output.content.value, expires_in=3600
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[_resolve_presigned_url] Failed to generate presigned URL: {e} | "
+                    f"job_id={self._context.job_id}",
+                    exc_info=True,
+                )
+
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
         if result.success:
+            if result.response:
+                self._resolve_presigned_url(result.response.response.output)
+
             final = LLMChainResponse(
                 response=result.response.response,
                 usage=result.usage,
@@ -159,6 +186,9 @@ class ChainExecutor:
     ) -> None:
         """Send intermediate callback for a completed block."""
         try:
+            if result.response:
+                self._resolve_presigned_url(result.response.response.output)
+
             intermediate = IntermediateChainResponse(
                 block_index=block_index + 1,
                 total_blocks=self._context.total_blocks,
