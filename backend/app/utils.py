@@ -559,6 +559,11 @@ def get_file_extension(mime_type: str) -> str:
     return mime_to_ext.get(mime_type, ".audio")
 
 
+def resolve_audio_url(url: str, mime_type: str):
+    """Download the audio file from the public url."""
+    pass
+
+
 def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
     """Decode base64 audio and write to temp file. Returns (file_path, error)."""
     try:
