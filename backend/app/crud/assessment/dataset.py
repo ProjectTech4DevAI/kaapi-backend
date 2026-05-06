@@ -70,7 +70,7 @@ def create_assessment_dataset(
         )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to save assessment dataset metadata: {e}",
+            detail=f"Failed to save assessment dataset metadata",
         ) from e
 
     logger.info(
