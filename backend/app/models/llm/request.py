@@ -102,8 +102,10 @@ class TextContent(SQLModel):
 
 
 class AudioContent(SQLModel):
-    format: Literal["base64"] = "base64"
-    value: str = Field(..., description="Base64 encoded audio")
+    format: Literal["base64", "url"] = "base64"
+    value: str = Field(
+        ..., description="Base64 encoded audio or public URL to download from"
+    )
     # keeping the mime_type liberal here, since does not affect base64 encoding
     mime_type: str | None = Field(
         None,

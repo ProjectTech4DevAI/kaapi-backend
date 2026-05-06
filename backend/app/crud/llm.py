@@ -31,6 +31,15 @@ def serialize_input(query_input: QueryInput | str) -> str:
     elif isinstance(query_input, TextInput):
         return query_input.content.value
     elif isinstance(query_input, AudioInput):
+        if query_input.content.format == "url":
+            return json.dumps(
+                {
+                    "type": "audio",
+                    "format": "url",
+                    "mime_type": query_input.content.mime_type,
+                    "url": query_input.content.value,
+                }
+            )
         return json.dumps(
             {
                 "type": "audio",

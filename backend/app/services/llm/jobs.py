@@ -67,6 +67,7 @@ from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
     cleanup_temp_file,
+    download_audio_bytes,
     get_webhook_secret,
     resolve_input,
     send_callback,
@@ -569,15 +570,27 @@ def execute_llm_call(
                     )
 
             # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
-            # Failures are non-fatal: the job proceeds and the provider still gets the base64.
+            # Failures are non-fatal: the job proceeds and the provider still gets the original input.
             if (
                 isinstance(query.input, AudioInput)
-                and query.input.content.format == "base64"
+                and query.input.content.format in ("base64", "url")
                 and llm_call_id
             ):
                 try:
+                    if query.input.content.format == "url":
+                        stt_bytes, dl_error = download_audio_bytes(
+                            query.input.content.value
+                        )
+                        if dl_error or not stt_bytes:
+                            raise ValueError(dl_error or "Empty audio bytes from URL")
+                        # Rewrite to base64 in-place so the provider resolve path
+                        # reuses these bytes instead of issuing a second HTTP download.
+                        query.input.content.value = base64.b64encode(stt_bytes).decode()
+                        query.input.content.format = "base64"
+                    else:
+                        stt_bytes = base64.b64decode(query.input.content.value)
+
                     storage = get_cloud_storage(session, project_id)
-                    stt_bytes = base64.b64decode(query.input.content.value)
                     s3_url = upload_audio_bytes_to_s3(
                         storage,
                         stt_bytes,

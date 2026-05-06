@@ -580,6 +580,39 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
         return "", f"Failed to write audio to temp file: {str(e)}"
 
 
+def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
+    """Download audio from a public URL. Returns (bytes, error)."""
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.content, None
+    except requests.exceptions.Timeout:
+        return None, f"Timed out downloading audio from URL: {url}"
+    except requests.exceptions.HTTPError as e:
+        return None, f"HTTP {e.response.status_code} downloading audio from URL: {url}"
+    except Exception as e:
+        return None, f"Failed to download audio from URL: {str(e)}"
+
+
+def resolve_audio_url(url: str, mime_type: str) -> tuple[str, str | None]:
+    """Download audio from a public URL and write to temp file. Returns (file_path, error)."""
+    audio_bytes, error = download_audio_bytes(url)
+    if error:
+        return "", error
+
+    ext = get_file_extension(mime_type)
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=ext, delete=False, prefix="audio_"
+        ) as tmp:
+            tmp.write(audio_bytes)
+            temp_path = tmp.name
+        logger.info(f"[resolve_audio_url] Downloaded audio to temp file: {temp_path}")
+        return temp_path, None
+    except Exception as e:
+        return "", f"Failed to write audio to temp file: {str(e)}"
+
+
 def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
     contents = (
         image_input.content
@@ -623,6 +656,8 @@ def resolve_input(
 
         elif isinstance(query_input, AudioInput):
             mime_type = query_input.content.mime_type or "audio/wav"
+            if query_input.content.format == "url":
+                return resolve_audio_url(query_input.content.value, mime_type)
             return resolve_audio_base64(query_input.content.value, mime_type)
 
         elif isinstance(query_input, ImageInput):
