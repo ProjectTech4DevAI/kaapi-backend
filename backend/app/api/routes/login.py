@@ -83,7 +83,7 @@ def recover_password(email: str, session: SessionDep) -> Message:
     return Message(message="Password recovery email sent")
 
 
-@router.post("/reset-password/", include_in_schema=False)
+@router.post("/reset-password", include_in_schema=False)
 def reset_password(session: SessionDep, body: NewPassword) -> Message:
     """
     Reset password

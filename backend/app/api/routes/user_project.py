@@ -32,7 +32,7 @@ router = APIRouter(prefix="/user-projects", tags=["User Projects"])
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("user_project/list.md"),
     response_model=APIResponse[list[UserProjectPublic]],
 )
@@ -47,7 +47,7 @@ def list_project_users(
 
 
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     description=load_description("user_project/add.md"),
     response_model=APIResponse[list[UserProjectPublic]],
