@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("config/create.md"),
     response_model=APIResponse[ConfigWithVersion],
     status_code=201,
@@ -44,7 +44,7 @@ def create_config(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("config/list.md"),
     response_model=APIResponse[list[ConfigPublic]],
     status_code=200,

@@ -21,7 +21,7 @@ def test_create_api_key_as_superuser(
     project = create_test_project(db)
 
     response = client.post(
-        f"{settings.API_V1_STR}/apikeys/",
+        f"{settings.API_V1_STR}/apikeys",
         headers=superuser_token_headers,
         params={
             "project_id": project.id,
@@ -48,7 +48,7 @@ def test_create_api_key_as_normal_user_forbidden(
 ) -> None:
     """Test that normal users cannot create API keys (superuser only)."""
     response = client.post(
-        f"{settings.API_V1_STR}/apikeys/",
+        f"{settings.API_V1_STR}/apikeys",
         headers=normal_user_token_headers,
         params={
             "project_id": user_api_key.project_id,
@@ -74,7 +74,7 @@ def test_list_api_keys(
         created_keys.append(key)
 
     response = client.get(
-        f"{settings.API_V1_STR}/apikeys/",
+        f"{settings.API_V1_STR}/apikeys",
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 200

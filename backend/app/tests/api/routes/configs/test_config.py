@@ -32,7 +32,7 @@ def test_create_config_success(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         json=config_data,
     )
@@ -73,7 +73,7 @@ def test_create_config_empty_blob_fails(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         json=config_data,
     )
@@ -107,7 +107,7 @@ def test_create_config_duplicate_name_fails(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         json=config_data,
     )
@@ -133,7 +133,7 @@ def test_list_configs(
         created_configs.append(config)
 
     response = client.get(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 200
@@ -163,7 +163,7 @@ def test_list_configs_with_pagination(
 
     # Test with limit
     response = client.get(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         params={"skip": 0, "limit": 2},
     )
@@ -174,7 +174,7 @@ def test_list_configs_with_pagination(
 
     # Test with skip
     response = client.get(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         params={"skip": 2, "limit": 2},
     )
@@ -445,7 +445,7 @@ def test_configs_isolated_by_project(
 
     # User should only see their project's configs
     response = client.get(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 200
@@ -467,7 +467,7 @@ def test_list_configs_with_query(
     create_test_config(db=db, project_id=user_api_key.project_id, name="other-config")
 
     response = client.get(
-        f"{settings.API_V1_STR}/configs/",
+        f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         params={"query": "search"},
     )

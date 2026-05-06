@@ -9,6 +9,7 @@ from app.crud import (
     get_user_by_email,
     get_organization_by_id,
 )
+from app.crud.user_project import add_user_to_project
 from app.models import (
     OnboardingRequest,
     OnboardingResponse,
@@ -149,6 +150,33 @@ def test_onboard_project_existing_user(db: Session) -> None:
         session=db, project_name=project_name, organization_id=org.id
     )
     assert project is not None
+
+
+def test_onboard_project_user_already_in_another_project(db: Session) -> None:
+    """Onboarding must 409 when the user is already mapped to a different project."""
+    existing_project = create_test_project(db)
+    existing_user = create_random_user(db)
+
+    add_user_to_project(
+        session=db,
+        email=existing_user.email,
+        organization_id=existing_project.organization_id,
+        project_id=existing_project.id,
+    )
+    db.commit()
+
+    onboard_request = OnboardingRequest(
+        organization_name="TestOrgOnboardDifferent",
+        project_name="TestProjectOnboardDifferent",
+        email=existing_user.email,
+        password=random_lower_string(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        onboard_project(session=db, onboard_in=onboard_request)
+
+    assert exc_info.value.status_code == 409
+    assert "already associated with another project" in str(exc_info.value.detail)
 
 
 def test_onboard_project_duplicate_project_name(db: Session) -> None:
