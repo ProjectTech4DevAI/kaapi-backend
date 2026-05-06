@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import update
 from sqlmodel import Session, select
 
@@ -152,6 +154,19 @@ def execute_metric_computation(
                 "skipped": skipped_count,
                 "failed": failed_count,
             }
+
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError("Task exceeded soft time limit")
+            logger.warning(
+                f"[execute_metric_computation] STT metric computation timed out | run_id={run_id}"
+            )
+            update_stt_run(
+                session=session,
+                run_id=run_id,
+                status="failed",
+                error_message=str(timeout_err),
+            )
+            raise
 
         except Exception as e:
             logger.error(

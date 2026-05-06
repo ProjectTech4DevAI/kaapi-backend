@@ -1,6 +1,8 @@
 from unittest.mock import patch, MagicMock
 from uuid import uuid4, UUID
 
+from gevent import Timeout
+
 import pytest
 from sqlmodel import Session
 
@@ -499,3 +501,111 @@ def test_execute_job_provider_factory_failure_marks_job_failed(
 
         collection_crud_instance.delete_by_id.assert_not_called()
         mock_get_llm_provider.assert_called_once()
+
+
+@patch("app.services.collections.delete_collection.get_llm_provider")
+def test_execute_job_timeout_marks_job_failed(
+    mock_get_llm_provider: MagicMock, db
+) -> None:
+    project = get_project(db)
+
+    collection = get_vector_store_collection(db, project, vector_store_id="vs_timeout")
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.DELETE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=collection.id,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.delete.side_effect = Timeout(300)
+    mock_get_llm_provider.return_value = mock_provider
+
+    with patch(
+        "app.services.collections.delete_collection.Session"
+    ) as SessionCtor, patch(
+        "app.services.collections.delete_collection.CollectionCrud"
+    ) as MockCollectionCrud:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        MockCollectionCrud.return_value.read_one.return_value = collection
+
+        req = DeletionRequest(collection_id=collection.id)
+
+        with pytest.raises(Timeout):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
+
+    failed_job = CollectionJobCrud(db, project.id).read_one(job.id)
+    assert failed_job.status == CollectionJobStatus.FAILED
+    assert "soft time limit" in (failed_job.error_message or "")
+
+    MockCollectionCrud.return_value.delete_by_id.assert_not_called()
+
+
+@patch("app.services.collections.delete_collection.get_llm_provider")
+@patch("app.services.collections.delete_collection.send_callback")
+def test_execute_job_timeout_sends_failure_callback(
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
+    db,
+) -> None:
+    project = get_project(db)
+    callback_url = "https://example.com/collections/delete-timeout"
+
+    collection = get_vector_store_collection(
+        db, project, vector_store_id="vs_timeout_cb"
+    )
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.DELETE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=collection.id,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.delete.side_effect = Timeout(300)
+    mock_get_llm_provider.return_value = mock_provider
+
+    with patch(
+        "app.services.collections.delete_collection.Session"
+    ) as SessionCtor, patch(
+        "app.services.collections.delete_collection.CollectionCrud"
+    ) as MockCollectionCrud:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        MockCollectionCrud.return_value.read_one.return_value = collection
+
+        req = DeletionRequest(collection_id=collection.id, callback_url=callback_url)
+
+        with pytest.raises(Timeout):
+            execute_job(
+                request=req.model_dump(mode="json"),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                job_id=str(job.id),
+                collection_id=str(collection.id),
+                task_instance=None,
+            )
+
+    mock_send_callback.assert_called_once()
+    cb_url_arg, payload_arg = mock_send_callback.call_args.args
+    assert str(cb_url_arg) == callback_url
+    assert payload_arg["success"] is False
+    assert "soft time limit" in (payload_arg["error"] or "")
+    assert payload_arg["data"]["status"] == CollectionJobStatus.FAILED
+    assert UUID(payload_arg["data"]["job_id"]) == job.id
