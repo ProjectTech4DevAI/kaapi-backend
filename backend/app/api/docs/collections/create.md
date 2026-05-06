@@ -1,4 +1,4 @@
-Setup and configure the document store that is pertinent to the RAG
+Setup and configure the Vector store that is pertinent to the File search
 pipeline:
 
 * Create a vector store from the document IDs you received after uploading your
@@ -8,23 +8,18 @@ pipeline:
   the cumulative size reaches 30 MB of documents given to upload to a vector store
   or the document count reaches 200 files in a batch, whichever limit is hit first.
 * [Deprecated] Attach the Vector Store to an OpenAI
-  [Assistant](https://platform.openai.com/docs/api-reference/assistants). Use
+  [Assistant]. Use
   parameters in the request body relevant to an Assistant to flesh out
   its configuration. Note that an assistant will only be created when you pass both
   "model" and "instruction" in the request body otherwise only a vector store will be
   created from the documents given.
 
-If any one of the LLM service interactions fail, all service resources are
-cleaned up. If an OpenAI vector Store is unable to be created, for example,
-all file(s) that were uploaded to OpenAI are removed from
-OpenAI. Failure can occur from OpenAI being down, or some parameter
-value being invalid. It can also fail due to document types not being
-accepted. This is especially true for PDFs that may not be parseable.
+If any step in the LLM service interaction fails, all previously created resources are cleaned up automatically. For example, if the vector store creation fails, any files already uploaded to OpenAI are removed. Failures can be caused by service downtime, invalid parameter values, or unsupported document types — the latter is especially common with PDFs that cannot be parsed.
 
-In the case of Openai, Vector store/assistant will be created asynchronously.
+The Vector store/assistant will be created asynchronously.
 The immediate response from this endpoint is `collection_job` object which is
 going to contain the collection "job ID" and status. Once the collection has
 been created, information about the collection will be returned to the user via
 the callback URL. If a callback URL is not provided, clients can check the
 `collection job info` endpoint with the `job_id`, to retrieve
-information about the creation of collection.
+information about the created collection.

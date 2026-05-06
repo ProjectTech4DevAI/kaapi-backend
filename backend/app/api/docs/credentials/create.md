@@ -51,9 +51,10 @@ Credentials are encrypted and stored securely for provider integrations (OpenAI,
 #### For registering Webhook Secret
 ```json
 {
-  "credential":{
-    "webhook_secret":"your-webhook-secret"
+  "credential": {
+    "webhook_": {
+      "webhook_secret: "webhook_secret"
+    }
   }
-
 }
 ```
