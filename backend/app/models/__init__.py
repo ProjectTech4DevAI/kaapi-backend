@@ -1,5 +1,7 @@
 from sqlmodel import SQLModel
 
+from app.models.assessment import Assessment, AssessmentRun  # noqa: F401
+
 from .api_key import (
     APIKey,
     APIKeyBase,

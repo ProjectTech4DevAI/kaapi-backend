@@ -4,14 +4,15 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
+from app.models import ConfigBlob
+from app.models.config.config import ConfigTag
+from app.models.llm.request import NativeCompletionConfig
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
     create_test_project,
     create_test_version,
 )
-from app.models import ConfigBlob
-from app.models.llm.request import NativeCompletionConfig
 
 
 def test_create_version_success(
@@ -264,6 +265,57 @@ def test_list_versions_different_project_fails(
         headers={"X-API-KEY": user_api_key.key},
     )
     assert response.status_code == 404
+
+
+def test_list_versions_with_explicit_default_tag_allows_implicit_default_config(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test explicit default tag scope allows configs created without an explicit tag."""
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="implicit-default-version-config",
+    )
+
+    response = client.get(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        params={"tag": ConfigTag.DEFAULT.value},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["data"]) == 1
+    assert data["data"][0]["version"] == 1
+
+
+def test_list_versions_with_explicit_default_tag_allows_default_config(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test explicit tag query allows version listing for matching tagged config."""
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="default-version-config",
+        tag=ConfigTag.DEFAULT,
+    )
+
+    response = client.get(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        params={"tag": ConfigTag.DEFAULT.value},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert len(data["data"]) == 1
+    assert data["data"][0]["version"] == 1
 
 
 def test_get_version_by_number(
