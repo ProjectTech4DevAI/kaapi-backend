@@ -6,6 +6,8 @@ from pathlib import Path
 from uuid import uuid4, UUID
 
 from fastapi import UploadFile
+from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from tenacity import retry, wait_exponential, stop_after_attempt
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
@@ -103,6 +105,46 @@ def build_failure_payload(job: DocTransformationJob, error_message: str):
     )
 
 
+def _handle_job_failure(
+    error_message: str,
+    job_uuid: UUID,
+    project_id: int,
+    callback_url: str | None,
+    webhook_secret: str | None,
+    job_for_payload: DocTransformationJob | None,
+    log_context: str = "",
+) -> DocTransformationJob | None:
+    context_suffix = f" on {log_context}" if log_context else ""
+    try:
+        with Session(engine) as db:
+            job_crud = DocTransformationJobCrud(session=db, project_id=project_id)
+            job_for_payload = job_crud.update(
+                job_uuid,
+                DocTransformJobUpdate(
+                    status=TransformationStatus.FAILED, error_message=error_message
+                ),
+            )
+    except Exception as db_error:
+        logger.error(
+            "[doc_transform.execute_job] failed to persist FAILED status%s | job_id=%s | db_error=%s",
+            context_suffix,
+            job_uuid,
+            db_error,
+        )
+    if callback_url and job_for_payload:
+        try:
+            failure_payload = build_failure_payload(job_for_payload, error_message)
+            send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
+        except Exception as cb_error:
+            logger.error(
+                "[doc_transform.execute_job] callback failed%s | job_id=%s | error=%s",
+                context_suffix,
+                job_uuid,
+                cb_error,
+            )
+    return job_for_payload
+
+
 @retry(wait=wait_exponential(multiplier=5, min=5, max=10), stop=stop_after_attempt(3))
 def execute_job(
     project_id: int,
@@ -120,8 +162,9 @@ def execute_job(
     job_for_payload = None  # keep latest job snapshot for payloads
     webhook_secret: str | None = None
 
+    job_uuid = UUID(job_id)
+
     try:
-        job_uuid = UUID(job_id)
         source_uuid = UUID(source_document_id)
 
         if callback_url:
@@ -232,6 +275,23 @@ def execute_job(
         if callback_url:
             send_callback(callback_url, success_payload, webhook_secret=webhook_secret)
 
+    except (Timeout, SoftTimeLimitExceeded) as err:
+        timeout_err = TimeoutError("Task exceeded soft time limit")
+        logger.warning(
+            "[doc_transform.execute_job] Timed Out | job_id=%s",
+            job_uuid,
+        )
+        _handle_job_failure(
+            str(timeout_err),
+            job_uuid,
+            project_id,
+            callback_url,
+            webhook_secret,
+            job_for_payload,
+            log_context="timeout",
+        )
+        raise
+
     except Exception as e:
         logger.error(
             "[doc_transform.execute_job] FAILED | job_id=%s | error=%s",
@@ -239,37 +299,9 @@ def execute_job(
             e,
             exc_info=True,
         )
-
-        try:
-            with Session(engine) as db:
-                job_crud = DocTransformationJobCrud(session=db, project_id=project_id)
-                job_for_payload = job_crud.update(
-                    job_uuid,
-                    DocTransformJobUpdate(
-                        status=TransformationStatus.FAILED, error_message=str(e)
-                    ),
-                )
-        except Exception as db_error:
-            logger.error(
-                "[doc_transform.execute_job] failed to persist FAILED status | job_id=%s | db_error=%s",
-                job_uuid,
-                db_error,
-            )
-
-        if callback_url and job_for_payload:
-            try:
-                failure_payload = build_failure_payload(job_for_payload, str(e))
-                send_callback(
-                    callback_url, failure_payload, webhook_secret=webhook_secret
-                )
-            except Exception as cb_error:
-                logger.error(
-                    "[doc_transform.execute_job] callback failed | job_id=%s | error=%s",
-                    job_uuid,
-                    cb_error,
-                )
-
-        # bubble up for caller/infra
+        _handle_job_failure(
+            str(e), job_uuid, project_id, callback_url, webhook_secret, job_for_payload
+        )
         raise
     finally:
         if tmp_dir and tmp_dir.exists():

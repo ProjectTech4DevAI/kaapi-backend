@@ -3,14 +3,19 @@ Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
-from typing import Any, Dict
+import functools
+from typing import Any, Dict, TypeVar
+from collections.abc import Callable
 
 from celery.result import AsyncResult
+from gevent import Timeout
 from opentelemetry.propagate import inject
 
 from app.celery.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _enqueue_with_trace_context(task, **kwargs) -> str:
@@ -211,3 +216,33 @@ def revoke_task(task_id: str, terminate: bool = False) -> bool:
     except Exception as e:
         logger.error(f"[revoke_task] Failed to revoke task {task_id}: {e}")
         return False
+
+
+def gevent_timeout(
+    seconds: float | None, task_name: str | None = None
+) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            name = task_name or func.__name__
+            timeout = Timeout(seconds)
+            timeout.start()
+            try:
+                return func(*args, **kwargs)
+            except Timeout as err:
+                if err is not timeout:
+                    raise
+                logger.error(f"[{name}] Timed out after {seconds}s")
+                raise
+            finally:
+                timeout.cancel()
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+# In gevent mode, Celery's soft and hard time limits fire during task cleanup,
+# producing a misleading "Hard time limit exceeded" log. The task has already
+# completed at this point (Pool POST fires first). This is a known gevent/Celery
+# interaction and is harmless.

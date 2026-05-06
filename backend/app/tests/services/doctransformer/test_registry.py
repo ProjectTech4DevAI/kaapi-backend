@@ -1,4 +1,6 @@
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
 
 from app.services.doctransform.registry import (
     get_file_format,
@@ -95,3 +97,21 @@ def test_convert_document(tmp_path, monkeypatch):
     monkeypatch.setitem(TRANSFORMERS, "fail", FailingTransformer)
     with pytest.raises(TransformationError):
         convert_document(input_file, output_file, transformer_name="fail")
+
+    # gevent Timeout propagates without being wrapped
+    class TimeoutTransformer:
+        def transform(self, input_path, output_path):
+            raise Timeout()
+
+    monkeypatch.setitem(TRANSFORMERS, "timeout", TimeoutTransformer)
+    with pytest.raises(Timeout):
+        convert_document(input_file, output_file, transformer_name="timeout")
+
+    # Celery SoftTimeLimitExceeded propagates without being wrapped
+    class SoftLimitTransformer:
+        def transform(self, input_path, output_path):
+            raise SoftTimeLimitExceeded()
+
+    monkeypatch.setitem(TRANSFORMERS, "softlimit", SoftLimitTransformer)
+    with pytest.raises(SoftTimeLimitExceeded):
+        convert_document(input_file, output_file, transformer_name="softlimit")
