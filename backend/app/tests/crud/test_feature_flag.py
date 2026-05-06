@@ -168,6 +168,13 @@ class TestDeleteFeatureFlag:
 
     def test_raises_when_not_found(self, db: Session) -> None:
         project = create_test_project(db)
+        # Delete the auto-seeded flag first so the next call raises
+        delete_feature_flag(
+            session=db,
+            key="ASSESSMENT",
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
         with pytest.raises(HTTPException, match="Feature flag not found"):
             delete_feature_flag(
                 session=db,
@@ -178,13 +185,7 @@ class TestDeleteFeatureFlag:
 
     def test_flag_not_accessible_after_delete(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
+        # Flag is auto-seeded by DB trigger; delete it directly
         delete_feature_flag(
             session=db,
             key="ASSESSMENT",
@@ -198,13 +199,7 @@ class TestDeleteFeatureFlag:
 class TestListFeatureFlags:
     def test_lists_all_for_project(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=True,
-        )
+        # ASSESSMENT flag is auto-seeded by DB trigger on project creation
         flags = list_feature_flags(session=db, project_id=project.id)
         assert len(flags) == 1
 
@@ -222,15 +217,9 @@ class TestListFeatureFlags:
                 organization_id=project_a.organization_id,
             ),
         )
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project_a.organization_id,
-            project_id=project_b.id,
-            enabled=True,
-        )
+        # Both projects have auto-seeded flags; verify project isolation
         flags = list_feature_flags(session=db, project_id=project_a.id)
-        assert len(flags) == 0
+        assert all(f.project_id == project_a.id for f in flags)
 
 
 class TestIsEnabled:
@@ -246,7 +235,8 @@ class TestIsEnabled:
 
     def test_returns_true_when_flag_enabled(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
+        # Flag is auto-seeded as disabled; enable it via update
+        update_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project.organization_id,
@@ -265,13 +255,7 @@ class TestIsEnabled:
 
     def test_returns_false_when_flag_disabled(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
-            session=db,
-            key="ASSESSMENT",
-            organization_id=project.organization_id,
-            project_id=project.id,
-            enabled=False,
-        )
+        # ASSESSMENT flag is auto-seeded as disabled=False by DB trigger
         assert (
             is_enabled(
                 session=db,
@@ -286,6 +270,13 @@ class TestIsEnabled:
 class TestResolveAllFlags:
     def test_returns_empty_dict_when_no_flags(self, db: Session) -> None:
         project = create_test_project(db)
+        # Delete the auto-seeded flag to test the truly empty case
+        delete_feature_flag(
+            session=db,
+            key="ASSESSMENT",
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
         result = resolve_all_flags(
             session=db,
             organization_id=project.organization_id,
@@ -295,7 +286,8 @@ class TestResolveAllFlags:
 
     def test_returns_project_flags(self, db: Session) -> None:
         project = create_test_project(db)
-        create_feature_flag(
+        # Flag is auto-seeded as disabled; enable it via update
+        update_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project.organization_id,
@@ -323,7 +315,8 @@ class TestResolveAllFlags:
                 organization_id=project_a.organization_id,
             ),
         )
-        create_feature_flag(
+        # Update project_b's auto-seeded flag to True to distinguish from project_a's False
+        update_feature_flag(
             session=db,
             key="ASSESSMENT",
             organization_id=project_a.organization_id,
@@ -335,4 +328,5 @@ class TestResolveAllFlags:
             organization_id=project_a.organization_id,
             project_id=project_a.id,
         )
-        assert "ASSESSMENT" not in result
+        # project_a has its own ASSESSMENT=False; project_b's True must not bleed in
+        assert result.get("ASSESSMENT") is not True
