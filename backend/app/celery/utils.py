@@ -4,7 +4,7 @@ Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
 import functools
-from typing import Any, Dict, ParamSpec, TypeVar
+from typing import Any, Dict, TypeVar
 from collections.abc import Callable
 
 from celery.result import AsyncResult
@@ -15,8 +15,7 @@ from app.celery.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-P = ParamSpec("P")
-R = TypeVar("R")
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _enqueue_with_trace_context(task, **kwargs) -> str:
@@ -221,10 +220,10 @@ def revoke_task(task_id: str, terminate: bool = False) -> bool:
 
 def gevent_timeout(
     seconds: float | None, task_name: str | None = None
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
+) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
         @functools.wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             name = task_name or func.__name__
             timeout = Timeout(seconds)
             timeout.start()
@@ -238,7 +237,7 @@ def gevent_timeout(
             finally:
                 timeout.cancel()
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
 
