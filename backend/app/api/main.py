@@ -13,8 +13,8 @@ from app.api.routes import (
     doc_transformation_job,
     documents,
     evaluations,
-    fine_tuning,
     features,
+    fine_tuning,
     languages,
     llm,
     llm_chain,
@@ -46,7 +46,6 @@ api_router.include_router(credentials.router)
 api_router.include_router(cron.router)
 api_router.include_router(doc_transformation_job.router)
 api_router.include_router(documents.router)
-api_router.include_router(auth.router)
 api_router.include_router(evaluations.router)
 api_router.include_router(features.router)
 api_router.include_router(fine_tuning.router)
