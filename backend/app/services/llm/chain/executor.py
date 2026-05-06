@@ -71,16 +71,16 @@ class ChainExecutor:
         )
 
     def _resolve_presigned_url(self, output) -> None:
-        """Replace s3:// URI in AudioOutput with a presigned URL in-place.
+        """Swap the s3:// URI in content.uri for a presigned URL in-place.
 
-        Non-fatal: keeps the s3:// URI if presigning fails rather than failing the job.
+        Non-fatal: clears uri on failure so clients don't receive a raw s3:// address.
         """
-        if isinstance(output, AudioOutput) and output.content.format == "uri":
+        if isinstance(output, AudioOutput) and output.content.uri:
             try:
                 with Session(engine) as session:
                     storage = get_cloud_storage(session, self._context.project_id)
-                output.content.value = storage.get_signed_url(
-                    output.content.value, expires_in=3600
+                output.content.uri = storage.get_signed_url(
+                    output.content.uri, expires_in=3600
                 )
             except Exception as e:
                 logger.warning(
@@ -88,6 +88,7 @@ class ChainExecutor:
                     f"job_id={self._context.job_id}",
                     exc_info=True,
                 )
+                output.content.uri = None
 
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
