@@ -14,7 +14,7 @@ def test_read_credentials(
     user_api_key: TestAuthContext,
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
@@ -81,7 +81,7 @@ def test_update_credentials(
     }
 
     response = client.patch(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=update_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -133,7 +133,7 @@ def test_create_credential(
     }
 
     create_response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=credential_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -191,7 +191,7 @@ def test_update_nonexistent_provider_upserts(
     }
 
     response = client.patch(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=update_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -222,7 +222,7 @@ def test_create_ignores_mismatched_ids(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=credential_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -252,7 +252,7 @@ def test_duplicate_credential_creation_fails(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=duplicate_credential,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -267,7 +267,7 @@ def test_delete_all_credentials(
 ) -> None:
     """Test deleting all credentials for a project."""
     response = client.delete(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
@@ -276,7 +276,7 @@ def test_delete_all_credentials(
     assert response_data["data"]["message"] == "All credentials deleted successfully"
 
     get_response = client.get(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
     assert get_response.status_code == 200
@@ -289,12 +289,12 @@ def test_delete_all_when_none_exist_returns_404(
 ) -> None:
     """Test deleting when no credentials exist."""
     client.delete(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
     response = client.delete(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
@@ -396,7 +396,7 @@ def test_create_credential_missing_credential_field(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=credential_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -417,7 +417,7 @@ def test_create_credential_empty_credential_dict(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=credential_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -438,7 +438,7 @@ def test_update_credential_missing_provider_field(
     }
 
     response = client.patch(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=update_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -457,7 +457,7 @@ def test_update_credential_missing_credential_field(
     }
 
     response = client.patch(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=update_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -477,7 +477,7 @@ def test_update_credential_empty_credential(
     }
 
     response = client.patch(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=update_data,
         headers={"X-API-KEY": user_api_key.key},
     )
@@ -493,12 +493,12 @@ def test_read_credentials_when_none_exist(
     """Test reading credentials when none exist returns an empty list."""
     # Delete all credentials first
     client.delete(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
     response = client.get(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
@@ -513,7 +513,7 @@ def test_create_multiple_providers_at_once(
     """Test creating credentials for multiple providers in a single request."""
     # Delete all credentials first
     client.delete(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         headers={"X-API-KEY": user_api_key.key},
     )
 
@@ -536,7 +536,7 @@ def test_create_multiple_providers_at_once(
     }
 
     response = client.post(
-        f"{settings.API_V1_STR}/credentials/",
+        f"{settings.API_V1_STR}/credentials",
         json=credential_data,
         headers={"X-API-KEY": user_api_key.key},
     )

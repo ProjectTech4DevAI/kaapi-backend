@@ -60,7 +60,7 @@ def collection_callback_notification(body: APIResponse[CollectionJobPublic]):
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("collections/list.md"),
     response_model=APIResponse[List[CollectionPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -79,7 +79,7 @@ def list_collections(
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("collections/create.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,

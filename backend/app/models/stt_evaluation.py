@@ -1,7 +1,7 @@
 """STT Evaluation models for Speech-to-Text evaluation feature."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -18,10 +18,11 @@ from app.core.util import now
 SUPPORTED_STT_MODELS = ["gemini-2.5-pro"]
 
 
-class EvaluationType(str, Enum):
+class EvaluationType(StrEnum):
     """Type of evaluation dataset/run."""
 
     TEXT = "text"
+    ASSESSMENT = "assessment"
     STT = "stt"
     TTS = "tts"
 

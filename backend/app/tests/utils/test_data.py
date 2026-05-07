@@ -20,6 +20,7 @@ from app.models import (
     ConfigVersionUpdate,
     EvaluationDataset,
 )
+from app.models.config.config import ConfigTag
 from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
 from app.crud import (
     create_organization,
@@ -242,6 +243,7 @@ def create_test_config(
     description: str | None = None,
     config_blob: ConfigBlob | None = None,
     use_kaapi_schema: bool = False,
+    tag: ConfigTag = ConfigTag.DEFAULT,
 ) -> Config:
     """
     Creates and returns a test configuration with an initial version.
@@ -255,6 +257,7 @@ def create_test_config(
         description: Config description
         config_blob: Config blob (creates default if None)
         use_kaapi_schema: If True, creates Kaapi-format config; if False, creates native format
+        tag: Config classification tag. Defaults to `default`.
     """
     if project_id is None:
         project = create_test_project(db)
@@ -295,6 +298,7 @@ def create_test_config(
         description=description or "Test configuration description",
         config_blob=config_blob,
         commit_message="Initial version",
+        tag=tag,
     )
 
     config_crud = ConfigCrud(session=db, project_id=project_id)

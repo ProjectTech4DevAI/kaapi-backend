@@ -114,7 +114,9 @@ class GeminiBatchProvider(BatchProvider):
 
         try:
             # Create JSONL content
-            jsonl_content = "\n".join(json.dumps(item) for item in jsonl_data)
+            jsonl_content = "\n".join(
+                json.dumps(item, ensure_ascii=False) for item in jsonl_data
+            )
 
             # Upload JSONL file to Gemini File API
             uploaded_file = self.upload_file(jsonl_content, purpose="batch")

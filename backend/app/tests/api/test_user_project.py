@@ -14,7 +14,7 @@ USER_PROJECTS_URL = f"{settings.API_V1_STR}/user-projects"
 
 
 class TestListProjectUsers:
-    """Test suite for GET /user-projects/"""
+    """Test suite for GET /user-projects"""
 
     def test_list_returns_empty(
         self,
@@ -23,7 +23,7 @@ class TestListProjectUsers:
     ):
         """Test listing users for a project with no users."""
         resp = client.get(
-            f"{USER_PROJECTS_URL}/?project_id=99999",
+            f"{USER_PROJECTS_URL}?project_id=99999",
             headers=superuser_token_headers,
         )
         assert resp.status_code == 200
@@ -47,7 +47,7 @@ class TestListProjectUsers:
         db.commit()
 
         resp = client.get(
-            f"{USER_PROJECTS_URL}/?project_id={project.id}",
+            f"{USER_PROJECTS_URL}?project_id={project.id}",
             headers=superuser_token_headers,
         )
         assert resp.status_code == 200
@@ -57,7 +57,7 @@ class TestListProjectUsers:
 
 
 class TestAddProjectUsers:
-    """Test suite for POST /user-projects/"""
+    """Test suite for POST /user-projects"""
 
     def test_add_user_requires_superuser(
         self,
@@ -68,7 +68,7 @@ class TestAddProjectUsers:
         """Test non-superuser cannot add users."""
         project = create_test_project(db)
         resp = client.post(
-            f"{USER_PROJECTS_URL}/",
+            USER_PROJECTS_URL,
             json={
                 "organization_id": project.organization_id,
                 "project_id": project.id,
@@ -89,7 +89,7 @@ class TestAddProjectUsers:
         email = random_email()
 
         resp = client.post(
-            f"{USER_PROJECTS_URL}/",
+            USER_PROJECTS_URL,
             json={
                 "organization_id": project.organization_id,
                 "project_id": project.id,
@@ -124,7 +124,7 @@ class TestAddProjectUsers:
         mock_settings.PROJECT_NAME = "Kaapi"
 
         resp = client.post(
-            f"{USER_PROJECTS_URL}/",
+            USER_PROJECTS_URL,
             json={
                 "organization_id": project.organization_id,
                 "project_id": project.id,
@@ -156,7 +156,7 @@ class TestAddProjectUsers:
 
         # Try adding again
         resp = client.post(
-            f"{USER_PROJECTS_URL}/",
+            USER_PROJECTS_URL,
             json={
                 "organization_id": project.organization_id,
                 "project_id": project.id,
@@ -187,7 +187,7 @@ class TestAddProjectUsers:
         db.commit()
 
         resp = client.post(
-            f"{USER_PROJECTS_URL}/",
+            USER_PROJECTS_URL,
             json={
                 "organization_id": project2.organization_id,
                 "project_id": project2.id,
