@@ -1,7 +1,7 @@
 """v1.0 query optimization: project_id + composite indexes, drop is_deleted
 
-Revision ID: 057
-Revises: 056
+Revision ID: 058
+Revises: 057
 Create Date: 2026-05-05 12:00:00.000000
 
 Bundles three coordinated changes for v1.0 lock:
@@ -34,8 +34,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "057"
-down_revision = "056"
+revision = "058"
+down_revision = "057"
 branch_labels = None
 depends_on = None
 

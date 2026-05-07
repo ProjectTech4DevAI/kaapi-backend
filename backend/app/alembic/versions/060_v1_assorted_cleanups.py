@@ -1,7 +1,7 @@
 """v1.0 assorted schema cleanups
 
-Revision ID: 059
-Revises: 058
+Revision ID: 060
+Revises: 059
 Create Date: 2026-05-07 14:00:00.000000
 
 Bundles five small, mutually independent v1.0 cleanups in source order:
@@ -12,7 +12,7 @@ Bundles five small, mutually independent v1.0 cleanups in source order:
 
   2. job: backfill orphan project_id rows to NULL, then add the missing
      foreign key constraint with ON DELETE CASCADE. The supporting
-     ix_job_project_id index is created by migration 057.
+     ix_job_project_id index is created by migration 058.
 
   3. job + llm_call: rename `created_at` → `inserted_at` to align with
      the rest of the schema (every other table uses `inserted_at`).
@@ -31,8 +31,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "059"
-down_revision = "058"
+revision = "060"
+down_revision = "059"
 branch_labels = None
 depends_on = None
 
