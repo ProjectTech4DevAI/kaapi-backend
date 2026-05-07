@@ -90,65 +90,78 @@ FK_INDEXES: list[tuple[str, str, str]] = [
 ]
 
 
-# Composite + partial indexes (P1). (index_name, body_after_INDEX_NAME)
-COMPOSITE_INDEXES: list[tuple[str, str]] = [
+# Composite + partial indexes (P1). (index_name, body_after_INDEX_NAME, schema)
+# `schema` is the unquoted PG schema for downgrade DROP INDEX, or None for
+# the default (public) schema. The upgrade body already names the schema
+# inline in its ON clause; the field exists so downgrade doesn't have to
+# string-sniff it back out.
+COMPOSITE_INDEXES: list[tuple[str, str, str | None]] = [
     (
         "ix_document_project_inserted_at_active",
         'ON "document" ("project_id", "inserted_at" DESC) WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_openai_conversation_project_inserted_at_active",
         'ON "openai_conversation" ("project_id", "inserted_at" DESC) WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_openai_conversation_ancestor_project_inserted_at_active",
         'ON "openai_conversation" ("ancestor_response_id", "project_id", "inserted_at" DESC) WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_openai_conversation_response_project_active",
         'ON "openai_conversation" ("response_id", "project_id") WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_collection_jobs_project_status_inserted_at",
         'ON "collection_jobs" ("project_id", "status", "inserted_at" DESC)',
+        None,
     ),
     (
         "ix_evaluation_run_org_project_type_inserted_at",
         'ON "evaluation_run" ("organization_id", "project_id", "type", "inserted_at" DESC)',
+        None,
     ),
     (
         "ix_evaluation_dataset_org_project_type_inserted_at",
         'ON "evaluation_dataset" ("organization_id", "project_id", "type", "inserted_at" DESC)',
-    ),
-    (
-        "ix_llm_call_job_created_at_active",
-        'ON "llm_call" ("job_id", "created_at" DESC) WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_model_evaluation_document_project_updated_at",
         'ON "model_evaluation" ("document_id", "project_id", "updated_at" DESC) WHERE "deleted_at" IS NULL',
+        None,
     ),
     (
         "ix_model_config_active_provider_name",
         'ON "global"."model_config" ("is_active", "provider", "model_name")',
+        "global",
     ),
     (
         "ix_collection_project_active",
         'ON "collection" ("project_id") WHERE "deleted_at" IS NULL',
+        None,
     ),
     # Composite FK indexes that match the actual query shape
     (
         "ix_fine_tuning_document_project",
         'ON "fine_tuning" ("document_id", "project_id")',
+        None,
     ),
     (
         "ix_model_evaluation_fine_tuning_project",
         'ON "model_evaluation" ("fine_tuning_id", "project_id")',
+        None,
     ),
     # Partial index for active-key listing on apikey
     (
         "ix_apikey_project_active",
         'ON "apikey" ("project_id") WHERE "deleted_at" IS NULL',
+        None,
     ),
 ]
 
@@ -172,15 +185,15 @@ def upgrade():
                 f'CREATE INDEX CONCURRENTLY IF NOT EXISTS "{index}" '
                 f'ON "{table}" ("{column}")'
             )
-        for index, body in COMPOSITE_INDEXES:
+        for index, body, _schema in COMPOSITE_INDEXES:
             op.execute(f'CREATE INDEX CONCURRENTLY IF NOT EXISTS "{index}" {body}')
 
 
 def downgrade():
     with op.get_context().autocommit_block():
-        for index, body in COMPOSITE_INDEXES:
-            schema_qualified = '"global".' if '"global"."model_config"' in body else ""
-            op.execute(f'DROP INDEX CONCURRENTLY IF EXISTS {schema_qualified}"{index}"')
+        for index, _body, schema in COMPOSITE_INDEXES:
+            qualified = f'"{schema}"."{index}"' if schema else f'"{index}"'
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}")
         for _table, _column, index in FK_INDEXES:
             op.execute(f'DROP INDEX CONCURRENTLY IF EXISTS "{index}"')
 
