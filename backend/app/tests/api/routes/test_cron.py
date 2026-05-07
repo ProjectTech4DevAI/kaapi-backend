@@ -187,7 +187,7 @@ def test_evaluation_cron_job_assessment_polling_failure(
     assert data["total_processed"] == 3
     assert data["total_failed"] == 0
     assert data["total_still_processing"] == 2
-    assert "assessment poll failure" in data["assessment_error"]
+    assert data["assessment_error"] == "Assessment polling failed"
 
 
 def test_evaluation_cron_job_requires_superuser(
