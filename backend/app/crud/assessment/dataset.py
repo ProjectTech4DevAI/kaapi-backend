@@ -24,6 +24,7 @@ def create_assessment_dataset(
     project_id: int,
     description: str | None = None,
     object_store_url: str | None = None,
+    langfuse_dataset_id: str | None = None,
 ) -> EvaluationDataset:
     """Create an assessment dataset backed by the shared evaluation_dataset table."""
     dataset = EvaluationDataset(
@@ -32,7 +33,7 @@ def create_assessment_dataset(
         type=EvaluationType.ASSESSMENT.value,
         dataset_metadata=dataset_metadata,
         object_store_url=object_store_url,
-        langfuse_dataset_id=None,
+        langfuse_dataset_id=langfuse_dataset_id,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
@@ -45,7 +46,7 @@ def create_assessment_dataset(
         session.refresh(dataset)
     except IntegrityError as e:
         session.rollback()
-        logger.error(
+        logger.warning(
             "[create_assessment_dataset] Dataset name already exists | "
             "name=%s | org_id=%s | project_id=%s",
             name,
