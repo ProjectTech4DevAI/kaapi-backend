@@ -27,6 +27,8 @@ _service_name_context: ContextVar[str | None] = ContextVar(
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = correlation_id.get() or "N/A"
+        if record.name == "uvicorn.error":
+            record.name = "uvicorn"
         return True
 
 
