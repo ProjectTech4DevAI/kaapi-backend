@@ -244,7 +244,7 @@ def test_list_assistants_success(
     assistant = get_assistant(db, project_id=user_api_key.project_id)
 
     response = client.get(
-        "/api/v1/assistant/",
+        "/api/v1/assistant",
         headers={"X-API-KEY": f"{user_api_key.key}"},
     )
 
@@ -266,21 +266,21 @@ def test_list_assistants_invalid_pagination(
     """Test assistants list with invalid pagination parameters."""
     # Test negative skip
     response = client.get(
-        "/api/v1/assistant/?skip=-1&limit=10",
+        "/api/v1/assistant?skip=-1&limit=10",
         headers=user_api_key_header,
     )
     assert response.status_code == 422
 
     # Test limit too high
     response = client.get(
-        "/api/v1/assistant/?skip=0&limit=101",
+        "/api/v1/assistant?skip=0&limit=101",
         headers=user_api_key_header,
     )
     assert response.status_code == 422
 
     # Test limit too low
     response = client.get(
-        "/api/v1/assistant/?skip=0&limit=0",
+        "/api/v1/assistant?skip=0&limit=0",
         headers=user_api_key_header,
     )
     assert response.status_code == 422

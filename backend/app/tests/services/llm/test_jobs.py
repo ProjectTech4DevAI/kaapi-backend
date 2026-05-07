@@ -2,6 +2,9 @@ import pytest
 from unittest.mock import patch, MagicMock
 from uuid import UUID, uuid4
 
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
+
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
@@ -218,6 +221,98 @@ class TestHandleJobError:
                 )
 
             assert "Callback service unavailable" in str(exc_info.value)
+
+    def test_handle_job_error_with_chain_id_updates_chain_status(self, db: Session):
+        """Test that chain status is updated to FAILED when chain_id is provided."""
+        from app.models.llm.request import ChainStatus
+
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        chain_id = uuid4()
+        callback_response = APIResponse.failure_response(error="Chain failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch("app.services.llm.jobs.update_llm_chain_status") as mock_update_chain,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=chain_id,
+            )
+
+        mock_update_chain.assert_called_once_with(
+            db,
+            chain_id=chain_id,
+            status=ChainStatus.FAILED,
+            error="Chain failed",
+        )
+
+    def test_handle_job_error_without_chain_id_skips_chain_update(self, db: Session):
+        """Test that update_llm_chain_status is not called when chain_id is None."""
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        callback_response = APIResponse.failure_response(error="Job failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch("app.services.llm.jobs.update_llm_chain_status") as mock_update_chain,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=None,
+            )
+
+        mock_update_chain.assert_not_called()
+
+    def test_handle_job_error_chain_update_failure_is_swallowed(self, db: Session):
+        """Test that an exception from update_llm_chain_status doesn't propagate."""
+        job = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="test-trace"
+        )
+        db.commit()
+
+        chain_id = uuid4()
+        callback_response = APIResponse.failure_response(error="Chain failed")
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback"),
+            patch(
+                "app.services.llm.jobs.update_llm_chain_status",
+                side_effect=Exception("DB error updating chain"),
+            ),
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            # Should not raise — the exception is caught and logged
+            result = handle_job_error(
+                job_id=job.id,
+                callback_url=None,
+                callback_response=callback_response,
+                chain_id=chain_id,
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "Chain failed"
 
 
 class TestExecuteJob:
@@ -1163,6 +1258,66 @@ class TestExecuteJob:
         env["provider"].execute.assert_called_once()
         mock_guardrails.assert_not_called()
 
+    def test_timeout_reraises_and_marks_job_failed(
+        self, db, job_env, job_for_execution, request_data
+    ):
+        env = job_env
+        env["provider"].execute.side_effect = Timeout(300)
+
+        with pytest.raises(Timeout):
+            self._execute_job(job_for_execution, db, request_data)
+
+        db.refresh(job_for_execution)
+        assert job_for_execution.status == JobStatus.FAILED
+
+    def test_timeout_with_callback_sends_failure_payload(
+        self, db, job_env, job_for_execution, request_data
+    ):
+        env = job_env
+        request_data["callback_url"] = "https://example.com/callback"
+        env["provider"].execute.side_effect = Timeout(300)
+
+        with pytest.raises(Timeout):
+            self._execute_job(job_for_execution, db, request_data)
+
+        env["send_callback"].assert_called_once()
+        payload = env["send_callback"].call_args.kwargs["data"]
+        assert payload["success"] is False
+        assert "soft time limit" in (payload["error"] or "")
+
+        db.refresh(job_for_execution)
+        assert job_for_execution.status == JobStatus.FAILED
+
+    def test_soft_time_limit_reraises_and_marks_job_failed(
+        self, db, job_env, job_for_execution, request_data
+    ):
+        env = job_env
+        env["provider"].execute.side_effect = SoftTimeLimitExceeded()
+
+        with pytest.raises(SoftTimeLimitExceeded):
+            self._execute_job(job_for_execution, db, request_data)
+
+        db.refresh(job_for_execution)
+        assert job_for_execution.status == JobStatus.FAILED
+
+    def test_soft_time_limit_with_callback_sends_failure_payload(
+        self, db, job_env, job_for_execution, request_data
+    ):
+        env = job_env
+        request_data["callback_url"] = "https://example.com/callback"
+        env["provider"].execute.side_effect = SoftTimeLimitExceeded()
+
+        with pytest.raises(SoftTimeLimitExceeded):
+            self._execute_job(job_for_execution, db, request_data)
+
+        env["send_callback"].assert_called_once()
+        payload = env["send_callback"].call_args.kwargs["data"]
+        assert payload["success"] is False
+        assert "soft time limit" in (payload["error"] or "")
+
+        db.refresh(job_for_execution)
+        assert job_for_execution.status == JobStatus.FAILED
+
 
 class TestStartChainJob:
     """Test cases for the start_chain_job function."""
@@ -1334,9 +1489,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch(
-                "app.services.llm.jobs.update_llm_chain_status"
-            ) as mock_update_status,
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch(
                 "app.services.llm.chain.chain.LLMChain",
@@ -1357,10 +1509,155 @@ class TestExecuteChainJob:
 
             result = self._execute_chain_job(chain_request_data)
 
-            mock_update_status.assert_called_once()
-            _, kwargs = mock_update_status.call_args
+            mock_handle_error.assert_called_once()
+            _, kwargs = mock_handle_error.call_args
             assert kwargs["chain_id"] == chain_id
-            assert kwargs["status"].value == "FAILED"
+
+    def test_timeout_reraises_and_calls_handle_job_error(self, chain_request_data):
+        chain_id = uuid4()
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+            patch("app.services.llm.chain.chain.LLMChain"),
+            patch(
+                "app.services.llm.chain.executor.ChainExecutor"
+            ) as mock_executor_class,
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = chain_id
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+            mock_executor_class.return_value.run.side_effect = Timeout(300)
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Task exceeded soft time limit",
+            }
+
+            with pytest.raises(Timeout):
+                self._execute_chain_job(chain_request_data)
+
+        mock_handle_error.assert_called_once()
+        _, kwargs = mock_handle_error.call_args
+        assert kwargs["chain_id"] == chain_id
+        callback_response = mock_handle_error.call_args.args[2]
+        assert callback_response.error == "Task exceeded soft time limit"
+
+    def test_timeout_with_callback_sends_failure_payload(self, chain_request_data):
+        chain_id = uuid4()
+        chain_request_data["callback_url"] = "https://example.com/chain-callback"
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+            patch("app.services.llm.chain.chain.LLMChain"),
+            patch(
+                "app.services.llm.chain.executor.ChainExecutor"
+            ) as mock_executor_class,
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = chain_id
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+            mock_executor_class.return_value.run.side_effect = Timeout(300)
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Task exceeded soft time limit",
+            }
+
+            with pytest.raises(Timeout):
+                self._execute_chain_job(chain_request_data)
+
+        mock_handle_error.assert_called_once()
+        call_args = mock_handle_error.call_args
+        assert call_args.args[1] == "https://example.com/chain-callback"
+        assert call_args.args[2].error == "Task exceeded soft time limit"
+        assert call_args.kwargs["chain_id"] == chain_id
+
+    def test_soft_time_limit_reraises_and_calls_handle_job_error(
+        self, chain_request_data
+    ):
+        chain_id = uuid4()
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+            patch("app.services.llm.chain.chain.LLMChain"),
+            patch(
+                "app.services.llm.chain.executor.ChainExecutor"
+            ) as mock_executor_class,
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = chain_id
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+            mock_executor_class.return_value.run.side_effect = SoftTimeLimitExceeded()
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Task exceeded soft time limit",
+            }
+
+            with pytest.raises(SoftTimeLimitExceeded):
+                self._execute_chain_job(chain_request_data)
+
+        mock_handle_error.assert_called_once()
+        _, kwargs = mock_handle_error.call_args
+        assert kwargs["chain_id"] == chain_id
+        callback_response = mock_handle_error.call_args.args[2]
+        assert callback_response.error == "Task exceeded soft time limit"
+
+    def test_soft_time_limit_with_callback_sends_failure_payload(
+        self, chain_request_data
+    ):
+        chain_id = uuid4()
+        chain_request_data["callback_url"] = "https://example.com/chain-callback"
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session,
+            patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
+            patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
+            patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
+            patch("app.services.llm.chain.chain.LLMChain"),
+            patch(
+                "app.services.llm.chain.executor.ChainExecutor"
+            ) as mock_executor_class,
+        ):
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = None
+
+            mock_chain_record = MagicMock()
+            mock_chain_record.id = chain_id
+            mock_create_chain.return_value = mock_chain_record
+            mock_creds.return_value = None
+            mock_executor_class.return_value.run.side_effect = SoftTimeLimitExceeded()
+            mock_handle_error.return_value = {
+                "success": False,
+                "error": "Task exceeded soft time limit",
+            }
+
+            with pytest.raises(SoftTimeLimitExceeded):
+                self._execute_chain_job(chain_request_data)
+
+        mock_handle_error.assert_called_once()
+        call_args = mock_handle_error.call_args
+        assert call_args.args[1] == "https://example.com/chain-callback"
+        assert call_args.args[2].error == "Task exceeded soft time limit"
+        assert call_args.kwargs["chain_id"] == chain_id
 
 
 class TestResolveConfigBlob:

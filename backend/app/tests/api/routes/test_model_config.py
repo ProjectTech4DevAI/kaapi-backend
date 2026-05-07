@@ -7,7 +7,7 @@ def test_list_models(
     client: TestClient, superuser_token_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/models/",
+        f"{settings.API_V1_STR}/models",
         headers=superuser_token_headers,
     )
 
@@ -23,7 +23,7 @@ def test_list_models_has_more(
     client: TestClient, superuser_token_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/models/?skip=0&limit=1",
+        f"{settings.API_V1_STR}/models?skip=0&limit=1",
         headers=superuser_token_headers,
     )
 
@@ -38,7 +38,7 @@ def test_list_models_filter_by_provider(
     client: TestClient, superuser_token_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/models/?provider=openai&limit=5",
+        f"{settings.API_V1_STR}/models?provider=openai&limit=5",
         headers=superuser_token_headers,
     )
 
@@ -52,7 +52,7 @@ def test_list_models_invalid_limit(
     client: TestClient, superuser_token_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/models/?skip=0&limit=0",
+        f"{settings.API_V1_STR}/models?skip=0&limit=0",
         headers=superuser_token_headers,
     )
     assert response.status_code == 422

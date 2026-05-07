@@ -108,8 +108,8 @@ class EvaluationDataset(SQLModel, table=True):
     type: str = SQLField(
         default="text",
         max_length=20,
-        description="Evaluation type: text, stt, or tts",
-        sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
+        description="Evaluation type: text, assessment, stt, or tts",
+        sa_column_kwargs={"comment": "Evaluation type: text, assessment, stt, or tts"},
     )
     language_id: int | None = SQLField(
         default=None,
@@ -213,8 +213,8 @@ class EvaluationRun(SQLModel, table=True):
     type: str = SQLField(
         default="text",
         max_length=20,
-        description="Evaluation type: text, stt, or tts",
-        sa_column_kwargs={"comment": "Evaluation type: text, stt, or tts"},
+        description="Evaluation type: text, assessment, stt, or tts",
+        sa_column_kwargs={"comment": "Evaluation type: text, assessment, stt, or tts"},
     )
     language_id: int | None = SQLField(
         default=None,

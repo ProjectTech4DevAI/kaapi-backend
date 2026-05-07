@@ -4,11 +4,13 @@ from typing import Any, Callable, Tuple
 from unittest.mock import patch
 
 import pytest
+from gevent import Timeout
 from moto import mock_aws
 from sqlmodel import Session
 
 from app.crud import DocTransformationJobCrud
 from app.models import Document, Project, TransformationStatus, DocTransformJobCreate
+from app.services.doctransform.job import execute_job
 from app.tests.services.doctransformer.test_job.utils import (
     DocTransformTestBase,
     MockTestTransformer,
@@ -227,3 +229,103 @@ class TestExecuteJobRetryAndErrors(DocTransformTestBase):
         db.refresh(job)
         assert job.status == TransformationStatus.FAILED
         assert "Database error during document creation" in job.error_message
+
+    @mock_aws
+    @pytest.mark.usefixtures("aws_credentials")
+    def test_execute_job_timeout_marks_job_failed(
+        self,
+        db: Session,
+        test_document: Tuple[Document, Project],
+    ) -> None:
+        """Test that a gevent Timeout marks the job FAILED with a soft-time-limit message."""
+        document, project = test_document
+        aws = self.setup_aws_s3()
+        self.create_s3_document_content(aws, document)
+
+        job_crud = DocTransformationJobCrud(session=db, project_id=project.id)
+        job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
+
+        with patch(
+            "app.services.doctransform.job.Session"
+        ) as mock_session_class, patch(
+            "app.services.doctransform.job.get_cloud_storage"
+        ) as mock_storage_class, patch(
+            "app.services.doctransform.registry.TRANSFORMERS",
+            {"test": MockTestTransformer},
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_storage = mock_storage_class.return_value
+            mock_storage.stream.side_effect = Timeout(300)
+
+            with pytest.raises(Timeout):
+                execute_job.__wrapped__(
+                    project_id=project.id,
+                    job_id=str(job.id),
+                    source_document_id=str(document.id),
+                    transformer_name="test",
+                    target_format="markdown",
+                    task_id=str(uuid4()),
+                    callback_url=None,
+                    task_instance=None,
+                )
+
+        db.refresh(job)
+        assert job.status == TransformationStatus.FAILED
+        assert "soft time limit" in job.error_message
+
+    @mock_aws
+    @pytest.mark.usefixtures("aws_credentials")
+    def test_execute_job_timeout_sends_failure_callback(
+        self,
+        db: Session,
+        test_document: Tuple[Document, Project],
+    ) -> None:
+        """Test that a gevent Timeout sends a failure callback when callback_url is set."""
+        document, project = test_document
+        aws = self.setup_aws_s3()
+        self.create_s3_document_content(aws, document)
+
+        job_crud = DocTransformationJobCrud(session=db, project_id=project.id)
+        job = job_crud.create(DocTransformJobCreate(source_document_id=document.id))
+
+        callback_url = "https://example.com/doctransform/timeout"
+
+        with patch(
+            "app.services.doctransform.job.Session"
+        ) as mock_session_class, patch(
+            "app.services.doctransform.job.get_cloud_storage"
+        ) as mock_storage_class, patch(
+            "app.services.doctransform.registry.TRANSFORMERS",
+            {"test": MockTestTransformer},
+        ), patch(
+            "app.services.doctransform.job.send_callback"
+        ) as mock_send_callback:
+            mock_session_class.return_value.__enter__.return_value = db
+            mock_session_class.return_value.__exit__.return_value = None
+
+            mock_storage = mock_storage_class.return_value
+            mock_storage.stream.side_effect = Timeout(300)
+
+            with pytest.raises(Timeout):
+                execute_job.__wrapped__(
+                    project_id=project.id,
+                    job_id=str(job.id),
+                    source_document_id=str(document.id),
+                    transformer_name="test",
+                    target_format="markdown",
+                    task_id=str(uuid4()),
+                    callback_url=callback_url,
+                    task_instance=None,
+                )
+
+        db.refresh(job)
+        assert job.status == TransformationStatus.FAILED
+        assert "soft time limit" in job.error_message
+
+        mock_send_callback.assert_called_once()
+        cb_url_arg, payload_arg = mock_send_callback.call_args.args
+        assert cb_url_arg == callback_url
+        assert payload_arg["success"] is False
+        assert "soft time limit" in (payload_arg["error"] or "")
