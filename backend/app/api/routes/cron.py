@@ -89,7 +89,7 @@ async def evaluation_cron_job(
                 f"[evaluation_cron_job] Assessment polling failed: {ae}",
                 exc_info=True,
             )
-            result["assessment_error"] = str(ae)
+            result["assessment_error"] = "Assessment polling failed"
 
         logger.info(
             f"[evaluation_cron_job] Completed: "
