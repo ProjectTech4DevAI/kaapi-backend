@@ -1,5 +1,7 @@
 import logging
+from typing import Any
 
+import celery
 from asgi_correlation_id import correlation_id
 from celery import current_task
 
@@ -16,6 +18,7 @@ def _set_trace(trace_id: str) -> None:
 
 
 @celery_app.task(bind=True, queue="high_priority", priority=9)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_llm_job")
 def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_job
 
@@ -30,6 +33,7 @@ def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
 
 
 @celery_app.task(bind=True, queue="high_priority", priority=9)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_llm_chain_job")
 def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_chain_job
 
@@ -44,6 +48,7 @@ def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwarg
 
 
 @celery_app.task(bind=True, queue="high_priority", priority=9)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_response_job")
 def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.response.jobs import execute_job
 
@@ -58,6 +63,7 @@ def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_doctransform_job")
 def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.doctransform.job import execute_job
 
@@ -106,6 +112,7 @@ def run_collection_batch_job(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_delete_collection_job")
 def run_delete_collection_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
@@ -122,6 +129,7 @@ def run_delete_collection_job(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_batch_submission")
 def run_stt_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
@@ -138,6 +146,7 @@ def run_stt_batch_submission(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_metric_computation")
 def run_stt_metric_computation(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
@@ -154,6 +163,7 @@ def run_stt_metric_computation(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_batch_submission")
 def run_tts_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
@@ -170,6 +180,7 @@ def run_tts_batch_submission(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):

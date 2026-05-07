@@ -1,22 +1,24 @@
 import logging
-from uuid import UUID
 from typing import Any
+from uuid import UUID
 
-from sqlmodel import Session, select, and_, func
 from fastapi import HTTPException
-from sqlalchemy.orm import defer
 from pydantic import ValidationError
+from sqlalchemy.orm import defer
+from sqlmodel import Session, and_, select
 
-from .config import ConfigCrud
 from app.core.util import now
 from app.models import (
     Config,
     ConfigVersion,
     ConfigVersionCreate,
-    ConfigVersionUpdate,
     ConfigVersionItems,
+    ConfigVersionUpdate,
 )
+from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob
+
+from .config import ConfigCrud
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +28,17 @@ class ConfigVersionCrud:
     CRUD operations for configuration versions scoped to a project.
     """
 
-    def __init__(self, session: Session, config_id: UUID, project_id: int):
+    def __init__(
+        self,
+        session: Session,
+        config_id: UUID,
+        project_id: int,
+        tag: ConfigTag = ConfigTag.DEFAULT,
+    ):
         self.session = session
         self.project_id = project_id
         self.config_id = config_id
+        self.tag = tag
 
     def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:
         """
@@ -243,7 +252,10 @@ class ConfigVersionCrud:
     def _config_exists_or_raise(self, config_id: UUID) -> Config:
         """Check if a config exists in the project."""
         config_crud = ConfigCrud(session=self.session, project_id=self.project_id)
-        config_crud.exists_or_raise(config_id)
+        return config_crud.exists_in_tag_scope_or_raise(
+            config_id=config_id,
+            tag=self.tag,
+        )
 
     def _validate_config_type_unchanged(
         self, version_create: ConfigVersionCreate

@@ -4,14 +4,18 @@ Business logic modules can use these functions without knowing Celery internals.
 """
 import logging
 import functools
-from typing import Any, Dict
+from typing import Any, Dict, TypeVar
+from collections.abc import Callable
 
 from celery.result import AsyncResult
 from gevent import Timeout
+from opentelemetry.propagate import inject
 
 from app.celery.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs) -> str:
@@ -182,27 +186,31 @@ def revoke_task(task_id: str, terminate: bool = False) -> bool:
         return False
 
 
-def gevent_timeout(seconds, task_name=None):
-    def decorator(func):
+def gevent_timeout(
+    seconds: float | None, task_name: str | None = None
+) -> Callable[[F], F]:
+    def decorator(func: F) -> F:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             name = task_name or func.__name__
             timeout = Timeout(seconds)
             timeout.start()
             try:
                 return func(*args, **kwargs)
-            except Timeout:
-                logger.error(
-                    f"[{name}] Timed out after {seconds}s — args={args}, kwargs={kwargs}"
-                )
+            except Timeout as err:
+                if err is not timeout:
+                    raise
+                logger.error(f"[{name}] Timed out after {seconds}s")
                 raise
-            # raise TimeoutError(f"[{name}] Task exceeded soft time limit of {seconds}s")
             finally:
-                raise TimeoutError(
-                    f"[{name}] Task exceeded soft time limit of {seconds}s"
-                )
                 timeout.cancel()
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
+
+
+# In gevent mode, Celery's soft and hard time limits fire during task cleanup,
+# producing a misleading "Hard time limit exceeded" log. The task has already
+# completed at this point (Pool POST fires first). This is a known gevent/Celery
+# interaction and is harmless.

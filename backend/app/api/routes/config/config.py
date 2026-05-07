@@ -1,19 +1,19 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, HTTPException
 
-from app.api.deps import SessionDep, AuthContextDep
+from fastapi import APIRouter, Depends, Query
+
+from app.api.deps import AuthContextDep, SessionDep
+from app.api.permissions import Permission, require_permission
 from app.crud.config import ConfigCrud
 from app.models import (
-    Config,
     ConfigCreate,
-    ConfigUpdate,
     ConfigPublic,
+    ConfigUpdate,
     ConfigWithVersion,
-    ConfigVersion,
     Message,
 )
+from app.models.config.config import ConfigTag
 from app.utils import APIResponse, load_description
-from app.api.permissions import Permission, require_permission
 
 router = APIRouter()
 
@@ -56,14 +56,27 @@ def list_configs(
     query: str | None = Query(None, description="search query"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
+    tag: ConfigTag = Query(
+        ConfigTag.DEFAULT,
+        description=(
+            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
+            "for assessment configs. "
+            "Supported values: 'default', 'ASSESSMENT'."
+        ),
+    ),
 ) -> APIResponse[list[ConfigPublic]]:
     """
     List all configurations for the current project.
     Ordered by updated_at in descending order.
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    configs, has_more = config_crud.read_all(query=query, skip=skip, limit=limit)
-    return APIResponse.success_response(data=configs, metadata=dict(has_more=has_more))
+    configs, has_more = config_crud.read_all(
+        query=query,
+        skip=skip,
+        limit=limit,
+        tag=tag,
+    )
+    return APIResponse.success_response(data=configs, metadata={"has_more": has_more})
 
 
 @router.get(

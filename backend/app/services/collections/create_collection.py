@@ -3,6 +3,8 @@ import time
 from uuid import UUID, uuid4
 
 from sqlmodel import Session
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
 from asgi_correlation_id import correlation_id
 
 from app.core.cloud import get_cloud_storage
@@ -172,6 +174,45 @@ def _retry_failed_uploads(
 
 
 def execute_setup_job(
+def _handle_job_failure(
+    span,
+    project_id: int,
+    organization_id: int,
+    job_id: str,
+    err: Exception,
+    collection_job: CollectionJob | None,
+    creation_request: CreationRequest | None,
+    provider=None,
+    result=None,
+) -> None:
+    """Record failure on span, clean up provider, mark job failed, and send failure callback."""
+    span.record_exception(err)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
+
+    if provider is not None and result is not None:
+        try:
+            provider.delete(result)
+        except Exception:
+            logger.warning("[create_collection.execute_job] Provider cleanup failed")
+
+    collection_job = _mark_job_failed(
+        project_id=project_id,
+        job_id=job_id,
+        err=err,
+        collection_job=collection_job,
+    )
+
+    if creation_request and creation_request.callback_url and collection_job:
+        failure_payload = build_failure_payload(collection_job, str(err))
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        send_callback(
+            str(creation_request.callback_url),
+            failure_payload,
+            webhook_secret=webhook_secret,
+        )
+
+
+def execute_job(
     request: dict,
     with_assistant: bool,
     project_id: int,
@@ -458,34 +499,50 @@ def execute_batch_job(
             len(all_docs),
         )
 
-        if creation_request.callback_url:
-            send_callback(creation_request.callback_url, success_payload)
+            if creation_request.callback_url:
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
 
-    except Timeout as err:
-        timeout_err = TimeoutError(
-            f"[execute_batch_job] Task exceeded soft time limit of {err.seconds}s"
-        )
-        _mark_job_failed(
-            project_id=project_id,
-            job_id=job_id,
-            err=timeout_err,
-            collection_job=collection_job,
-        )
-        raise
-    except BaseException as err:
-        logger.error(
-            "[create_collection.execute_batch_job] Batch %d failed | job_id=%s, error=%s",
-            batch_number,
-            job_id,
-            str(err),
-            exc_info=True,
-        )
-        collection_job = _mark_job_failed(
-            project_id=project_id,
-            job_id=job_id,
-            err=err,
-            collection_job=collection_job,
-        )
-        if creation_request and creation_request.callback_url and collection_job:
-            failure_payload = build_failure_payload(collection_job, str(err))
-            send_callback(creation_request.callback_url, failure_payload)
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError("Task exceeded soft time limit")
+            logger.warning(
+                "[create_collection.execute_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
+                job_id,
+                str(timeout_err),
+            )
+            _handle_job_failure(
+                span,
+                project_id,
+                organization_id,
+                job_id,
+                timeout_err,
+                collection_job,
+                creation_request,
+                provider,
+                result,
+            )
+            raise
+
+        except Exception as err:
+            logger.error(
+                "[create_collection.execute_job] Collection Creation Failed | {'collection_job_id': '%s', 'error': '%s'}",
+                job_id,
+                str(err),
+                exc_info=True,
+            )
+            _handle_job_failure(
+                span,
+                project_id,
+                organization_id,
+                job_id,
+                err,
+                collection_job,
+                creation_request,
+                provider,
+                result,
+            )
+            raise

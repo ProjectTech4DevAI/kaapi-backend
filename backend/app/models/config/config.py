@@ -1,13 +1,31 @@
-from uuid import UUID, uuid4
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from uuid import UUID, uuid4
 
-from sqlmodel import Field, SQLModel, Index, text
+import sqlalchemy as sa
 from pydantic import field_validator
+from sqlalchemy.dialects import postgresql
+from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 from app.models.llm.request import ConfigBlob
+
 from .version import ConfigVersionPublic
+
+
+class ConfigTag(StrEnum):
+    """Config classification tag."""
+
+    DEFAULT = "default"
+    ASSESSMENT = "ASSESSMENT"
+
+
+_CONFIG_TAG_PG_ENUM = postgresql.ENUM(
+    ConfigTag,
+    name="config_tag",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
 
 
 class ConfigBase(SQLModel):
@@ -45,6 +63,13 @@ class Config(ConfigBase, table=True):
             "updated_at",
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index(
+            "idx_config_project_id_tag_active",
+            "project_id",
+            "tag",
+            text("updated_at DESC"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: UUID = Field(
@@ -58,6 +83,19 @@ class Config(ConfigBase, table=True):
         nullable=False,
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the project"},
+    )
+
+    tag: ConfigTag = Field(
+        default=ConfigTag.DEFAULT,
+        sa_column=sa.Column(
+            _CONFIG_TAG_PG_ENUM,
+            nullable=False,
+            server_default=sa.text("'default'::config_tag"),
+            comment=(
+                "Tag classifying the config: 'default' for general use, "
+                "'ASSESSMENT' for assessment use."
+            ),
+        ),
     )
 
     inserted_at: datetime = Field(
@@ -90,6 +128,13 @@ class ConfigCreate(ConfigBase):
         max_length=512,
         description="Optional message describing the changes in this version",
     )
+    tag: ConfigTag = Field(
+        default=ConfigTag.DEFAULT,
+        description=(
+            "Optional tag for classifying this config. Omit to store 'default'; "
+            "set 'ASSESSMENT' for assessment use."
+        ),
+    )
 
     @field_validator("config_blob")
     def validate_blob_not_empty(cls, value):
@@ -102,6 +147,10 @@ class ConfigUpdate(SQLModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(
         default=None, max_length=512, description="Optional description"
+    )
+    tag: ConfigTag | None = Field(
+        default=None,
+        description=("Optional tag for classifying this config. "),
     )
 
 
