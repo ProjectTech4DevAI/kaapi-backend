@@ -1,10 +1,10 @@
-"""drop redundant indexes superseded by 055 composites
+"""drop redundant indexes superseded by 057 composites
 
-Revision ID: 056
-Revises: 055
+Revision ID: 058
+Revises: 057
 Create Date: 2026-05-05 14:00:00.000000
 
-Drops indexes that are now redundant after migration 055 added the
+Drops indexes that are now redundant after migration 057 added the
 real composite/partial indexes that match actual query shapes:
 
   ix_project_name
@@ -51,8 +51,8 @@ schema can be restored bit-for-bit if needed.
 from alembic import op
 
 
-revision = "056"
-down_revision = "055"
+revision = "058"
+down_revision = "057"
 branch_labels = None
 depends_on = None
 
