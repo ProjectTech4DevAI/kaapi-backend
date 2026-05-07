@@ -13,6 +13,7 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -25,6 +26,7 @@ def resolve_evaluation_config(
     config_id: UUID,
     config_version: int,
     project_id: int,
+    tag: ConfigTag = ConfigTag.DEFAULT,
 ) -> tuple[ConfigBlob | None, str | None]:
     """
     Resolve config blob from stored config management.
@@ -42,6 +44,7 @@ def resolve_evaluation_config(
         session=session,
         config_id=config_id,
         project_id=project_id,
+        tag=tag,
     )
 
     return resolve_config_blob(

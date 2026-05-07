@@ -9,7 +9,7 @@ router = APIRouter(prefix="/utils", tags=["utils"])
 
 
 @router.post(
-    "/test-email/",
+    "/test-email",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     status_code=201,
     include_in_schema=False,
@@ -27,6 +27,6 @@ def test_email(email_to: EmailStr) -> Message:
     return Message(message="Test email sent")
 
 
-@router.get("/health/", include_in_schema=False)
+@router.get("/health", include_in_schema=False)
 async def health_check() -> bool:
     return True

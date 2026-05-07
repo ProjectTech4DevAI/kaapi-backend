@@ -7,7 +7,7 @@ from app.models import User
 
 def test_create_user(client: TestClient, db: Session) -> None:
     r = client.post(
-        f"{settings.API_V1_STR}/private/users/",
+        f"{settings.API_V1_STR}/private/users",
         json={
             "email": "pollo@listo.com",
             "password": "password123",

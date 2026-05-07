@@ -89,6 +89,48 @@ class TestOpenAIBatchProvider:
 
         assert result["total_items"] == 1
 
+    def test_create_batch_preserves_unicode_text_in_jsonl(
+        self, provider, mock_openai_client
+    ):
+        """Test JSONL upload keeps non-ASCII prompt text UTF-8 encoded."""
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "method": "POST",
+                "url": "/v1/responses",
+                "body": {
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "# Problem Statement\n\nఎండ్",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ]
+        config = {"endpoint": "/v1/responses"}
+
+        mock_file_response = MagicMock()
+        mock_file_response.id = "file-123"
+        mock_openai_client.files.create.return_value = mock_file_response
+
+        mock_batch = MagicMock()
+        mock_batch.id = "batch-456"
+        mock_batch.status = "validating"
+        mock_openai_client.batches.create.return_value = mock_batch
+
+        provider.create_batch(jsonl_data, config)
+
+        uploaded_bytes = mock_openai_client.files.create.call_args.kwargs["file"][1]
+        uploaded_content = uploaded_bytes.decode("utf-8")
+        assert "ఎండ్" in uploaded_content
+        assert "\\u0c" not in uploaded_content
+
     def test_create_batch_file_upload_error(self, provider, mock_openai_client):
         """Test handling of file upload error during batch creation."""
         jsonl_data = [{"custom_id": "req-1"}]

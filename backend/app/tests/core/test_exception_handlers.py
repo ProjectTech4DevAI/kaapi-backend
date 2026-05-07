@@ -112,7 +112,7 @@ class TestValidationErrorResponse:
         self, client: TestClient, user_api_key: TestAuthContext
     ) -> None:
         response = client.post(
-            f"{settings.API_V1_STR}/configs/",
+            f"{settings.API_V1_STR}/configs",
             headers={"X-API-KEY": user_api_key.key},
             json={},
         )
@@ -127,7 +127,7 @@ class TestValidationErrorResponse:
         self, client: TestClient, user_api_key: TestAuthContext
     ) -> None:
         response = client.post(
-            f"{settings.API_V1_STR}/configs/",
+            f"{settings.API_V1_STR}/configs",
             headers={"X-API-KEY": user_api_key.key},
             json={
                 "name": "test-config",

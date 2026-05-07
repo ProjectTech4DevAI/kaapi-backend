@@ -22,7 +22,7 @@ def test_list_collections_returns_api_response(
     """
 
     response = client.get(
-        f"{settings.API_V1_STR}/collections/",
+        f"{settings.API_V1_STR}/collections",
         headers=user_api_key_header,
     )
 
@@ -47,7 +47,7 @@ def test_list_collections_includes_assistant_collection(
     project = get_project(db, "Dalgo")
 
     response_before = client.get(
-        f"{settings.API_V1_STR}/collections/",
+        f"{settings.API_V1_STR}/collections",
         headers=user_api_key_header,
     )
     assert response_before.status_code == 200
@@ -55,7 +55,7 @@ def test_list_collections_includes_assistant_collection(
     collection = get_assistant_collection(db, project)
 
     response_after = client.get(
-        f"{settings.API_V1_STR}/collections/",
+        f"{settings.API_V1_STR}/collections",
         headers=user_api_key_header,
     )
     assert response_after.status_code == 200
@@ -86,7 +86,7 @@ def test_list_collections_includes_vector_store_collection_with_fields(
     collection = get_vector_store_collection(db, project)
 
     response = client.get(
-        f"{settings.API_V1_STR}/collections/",
+        f"{settings.API_V1_STR}/collections",
         headers=user_api_key_header,
     )
     assert response.status_code == 200
@@ -119,7 +119,7 @@ def test_list_collections_does_not_error_with_no_collections(
     This assumes a clean DB or that there may be zero collections initially.
     """
     response = client.get(
-        f"{settings.API_V1_STR}/collections/",
+        f"{settings.API_V1_STR}/collections",
         headers=user_api_key_header,
     )
 
