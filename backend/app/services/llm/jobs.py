@@ -591,12 +591,13 @@ def execute_llm_call(
                         stt_bytes = base64.b64decode(query.input.content.value)
 
                     storage = get_cloud_storage(session, project_id)
+                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/stt"
                     s3_url = upload_audio_bytes_to_s3(
                         storage,
                         stt_bytes,
                         llm_call_id,
                         query.input.content.mime_type,
-                        "llm/stt/audio",
+                        subfolder_path,
                     )
                     if s3_url:
                         stt_input_record = json.dumps(
@@ -738,12 +739,13 @@ def execute_llm_call(
                     with Session(engine) as s3_session:
                         storage = get_cloud_storage(s3_session, project_id)
                     tts_bytes = base64.b64decode(tts_output.content.value)
+                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/tts"
                     s3_url = upload_audio_bytes_to_s3(
                         storage,
                         tts_bytes,
                         llm_call_id,
                         tts_output.content.mime_type,
-                        "llm/tts/audio",
+                        subfolder_path,
                     )
                     if s3_url:
                         # Keep base64 in the response object for backward-compatible clients.
