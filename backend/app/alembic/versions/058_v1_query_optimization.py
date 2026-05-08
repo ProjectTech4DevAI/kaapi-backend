@@ -15,6 +15,9 @@ Bundles three coordinated changes for v1.0 lock:
 
 2. Composite + partial indexes for hot list/pagination paths matching:
        WHERE project_id = ? [AND deleted_at IS NULL] ORDER BY <ts> DESC
+   Plus a small partial index `ix_evaluation_run_processing` for the
+   cron polling queries that filter by (type, status='processing')
+   without an organization_id predicate.
 
 3. Drop the redundant `is_deleted` boolean from every table that also
    carries `deleted_at`. `deleted_at IS NULL` becomes the single source
@@ -124,6 +127,16 @@ COMPOSITE_INDEXES: list[tuple[str, str, str | None]] = [
     (
         "ix_evaluation_run_org_project_type_inserted_at",
         'ON "evaluation_run" ("organization_id", "project_id", "type", "inserted_at" DESC)',
+        None,
+    ),
+    # Partial index for cron polling queries that filter by
+    # (type, status='processing') without an organization_id predicate
+    # (crud/evaluations/cron_utils.py and crud/evaluations/processing.py).
+    # The composite above leads with organization_id and does not serve
+    # these unscoped scans.
+    (
+        "ix_evaluation_run_processing",
+        'ON "evaluation_run" ("type", "batch_job_id") WHERE "status" = \'processing\'',
         None,
     ),
     (

@@ -25,7 +25,7 @@ def upgrade():
         "languages",
         sa.Column(
             "id",
-            sa.Integer(),
+            sa.BigInteger(),
             sa.Identity(always=False),
             primary_key=True,
             comment="Unique identifier for the language",
