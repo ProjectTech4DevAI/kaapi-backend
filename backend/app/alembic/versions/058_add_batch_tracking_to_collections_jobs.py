@@ -1,7 +1,7 @@
 """add batch tracking to collection_jobs
 
-Revision ID: 055
-Revises: 054
+Revision ID: 058
+Revises: 057
 Create Date: 2026-04-13
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "055"
-down_revision = "054"
+revision = "058"
+down_revision = "057"
 branch_labels = None
 depends_on = None
 

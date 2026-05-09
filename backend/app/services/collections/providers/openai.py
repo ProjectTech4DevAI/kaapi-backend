@@ -57,6 +57,7 @@ class OpenAIProvider(BaseProvider):
                     str(err),
                     exc_info=True,
                 )
+                raise
 
     def create(
         self,
@@ -77,7 +78,7 @@ class OpenAIProvider(BaseProvider):
                 )
 
             if docs:
-                vector_store_crud.update_batch(vector_store_id, docs)
+                vector_store_crud.update(vector_store_id, docs)
                 logger.info(
                     "[OpenAIProvider.create] Batch uploaded | vector_store_id=%s, doc_count=%d",
                     vector_store_id,
@@ -89,7 +90,7 @@ class OpenAIProvider(BaseProvider):
                     llm_service_id=vector_store_id,
                     llm_service_name=get_service_name("openai"),
                 )
-
+            # if "is_final" is true then only will assistant creation happen -
             with_assistant = (
                 collection_request.model is not None
                 and collection_request.instructions is not None
