@@ -79,7 +79,7 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
     )
 
     with patch(
-        "app.services.collections.create_collection.start_create_collection_job"
+        "app.services.collections.create_collection.start_collection_setup_job"
     ) as mock_schedule:
         mock_schedule.return_value = "fake-task-id"
 

@@ -18,14 +18,24 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _enqueue_with_trace_context(task, **kwargs) -> str:
+    """Publish Celery task with explicit trace context headers."""
+    otel_headers: dict[str, str] = {}
+    inject(otel_headers)
+    celery_headers = dict(otel_headers)
+    celery_headers["otel"] = otel_headers
+    async_result = task.apply_async(kwargs=kwargs, headers=celery_headers)
+    return async_result.id
+
+
 def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs) -> str:
     from app.celery.tasks.job_execution import run_llm_job
 
-    task = run_llm_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_llm_job, project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
     )
-    logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task.id}")
-    return task.id
+    logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task_id}")
+    return task_id
 
 
 def start_llm_chain_job(
@@ -33,13 +43,17 @@ def start_llm_chain_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_llm_chain_job
 
-    task = run_llm_chain_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_llm_chain_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_llm_chain_job] Started job {job_id} with Celery task {task.id}"
+        f"[start_llm_chain_job] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_response_job(
@@ -47,11 +61,15 @@ def start_response_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_response_job
 
-    task = run_response_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_response_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
-    logger.info(f"[start_response_job] Started job {job_id} with Celery task {task.id}")
-    return task.id
+    logger.info(f"[start_response_job] Started job {job_id} with Celery task {task_id}")
+    return task_id
 
 
 def start_doctransform_job(
@@ -59,27 +77,35 @@ def start_doctransform_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_doctransform_job
 
-    task = run_doctransform_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_doctransform_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_doctransform_job] Started job {job_id} with Celery task {task.id}"
+        f"[start_doctransform_job] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
-def start_create_collection_job(
+def start_collection_setup_job(
     project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:
-    from app.celery.tasks.job_execution import run_create_collection_job
+    from app.celery.tasks.job_execution import run_collection_setup_job
 
-    task = run_create_collection_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_collection_setup_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_create_collection_job] Started job {job_id} with Celery task {task.id}"
+        f"[start_collection_setup_job] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_collection_batch_job(
@@ -87,13 +113,17 @@ def start_collection_batch_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_collection_batch_job
 
-    task = run_collection_batch_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_collection_batch_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_collection_batch_job] Started batch job {job_id} with Celery task {task.id}"
+        f"[start_collection_setup_job] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_delete_collection_job(
@@ -101,13 +131,17 @@ def start_delete_collection_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_delete_collection_job
 
-    task = run_delete_collection_job.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_delete_collection_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_delete_collection_job] Started job {job_id} with Celery task {task.id}"
+        f"[start_delete_collection_job] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_stt_batch_submission(
@@ -115,13 +149,17 @@ def start_stt_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_batch_submission
 
-    task = run_stt_batch_submission.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_stt_batch_submission,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_stt_batch_submission] Started job {job_id} with Celery task {task.id}"
+        f"[start_stt_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_stt_metric_computation(
@@ -129,13 +167,17 @@ def start_stt_metric_computation(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_metric_computation
 
-    task = run_stt_metric_computation.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_stt_metric_computation,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_stt_metric_computation] Started job {job_id} with Celery task {task.id}"
+        f"[start_stt_metric_computation] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_tts_batch_submission(
@@ -143,13 +185,17 @@ def start_tts_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_batch_submission
 
-    task = run_tts_batch_submission.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_tts_batch_submission,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_tts_batch_submission] Started job {job_id} with Celery task {task.id}"
+        f"[start_tts_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def start_tts_result_processing(
@@ -157,13 +203,17 @@ def start_tts_result_processing(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_result_processing
 
-    task = run_tts_result_processing.delay(
-        project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
+    task_id = _enqueue_with_trace_context(
+        run_tts_result_processing,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
     )
     logger.info(
-        f"[start_tts_result_processing] Started job {job_id} with Celery task {task.id}"
+        f"[start_tts_result_processing] Started job {job_id} with Celery task {task_id}"
     )
-    return task.id
+    return task_id
 
 
 def get_task_status(task_id: str) -> Dict[str, Any]:

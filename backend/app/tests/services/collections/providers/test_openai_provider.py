@@ -315,6 +315,89 @@ def test_upload_files_mixed_skips_uploaded_uploads_new() -> None:
     storage.get.assert_called_once_with(new_doc.object_store_url)
 
 
+def test_upload_files_empty_docs_is_noop() -> None:
+    client = MagicMock()
+    provider = OpenAIProvider(client=client)
+    storage = MagicMock()
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p, crud_p:
+        provider.upload_files(storage, [], project_id=1)
+
+    storage.get.assert_not_called()
+    client.files.create.assert_not_called()
+
+
+def test_upload_files_file_object_name_matches_doc_fname() -> None:
+    """The BytesIO passed to OpenAI must carry the original filename."""
+    from io import BytesIO
+
+    client = MagicMock()
+    client.files.create.return_value = MagicMock(id="file-abc")
+    provider = OpenAIProvider(client=client)
+
+    storage = MagicMock()
+    storage.get.return_value = b"data"
+
+    doc = _make_doc(file_size_kb=1.0)
+    doc.fname = "report.pdf"
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p as MockSession, crud_p:
+        MockSession.return_value.__enter__.return_value = MagicMock()
+        MockSession.return_value.__exit__.return_value = False
+        provider.upload_files(storage, [doc], project_id=1)
+
+    _, kwargs = client.files.create.call_args
+    f_obj = kwargs["file"]
+    assert isinstance(f_obj, BytesIO)
+    assert f_obj.name == "report.pdf"
+
+
+def test_upload_files_raises_on_db_update_failure() -> None:
+    client = MagicMock()
+    client.files.create.return_value = MagicMock(id="file-ok")
+    provider = OpenAIProvider(client=client)
+
+    storage = MagicMock()
+    storage.get.return_value = b"content"
+
+    doc = _make_doc(file_size_kb=1.0)
+    mock_crud = MagicMock()
+    mock_crud.read_one.return_value = MagicMock()
+    mock_crud.update.side_effect = RuntimeError("DB write failed")
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p as MockSession, crud_p as MockDocCrud:
+        MockSession.return_value.__enter__.return_value = MagicMock()
+        MockSession.return_value.__exit__.return_value = False
+        MockDocCrud.return_value = mock_crud
+
+        with pytest.raises(RuntimeError, match="DB write failed"):
+            provider.upload_files(storage, [doc], project_id=1)
+
+
+def test_upload_files_first_failure_stops_remaining_docs() -> None:
+    """If the first doc raises, subsequent docs are never attempted."""
+    client = MagicMock()
+    client.files.create.side_effect = RuntimeError("quota exceeded")
+    provider = OpenAIProvider(client=client)
+
+    storage = MagicMock()
+    storage.get.return_value = b"content"
+
+    doc1 = _make_doc(file_size_kb=1.0)
+    doc2 = _make_doc(file_size_kb=1.0)
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p, crud_p:
+        with pytest.raises(RuntimeError, match="quota exceeded"):
+            provider.upload_files(storage, [doc1, doc2], project_id=1)
+
+    client.files.create.assert_called_once()
+    assert storage.get.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # create (existing tests below)
 # ---------------------------------------------------------------------------
