@@ -122,6 +122,28 @@ def test_batch_documents_mixed_size_batching() -> None:
     assert len(batches[2]) == 1  # 15 MB total
 
 
+def test_batch_documents_zero_size_files_batches_by_count() -> None:
+    """Zero-size docs contribute nothing to size, so only the 200-doc count limit applies."""
+    docs = create_fake_documents(250, file_size_kb=0)
+    batches = helpers.batch_documents(docs)
+
+    assert len(batches) == 2
+    assert len(batches[0]) == 200
+    assert len(batches[1]) == 50
+
+
+def test_batch_documents_doc_exactly_at_size_limit_stays_in_same_batch() -> None:
+    """A doc whose size exactly equals MAX_BATCH_SIZE_KB should not trigger a new batch
+    on its own — the split only happens when adding it would *exceed* the limit."""
+    from app.services.collections.helpers import MAX_BATCH_SIZE_KB
+
+    docs = create_fake_documents(1, file_size_kb=MAX_BATCH_SIZE_KB)
+    batches = helpers.batch_documents(docs)
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 1
+
+
 def test_batch_documents_with_none_file_size_raises() -> None:
     """Test that documents with None file_size raise TypeError — sizes must be backfilled before batching."""
     docs = create_fake_documents(10, file_size_kb=None)
