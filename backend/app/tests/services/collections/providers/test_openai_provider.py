@@ -24,7 +24,6 @@ def test_create_openai_vector_store_only() -> None:
         temperature=None,
     )
 
-    storage = MagicMock()
     documents = [
         SimpleNamespace(file_size_kb=10),
         SimpleNamespace(file_size_kb=20),
@@ -40,7 +39,6 @@ def test_create_openai_vector_store_only() -> None:
 
         collection = provider.create(
             collection_request,
-            storage,
             documents,
         )
 
@@ -60,7 +58,6 @@ def test_create_openai_with_assistant() -> None:
         temperature=0.7,
     )
 
-    storage = MagicMock()
     documents = [SimpleNamespace(file_size_kb=10)]
     vector_store_id = generate_openai_id("vs_")
     assistant_id = generate_openai_id("asst_")
@@ -79,8 +76,8 @@ def test_create_openai_with_assistant() -> None:
 
         collection = provider.create(
             collection_request,
-            storage,
             documents,
+            is_final=True,
         )
 
     assert collection.llm_service_id == assistant_id
@@ -341,6 +338,5 @@ def test_create_propagates_exception() -> None:
         with pytest.raises(RuntimeError):
             provider.create(
                 collection_request,
-                MagicMock(),
                 [SimpleNamespace(file_size_kb=10)],
             )

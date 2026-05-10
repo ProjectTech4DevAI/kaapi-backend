@@ -211,6 +211,9 @@ def execute_setup_job(
                     organization_id=organization_id,
                 )
 
+                for doc in flat_docs:
+                    session.expunge(doc)
+
                 collection_job_crud = CollectionJobCrud(session, project_id)
                 collection_job = collection_job_crud.update(
                     job_uuid,
@@ -219,9 +222,6 @@ def execute_setup_job(
                         status=CollectionJobStatus.PROCESSING,
                     ),
                 )
-
-                for doc in flat_docs:
-                    session.expunge(doc)
 
             provider.upload_files(storage, flat_docs, project_id)
 
