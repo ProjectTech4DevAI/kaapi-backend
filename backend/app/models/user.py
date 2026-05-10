@@ -78,6 +78,7 @@ class User(UserBase, table=True):
 # Properties to return via API, id is always required
 class UserPublic(UserBase):
     id: int
+    features: list[str] = Field(default_factory=list)
 
 
 class UsersPublic(SQLModel):
