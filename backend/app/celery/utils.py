@@ -121,7 +121,7 @@ def start_collection_batch_job(
         **kwargs,
     )
     logger.info(
-        f"[start_collection_setup_job] Started job {job_id} with Celery task {task_id}"
+        f"[start_collection_batch_job] Started job {job_id} with Celery task {task_id}"
     )
     return task_id
 

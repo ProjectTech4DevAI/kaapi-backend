@@ -122,21 +122,24 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 files=[],
                 file_ids=[doc.openai_file_id for doc in docs],
             )
-            logger.info(
-                f"[OpenAIVectorStoreCrud.update] Batch complete | "
-                f"{{'vector_store_id': '{vector_store_id}', "
-                f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
-            )
-            if batch.file_counts.failed > 0:
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] Batch had failures | "
-                    f"{{'vector_store_id': '{vector_store_id}', 'failed_count': {batch.file_counts.failed}}}"
-                )
         except OpenAIError as err:
             logger.error(
                 f"[OpenAIVectorStoreCrud.update] Batch attach failed | "
                 f"{{'vector_store_id': '{vector_store_id}', 'error': '{str(err)}'}}",
                 exc_info=True,
+            )
+            raise
+
+        logger.info(
+            f"[OpenAIVectorStoreCrud.update] Batch complete | "
+            f"{{'vector_store_id': '{vector_store_id}', "
+            f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
+        )
+        if batch.file_counts.failed > 0:
+            raise RuntimeError(
+                f"Batch attach to vector store {vector_store_id!r} completed with "
+                f"{batch.file_counts.failed} failed file(s) "
+                f"({batch.file_counts.completed} succeeded)"
             )
 
     def delete(self, vector_store_id: str, retries: int = 3):

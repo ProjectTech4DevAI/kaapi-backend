@@ -3,7 +3,9 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from openai import OpenAIError
 
+from app.crud.rag.open_ai import OpenAIVectorStoreCrud
 from app.services.collections.providers.openai import OpenAIProvider
 from app.models.collection import Collection
 from app.services.collections.helpers import get_service_name
@@ -376,6 +378,37 @@ def test_upload_files_raises_on_db_update_failure() -> None:
         with pytest.raises(RuntimeError, match="DB write failed"):
             provider.upload_files(storage, [doc], project_id=1)
 
+    client.files.delete.assert_called_once_with("file-ok")
+    assert doc.openai_file_id is None
+
+
+def test_upload_files_db_failure_rollback_delete_error_still_raises_original() -> None:
+    """If both DB persistence and the rollback delete fail, the original DB error propagates."""
+    client = MagicMock()
+    client.files.create.return_value = MagicMock(id="file-ok")
+    client.files.delete.side_effect = RuntimeError("delete failed")
+    provider = OpenAIProvider(client=client)
+
+    storage = MagicMock()
+    storage.get.return_value = b"content"
+
+    doc = _make_doc(file_size_kb=1.0)
+    mock_crud = MagicMock()
+    mock_crud.read_one.return_value = MagicMock()
+    mock_crud.update.side_effect = RuntimeError("DB write failed")
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p as MockSession, crud_p as MockDocCrud:
+        MockSession.return_value.__enter__.return_value = MagicMock()
+        MockSession.return_value.__exit__.return_value = False
+        MockDocCrud.return_value = mock_crud
+
+        with pytest.raises(RuntimeError, match="DB write failed"):
+            provider.upload_files(storage, [doc], project_id=1)
+
+    client.files.delete.assert_called_once_with("file-ok")
+    assert doc.openai_file_id is None
+
 
 def test_upload_files_first_failure_stops_remaining_docs() -> None:
     """If the first doc raises, subsequent docs are never attempted."""
@@ -396,6 +429,89 @@ def test_upload_files_first_failure_stops_remaining_docs() -> None:
 
     client.files.create.assert_called_once()
     assert storage.get.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# OpenAIVectorStoreCrud.update
+# ---------------------------------------------------------------------------
+
+
+def _make_batch(completed: int, failed: int) -> MagicMock:
+    batch = MagicMock()
+    batch.file_counts.completed = completed
+    batch.file_counts.failed = failed
+    return batch
+
+
+def _make_openai_doc(file_id: str = "file-abc") -> MagicMock:
+    doc = MagicMock()
+    doc.openai_file_id = file_id
+    return doc
+
+
+def test_vector_store_update_skips_when_no_docs() -> None:
+    client = MagicMock()
+    crud = OpenAIVectorStoreCrud(client)
+    crud.update("vs_123", [])
+    client.vector_stores.file_batches.upload_and_poll.assert_not_called()
+
+
+def test_vector_store_update_succeeds_with_no_failures() -> None:
+    client = MagicMock()
+    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
+        completed=3, failed=0
+    )
+    crud = OpenAIVectorStoreCrud(client)
+    crud.update("vs_123", [_make_openai_doc() for _ in range(3)])
+    client.vector_stores.file_batches.upload_and_poll.assert_called_once()
+
+
+def test_vector_store_update_raises_on_openai_error() -> None:
+    client = MagicMock()
+    client.vector_stores.file_batches.upload_and_poll.side_effect = OpenAIError(
+        "rate limit"
+    )
+    crud = OpenAIVectorStoreCrud(client)
+
+    with pytest.raises(OpenAIError, match="rate limit"):
+        crud.update("vs_123", [_make_openai_doc()])
+
+
+def test_vector_store_update_raises_on_partial_failures() -> None:
+    client = MagicMock()
+    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
+        completed=2, failed=1
+    )
+    crud = OpenAIVectorStoreCrud(client)
+
+    with pytest.raises(RuntimeError, match="1 failed file"):
+        crud.update("vs_123", [_make_openai_doc() for _ in range(3)])
+
+
+def test_vector_store_update_raises_on_all_failures() -> None:
+    client = MagicMock()
+    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
+        completed=0, failed=2
+    )
+    crud = OpenAIVectorStoreCrud(client)
+
+    with pytest.raises(RuntimeError, match="2 failed file"):
+        crud.update("vs_123", [_make_openai_doc() for _ in range(2)])
+
+
+def test_vector_store_update_passes_file_ids_to_openai() -> None:
+    client = MagicMock()
+    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
+        completed=2, failed=0
+    )
+    crud = OpenAIVectorStoreCrud(client)
+    docs = [_make_openai_doc("file-1"), _make_openai_doc("file-2")]
+
+    crud.update("vs_abc", docs)
+
+    _, kwargs = client.vector_stores.file_batches.upload_and_poll.call_args
+    assert kwargs["vector_store_id"] == "vs_abc"
+    assert kwargs["file_ids"] == ["file-1", "file-2"]
 
 
 # ---------------------------------------------------------------------------

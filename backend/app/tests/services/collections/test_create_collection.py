@@ -301,6 +301,51 @@ def test_execute_setup_job_timeout_marks_failed_and_reraises(
     assert "soft time limit" in (updated_job.error_message or "")
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
+@patch("app.services.collections.create_collection.get_llm_provider")
+@patch("app.services.collections.create_collection.start_collection_batch_job")
+def test_execute_setup_job_soft_time_limit_marks_failed_and_reraises(
+    mock_queue_batch: MagicMock,
+    mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
+    db: Session,
+) -> None:
+    project = get_project(db)
+    store = DocumentStore(db=db, project_id=project.id)
+    doc = store.put()
+
+    mock_provider = _mock_provider_with_size("vs_123", "openai vector store")
+    mock_provider.upload_files.side_effect = SoftTimeLimitExceeded()
+    mock_get_provider.return_value = mock_provider
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.PENDING,
+    )
+    request = CreationRequest(documents=[doc.id], provider="openai", callback_url=None)
+
+    patcher = _patch_session(db)
+    try:
+        with pytest.raises(SoftTimeLimitExceeded):
+            execute_setup_job(
+                request=request.model_dump(mode="json"),
+                with_assistant=False,
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                job_id=str(job.id),
+                task_instance=None,
+            )
+    finally:
+        patcher.stop()
+
+    updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
+    assert updated_job.status == CollectionJobStatus.FAILED
+    assert "soft time limit" in (updated_job.error_message or "")
+
+
 # ---------------------------------------------------------------------------
 # execute_batch_job
 # ---------------------------------------------------------------------------
@@ -586,6 +631,51 @@ def test_execute_batch_job_timeout_marks_failed_and_reraises(
     patcher = _patch_session(db)
     try:
         with pytest.raises(Timeout):
+            execute_batch_job(
+                request=request.model_dump(mode="json"),
+                with_assistant=False,
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                job_id=str(job.id),
+                task_instance=None,
+                vector_store_id=None,
+                batch_number=1,
+                batch_doc_ids=[str(doc.id)],
+                remaining_batches=[],
+            )
+    finally:
+        patcher.stop()
+
+    updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
+    assert updated_job.status == CollectionJobStatus.FAILED
+    assert "soft time limit" in (updated_job.error_message or "")
+
+
+@patch("app.services.collections.create_collection.get_llm_provider")
+def test_execute_batch_job_soft_time_limit_marks_failed_and_reraises(
+    mock_get_provider: MagicMock,
+    db: Session,
+) -> None:
+    project = get_project(db)
+    store = DocumentStore(db=db, project_id=project.id)
+    doc = store.put()
+
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_provider.create.side_effect = SoftTimeLimitExceeded()
+    mock_get_provider.return_value = mock_provider
+
+    job = get_collection_job(
+        db,
+        project,
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.PROCESSING,
+    )
+    request = CreationRequest(documents=[doc.id], provider="openai", callback_url=None)
+
+    patcher = _patch_session(db)
+    try:
+        with pytest.raises(SoftTimeLimitExceeded):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
                 with_assistant=False,

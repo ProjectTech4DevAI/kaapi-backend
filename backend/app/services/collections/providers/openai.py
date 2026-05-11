@@ -36,6 +36,7 @@ class OpenAIProvider(BaseProvider):
         for doc in docs:
             if self.get_existing_file_id(doc):
                 continue
+
             try:
                 content = storage.get(doc.object_store_url)
                 if doc.file_size_kb is None:
@@ -43,7 +44,17 @@ class OpenAIProvider(BaseProvider):
                 f_obj = BytesIO(content)
                 f_obj.name = doc.fname
                 uploaded = self.client.files.create(file=f_obj, purpose="assistants")
-                doc.openai_file_id = uploaded.id
+            except Exception as err:
+                logger.error(
+                    "[OpenAIProvider.upload_files] Failed to upload file | doc_id=%s, error=%s",
+                    doc.id,
+                    str(err),
+                    exc_info=True,
+                )
+                raise
+
+            doc.openai_file_id = uploaded.id
+            try:
                 with Session(engine) as session:
                     document_crud = DocumentCrud(session, project_id)
                     db_doc = document_crud.read_one(doc.id)
@@ -52,11 +63,30 @@ class OpenAIProvider(BaseProvider):
                     document_crud.update(db_doc)
             except Exception as err:
                 logger.error(
-                    "[OpenAIProvider.upload_files] Failed to upload file | doc_id=%s, error=%s",
+                    "[OpenAIProvider.upload_files] DB persistence failed, rolling back OpenAI file | "
+                    "doc_id=%s, openai_file_id=%s, error=%s",
                     doc.id,
+                    uploaded.id,
                     str(err),
                     exc_info=True,
                 )
+                try:
+                    self.client.files.delete(uploaded.id)
+                    logger.info(
+                        "[OpenAIProvider.upload_files] Rolled back OpenAI file | "
+                        "doc_id=%s, openai_file_id=%s",
+                        doc.id,
+                        uploaded.id,
+                    )
+                except Exception as delete_err:
+                    logger.error(
+                        "[OpenAIProvider.upload_files] Rollback failed, file is orphaned | "
+                        "doc_id=%s, openai_file_id=%s, error=%s",
+                        doc.id,
+                        uploaded.id,
+                        str(delete_err),
+                    )
+                doc.openai_file_id = None
                 raise
 
     def create(
@@ -72,10 +102,6 @@ class OpenAIProvider(BaseProvider):
             if vector_store_id is None:
                 vector_store = vector_store_crud.create()
                 vector_store_id = vector_store.id
-                logger.info(
-                    "[OpenAIProvider.create] Vector store created | vector_store_id=%s",
-                    vector_store_id,
-                )
 
             if docs:
                 vector_store_crud.update(vector_store_id, docs)
