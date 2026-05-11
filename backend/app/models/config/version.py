@@ -117,7 +117,6 @@ class ConfigVersionUpdate(SQLModel):
 
 
 class ConfigVersionPublic(ConfigVersionBase):
-    id: UUID = Field(description="Unique id for the configuration version")
     config_id: UUID = Field(description="Id of the parent configuration")
     version: int = Field(nullable=False, description="Version number starting at 1")
     inserted_at: datetime
