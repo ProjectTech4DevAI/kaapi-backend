@@ -2,7 +2,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.util import now
 from app.models.llm.request import ChainStatus, LlmChain
@@ -144,3 +144,9 @@ def update_llm_chain_block_completed(
         f"llm_call_id={llm_call_id}"
     )
     return db_chain
+
+
+def get_llm_chain_by_job_id(session: Session, job_id: UUID) -> LlmChain | None:
+    """Return the LlmChain record associated with the given job."""
+    statement = select(LlmChain).where(LlmChain.job_id == job_id)
+    return session.exec(statement).first()

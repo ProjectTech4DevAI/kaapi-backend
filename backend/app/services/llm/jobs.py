@@ -30,11 +30,18 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
     create_llm_call,
+    create_llm_call_pending,
+    get_llm_call_by_job_id,
     serialize_input,
     update_llm_call_input,
+    update_llm_call_resolved_fields,
     update_llm_call_response,
 )
-from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
+from app.crud.llm_chain import (
+    create_llm_chain,
+    get_llm_chain_by_job_id,
+    update_llm_chain_status,
+)
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
 from app.models.llm.request import (
     AudioInput,
@@ -124,6 +131,20 @@ def start_job(
         )
 
         try:
+            create_llm_call_pending(
+                db,
+                job_id=job.id,
+                project_id=project_id,
+                organization_id=organization_id,
+                request=request,
+            )
+        except Exception as e:
+            logger.warning(
+                f"[start_job] Failed to pre-create LlmCall record (non-fatal): {e} | job_id={job.id}",
+                exc_info=True,
+            )
+
+        try:
             task_id = start_llm_job(
                 project_id=project_id,
                 job_id=str(job.id),
@@ -171,6 +192,22 @@ def start_chain_job(
         logger.info(
             f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
         )
+
+        try:
+            create_llm_chain(
+                db,
+                job_id=job.id,
+                project_id=project_id,
+                organization_id=organization_id,
+                total_blocks=len(request.blocks),
+                input=serialize_input(request.query.input),
+                configs=[block.model_dump(mode="json") for block in request.blocks],
+            )
+        except Exception as e:
+            logger.warning(
+                f"[start_chain_job] Failed to pre-create LlmChain record (non-fatal): {e} | job_id={job.id}",
+                exc_info=True,
+            )
 
         try:
             task_id = start_llm_chain_job(
@@ -542,27 +579,78 @@ def execute_llm_call(
                         config=config,
                         request_metadata=request_metadata,
                     )
-                    llm_call = create_llm_call(
-                        session,
-                        request=llm_call_request,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        resolved_config=resolved_config_blob,
-                        original_provider=original_provider,
-                        chain_id=chain_id,
+                    # For standalone calls (no chain_id), a pending LlmCall row was
+                    # pre-created in start_job(). Find it and fill in the resolved fields.
+                    # For chain block calls (chain_id set), always create a fresh row.
+                    existing = (
+                        get_llm_call_by_job_id(session, job_id)
+                        if chain_id is None
+                        else None
                     )
+                    if existing is not None:
+                        # Determine input/output types now that config is resolved
+                        completion_type = resolved_config_blob.completion.type or (
+                            resolved_config_blob.completion.params.get("type", "text")
+                            if isinstance(resolved_config_blob.completion.params, dict)
+                            else getattr(
+                                resolved_config_blob.completion.params, "type", "text"
+                            )
+                        )
+                        if completion_type == "stt":
+                            _input_type, _output_type = "audio", "text"
+                        elif completion_type == "tts":
+                            _input_type, _output_type = "text", "audio"
+                        elif isinstance(query.input, ImageInput):
+                            _input_type, _output_type = "image", "text"
+                        elif isinstance(query.input, PDFInput):
+                            _input_type, _output_type = "pdf", "text"
+                        elif isinstance(query.input, list):
+                            _input_type, _output_type = "multimodal", "text"
+                        else:
+                            _input_type, _output_type = "text", "text"
+
+                        config_dict: dict[str, Any]
+                        if llm_call_request.config.is_stored_config:
+                            config_dict = {
+                                "config_id": str(llm_call_request.config.id),
+                                "config_version": llm_call_request.config.version,
+                            }
+                        else:
+                            config_dict = {
+                                "config_blob": resolved_config_blob.model_dump()
+                            }
+
+                        llm_call = update_llm_call_resolved_fields(
+                            session,
+                            llm_call_id=existing.id,
+                            input_type=_input_type,
+                            output_type=_output_type,
+                            provider=original_provider,
+                            model=model_name,
+                            config=config_dict,
+                        )
+                    else:
+                        llm_call = create_llm_call(
+                            session,
+                            request=llm_call_request,
+                            job_id=job_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            resolved_config=resolved_config_blob,
+                            original_provider=original_provider,
+                            chain_id=chain_id,
+                        )
                     llm_call_id = llm_call.id
                     create_span.set_attribute("llm.call_id", str(llm_call_id))
                     logger.info(
-                        f"[execute_llm_call] Created LLM call record | "
+                        f"[execute_llm_call] {'Updated' if existing else 'Created'} LLM call record | "
                         f"llm_call_id={llm_call_id}, job_id={job_id}"
                     )
                 except Exception as e:
                     create_span.record_exception(e)
                     create_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                     logger.error(
-                        f"[execute_llm_call] Failed to create LLM call record: {e} | job_id={job_id}",
+                        f"[execute_llm_call] Failed to create/update LLM call record: {e} | job_id={job_id}",
                         exc_info=True,
                     )
                     return BlockResult(
@@ -577,6 +665,7 @@ def execute_llm_call(
                 and llm_call_id
             ):
                 try:
+                    original_format = query.input.content.format
                     if query.input.content.format == "url":
                         stt_bytes, dl_error = download_audio_bytes(
                             query.input.content.value
@@ -604,6 +693,7 @@ def execute_llm_call(
                             {
                                 "type": "audio",
                                 "format": "uri",
+                                "original_format": original_format,
                                 "mime_type": query.input.content.mime_type,
                                 "size_bytes": len(stt_bytes),
                                 "uri": s3_url,
@@ -1057,19 +1147,23 @@ def execute_chain_job(
 
         try:
             with Session(engine) as session:
-                chain_record = create_llm_chain(
-                    session,
-                    job_id=job_uuid,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                    total_blocks=len(request.blocks),
-                    input=serialize_input(request.query.input),
-                    configs=[block.model_dump(mode="json") for block in request.blocks],
-                )
+                chain_record = get_llm_chain_by_job_id(session, job_uuid)
+                if chain_record is None:
+                    chain_record = create_llm_chain(
+                        session,
+                        job_id=job_uuid,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        total_blocks=len(request.blocks),
+                        input=serialize_input(request.query.input),
+                        configs=[
+                            block.model_dump(mode="json") for block in request.blocks
+                        ],
+                    )
                 chain_uuid = chain_record.id
 
                 logger.info(
-                    f"[execute_chain_job] Created chain record | "
+                    f"[execute_chain_job] Using chain record | "
                     f"chain_id={chain_uuid}, job_id={job_uuid}"
                 )
 

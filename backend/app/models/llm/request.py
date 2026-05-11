@@ -537,11 +537,11 @@ class LlmCall(SQLModel, table=True):
     )
 
     # NOTE: image, pdf, multimodal are internal labels stored in the table not user facing.
-    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] = Field(
-        ...,
+    input_type: Literal["text", "audio", "image", "pdf", "multimodal"] | None = Field(
+        default=None,
         sa_column=sa.Column(
             sa.String,
-            nullable=False,
+            nullable=True,
             comment="Input type: text, audio, image, pdf, multimodal",
         ),
     )
@@ -556,20 +556,22 @@ class LlmCall(SQLModel, table=True):
     )
 
     # Provider and model info
-    provider: str = Field(
-        ...,
+    provider: str | None = Field(
+        default=None,
         sa_column=sa.Column(
             sa.String,
-            nullable=False,
+            nullable=True,
             comment="AI provider as sent by user (e.g openai, -native, google)",
         ),
     )
 
-    model: str = Field(
-        ...,
-        sa_column_kwargs={
-            "comment": "Specific model used e.g. 'gpt-4o', 'gemini-2.5-pro'"
-        },
+    model: str | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            sa.String,
+            nullable=True,
+            comment="Specific model used e.g. 'gpt-4o', 'gemini-2.5-pro'",
+        ),
     )
 
     # Response fields

@@ -19,7 +19,7 @@ from app.models.llm.request import (
 logger = logging.getLogger(__name__)
 
 
-def serialize_input(query_input: QueryInput | str) -> str:
+def serialize_input(query_input: QueryInput | str | list) -> str:
     """Serialize query input for database storage.
 
     For text: stores the actual content value
@@ -279,3 +279,96 @@ def get_llm_calls_by_job_id(
     )
 
     return list(session.exec(statement).all())
+
+
+def get_llm_call_by_job_id(session: Session, job_id: UUID) -> LlmCall | None:
+    """Return the single active LlmCall for a standalone job (no chain_id)."""
+    statement = select(LlmCall).where(
+        LlmCall.job_id == job_id,
+        LlmCall.chain_id.is_(None),
+        LlmCall.deleted_at.is_(None),
+    )
+    return session.exec(statement).first()
+
+
+def create_llm_call_pending(
+    session: Session,
+    *,
+    job_id: UUID,
+    project_id: int,
+    organization_id: int,
+    request: LLMCallRequest,
+    chain_id: UUID | None = None,
+) -> LlmCall:
+    """Create a minimal LlmCall row at job-creation time.
+
+    Only fields available before config resolution are populated.
+    input_type, output_type, provider, model, content, usage stay NULL
+    and are filled in by the Celery task via update_llm_call_resolved_fields().
+    """
+    config_dict: dict[str, Any] | None = None
+    if request.config.is_stored_config:
+        config_dict = {
+            "config_id": str(request.config.id),
+            "config_version": request.config.version,
+        }
+
+    conversation_id = None
+    auto_create = None
+    if request.query.conversation:
+        conversation_id = request.query.conversation.id
+        auto_create = request.query.conversation.auto_create
+
+    db_llm_call = LlmCall(
+        job_id=job_id,
+        project_id=project_id,
+        organization_id=organization_id,
+        chain_id=chain_id,
+        input=serialize_input(request.query.input),
+        conversation_id=conversation_id,
+        auto_create=auto_create,
+        config=config_dict,
+    )
+
+    session.add(db_llm_call)
+    session.commit()
+    session.refresh(db_llm_call)
+
+    logger.info(
+        f"[create_llm_call_pending] Created pending LLM call id={db_llm_call.id}, job_id={job_id}"
+    )
+
+    return db_llm_call
+
+
+def update_llm_call_resolved_fields(
+    session: Session,
+    *,
+    llm_call_id: UUID,
+    input_type: str,
+    output_type: str | None,
+    provider: str | None,
+    model: str | None,
+    config: dict[str, Any],
+) -> LlmCall:
+    """Populate config-resolved fields on a pending LlmCall row."""
+    db_llm_call = session.get(LlmCall, llm_call_id)
+    if not db_llm_call:
+        raise ValueError(f"LLM call not found with id={llm_call_id}")
+
+    db_llm_call.input_type = input_type
+    db_llm_call.output_type = output_type
+    db_llm_call.provider = provider
+    db_llm_call.model = model
+    db_llm_call.config = config
+    db_llm_call.updated_at = now()
+
+    session.add(db_llm_call)
+    session.commit()
+    session.refresh(db_llm_call)
+
+    logger.info(
+        f"[update_llm_call_resolved_fields] Updated resolved fields | llm_call_id={llm_call_id}, provider={provider}, model={model}"
+    )
+
+    return db_llm_call
