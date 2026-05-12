@@ -1,14 +1,28 @@
 import uuid
 from unittest.mock import MagicMock, patch
+from uuid import UUID, uuid4
 
 import httpx
+import pytest
+from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.models.llm.request import Validator
+from app.crud.jobs import JobCrud
+from app.models import JobType
+from app.models.llm.request import (
+    ConfigBlob,
+    LLMCallConfig,
+    LlmCall,
+    NativeCompletionConfig,
+    QueryParams,
+    Validator,
+)
 from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
+    save_rephrase_guardrail_call,
 )
+from app.tests.utils.utils import get_project
 
 
 TEST_JOB_ID = uuid.uuid4()
@@ -253,3 +267,108 @@ def test_list_validators_config_network_error_fails_open(mock_client_cls) -> Non
 
     assert input_guardrails == []
     assert output_guardrails == []
+
+
+_SAFE_TEXT = "Please rephrase: content not allowed."
+_CONFIG_BLOB = ConfigBlob(
+    completion=NativeCompletionConfig(
+        provider="openai-native",
+        params={"model": "gpt-4o"},
+        type="text",
+    ),
+    input_guardrails=[Validator(validator_config_id=uuid4())],
+)
+_CONFIG = LLMCallConfig(blob=_CONFIG_BLOB)
+
+
+class TestSaveRephraseGuardrailCall:
+    @pytest.fixture
+    def job(self, db: Session):
+        j = JobCrud(session=db).create(
+            job_type=JobType.LLM_API, trace_id="rephrase-test"
+        )
+        db.commit()
+        return j
+
+    def _call(self, db: Session, job, **overrides):
+        project = get_project(db)
+        kwargs = dict(
+            session=db,
+            query=QueryParams(input="original unsafe input"),
+            config=_CONFIG,
+            request_metadata=None,
+            config_blob=_CONFIG_BLOB,
+            guardrail_direct_response=_SAFE_TEXT,
+            job_id=job.id,
+            project_id=project.id,
+            organization_id=project.organization_id,
+            chain_id=None,
+        )
+        kwargs.update(overrides)
+        return save_rephrase_guardrail_call(**kwargs)
+
+    def test_success_returns_uuid(self, db: Session, job) -> None:
+        result = self._call(db, job)
+        assert isinstance(result, UUID)
+
+    def test_success_saves_original_input_and_job_id(self, db: Session, job) -> None:
+        llm_call_id = self._call(db, job)
+        llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
+        assert llm_call is not None
+        assert llm_call.input == "original unsafe input"
+        assert llm_call.job_id == job.id
+
+    def test_success_saves_safe_text_as_content(self, db: Session, job) -> None:
+        llm_call_id = self._call(db, job)
+        llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
+        assert llm_call.content == {
+            "type": "text",
+            "content": {"format": "text", "value": _SAFE_TEXT},
+        }
+
+    def test_success_saves_zero_usage(self, db: Session, job) -> None:
+        llm_call_id = self._call(db, job)
+        llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
+        assert llm_call.usage == {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    def test_create_llm_call_error_returns_none(self, db: Session, job) -> None:
+        with patch(
+            "app.services.llm.guardrails.create_llm_call",
+            side_effect=Exception("DB insert failed"),
+        ):
+            result = self._call(db, job)
+        assert result is None
+
+    def test_update_llm_call_response_error_returns_none(
+        self, db: Session, job
+    ) -> None:
+        with patch(
+            "app.services.llm.guardrails.update_llm_call_response",
+            side_effect=Exception("DB update failed"),
+        ):
+            result = self._call(db, job)
+        assert result is None
+
+    def test_chain_id_forwarded_to_create_llm_call(self, db: Session, job) -> None:
+        chain_id = uuid4()
+        with patch("app.services.llm.guardrails.create_llm_call") as mock_create:
+            mock_create.return_value = MagicMock(id=uuid4())
+            with patch("app.services.llm.guardrails.update_llm_call_response"):
+                self._call(db, job, chain_id=chain_id)
+        _, kwargs = mock_create.call_args
+        assert kwargs["chain_id"] == chain_id
+
+    def test_request_metadata_forwarded_to_llm_call_request(
+        self, db: Session, job
+    ) -> None:
+        metadata = {"request_id": "abc", "user": "test"}
+        with patch("app.services.llm.guardrails.create_llm_call") as mock_create:
+            mock_create.return_value = MagicMock(id=uuid4())
+            with patch("app.services.llm.guardrails.update_llm_call_response"):
+                self._call(db, job, request_metadata=metadata)
+        _, kwargs = mock_create.call_args
+        assert kwargs["request"].request_metadata == metadata
