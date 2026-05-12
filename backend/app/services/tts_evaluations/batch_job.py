@@ -2,6 +2,8 @@
 
 import logging
 
+from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -50,63 +52,65 @@ def execute_batch_submission(
     )
 
     with Session(engine) as session:
-        run = get_tts_run_by_id(
-            session=session,
-            run_id=run_id,
-            org_id=organization_id,
-            project_id=project_id,
-        )
-
-        if not run:
-            logger.error(f"[execute_batch_submission] Run not found | run_id: {run_id}")
-            return {"success": False, "error": "Run not found"}
-
-        dataset = get_tts_dataset_by_id(
-            session=session,
-            dataset_id=dataset_id,
-            org_id=organization_id,
-            project_id=project_id,
-        )
-
-        if not dataset:
-            logger.error(
-                f"[execute_batch_submission] Dataset not found | "
-                f"run_id: {run_id}, dataset_id: {dataset_id}"
-            )
-            update_tts_run(
-                session=session,
-                run_id=run_id,
-                status="failed",
-                error_message="Dataset not found",
-            )
-            return {"success": False, "error": "Dataset not found"}
-
-        sample_texts = get_sample_texts_from_dataset(session, dataset, project_id)
-
-        if not sample_texts:
-            logger.warning(
-                f"[execute_batch_submission] No samples found | "
-                f"run_id: {run_id}, dataset_id: {dataset_id}"
-            )
-            update_tts_run(
-                session=session,
-                run_id=run_id,
-                status="failed",
-                error_message="No samples found for dataset",
-            )
-            return {"success": False, "error": "No samples found"}
-
-        # Create result records for each sample text and model
-        results = create_tts_results(
-            session=session,
-            sample_texts=sample_texts,
-            evaluation_run_id=run.id,
-            org_id=organization_id,
-            project_id=project_id,
-            models=models,
-        )
-
         try:
+            run = get_tts_run_by_id(
+                session=session,
+                run_id=run_id,
+                org_id=organization_id,
+                project_id=project_id,
+            )
+
+            if not run:
+                logger.warning(
+                    f"[execute_batch_submission] Run not found | run_id: {run_id}"
+                )
+                return {"success": False, "error": "Run not found"}
+
+            dataset = get_tts_dataset_by_id(
+                session=session,
+                dataset_id=dataset_id,
+                org_id=organization_id,
+                project_id=project_id,
+            )
+
+            if not dataset:
+                logger.warning(
+                    f"[execute_batch_submission] Dataset not found | "
+                    f"run_id: {run_id}, dataset_id: {dataset_id}"
+                )
+                update_tts_run(
+                    session=session,
+                    run_id=run_id,
+                    status="failed",
+                    error_message="Dataset not found",
+                )
+                return {"success": False, "error": "Dataset not found"}
+
+            sample_texts = get_sample_texts_from_dataset(session, dataset, project_id)
+
+            if not sample_texts:
+                logger.warning(
+                    f"[execute_batch_submission] No samples found | "
+                    f"run_id: {run_id}, dataset_id: {dataset_id}"
+                )
+                update_tts_run(
+                    session=session,
+                    run_id=run_id,
+                    status="failed",
+                    error_message="No samples found for dataset",
+                )
+                return {"success": False, "error": "No samples found"}
+
+            # Create result records for each sample text and model
+            results = create_tts_results(
+                session=session,
+                sample_texts=sample_texts,
+                evaluation_run_id=run.id,
+                org_id=organization_id,
+                project_id=project_id,
+                models=models,
+            )
+
             batch_result = start_tts_evaluation_batch(
                 session=session,
                 run=run,
@@ -122,6 +126,19 @@ def execute_batch_submission(
             )
 
             return batch_result
+
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError("Task exceeded soft time limit")
+            logger.warning(
+                f"[execute_batch_submission] TTS batch submission timed out | run_id={run_id}"
+            )
+            update_tts_run(
+                session=session,
+                run_id=run_id,
+                status="failed",
+                error_message=str(timeout_err),
+            )
+            raise
 
         except Exception as e:
             logger.error(

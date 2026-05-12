@@ -443,6 +443,18 @@ def sign_webhook_payload(
     return signature, timestamp_ms
 
 
+def require_organization_for_project(
+    project_id: int | None,
+    organization_id: int | None,
+) -> None:
+    """Raise 400 if project_id is provided without organization_id."""
+    if project_id is not None and organization_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="organization_id is required when project_id is set",
+        )
+
+
 def get_webhook_secret(
     project_id: int | None, organization_id: int | None
 ) -> str | None:

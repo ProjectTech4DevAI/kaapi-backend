@@ -17,7 +17,7 @@ from app.api.docs.openapi_config import tags_metadata, customize_openapi_schema
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
-from app.core.middleware import http_request_logger
+from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
 from app.core.sentry_filters import before_send_transaction_filter
 from app.core.telemetry import instrument_app, setup_telemetry
 
@@ -91,6 +91,7 @@ app.openapi = custom_openapi
 
 app.middleware("http")(http_request_logger)
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(StripTrailingSlashMiddleware)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 

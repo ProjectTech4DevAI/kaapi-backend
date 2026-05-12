@@ -22,7 +22,7 @@ router = APIRouter(prefix="/credentials", tags=["Credentials"])
 
 
 @router.post(
-    "/",
+    "",
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/create.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -52,7 +52,7 @@ def create_new_credential(
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/list.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -103,7 +103,7 @@ def read_provider_credential(
 
 
 @router.patch(
-    "/",
+    "",
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/update.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -165,7 +165,7 @@ def delete_provider_credential(
 
 
 @router.delete(
-    "/",
+    "",
     response_model=APIResponse[dict],
     description=load_description("credentials/delete_all.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

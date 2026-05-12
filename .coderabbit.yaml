@@ -1,0 +1,7 @@
+reviews:
+  auto_review:
+    enabled: true
+    labels:
+      - "ready-for-review"
+    base_branches:
+      - ".*"  # allows all branches

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
 
@@ -227,8 +229,32 @@ def handle_job_error(
     callback_response: APIResponse,
     organization_id: int | None = None,
     project_id: int | None = None,
+    chain_id: UUID | None = None,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
+    with Session(engine) as session:
+        JobCrud(session=session).update(
+            job_id=job_id,
+            job_update=JobUpdate(
+                status=JobStatus.FAILED,
+                error_message=callback_response.error,
+            ),
+        )
+        if chain_id:
+            try:
+                update_llm_chain_status(
+                    session,
+                    chain_id=chain_id,
+                    status=ChainStatus.FAILED,
+                    error=callback_response.error,
+                )
+            except Exception as update_err:
+                logger.error(
+                    f"[handle_job_error] Failed to update chain status: {update_err} | "
+                    f"chain_id={chain_id}",
+                    exc_info=True,
+                )
+
     if callback_url:
         webhook_secret = get_webhook_secret(project_id, organization_id)
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
@@ -246,15 +272,6 @@ def handle_job_error(
                 data=callback_response.model_dump(),
                 webhook_secret=webhook_secret,
             )
-
-    with Session(engine) as session:
-        JobCrud(session=session).update(
-            job_id=job_id,
-            job_update=JobUpdate(
-                status=JobStatus.FAILED,
-                error_message=callback_response.error,
-            ),
-        )
 
     return callback_response.model_dump()
 
@@ -816,6 +833,8 @@ def execute_llm_call(
         error_message = error or "Unknown error occurred"
         return BlockResult(error=error_message, llm_call_id=llm_call_id)
 
+    except (Timeout, SoftTimeLimitExceeded):
+        raise
     except Exception as e:
         logger.error(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",
@@ -937,6 +956,23 @@ def execute_job(
                 organization_id=organization_id,
                 project_id=project_id,
             )
+
+        except (Timeout, SoftTimeLimitExceeded):
+            logger.warning(
+                f"[execute_job] LLM job timed out | job_id={job_uuid}, task_id={task_id}"
+            )
+            callback_response = APIResponse.failure_response(
+                error="Task exceeded soft time limit",
+                metadata=request.request_metadata,
+            )
+            handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+            raise
 
         except Exception as e:
             callback_response = APIResponse.failure_response(
@@ -1062,27 +1098,30 @@ def execute_chain_job(
             executor = ChainExecutor(chain=chain, context=context, request=request)
             return executor.run()
 
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            logger.warning(
+                f"[execute_chain_job] Chain job timed out | job_id={job_uuid}, task_id={task_id}"
+            )
+
+            callback_response = APIResponse.failure_response(
+                error="Task exceeded soft time limit",
+                metadata=request.request_metadata,
+            )
+            handle_job_error(
+                job_uuid,
+                callback_url_str,
+                callback_response,
+                organization_id=organization_id,
+                project_id=project_id,
+                chain_id=chain_uuid,
+            )
+            raise
+
         except Exception as e:
             logger.error(
                 f"[execute_chain_job] Failed: {e} | job_id={job_uuid}",
                 exc_info=True,
             )
-
-            if chain_uuid:
-                try:
-                    with Session(engine) as session:
-                        update_llm_chain_status(
-                            session,
-                            chain_id=chain_uuid,
-                            status=ChainStatus.FAILED,
-                            error=str(e),
-                        )
-                except Exception as update_err:
-                    logger.warning(
-                        f"[execute_chain_job] Failed to update chain status: {update_err} | "
-                        f"chain_id={chain_uuid}",
-                        exc_info=True,
-                    )
 
             callback_response = APIResponse.failure_response(
                 error="Unexpected error occurred",
@@ -1094,6 +1133,7 @@ def execute_chain_job(
                 callback_response,
                 organization_id=organization_id,
                 project_id=project_id,
+                chain_id=chain_uuid,
             )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.

@@ -1,5 +1,7 @@
 from sqlmodel import SQLModel
 
+from app.models.assessment import Assessment, AssessmentRun  # noqa: F401
+
 from .api_key import (
     APIKey,
     APIKeyBase,
@@ -88,6 +90,13 @@ from .evaluation import (
     EvaluationRunCreate,
     EvaluationRunPublic,
     EvaluationRunUpdate,
+)
+from .feature_flag import (
+    FeatureFlag,
+    FeatureFlagCreate,
+    FeatureFlagDelete,
+    FeatureFlagPublic,
+    FeatureFlagUpdate,
 )
 from .file import AudioUploadResponse, File, FilePublic, FileType
 from .fine_tuning import (

@@ -53,7 +53,7 @@ def get_transformation_job(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("documents/job_list.md"),
     response_model=APIResponse[DocTransformationJobsPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

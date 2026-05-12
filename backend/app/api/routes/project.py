@@ -22,7 +22,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 # Retrieve projects
 @router.get(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[List[ProjectPublic]],
     description=load_description("projects/list.md"),
@@ -44,7 +44,7 @@ def read_projects(
 
 # Create a new project
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/create.md"),

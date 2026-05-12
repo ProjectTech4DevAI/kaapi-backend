@@ -68,7 +68,7 @@ def doctransformation_callback_notification(
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("documents/list.md"),
     response_model=APIResponse[list[Union[DocumentPublic, TransformedDocumentPublic]]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -100,7 +100,7 @@ def list_docs(
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("documents/upload.md"),
     response_model=APIResponse[DocumentUploadResponse],
     callbacks=doctransformation_callback_router.routes,

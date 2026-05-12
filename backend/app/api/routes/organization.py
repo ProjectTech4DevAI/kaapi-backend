@@ -22,7 +22,7 @@ router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
 # Retrieve organizations
 @router.get(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[List[OrganizationPublic]],
     description=load_description("organization/list.md"),
@@ -44,7 +44,7 @@ def read_organizations(
 
 # Create a new organization
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/create.md"),

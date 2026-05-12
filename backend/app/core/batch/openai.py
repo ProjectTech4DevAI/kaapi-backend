@@ -57,7 +57,9 @@ class OpenAIBatchProvider(BatchProvider):
         try:
             # Step 1: Upload file
             file_id = self.upload_file(
-                content="\n".join([json.dumps(line) for line in jsonl_data]),
+                content="\n".join(
+                    json.dumps(line, ensure_ascii=False) for line in jsonl_data
+                ),
                 purpose="batch",
             )
 

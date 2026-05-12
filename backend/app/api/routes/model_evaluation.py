@@ -113,7 +113,7 @@ def run_model_evaluation(
 
 
 @router.post(
-    "/evaluate_models/",
+    "/evaluate_models",
     response_model=APIResponse,
     description=load_description("model_evaluation/evaluate.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
