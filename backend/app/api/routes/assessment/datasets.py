@@ -1,6 +1,7 @@
 """Assessment dataset endpoints."""
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
@@ -119,16 +120,18 @@ def get_dataset(
     include_signed_url: bool = Query(
         False, description="Include a signed URL for downloading the raw file from S3"
     ),
-    limit_rows: int
-    | None = Query(
-        None,
-        ge=1,
-        le=100,
-        description=(
-            "If set, fetch the underlying file and include a preview of the first "
-            "N data rows plus column headers. Skip to avoid the file download."
+    limit_rows: Annotated[
+        int | None,
+        Query(
+            ge=1,
+            le=100,
+            description=(
+                "If set, fetch the underlying file and include a preview of the "
+                "first N data rows plus column headers. Skip to avoid the file "
+                "download."
+            ),
         ),
-    ),
+    ] = None,
 ) -> APIResponse[AssessmentDatasetResponse]:
     """Get a specific assessment dataset."""
     dataset = get_assessment_dataset_by_id(
