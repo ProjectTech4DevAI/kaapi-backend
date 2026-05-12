@@ -116,7 +116,7 @@ def create_llm_call(
         }
     else:
         config_dict = {
-            "config_blob": resolved_config.model_dump(),
+            "config_blob": resolved_config.model_dump(mode="json"),
         }
 
     # Extract conversation info if present
