@@ -125,19 +125,14 @@ Skip any section in the output that has nothing notable.
 - <correctness, security, or convention violations. Each: path:line, what's wrong, why it breaks, suggested fix. Prefix VERY IMPORTANT: / MUST: when warranted.>
 
 ## Suggestions
-- <non-blocking improvements, grouped by area if many>
+- <non-blocking improvements>
 
 ## Nits
 - <style, naming, tiny cleanups — prefix `nit:`>
-
-## Tests
-- <coverage gaps, redundant tests, missing regression tests>
-
-## Migrations
-- <only if alembic/versions/ touched: rev id, ordering, indexes, nullability, downgrade reversibility, backfill correctness>
-
-## Follow-ups (not for this PR)
-- <cross-cutting refactors, consistency sweeps, scope-creep items the author should track separately>
 ```
+
+Each item gets exactly one bullet — no item appears in more than one section. Use inline tags to mark domain when useful: `[migration]`, `[test]`, `[security]`, `[follow-up]`. Severity drives the section; the tag adds the domain colour.
+
+Use `[follow-up]` for cross-cutting work the author should track separately rather than fix in this PR; place it in `Suggestions`.
 
 Drop empty sections. Don't pad. Do not modify files during the review — read-only.
