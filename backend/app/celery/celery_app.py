@@ -45,9 +45,12 @@ def _initialize_worker_observability() -> None:
                     level=logging.INFO,
                     sentry_logs_level=logging.INFO,
                 ),
+                CeleryIntegration(
+                    propagate_traces=False,
+                    monitor_beat_tasks=False,
+                ),
             ],
             disabled_integrations=[
-                CeleryIntegration(),
                 SqlalchemyIntegration(),
                 HttpxIntegration(),
             ],
