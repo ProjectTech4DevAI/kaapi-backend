@@ -3,9 +3,17 @@ from uuid import UUID
 import logging
 
 import httpx
+from sqlmodel import Session
 
 from app.core.config import settings
-from app.models.llm.request import Validator
+from app.crud.llm import create_llm_call, update_llm_call_response
+from app.models.llm.request import (
+    ConfigBlob,
+    LLMCallConfig,
+    LLMCallRequest,
+    QueryParams,
+    Validator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,3 +175,68 @@ def list_validators_config(
             f"project_id={project_id}, endpoint={endpoint}, error={e}"
         )
         return [], []
+
+
+def save_rephrase_guardrail_call(
+    *,
+    session: Session,
+    query: QueryParams,
+    config: LLMCallConfig,
+    request_metadata: dict | None,
+    config_blob: ConfigBlob,
+    guardrail_direct_response: str,
+    job_id: UUID,
+    project_id: int,
+    organization_id: int,
+    chain_id: UUID | None,
+) -> UUID | None:
+    """Persist the LLM call record for a guardrail rephrase response.
+
+    Returns the llm_call_id on success, None if the DB write fails (non-fatal).
+    """
+    try:
+        rephrase_call_request = LLMCallRequest(
+            query=query,
+            config=config,
+            request_metadata=request_metadata,
+        )
+        rephrase_resolved_config = ConfigBlob(
+            completion=config_blob.completion,
+            prompt_template=config_blob.prompt_template,
+            input_guardrails=config_blob.input_guardrails,
+            output_guardrails=config_blob.output_guardrails,
+        )
+        rephrase_llm_call = create_llm_call(
+            session,
+            request=rephrase_call_request,
+            job_id=job_id,
+            project_id=project_id,
+            organization_id=organization_id,
+            resolved_config=rephrase_resolved_config,
+            original_provider=str(config_blob.completion.provider),
+            chain_id=chain_id,
+        )
+        update_llm_call_response(
+            session,
+            llm_call_id=rephrase_llm_call.id,
+            provider_response_id=str(job_id),
+            content={
+                "type": "text",
+                "content": {
+                    "format": "text",
+                    "value": guardrail_direct_response,
+                },
+            },
+            usage={
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            },
+        )
+        return rephrase_llm_call.id
+    except Exception as e:
+        logger.error(
+            f"[save_rephrase_guardrail_call] Failed to record rephrase guardrail call: {e} | job_id={job_id}",
+            exc_info=True,
+        )
+        return None

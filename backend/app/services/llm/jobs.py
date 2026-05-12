@@ -46,6 +46,7 @@ from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
+    save_rephrase_guardrail_call,
 )
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
@@ -490,51 +491,18 @@ def execute_llm_call(
                     )
                     if original_input_value is not None:
                         query.input.content.value = original_input_value
-                    try:
-                        rephrase_call_request = LLMCallRequest(
-                            query=query,
-                            config=config,
-                            request_metadata=request_metadata,
-                        )
-                        rephrase_resolved_config = ConfigBlob(
-                            completion=config_blob.completion,
-                            prompt_template=config_blob.prompt_template,
-                            input_guardrails=config_blob.input_guardrails,
-                            output_guardrails=config_blob.output_guardrails,
-                        )
-                        rephrase_llm_call = create_llm_call(
-                            session,
-                            request=rephrase_call_request,
-                            job_id=job_id,
-                            project_id=project_id,
-                            organization_id=organization_id,
-                            resolved_config=rephrase_resolved_config,
-                            original_provider=str(config_blob.completion.provider),
-                            chain_id=chain_id,
-                        )
-                        llm_call_id = rephrase_llm_call.id
-                        update_llm_call_response(
-                            session,
-                            llm_call_id=llm_call_id,
-                            provider_response_id=str(job_id),
-                            content={
-                                "type": "text",
-                                "content": {
-                                    "format": "text",
-                                    "value": guardrail_direct_response,
-                                },
-                            },
-                            usage={
-                                "input_tokens": 0,
-                                "output_tokens": 0,
-                                "total_tokens": 0,
-                            },
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[execute_llm_call] Failed to record rephrase guardrail call: {e} | job_id={job_id}",
-                            exc_info=True,
-                        )
+                    llm_call_id = save_rephrase_guardrail_call(
+                        session=session,
+                        query=query,
+                        config=config,
+                        request_metadata=request_metadata,
+                        config_blob=config_blob,
+                        guardrail_direct_response=guardrail_direct_response,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        chain_id=chain_id,
+                    )
                     return BlockResult(
                         response=llm_response,
                         usage=guardrail_usage,
