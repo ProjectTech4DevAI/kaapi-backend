@@ -125,6 +125,110 @@ def _count_rows(content: bytes, file_ext: str) -> int:
     return _count_csv_rows(content)
 
 
+def _stringify(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _preview_csv(content: bytes, limit: int) -> tuple[list[str], list[list[str]]]:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = content.decode(encoding)
+            break
+        except (UnicodeDecodeError, ValueError):
+            continue
+    else:
+        text = content.decode("utf-8", errors="replace")
+
+    reader = csv.reader(io.StringIO(text))
+    header = next(reader, None) or []
+    headers = [_stringify(cell) for cell in header]
+
+    rows: list[list[str]] = []
+    for row in reader:
+        if not any(cell.strip() for cell in row):
+            continue
+        rows.append([_stringify(cell) for cell in row])
+        if len(rows) >= limit:
+            break
+    return headers, rows
+
+
+def _preview_excel(content: bytes, limit: int) -> tuple[list[str], list[list[str]]]:
+    import openpyxl
+
+    wb = None
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            return [], []
+
+        rows_iter = ws.iter_rows(values_only=True)
+        header = next(rows_iter, None) or ()
+        headers = [_stringify(cell) for cell in header]
+
+        rows: list[list[str]] = []
+        for row in rows_iter:
+            if not row or not any(cell is not None for cell in row):
+                continue
+            rows.append([_stringify(cell) for cell in row])
+            if len(rows) >= limit:
+                break
+        return headers, rows
+    finally:
+        if wb is not None:
+            wb.close()
+
+
+def preview_dataset(
+    session: Session,
+    dataset: EvaluationDataset,
+    project_id: int,
+    limit: int,
+) -> tuple[list[str], list[list[str]]]:
+    """Return the first `limit` data rows (plus header) of a dataset file."""
+    if not dataset.object_store_url:
+        raise HTTPException(
+            status_code=404, detail="Dataset has no underlying file to preview."
+        )
+
+    file_ext = (dataset.dataset_metadata or {}).get("file_extension")
+    if file_ext == ".xls":
+        raise HTTPException(
+            status_code=422,
+            detail="Legacy Excel format (.xls) is not supported.",
+        )
+
+    storage = get_cloud_storage(session=session, project_id=project_id)
+    try:
+        content = storage.get(dataset.object_store_url)
+    except Exception as e:
+        logger.warning(
+            f"[preview_dataset] Failed to fetch file | dataset_id={dataset.id} | {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to fetch dataset file from storage."
+        ) from e
+
+    try:
+        if file_ext == ".xlsx":
+            return _preview_excel(content, limit)
+        return _preview_csv(content, limit)
+    except InvalidFileException as e:
+        raise HTTPException(status_code=422, detail="Invalid XLSX file content.") from e
+    except Exception as e:
+        logger.warning(
+            f"[preview_dataset] Failed to parse file | dataset_id={dataset.id} | {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=422, detail="Unable to parse dataset file for preview."
+        ) from e
+
+
 def upload_dataset(
     session: Session,
     file_content: bytes,

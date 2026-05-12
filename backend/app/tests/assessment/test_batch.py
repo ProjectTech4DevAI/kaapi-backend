@@ -419,7 +419,7 @@ class TestBatchHelpers:
             google_params={"temperature": 0.2, "instructions": "system"},
         )
         assert len(google_jsonl) == 1
-        assert google_jsonl[0]["metadata"]["key"] == "row_0"
+        assert google_jsonl[0]["key"] == "row_0"
         assert google_jsonl[0]["request"]["systemInstruction"] == {
             "parts": [{"text": "system"}]
         }
