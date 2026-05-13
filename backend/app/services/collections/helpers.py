@@ -2,14 +2,12 @@ import logging
 import json
 import ast
 import re
-from uuid import UUID
 
 from fastapi import HTTPException
-from sqlmodel import select
 
 from app.crud import CollectionCrud
 from app.api.deps import SessionDep
-from app.models import DocumentCollection, Collection, CollectionPublic, Document
+from app.models import Collection, CollectionPublic, Document
 
 
 logger = logging.getLogger(__name__)
@@ -111,30 +109,6 @@ def batch_documents(documents: list[Document]) -> list[list[Document]]:
     return docs_batches
 
 
-# Even though this function is used in the documents router, it's kept here for now since the assistant creation logic will
-# eventually be removed from Kaapi. Once that happens, this function can be safely deleted -
-def pick_service_for_documennt(session, doc_id: UUID, a_crud, v_crud):
-    """
-    Return the correct remote (v_crud or a_crud) for this document
-    by inspecting an active linked Collection's llm_service_name.
-    Defaults to a_crud if not vector store.
-    """
-    coll = session.exec(
-        select(Collection)
-        .join(DocumentCollection, DocumentCollection.collection_id == Collection.id)
-        .where(
-            DocumentCollection.document_id == doc_id,
-            Collection.deleted_at.is_(None),
-        )
-        .limit(1)
-    ).first()
-
-    service = (
-        (getattr(coll, "llm_service_name", "") or "").strip().lower() if coll else ""
-    )
-    return v_crud if service == get_service_name("openai") else a_crud
-
-
 def ensure_unique_name(
     session: SessionDep,
     project_id: int,
@@ -155,35 +129,12 @@ def ensure_unique_name(
 
 
 def to_collection_public(collection: Collection) -> CollectionPublic:
-    """
-    Convert a Collection DB model to CollectionPublic response model.
-
-    Maps fields based on service type:
-    - If llm_service_name is a vector store (matches get_service_name pattern),
-      use knowledge_base_id/knowledge_base_provider
-    - Otherwise (assistant), use llm_service_id/llm_service_name
-    """
-    is_vector_store = collection.llm_service_name == get_service_name(
-        collection.provider
+    return CollectionPublic(
+        id=collection.id,
+        knowledge_base_id=collection.llm_service_id,
+        knowledge_base_provider=collection.llm_service_name,
+        project_id=collection.project_id,
+        inserted_at=collection.inserted_at,
+        updated_at=collection.updated_at,
+        deleted_at=collection.deleted_at,
     )
-
-    if is_vector_store:
-        return CollectionPublic(
-            id=collection.id,
-            knowledge_base_id=collection.llm_service_id,
-            knowledge_base_provider=collection.llm_service_name,
-            project_id=collection.project_id,
-            inserted_at=collection.inserted_at,
-            updated_at=collection.updated_at,
-            deleted_at=collection.deleted_at,
-        )
-    else:
-        return CollectionPublic(
-            id=collection.id,
-            llm_service_id=collection.llm_service_id,
-            llm_service_name=collection.llm_service_name,
-            project_id=collection.project_id,
-            inserted_at=collection.inserted_at,
-            updated_at=collection.updated_at,
-            deleted_at=collection.deleted_at,
-        )

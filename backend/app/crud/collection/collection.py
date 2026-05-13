@@ -82,6 +82,31 @@ class CollectionCrud:
         )
         return collection
 
+    def read_one_if_delete(self, collection_id: UUID) -> Collection:
+        statement = select(Collection).where(
+            and_(
+                Collection.project_id == self.project_id,
+                Collection.id == collection_id,
+            )
+        )
+
+        collection = self.session.exec(statement).one_or_none()
+        if collection is None:
+            logger.warning(
+                "[CollectionCrud.read_one_if_delete] Collection not found | "
+                f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
+            )
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        if collection.deleted_at is not None:
+            logger.warning(
+                "[CollectionCrud.read_one_if_delete] Collection already deleted | "
+                f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
+            )
+            raise HTTPException(status_code=400, detail="Collection already deleted")
+
+        return collection
+
     def read_all(self):
         statement = select(Collection).where(
             and_(
@@ -122,6 +147,11 @@ class CollectionCrud:
 
     @delete.register
     def _(self, model: Collection, remote):
+        if model.deleted_at is not None:
+            logger.info(
+                f"[CollectionCrud.delete] Collection already deleted | {{'collection_id': '{model.id}'}}"
+            )
+            return model
         remote.delete(model.llm_service_id)
         model.deleted_at = now()
         collection = self._update(model)

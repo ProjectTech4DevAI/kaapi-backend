@@ -66,14 +66,6 @@ class ResourceCleaner:
         raise NotImplementedError()
 
 
-class AssistantCleaner(ResourceCleaner):
-    def clean(self, resource):
-        logger.info(
-            f"[AssistantCleaner.clean] Deleting assistant | {{'assistant_id': '{resource}'}}"
-        )
-        self.client.beta.assistants.delete(resource)
-
-
 class VectorStoreCleaner(ResourceCleaner):
     def clean(self, resource):
         logger.info(
@@ -157,61 +149,4 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         cleaner(vector_store_id)
         logger.info(
             f"[OpenAIVectorStoreCrud.delete] Vector store deleted | {{'vector_store_id': '{vector_store_id}'}}"
-        )
-
-
-class OpenAIAssistantCrud(OpenAICrud):
-    def create(self, vector_store_id: str, **kwargs):
-        logger.info(
-            f"[OpenAIAssistantCrud.create] Creating assistant | {{'vector_store_id': '{vector_store_id}'}}"
-        )
-        assistant = self.client.beta.assistants.create(
-            tools=[
-                {
-                    "type": "file_search",
-                }
-            ],
-            tool_resources={
-                "file_search": {
-                    "vector_store_ids": [
-                        vector_store_id,
-                    ],
-                },
-            },
-            **kwargs,
-        )
-        logger.info(
-            f"[OpenAIAssistantCrud.create] Assistant created | {{'assistant_id': '{assistant.id}', 'vector_store_id': '{vector_store_id}'}}"
-        )
-        return assistant
-
-    def delete(self, assistant_id: str):
-        logger.info(
-            f"[OpenAIAssistantCrud.delete] Starting assistant deletion | {{'assistant_id': '{assistant_id}'}}"
-        )
-        assistant = self.client.beta.assistants.retrieve(assistant_id)
-        vector_stores = assistant.tool_resources.file_search.vector_store_ids
-
-        try:
-            (vector_store_id,) = vector_stores
-        except ValueError:
-            if vector_stores:
-                names = ", ".join(vector_stores)
-                err = ValueError(f"Too many attached vector stores: {names}")
-            else:
-                err = ValueError("No vector stores found")
-
-            logger.error(
-                f"[OpenAIAssistantCrud.delete] Invalid vector store state | {{'assistant_id': '{assistant_id}', 'vector_stores': '{vector_stores}'}}",
-                exc_info=True,
-            )
-            raise err
-
-        v_crud = OpenAIVectorStoreCrud(self.client)
-        v_crud.delete(vector_store_id)
-
-        cleaner = AssistantCleaner(self.client)
-        cleaner(assistant_id)
-        logger.info(
-            f"[OpenAIAssistantCrud.delete] Assistant deleted | {{'assistant_id': '{assistant_id}'}}"
         )

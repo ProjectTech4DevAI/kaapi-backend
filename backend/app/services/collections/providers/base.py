@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from app.core.cloud.storage import CloudStorage
-from app.models import CreationRequest, Collection, Document
+from app.models import Collection, Document
 
 
 class BaseProvider(ABC):
@@ -11,8 +11,7 @@ class BaseProvider(ABC):
     All provider implementations (OpenAI, Bedrock, etc.) must inherit from
     this class and implement the required methods.
 
-    Providers handle creation of collection and
-    optional assistant/agent creation backed by those collections.
+    Providers handle creation of vector store collections.
 
     Attributes:
         client: The provider-specific client instance
@@ -40,15 +39,11 @@ class BaseProvider(ABC):
     @abstractmethod
     def create(
         self,
-        collection_request: CreationRequest,
         docs: list[Document],
         vector_store_id: str | None = None,
-        is_final: bool = False,
     ) -> Collection:
         """Upload docs batch to vector store (creating it if vector_store_id is None).
-        Creates assistant only when is_final=True and model/instructions are set.
-        Returns Collection with llm_service_id set to vector_store_id on intermediate batches,
-        or to assistant/vector_store id on the final batch."""
+        Returns Collection with llm_service_id set to the vector store ID."""
         raise NotImplementedError("Providers must implement create method")
 
     @abstractmethod

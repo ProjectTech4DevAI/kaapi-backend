@@ -9,9 +9,9 @@ from app.services.collections.providers import BaseProvider
 from app.core.cloud.storage import CloudStorage
 from app.core.db import engine
 from app.crud import DocumentCrud
-from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
+from app.crud.rag import OpenAIVectorStoreCrud
 from app.services.collections.helpers import get_service_name
-from app.models import CreationRequest, Collection, Document
+from app.models import Collection, Document
 
 
 logger = logging.getLogger(__name__)
@@ -91,10 +91,8 @@ class OpenAIProvider(BaseProvider):
 
     def create(
         self,
-        collection_request: CreationRequest,
         docs: List[Document],
         vector_store_id: str | None = None,
-        is_final: bool = False,
     ) -> Collection:
         try:
             vector_store_crud = OpenAIVectorStoreCrud(self.client)
@@ -111,49 +109,10 @@ class OpenAIProvider(BaseProvider):
                     len(docs),
                 )
 
-            if not is_final:
-                return Collection(
-                    llm_service_id=vector_store_id,
-                    llm_service_name=get_service_name("openai"),
-                )
-            # if "is_final" is true then only will assistant creation happen -
-            with_assistant = (
-                collection_request.model is not None
-                and collection_request.instructions is not None
+            return Collection(
+                llm_service_id=vector_store_id,
+                llm_service_name=get_service_name("openai"),
             )
-            if with_assistant:
-                assistant_crud = OpenAIAssistantCrud(self.client)
-
-                assistant_options = {
-                    "model": collection_request.model,
-                    "instructions": collection_request.instructions,
-                    "temperature": collection_request.temperature,
-                }
-                filtered_options = {
-                    k: v for k, v in assistant_options.items() if v is not None
-                }
-
-                assistant = assistant_crud.create(vector_store_id, **filtered_options)
-
-                logger.info(
-                    "[OpenAIProvider.create] Assistant created | assistant_id=%s, vector_store_id=%s",
-                    assistant.id,
-                    vector_store_id,
-                )
-
-                return Collection(
-                    llm_service_id=assistant.id,
-                    llm_service_name=filtered_options.get("model", "assistant"),
-                )
-            else:
-                logger.info(
-                    "[OpenAIProvider.create] Skipping assistant creation | with_assistant=False"
-                )
-
-                return Collection(
-                    llm_service_id=vector_store_id,
-                    llm_service_name=get_service_name("openai"),
-                )
 
         except Exception as e:
             logger.error(
@@ -163,26 +122,14 @@ class OpenAIProvider(BaseProvider):
             raise
 
     def delete(self, collection: Collection) -> None:
-        """Delete OpenAI resources (assistant or vector store).
-
-        Determines what to delete based on llm_service_name:
-        - If assistant was created, delete the assistant (which also removes the vector store)
-        - If only vector store was created, delete the vector store
-        """
         try:
-            if collection.llm_service_name != get_service_name("openai"):
-                OpenAIAssistantCrud(self.client).delete(collection.llm_service_id)
-                logger.info(
-                    f"[OpenAIProvider.delete] Deleted assistant | assistant_id={collection.llm_service_id}"
-                )
-            else:
-                OpenAIVectorStoreCrud(self.client).delete(collection.llm_service_id)
-                logger.info(
-                    f"[OpenAIProvider.delete] Deleted vector store | vector_store_id={collection.llm_service_id}"
-                )
+            OpenAIVectorStoreCrud(self.client).delete(collection.llm_service_id)
+            logger.info(
+                f"[OpenAIProvider.delete] Deleted vector store | vector_store_id={collection.llm_service_id}"
+            )
         except Exception as e:
             logger.error(
-                f"[OpenAIProvider.delete] Failed to delete resource | "
+                f"[OpenAIProvider.delete] Failed to delete vector store | "
                 f"llm_service_id={collection.llm_service_id}, error={str(e)}",
                 exc_info=True,
             )

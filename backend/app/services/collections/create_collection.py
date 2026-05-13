@@ -44,7 +44,6 @@ def start_job(
     request: CreationRequest,
     project_id: int,
     collection_job_id: UUID,
-    with_assistant: bool,
     organization_id: int,
 ) -> str:
     trace_id = correlation_id.get() or "N/A"
@@ -57,7 +56,6 @@ def start_job(
         job_id=str(collection_job_id),
         trace_id=trace_id,
         request=request.model_dump(mode="json"),
-        with_assistant=with_assistant,
         organization_id=organization_id,
     )
 
@@ -162,7 +160,6 @@ def _handle_job_failure(
 
 def execute_setup_job(
     request: dict,
-    with_assistant: bool,
     project_id: int,
     organization_id: int,
     task_id: str,
@@ -191,9 +188,6 @@ def execute_setup_job(
 
         try:
             creation_request = CreationRequest(**request)
-            if with_assistant:
-                creation_request.provider = "openai"
-
             span.set_attribute("collection.provider", str(creation_request.provider))
 
             job_uuid = UUID(job_id)
@@ -262,7 +256,6 @@ def execute_setup_job(
                 remaining_batches=batch_doc_ids[1:],
                 request=request,
                 vector_store_id=None,
-                with_assistant=with_assistant,
                 organization_id=organization_id,
             )
 
@@ -310,7 +303,6 @@ def execute_setup_job(
 
 def execute_batch_job(
     request: dict,
-    with_assistant: bool,
     project_id: int,
     organization_id: int,
     task_id: str,
@@ -349,9 +341,6 @@ def execute_batch_job(
         try:
             batch_start_time = time.time()
             creation_request = CreationRequest(**request)
-            if with_assistant:
-                creation_request.provider = "openai"
-
             span.set_attribute("collection.provider", str(creation_request.provider))
 
             job_uuid = UUID(job_id)
@@ -367,7 +356,6 @@ def execute_batch_job(
             )
 
             all_doc_ids_this_batch = [UUID(d) for d in batch_doc_ids]
-            is_final = not remaining_batches
 
             with Session(engine) as session:
                 provider = get_llm_provider(
@@ -388,10 +376,8 @@ def execute_batch_job(
                     session.expunge(doc)
 
             collection_result = provider.create(
-                creation_request,
                 batch_docs,
                 vector_store_id=vector_store_id,
-                is_final=is_final,
             )
             result = collection_result
             resolved_vector_store_id = collection_result.llm_service_id
@@ -430,7 +416,6 @@ def execute_batch_job(
                     batch_doc_ids=remaining_batches[0],
                     remaining_batches=remaining_batches[1:],
                     request=request,
-                    with_assistant=with_assistant,
                     organization_id=organization_id,
                 )
                 logger.info(

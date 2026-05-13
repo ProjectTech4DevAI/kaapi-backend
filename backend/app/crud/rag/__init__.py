@@ -1,1 +1,1 @@
-from .open_ai import OpenAICrud, OpenAIVectorStoreCrud, OpenAIAssistantCrud
+from .open_ai import OpenAICrud, OpenAIVectorStoreCrud

@@ -88,7 +88,6 @@ def test_start_job_creates_collection_job_and_schedules_task(db: Session) -> Non
             request=request,
             project_id=project.id,
             collection_job_id=job_id,
-            with_assistant=True,
             organization_id=project.organization_id,
         )
 
@@ -136,7 +135,6 @@ def test_execute_setup_job_marks_processing_and_queues_first_batch(
     try:
         execute_setup_job(
             request=request.model_dump(mode="json"),
-            with_assistant=False,
             project_id=project.id,
             organization_id=project.organization_id,
             task_id=task_id,
@@ -188,7 +186,6 @@ def test_execute_setup_job_failure_marks_job_failed_and_raises(
         with pytest.raises(RuntimeError, match="S3 upload failed"):
             execute_setup_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -239,7 +236,6 @@ def test_execute_setup_job_failure_sends_callback(
         with pytest.raises(RuntimeError):
             execute_setup_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -286,7 +282,6 @@ def test_execute_setup_job_timeout_marks_failed_and_reraises(
         with pytest.raises(Timeout):
             execute_setup_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -331,7 +326,6 @@ def test_execute_setup_job_soft_time_limit_marks_failed_and_reraises(
         with pytest.raises(SoftTimeLimitExceeded):
             execute_setup_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -380,7 +374,6 @@ def test_execute_batch_job_non_final_queues_next_batch(
     try:
         execute_batch_job(
             request=request.model_dump(mode="json"),
-            with_assistant=False,
             project_id=project.id,
             organization_id=project.organization_id,
             task_id=task_id,
@@ -433,7 +426,6 @@ def test_execute_batch_job_final_batch_creates_collection_and_marks_successful(
     try:
         execute_batch_job(
             request=request.model_dump(mode="json"),
-            with_assistant=False,
             project_id=project.id,
             organization_id=project.organization_id,
             task_id=str(uuid4()),
@@ -493,7 +485,6 @@ def test_execute_batch_job_final_batch_sends_success_callback(
     try:
         execute_batch_job(
             request=request.model_dump(mode="json"),
-            with_assistant=False,
             project_id=project.id,
             organization_id=project.organization_id,
             task_id=str(uuid4()),
@@ -541,7 +532,6 @@ def test_execute_batch_job_provider_failure_marks_failed_and_raises(
         with pytest.raises(RuntimeError, match="vector store error"):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -590,7 +580,6 @@ def test_execute_batch_job_cleanup_called_when_provider_create_succeeds_but_db_f
         with pytest.raises(Exception, match="DB write failed"):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -633,7 +622,6 @@ def test_execute_batch_job_timeout_marks_failed_and_reraises(
         with pytest.raises(Timeout):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -678,7 +666,6 @@ def test_execute_batch_job_soft_time_limit_marks_failed_and_reraises(
         with pytest.raises(SoftTimeLimitExceeded):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),
@@ -728,7 +715,6 @@ def test_execute_batch_job_failure_sends_callback(
         with pytest.raises(RuntimeError):
             execute_batch_job(
                 request=request.model_dump(mode="json"),
-                with_assistant=False,
                 project_id=project.id,
                 organization_id=project.organization_id,
                 task_id=str(uuid4()),

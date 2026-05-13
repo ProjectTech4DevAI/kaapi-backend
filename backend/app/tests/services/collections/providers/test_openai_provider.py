@@ -15,16 +15,9 @@ from app.tests.utils.llm_provider import (
 )
 
 
-def test_create_openai_vector_store_only() -> None:
+def test_create_openai_vector_store() -> None:
     client = get_mock_openai_client_with_vector_store()
     provider = OpenAIProvider(client=client)
-
-    collection_request = SimpleNamespace(
-        documents=["doc1", "doc2"],
-        model=None,
-        instructions=None,
-        temperature=None,
-    )
 
     documents = [
         SimpleNamespace(file_size_kb=10),
@@ -39,71 +32,11 @@ def test_create_openai_vector_store_only() -> None:
         vector_store_crud.create.return_value = MagicMock(id=vector_store_id)
         vector_store_crud.update.return_value = None
 
-        collection = provider.create(
-            collection_request,
-            documents,
-        )
+        collection = provider.create(documents)
 
     assert isinstance(collection, Collection)
     assert collection.llm_service_id == vector_store_id
     assert collection.llm_service_name == get_service_name("openai")
-
-
-def test_create_openai_with_assistant() -> None:
-    client = get_mock_openai_client_with_vector_store()
-    provider = OpenAIProvider(client=client)
-
-    collection_request = SimpleNamespace(
-        documents=["doc1"],
-        model="gpt-4o",
-        instructions="You are helpful",
-        temperature=0.7,
-    )
-
-    documents = [SimpleNamespace(file_size_kb=10)]
-    vector_store_id = generate_openai_id("vs_")
-    assistant_id = generate_openai_id("asst_")
-
-    with patch(
-        "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
-    ) as vector_store_crud_cls, patch(
-        "app.services.collections.providers.openai.OpenAIAssistantCrud"
-    ) as assistant_crud_cls:
-        vector_store_crud = vector_store_crud_cls.return_value
-        vector_store_crud.create.return_value = MagicMock(id=vector_store_id)
-        vector_store_crud.update.return_value = None
-
-        assistant_crud = assistant_crud_cls.return_value
-        assistant_crud.create.return_value = MagicMock(id=assistant_id)
-
-        collection = provider.create(
-            collection_request,
-            documents,
-            is_final=True,
-        )
-
-    assert collection.llm_service_id == assistant_id
-    assert collection.llm_service_name == "gpt-4o"
-
-
-def test_delete_openai_assistant() -> None:
-    client = MagicMock()
-    provider = OpenAIProvider(client=client)
-
-    collection = Collection(
-        llm_service_id=generate_openai_id("asst_"),
-        llm_service_name="gpt-4o",
-        provider="openai",
-        project_id=1,
-    )
-
-    with patch(
-        "app.services.collections.providers.openai.OpenAIAssistantCrud"
-    ) as assistant_crud_cls:
-        assistant_crud = assistant_crud_cls.return_value
-        provider.delete(collection)
-
-    assistant_crud.delete.assert_called_once_with(collection.llm_service_id)
 
 
 def test_delete_openai_vector_store() -> None:
@@ -522,20 +455,10 @@ def test_vector_store_update_passes_file_ids_to_openai() -> None:
 def test_create_propagates_exception() -> None:
     provider = OpenAIProvider(client=MagicMock())
 
-    collection_request = SimpleNamespace(
-        documents=["doc1"],
-        model=None,
-        instructions=None,
-        temperature=None,
-    )
-
     with patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls:
         vector_store_crud_cls.return_value.create.side_effect = RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
-            provider.create(
-                collection_request,
-                [SimpleNamespace(file_size_kb=10)],
-            )
+            provider.create([SimpleNamespace(file_size_kb=10)])
