@@ -333,6 +333,15 @@ class AssessmentExportRow(BaseModel):
     updated_at: datetime
 
 
+class AssessmentDatasetPreview(BaseModel):
+    """Lightweight preview of a dataset's columns and first N rows."""
+
+    headers: list[str]
+    rows: list[list[str]]
+    returned_rows: int = 0
+    truncated: bool = False
+
+
 class AssessmentDatasetResponse(BaseModel):
     """Response model for assessment dataset."""
 
@@ -343,3 +352,4 @@ class AssessmentDatasetResponse(BaseModel):
     file_extension: str | None = None
     object_store_url: str | None = None
     signed_url: str | None = None
+    preview: AssessmentDatasetPreview | None = None

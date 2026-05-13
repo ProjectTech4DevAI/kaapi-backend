@@ -28,7 +28,7 @@ def create_model_evaluation(
     fine_tuning_job = fetch_by_id(session, request.fine_tuning_id, project_id)
 
     if fine_tuning_job.fine_tuned_model and fine_tuning_job.test_data_s3_object is None:
-        logger.error(
+        logger.warning(
             f"[create_model_evaluation] No fine tuned model or test data found for the given fine tuning ID | fine_tuning_id={request.fine_tuning_id}, project_id={project_id}"
         )
         raise HTTPException(404, "Fine tuned model not found")
@@ -69,9 +69,6 @@ def fetch_by_eval_id(
     ).one_or_none()
 
     if model_eval is None:
-        logger.error(
-            f"[fetch_by_id]Model evaluation not found for eval_id={eval_id}, project_id={project_id}"
-        )
         raise HTTPException(status_code=404, detail="Model evaluation not found")
 
     logger.info(
@@ -97,9 +94,6 @@ def fetch_eval_by_doc_id(
     model_evals = session.exec(query).all()
 
     if not model_evals:
-        logger.error(
-            f"[fetch_eval_by_doc_id]Model evaluation not found for document_id={document_id}, project_id={project_id}"
-        )
         raise HTTPException(status_code=404, detail="Model evaluation not found")
 
     logger.info(
@@ -130,8 +124,8 @@ def fetch_top_model_by_doc_id(
 
     top_model = session.exec(stmt).first()
 
-    if top_model is None:
-        logger.error(
+    if not top_model:
+        logger.warning(
             f"[fetch_top_model_by_doc_id]No model evaluation found with populated score for document_id={document_id}, project_id={project_id}"
         )
         raise HTTPException(status_code=404, detail="No top model found")

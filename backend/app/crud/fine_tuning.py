@@ -93,7 +93,7 @@ def fetch_by_id(session: Session, job_id: int, project_id: int) -> FineTuning:
     ).one_or_none()
 
     if job is None:
-        logger.error(
+        logger.warning(
             f"[fetch_by_id]Fine-tune job not found: job_id={job_id}, project_id={project_id}"
         )
         raise HTTPException(status_code=404, detail="Job not found")

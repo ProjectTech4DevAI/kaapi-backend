@@ -48,9 +48,8 @@ class DocumentCrud:
                 try:
                     raise ValueError(f"Negative skip: {skip}")
                 except ValueError as err:
-                    logger.error(
+                    logger.warning(
                         f"[DocumentCrud.read_many] Invalid skip value | {{'project_id': {self.project_id}, 'skip': {skip}, 'error': '{str(err)}'}}",
-                        exc_info=True,
                     )
                     raise
             statement = statement.offset(skip)
@@ -60,9 +59,8 @@ class DocumentCrud:
                 try:
                     raise ValueError(f"Negative limit: {limit}")
                 except ValueError as err:
-                    logger.error(
+                    logger.warning(
                         f"[DocumentCrud.read_many] Invalid limit value | {{'project_id': {self.project_id}, 'limit': {limit}, 'error': '{str(err)}'}}",
-                        exc_info=True,
                     )
                     raise
             statement = statement.limit(limit + 1)
@@ -112,9 +110,8 @@ class DocumentCrud:
             try:
                 raise PermissionError(error)
             except PermissionError as err:
-                logger.error(
+                logger.warning(
                     f"[DocumentCrud.update] Permission error | {{'doc_id': '{document.id}', 'error': '{str(err)}'}}",
-                    exc_info=True,
                 )
                 raise
         document.updated_at = now()

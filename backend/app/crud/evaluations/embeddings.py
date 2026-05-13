@@ -166,7 +166,9 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
             # Handle errors in batch processing
             if response.get("error"):
                 error_msg = response["error"].get("message", "Unknown error")
-                logger.error(f"Trace {trace_id} had error: {error_msg}")
+                logger.warning(
+                    f"[parse_embedding_batch_results] Trace {trace_id} had error: {error_msg}"
+                )
                 continue
 
             # Extract the response body

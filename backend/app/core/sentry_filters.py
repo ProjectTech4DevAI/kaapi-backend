@@ -5,7 +5,9 @@ from typing import Any
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
 _HTTP_SEND_RECEIVE = re.compile(r"http (send|receive)$", re.IGNORECASE)
 _DB_QUERY_SPAN = re.compile(r"^db\.query$", re.IGNORECASE)
-_BARE_HTTP_METHOD = re.compile(r"^(GET|HEAD|OPTIONS)$", re.IGNORECASE)
+_BARE_HTTP_METHOD = re.compile(
+    r"^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE|TRACE|CONNECT)$", re.IGNORECASE
+)
 _NOISE_PATH = re.compile(
     r"(^/health/?$|^/robots\.txt$|^/favicon\.ico$|^/wp-admin|^/wp-login|^/xmlrpc\.php$)",
     re.IGNORECASE,

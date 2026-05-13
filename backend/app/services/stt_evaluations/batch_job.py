@@ -71,7 +71,7 @@ def execute_batch_submission(
             )
 
             if not samples:
-                logger.error(
+                logger.warning(
                     f"[execute_batch_submission] No samples found | "
                     f"run_id: {run_id}, dataset_id: {dataset_id}"
                 )
