@@ -183,7 +183,7 @@ def upgrade():
     # Phase A (transactional): preserve audit timestamp, drop redundant column.
     for table in IS_DELETED_TABLES:
         op.execute(
-            f"UPDATE {table} "
+            f'UPDATE "{table}" '
             f"SET deleted_at = NOW() "
             f"WHERE is_deleted = TRUE AND deleted_at IS NULL"
         )

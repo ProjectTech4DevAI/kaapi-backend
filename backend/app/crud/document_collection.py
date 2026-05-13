@@ -1,15 +1,20 @@
+import logging
 from typing import Optional
 
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import Document, Collection, DocumentCollection
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentCollectionCrud:
     def __init__(self, session: Session):
         self.session = session
 
-    def create(self, collection: Collection, documents: list[Document]):
+    def create(self, collection: Collection, documents: list[Document]) -> None:
         document_collection = []
         for d in documents:
             dc = DocumentCollection(
@@ -18,8 +23,20 @@ class DocumentCollectionCrud:
             )
             document_collection.append(dc)
 
-        self.session.bulk_save_objects(document_collection)
-        self.session.commit()
+        try:
+            self.session.bulk_save_objects(document_collection)
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            logger.warning(
+                "[DocumentCollectionCrud.create] Duplicate document-collection link | "
+                f"{{'collection_id': '{collection.id}'}}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Duplicate document-collection link",
+            )
         self.session.refresh(collection)
 
     def read(
