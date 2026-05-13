@@ -128,7 +128,7 @@ class ChainExecutor:
             error=error or "Unknown error occurred",
             metadata=self._request.request_metadata,
         )
-        logger.error(
+        logger.warning(
             f"[_handle_error] Chain execution failed | "
             f"chain_id={self._context.chain_id}, job_id={self._context.job_id}, error={error}"
         )

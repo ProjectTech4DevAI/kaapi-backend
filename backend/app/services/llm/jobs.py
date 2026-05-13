@@ -77,6 +77,33 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _set_traceability_attributes(
+    span: trace.Span,
+    *,
+    job_id: UUID | str | None = None,
+    llm_call_id: UUID | str | None = None,
+    chain_id: UUID | str | None = None,
+    trace_id: str | None = None,
+    project_id: int | None = None,
+    organization_id: int | None = None,
+    task_id: str | None = None,
+) -> None:
+    if job_id is not None:
+        span.set_attribute("llm.job_id", str(job_id))
+    if llm_call_id is not None:
+        span.set_attribute("llm.call_id", str(llm_call_id))
+    if chain_id is not None:
+        span.set_attribute("llm.chain_id", str(chain_id))
+    if trace_id is not None:
+        span.set_attribute("kaapi.trace_id", trace_id)
+    if project_id is not None:
+        span.set_attribute("kaapi.project_id", project_id)
+    if organization_id is not None:
+        span.set_attribute("kaapi.organization_id", organization_id)
+    if task_id is not None:
+        span.set_attribute("celery.task_id", task_id)
+
+
 def _execute_provider_call(
     *,
     func,
@@ -109,15 +136,19 @@ def start_job(
         project_id=project_id,
         organization_id=organization_id,
     ), tracer.start_as_current_span("llm.start_job") as span:
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
-
         trace_id = correlation_id.get() or "N/A"
+        _set_traceability_attributes(
+            span,
+            project_id=project_id,
+            organization_id=organization_id,
+            trace_id=trace_id,
+        )
+
         job_crud = JobCrud(session=db)
         job = job_crud.create(
             job_type=JobType.LLM_API, trace_id=trace_id, project_id=project_id
         )
-        span.set_attribute("llm.job_id", str(job.id))
+        _set_traceability_attributes(span, job_id=job.id)
 
         logger.info(
             f"[start_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
@@ -144,7 +175,7 @@ def start_job(
                 status_code=500, detail="Internal server error while executing LLM call"
             )
 
-        span.set_attribute("celery.task_id", str(task_id))
+        _set_traceability_attributes(span, task_id=str(task_id))
         logger.info(
             f"[start_job] Job scheduled for LLM call | job_id={job.id}, project_id={project_id}, task_id={task_id}"
         )
@@ -167,7 +198,14 @@ def start_chain_job(
         job_id=job.id,
         project_id=project_id,
         organization_id=organization_id,
-    ):
+    ), tracer.start_as_current_span("llm.chain.start_job") as span:
+        _set_traceability_attributes(
+            span,
+            job_id=job.id,
+            trace_id=trace_id,
+            project_id=project_id,
+            organization_id=organization_id,
+        )
         logger.info(
             f"[start_chain_job] Created job | job_id={job.id}, status={job.status}, project_id={project_id}"
         )
@@ -181,6 +219,8 @@ def start_chain_job(
                 organization_id=organization_id,
             )
         except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
             logger.error(
                 f"[start_chain_job] Error starting Celery task: {str(e)} | job_id={job.id}, project_id={project_id}",
                 exc_info=True,
@@ -192,6 +232,7 @@ def start_chain_job(
                 detail="Internal server error while executing LLM chain job",
             )
 
+        _set_traceability_attributes(span, task_id=str(task_id))
         logger.info(
             f"[start_chain_job] Job scheduled for LLM chain job | job_id={job.id}, project_id={project_id}, task_id={task_id}"
         )
@@ -235,6 +276,13 @@ def handle_job_error(
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
             cb_span.set_attribute("callback.url", callback_url)
             cb_span.set_attribute("callback.status", "failure")
+            _set_traceability_attributes(
+                cb_span,
+                job_id=job_id,
+                trace_id=correlation_id.get(),
+                project_id=project_id,
+                organization_id=organization_id,
+            )
             send_callback(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
@@ -448,11 +496,19 @@ def execute_llm_call(
 
     config_blob: ConfigBlob | None = None
     llm_call_id: UUID | None = None
+    trace_id = correlation_id.get()
 
     try:
         with Session(engine) as session:
             with tracer.start_as_current_span("llm.resolve_config") as cfg_span:
-                cfg_span.set_attribute("llm.job_id", str(job_id))
+                _set_traceability_attributes(
+                    cfg_span,
+                    job_id=job_id,
+                    chain_id=chain_id,
+                    trace_id=trace_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
                 cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
                 if config.is_stored_config:
                     cfg_span.set_attribute("llm.config.id", str(config.id))
@@ -473,7 +529,14 @@ def execute_llm_call(
                 query.input.content.value = interpolated
 
             with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
-                guard_span.set_attribute("llm.job_id", str(job_id))
+                _set_traceability_attributes(
+                    guard_span,
+                    job_id=job_id,
+                    chain_id=chain_id,
+                    trace_id=trace_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
                 query, input_error, guardrail_direct_response = apply_input_guardrails(
                     config_blob=config_blob,
                     query=query,
@@ -530,7 +593,14 @@ def execute_llm_call(
             )
 
             with tracer.start_as_current_span("llm.create_call_record") as create_span:
-                create_span.set_attribute("llm.job_id", str(job_id))
+                _set_traceability_attributes(
+                    create_span,
+                    job_id=job_id,
+                    chain_id=chain_id,
+                    trace_id=trace_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
                 create_span.set_attribute(
                     "llm.provider", str(completion_config.provider)
                 )
@@ -553,7 +623,7 @@ def execute_llm_call(
                         chain_id=chain_id,
                     )
                     llm_call_id = llm_call.id
-                    create_span.set_attribute("llm.call_id", str(llm_call_id))
+                    _set_traceability_attributes(create_span, llm_call_id=llm_call_id)
                     logger.info(
                         f"[execute_llm_call] Created LLM call record | "
                         f"llm_call_id={llm_call_id}, job_id={job_id}"
@@ -659,6 +729,15 @@ def execute_llm_call(
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with tracer.start_as_current_span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
+            _set_traceability_attributes(
+                ai_span,
+                job_id=job_id,
+                llm_call_id=llm_call_id,
+                chain_id=chain_id,
+                trace_id=trace_id,
+                project_id=project_id,
+                organization_id=organization_id,
+            )
             if completion_type:
                 ai_span.set_attribute("completion_type", completion_type)
             set_gen_ai_request_attributes(
@@ -676,6 +755,15 @@ def execute_llm_call(
                     with tracer.start_as_current_span(
                         "llm.provider.execute"
                     ) as provider_span:
+                        _set_traceability_attributes(
+                            provider_span,
+                            job_id=job_id,
+                            llm_call_id=llm_call_id,
+                            chain_id=chain_id,
+                            trace_id=trace_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                        )
                         provider_span.set_attribute("llm.provider", provider_name)
                         provider_span.set_attribute(
                             "llm.operation.name", "provider.execute"
@@ -778,8 +866,15 @@ def execute_llm_call(
                     with tracer.start_as_current_span(
                         "llm.update_call_record"
                     ) as update_span:
-                        update_span.set_attribute("llm.call_id", str(llm_call_id))
-                        update_span.set_attribute("llm.job_id", str(job_id))
+                        _set_traceability_attributes(
+                            update_span,
+                            job_id=job_id,
+                            llm_call_id=llm_call_id,
+                            chain_id=chain_id,
+                            trace_id=trace_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                        )
                         try:
                             update_llm_call_response(
                                 session,
@@ -824,7 +919,15 @@ def execute_llm_call(
             with tracer.start_as_current_span(
                 "llm.guardrails.output"
             ) as out_guard_span:
-                out_guard_span.set_attribute("llm.job_id", str(job_id))
+                _set_traceability_attributes(
+                    out_guard_span,
+                    job_id=job_id,
+                    llm_call_id=llm_call_id,
+                    chain_id=chain_id,
+                    trace_id=trace_id,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
                 result, output_error = apply_output_guardrails(
                     config_blob=config_blob,
                     result=result,
@@ -891,6 +994,14 @@ def execute_job(
         project_id=project_id,
         organization_id=organization_id,
     ):
+        _set_traceability_attributes(
+            trace.get_current_span(),
+            job_id=job_uuid,
+            trace_id=correlation_id.get(),
+            project_id=project_id,
+            organization_id=organization_id,
+            task_id=task_id,
+        )
         logger.info(
             f"[execute_job] Starting LLM job execution | job_id={job_id}, task_id={task_id}, callback_url {callback_url_str}"
         )
@@ -952,7 +1063,14 @@ def execute_job(
                     with tracer.start_as_current_span("llm.send_callback") as cb_span:
                         cb_span.set_attribute("callback.url", callback_url_str)
                         cb_span.set_attribute("callback.status", "success")
-                        cb_span.set_attribute("llm.job_id", str(job_uuid))
+                        _set_traceability_attributes(
+                            cb_span,
+                            job_id=job_uuid,
+                            trace_id=correlation_id.get(),
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            task_id=task_id,
+                        )
                         send_callback(
                             callback_url=callback_url_str,
                             data=callback_response.model_dump(),
@@ -1050,6 +1168,14 @@ def execute_chain_job(
         organization_id=organization_id,
         total_blocks=len(request.blocks),
     ):
+        _set_traceability_attributes(
+            trace.get_current_span(),
+            job_id=job_uuid,
+            trace_id=correlation_id.get(),
+            project_id=project_id,
+            organization_id=organization_id,
+            task_id=task_id,
+        )
         logger.info(
             f"[execute_chain_job] Starting chain execution | "
             f"job_id={job_uuid}, total_blocks={len(request.blocks)}"
@@ -1067,6 +1193,9 @@ def execute_chain_job(
                     configs=[block.model_dump(mode="json") for block in request.blocks],
                 )
                 chain_uuid = chain_record.id
+                _set_traceability_attributes(
+                    trace.get_current_span(), chain_id=chain_uuid
+                )
 
                 logger.info(
                     f"[execute_chain_job] Created chain record | "
@@ -1115,6 +1244,7 @@ def execute_chain_job(
             logger.warning(
                 f"[execute_chain_job] Chain job timed out | job_id={job_uuid}, task_id={task_id}"
             )
+
             callback_response = APIResponse.failure_response(
                 error="Task exceeded soft time limit",
                 metadata=request.request_metadata,
@@ -1134,6 +1264,7 @@ def execute_chain_job(
                 f"[execute_chain_job] Failed: {e} | job_id={job_uuid}",
                 exc_info=True,
             )
+
             callback_response = APIResponse.failure_response(
                 error="Unexpected error occurred",
                 metadata=request.request_metadata,

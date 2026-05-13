@@ -83,9 +83,8 @@ def create_evaluation_dataset(
 
     except IntegrityError as e:
         session.rollback()
-        logger.error(
-            f"[create_evaluation_dataset] Database integrity error creating dataset | name={name} | {e}",
-            exc_info=True,
+        logger.warning(
+            f"[create_evaluation_dataset] Duplicate dataset name | name={name} | {e}",
         )
         raise HTTPException(
             status_code=409,
