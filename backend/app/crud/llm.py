@@ -283,10 +283,14 @@ def get_llm_calls_by_job_id(
 
 def get_llm_call_by_job_id(session: Session, job_id: UUID) -> LlmCall | None:
     """Return the single active LlmCall for a standalone job (no chain_id)."""
-    statement = select(LlmCall).where(
-        LlmCall.job_id == job_id,
-        LlmCall.chain_id.is_(None),
-        LlmCall.deleted_at.is_(None),
+    statement = (
+        select(LlmCall)
+        .where(
+            LlmCall.job_id == job_id,
+            LlmCall.chain_id.is_(None),
+            LlmCall.deleted_at.is_(None),
+        )
+        .order_by(LlmCall.created_at.desc())
     )
     return session.exec(statement).first()
 
