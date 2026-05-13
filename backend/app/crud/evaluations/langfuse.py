@@ -268,7 +268,7 @@ def upload_dataset_to_langfuse(
             )
             return True
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"[upload_dataset_to_langfuse] Failed to upload item | "
                 f"duplicate={duplicate_num + 1} | "
                 f"question={item['question'][:50]}... | {e}"
@@ -390,8 +390,8 @@ def fetch_trace_scores_from_langfuse(
         try:
             dataset_run = langfuse.api.datasets.get_run(dataset_name, run_name)
         except Exception as e:
-            logger.error(
-                f"[fetch_trace_scores_from_langfuse] Failed to get run | "
+            logger.warning(
+                f"[fetch_trace_scores_from_langfuse] Run not found in Langfuse | "
                 f"dataset={dataset_name} | run={run_name} | error={e}"
             )
             raise ValueError(

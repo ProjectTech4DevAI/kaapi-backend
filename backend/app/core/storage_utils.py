@@ -11,12 +11,13 @@ import mimetypes
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote, urlparse
+from uuid import UUID
 
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.cloud.storage import CloudStorage, CloudStorageError
-from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,46 @@ def load_json_from_object_store(storage: CloudStorage, url: str) -> list | dict 
             exc_info=True,
         )
         return None
+
+
+_MIME_TO_EXT: dict[str, str] = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "audio/webm": "webm",
+    "audio/mp4": "mp4",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+}
+
+
+def upload_audio_bytes_to_s3(
+    storage: CloudStorage,
+    audio_bytes: bytes,
+    call_id: UUID,
+    mime_type: str | None,
+    prefix: str,
+) -> str | None:
+    """Upload decoded audio bytes to S3 and return the s3:// URI.
+
+    Args:
+        storage: CloudStorage instance
+        audio_bytes: Raw audio bytes
+        call_id: LLM call UUID used as the filename stem
+        mime_type: MIME type of the audio (determines file extension)
+        prefix: S3 subdirectory, e.g. "llm/tts/audio" or "llm/stt/audio"
+
+    Returns:
+        s3:// URI if successful, None on failure
+    """
+    ext = _MIME_TO_EXT.get(mime_type or "", "wav")
+    filename = f"{call_id}.{ext}"
+    return upload_to_object_store(
+        storage, audio_bytes, filename, prefix, mime_type or "audio/wav"
+    )
 
 
 def generate_timestamped_filename(base_name: str, extension: str = "csv") -> str:
