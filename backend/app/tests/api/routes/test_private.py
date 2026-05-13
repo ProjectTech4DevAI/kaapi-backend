@@ -1,105 +1,17 @@
 import base64
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch, call
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.crud import JobCrud
-from app.crud.llm import create_llm_call, update_llm_call_response
-from app.models import JobType, LlmCall, User
-from app.models.llm.request import (
-    ConfigBlob,
-    KaapiCompletionConfig,
-    LLMCallConfig,
-    QueryParams,
-)
-from app.models.llm import LLMCallRequest
-from app.tests.utils.auth import get_user_test_auth_context
+from app.models import User
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-FAKE_B64 = base64.b64encode(b"\x00\x01\x02\x03audio-bytes").decode()
-
-TTS_CONFIG = ConfigBlob(
-    completion=KaapiCompletionConfig(
-        provider="openai",
-        params={"model": "gpt-4o-mini-tts", "temperature": 0.7},
-        type="tts",
-    )
-)
-
-
-def _make_tts_call(
-    db: Session,
-    *,
-    project_id: int,
-    organization_id: int,
-    content: dict | None = None,
-) -> LlmCall:
-    """Create an LlmCall with input_type=text, output_type=audio."""
-    job = JobCrud(db).create(
-        job_type=JobType.LLM_API,
-        trace_id=f"test-tts-{uuid4().hex[:8]}",
-        project_id=project_id,
-    )
-    call = create_llm_call(
-        db,
-        request=LLMCallRequest(
-            query=QueryParams(input="Say hello"),
-            config=LLMCallConfig(blob=TTS_CONFIG),
-        ),
-        job_id=job.id,
-        project_id=project_id,
-        organization_id=organization_id,
-        resolved_config=TTS_CONFIG,
-        original_provider="openai",
-    )
-    if content is not None:
-        update_llm_call_response(
-            db,
-            llm_call_id=call.id,
-            provider_response_id=f"resp_{uuid4().hex[:8]}",
-            content=content,
-        )
-        db.refresh(call)
-    return call
-
-
-def _base64_content(mime_type: str = "audio/mp3") -> dict:
-    return {
-        "type": "audio",
-        "content": {
-            "format": "base64",
-            "value": FAKE_B64,
-            "mime_type": mime_type,
-        },
-    }
-
-
-def _uri_content() -> dict:
-    """Content that has already been migrated."""
-    return {
-        "type": "audio",
-        "content": {
-            "format": "uri",
-            "value": "s3://bucket/audio/existing.mp3",
-            "mime_type": "audio/mp3",
-        },
-    }
-
-
-MIGRATE_URL = f"{settings.API_V1_STR}/private/migrate/tts-base64-to-s3"
-UPLOAD_PATH = "app.api.routes.private.upload_audio_bytes_to_s3"
-STORAGE_PATH = "app.api.routes.private.get_cloud_storage"
-
-
-# ---------------------------------------------------------------------------
-# Existing user test
+# Existing user test (unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -125,215 +37,210 @@ def test_create_user(client: TestClient, db: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Migration tests
+# Unit tests for migrate_tts_base64_to_s3
 # ---------------------------------------------------------------------------
 
+MODULE = "app.api.routes.private"
+FAKE_AUDIO = b"\x00\x01\x02\x03audio-bytes"
+FAKE_B64 = base64.b64encode(FAKE_AUDIO).decode()
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/orgs/1/1/audio/tts/migrated.mp3")
-def test_migrate_processes_base64_rows(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
-) -> None:
-    """Rows with base64 content are uploaded and rewritten to URI format."""
-    auth = get_user_test_auth_context(db)
-    call = _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_base64_content(),
+
+def _fake_call(
+    content: dict | None = None,
+    project_id: int = 1,
+    organization_id: int = 10,
+) -> SimpleNamespace:
+    """Lightweight stand-in for an LlmCall row."""
+    return SimpleNamespace(
+        id=uuid4(),
+        project_id=project_id,
+        organization_id=organization_id,
+        content=content,
+        updated_at=None,
     )
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
 
-    data = r.json()
-    assert data["processed"] >= 1
-    assert data["failed"] == 0
-
-    db.refresh(call)
-    assert call.content["content"]["format"] == "uri"
-    assert call.content["content"]["value"].startswith("s3://")
-    mock_upload.assert_called()
+def _b64_content(mime_type: str = "audio/mp3") -> dict:
+    return {
+        "type": "audio",
+        "content": {"format": "base64", "value": FAKE_B64, "mime_type": mime_type},
+    }
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_skips_already_migrated_rows(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+def _uri_content() -> dict:
+    return {
+        "type": "audio",
+        "content": {
+            "format": "uri",
+            "value": "s3://bucket/existing.mp3",
+            "mime_type": "audio/mp3",
+        },
+    }
+
+
+def _mock_session(rows: list) -> MagicMock:
+    """Build a mock session whose .exec() returns count then rows."""
+    session = MagicMock()
+    count_result = MagicMock()
+    count_result.one.return_value = len(rows)
+    # First exec call → count, second → row iterator
+    session.exec.side_effect = [count_result, iter(rows)]
+    return session
+
+
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/migrated.mp3")
+def test_processes_base64_row(mock_upload: MagicMock, mock_storage: MagicMock) -> None:
+    """A row with base64 content is uploaded and rewritten to URI format."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
+
+    row = _fake_call(content=_b64_content())
+    session = _mock_session([row])
+
+    result = migrate_tts_base64_to_s3(session)
+
+    assert result["processed"] == 1
+    assert result["failed"] == 0
+    assert row.content["content"]["format"] == "uri"
+    assert row.content["content"]["value"] == "s3://bucket/migrated.mp3"
+    session.add.assert_called_once_with(row)
+    mock_upload.assert_called_once()
+
+
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/migrated.mp3")
+def test_skips_already_migrated_uri(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """Rows already in URI format are skipped, not re-uploaded."""
-    auth = get_user_test_auth_context(db)
-    _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_uri_content(),
-    )
+    """Rows already in URI format are skipped."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    row = _fake_call(content=_uri_content())
+    session = _mock_session([row])
 
-    data = r.json()
-    assert data["skipped"] >= 1
-    # upload should not be called for already-migrated rows
+    result = migrate_tts_base64_to_s3(session)
+
+    assert result["skipped"] == 1
+    assert result["processed"] == 0
     mock_upload.assert_not_called()
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_skips_rows_with_no_content(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
-) -> None:
-    """Rows with NULL content are skipped."""
-    auth = get_user_test_auth_context(db)
-    _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=None,
-    )
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/migrated.mp3")
+def test_skips_null_content(mock_upload: MagicMock, mock_storage: MagicMock) -> None:
+    """Rows with None content are skipped."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    row = _fake_call(content=None)
+    session = _mock_session([row])
 
-    data = r.json()
-    assert data["skipped"] >= 1
+    result = migrate_tts_base64_to_s3(session)
+
+    assert result["skipped"] == 1
+    assert result["processed"] == 0
     mock_upload.assert_not_called()
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value=None)
-def test_migrate_records_failure_when_upload_returns_none(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value=None)
+def test_fails_when_upload_returns_none(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """When upload_audio_bytes_to_s3 returns None, the row is counted as failed."""
-    auth = get_user_test_auth_context(db)
-    call = _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_base64_content(),
-    )
+    """upload returning None is recorded as a failure; original content is unchanged."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    original_content = _b64_content()
+    row = _fake_call(content=original_content)
+    session = _mock_session([row])
 
-    data = r.json()
-    assert data["failed"] >= 1
-    assert any(e["call_id"] == str(call.id) for e in data["errors"])
+    result = migrate_tts_base64_to_s3(session)
 
-    # Original content should remain unchanged
-    db.refresh(call)
-    assert call.content["content"]["format"] == "base64"
+    assert result["failed"] == 1
+    assert result["processed"] == 0
+    assert any(e["call_id"] == str(row.id) for e in result["errors"])
+    session.expunge.assert_called_once_with(row)
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, side_effect=RuntimeError("S3 connection timeout"))
-def test_migrate_records_failure_on_upload_exception(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", side_effect=RuntimeError("S3 timeout"))
+def test_fails_on_upload_exception(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """An exception during upload is caught, logged, and reported in errors."""
-    auth = get_user_test_auth_context(db)
-    call = _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_base64_content(),
-    )
+    """An upload exception is caught and recorded in errors."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    row = _fake_call(content=_b64_content())
+    session = _mock_session([row])
 
-    data = r.json()
-    assert data["failed"] >= 1
-    error_entry = next(e for e in data["errors"] if e["call_id"] == str(call.id))
-    assert "S3 connection timeout" in error_entry["error"]
+    result = migrate_tts_base64_to_s3(session)
 
-    # Original content should remain unchanged
-    db.refresh(call)
-    assert call.content["content"]["format"] == "base64"
+    assert result["failed"] == 1
+    error = next(e for e in result["errors"] if e["call_id"] == str(row.id))
+    assert "S3 timeout" in error["error"]
+    session.expunge.assert_called_once_with(row)
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_uses_correct_s3_prefix(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_uses_correct_s3_prefix(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """The S3 prefix follows orgs/{org_id}/{project_id}/audio/tts."""
-    auth = get_user_test_auth_context(db)
-    call = _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_base64_content(),
-    )
+    """The prefix follows orgs/{org_id}/{project_id}/audio/tts."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    row = _fake_call(content=_b64_content(), project_id=42, organization_id=7)
+    session = _mock_session([row])
 
-    # Verify the prefix passed to upload_audio_bytes_to_s3
-    _, kwargs = mock_upload.call_args
-    # positional args: (storage, audio_bytes, call_id, mime_type, prefix)
+    migrate_tts_base64_to_s3(session)
+
     args = mock_upload.call_args[0]
-    expected_prefix = f"orgs/{auth.organization_id}/{auth.project_id}/audio/tts"
-    assert args[4] == expected_prefix
+    assert args[4] == "orgs/7/42/audio/tts"
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_preserves_mime_type(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
-) -> None:
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_preserves_mime_type(mock_upload: MagicMock, mock_storage: MagicMock) -> None:
     """The migrated content retains the original mime_type."""
-    auth = get_user_test_auth_context(db)
-    call = _make_tts_call(
-        db,
-        project_id=auth.project_id,
-        organization_id=auth.organization_id,
-        content=_base64_content(mime_type="audio/wav"),
-    )
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    row = _fake_call(content=_b64_content(mime_type="audio/wav"))
+    session = _mock_session([row])
 
-    db.refresh(call)
-    assert call.content["content"]["mime_type"] == "audio/wav"
+    migrate_tts_base64_to_s3(session)
+
+    assert row.content["content"]["mime_type"] == "audio/wav"
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_returns_summary_fields(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_no_candidates(mock_upload: MagicMock, mock_storage: MagicMock) -> None:
+    """Zero rows means all counters are zero and no uploads happen."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
+
+    session = _mock_session([])
+
+    result = migrate_tts_base64_to_s3(session)
+
+    assert result["processed"] == 0
+    assert result["failed"] == 0
+    assert result["committed"] == 0
+    assert result["total_candidates"] == 0
+    mock_upload.assert_not_called()
+    session.commit.assert_not_called()
+
+
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_returns_all_summary_fields(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """The response includes all expected summary fields."""
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    """The response dict contains every expected key."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    data = r.json()
+    session = _mock_session([])
+
+    result = migrate_tts_base64_to_s3(session)
+
     for key in [
         "processed",
         "committed",
@@ -343,28 +250,49 @@ def test_migrate_returns_summary_fields(
         "elapsed_seconds",
         "errors",
     ]:
-        assert key in data, f"Missing key: {key}"
-
-    assert isinstance(data["elapsed_seconds"], (int, float))
-    assert isinstance(data["errors"], list)
-    assert data["total_candidates"] >= 0
+        assert key in result, f"Missing key: {key}"
+    assert isinstance(result["elapsed_seconds"], (int, float))
+    assert isinstance(result["errors"], list)
 
 
-@patch(STORAGE_PATH, return_value=MagicMock())
-@patch(UPLOAD_PATH, return_value="s3://bucket/audio.mp3")
-def test_migrate_no_candidates(
-    mock_upload: MagicMock,
-    mock_storage: MagicMock,
-    client: TestClient,
-    db: Session,
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_mixed_rows(mock_upload: MagicMock, mock_storage: MagicMock) -> None:
+    """A mix of base64, URI, and null-content rows are handled correctly."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
+
+    rows = [
+        _fake_call(content=_b64_content()),
+        _fake_call(content=_uri_content()),
+        _fake_call(content=None),
+        _fake_call(content=_b64_content(mime_type="audio/wav")),
+    ]
+    session = _mock_session(rows)
+
+    result = migrate_tts_base64_to_s3(session)
+
+    assert result["processed"] == 2
+    assert result["skipped"] == 2
+    assert result["failed"] == 0
+    assert mock_upload.call_count == 2
+
+
+@patch(f"{MODULE}.get_cloud_storage", return_value=MagicMock())
+@patch(f"{MODULE}.upload_audio_bytes_to_s3", return_value="s3://bucket/out.mp3")
+def test_caches_storage_per_project(
+    mock_upload: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """When there are no matching rows, migration completes with all zeros."""
-    # Don't create any TTS LlmCall rows — the endpoint should still succeed
-    r = client.post(MIGRATE_URL)
-    assert r.status_code == 200
+    """get_cloud_storage is called once per unique project_id, not per row."""
+    from app.api.routes.private import migrate_tts_base64_to_s3
 
-    data = r.json()
-    assert data["processed"] == 0
-    assert data["failed"] == 0
-    assert data["committed"] == 0
-    mock_upload.assert_not_called()
+    rows = [
+        _fake_call(content=_b64_content(), project_id=1),
+        _fake_call(content=_b64_content(), project_id=1),
+        _fake_call(content=_b64_content(), project_id=2),
+    ]
+    session = _mock_session(rows)
+
+    migrate_tts_base64_to_s3(session)
+
+    # Only 2 distinct project_ids → 2 calls
+    assert mock_storage.call_count == 2
