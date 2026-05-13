@@ -31,6 +31,15 @@ def serialize_input(query_input: QueryInput | str) -> str:
     elif isinstance(query_input, TextInput):
         return query_input.content.value
     elif isinstance(query_input, AudioInput):
+        if query_input.content.format == "url":
+            return json.dumps(
+                {
+                    "type": "audio",
+                    "format": "url",
+                    "mime_type": query_input.content.mime_type,
+                    "url": query_input.content.value,
+                }
+            )
         return json.dumps(
             {
                 "type": "audio",
@@ -187,11 +196,12 @@ def update_llm_call_response(
         db_llm_call.provider_response_id = provider_response_id
 
     if content is not None:
-        # For audio outputs (AudioOutput model): calculate size metadata from base64 content
-        # AudioOutput serializes as: {"type": "audio", "content": {"format": "base64", "value": "...", "mime_type": "..."}}
+        # For audio outputs: calculate size only when content is still base64 (not a URI)
         if content.get("type") == "audio":
-            audio_value = content.get("content", {}).get("value")
-            if audio_value:
+            audio_content = content.get("content", {})
+            audio_format = audio_content.get("format")
+            audio_value = audio_content.get("value")
+            if audio_value and audio_format == "base64":
                 try:
                     audio_data = base64.b64decode(audio_value)
                     content["audio_size_bytes"] = len(audio_data)
@@ -216,6 +226,27 @@ def update_llm_call_response(
     logger.info(f"[update_llm_call_response] Updated LLM call id={llm_call_id}")
 
     return db_llm_call
+
+
+def update_llm_call_input(
+    session: Session,
+    llm_call_id: UUID,
+    s3_uri: str,
+) -> None:
+    """Overwrite llm_call.input with an S3 URI after uploading STT audio."""
+    db_llm_call = session.get(LlmCall, llm_call_id)
+    if not db_llm_call:
+        logger.warning(
+            f"[update_llm_call_input] LLM call not found | llm_call_id={llm_call_id}"
+        )
+        return
+    db_llm_call.input = s3_uri
+    db_llm_call.updated_at = now()
+    session.add(db_llm_call)
+    session.commit()
+    logger.info(
+        f"[update_llm_call_input] Updated input URI | llm_call_id={llm_call_id}"
+    )
 
 
 def get_llm_call_by_id(
