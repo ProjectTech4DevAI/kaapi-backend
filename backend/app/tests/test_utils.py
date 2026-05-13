@@ -119,15 +119,18 @@ class TestHandleOpenAIError:
         resp_mock.json.return_value = {"error": {"message": "rate limited"}}
         err = openai.OpenAIError()
         err.body = None
-        err.message = None
         err.response = resp_mock
+        # Remove message so hasattr(e, "message") is False and we hit the response branch
+        if hasattr(err, "message"):
+            del err.message
         assert handle_openai_error(err) == "rate limited"
 
     def test_falls_back_to_str(self) -> None:
         err = openai.OpenAIError("generic failure")
         err.body = None
-        err.message = None
-        # no response attr
+        # Remove both message and response so we fall through to str(e)
+        if hasattr(err, "message"):
+            del err.message
         if hasattr(err, "response"):
             del err.response
         assert "generic failure" in handle_openai_error(err)
@@ -367,7 +370,7 @@ class TestResolveInputExtended:
         assert "not supported in multimodal" in error
 
     def test_multimodal_rejects_unknown_type(self) -> None:
-        result, error = resolve_input(parts=["not a valid input"])
+        result, error = resolve_input(["not a valid input"])
         # list with unsupported item type
         assert result == ""
         assert "Unsupported input type" in error
