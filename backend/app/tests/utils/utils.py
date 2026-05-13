@@ -79,7 +79,7 @@ def get_assistant(
     If a assistant name is provided, fetch the active assistant with that name.
     If no name is provided, fetch any random assistant.
     """
-    filters = [Assistant.is_deleted == False]
+    filters = [Assistant.deleted_at.is_(None)]
 
     if project_id is not None:
         filters.append(Assistant.project_id == project_id)

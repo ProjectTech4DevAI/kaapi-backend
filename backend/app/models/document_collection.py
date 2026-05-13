@@ -1,10 +1,14 @@
 from uuid import UUID
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 class DocumentCollection(SQLModel, table=True):
     """Junction table linking documents to collections."""
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "collection_id", name="uq_document_collection"),
+    )
 
     id: int | None = Field(
         default=None,

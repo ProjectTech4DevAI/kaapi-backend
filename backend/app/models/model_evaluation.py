@@ -89,13 +89,6 @@ class ModelEvaluation(ModelEvaluationBase, table=True):
         description="Error message if evaluation failed",
         sa_column_kwargs={"comment": "Error message if evaluation failed"},
     )
-    is_deleted: bool = Field(
-        default=False,
-        nullable=False,
-        description="Soft delete flag",
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
-
     # Foreign keys
     fine_tuning_id: int = Field(
         foreign_key="fine_tuning.id",
@@ -140,7 +133,7 @@ class ModelEvaluation(ModelEvaluationBase, table=True):
 
     # Relationships
     project: Project = Relationship()
-    fine_tuning: "Fine_Tuning" = Relationship(back_populates="model_evaluation")
+    fine_tuning: "FineTuning" = Relationship(back_populates="model_evaluation")
 
 
 class ModelEvaluationUpdate(SQLModel):

@@ -74,12 +74,6 @@ class Assistant(AssistantBase, table=True):
             "comment": "Parameter that controls maximum number of results to return"
         },
     )
-    is_deleted: bool = Field(
-        default=False,
-        nullable=False,
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
-
     # Foreign keys
     project_id: int = Field(
         foreign_key="project.id",

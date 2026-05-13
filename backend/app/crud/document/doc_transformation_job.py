@@ -41,7 +41,7 @@ class DocTransformationJobCrud:
                 and_(
                     DocTransformationJob.id == job_id,
                     Document.project_id == self.project_id,
-                    Document.is_deleted.is_(False),
+                    Document.deleted_at.is_(None),
                 )
             )
         )
@@ -62,7 +62,7 @@ class DocTransformationJobCrud:
                 and_(
                     DocTransformationJob.id.in_(list(job_ids)),
                     Document.project_id == self.project_id,
-                    Document.is_deleted.is_(False),
+                    Document.deleted_at.is_(None),
                 )
             )
         )

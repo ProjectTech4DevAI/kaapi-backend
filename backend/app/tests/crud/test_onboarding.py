@@ -253,7 +253,7 @@ def test_onboard_project_api_key_generation(db: Session) -> None:
             APIKey.user_id == user.id,
             APIKey.project_id == project.id,
             APIKey.organization_id == org.id,
-            APIKey.is_deleted.is_(False),
+            APIKey.deleted_at.is_(None),
         )
     ).first()
     assert api_key_record is not None

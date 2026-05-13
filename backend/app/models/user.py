@@ -1,5 +1,9 @@
+from datetime import datetime
+
 from pydantic import EmailStr
 from sqlmodel import Field, SQLModel
+
+from app.core.util import now
 
 
 # Shared properties
@@ -72,6 +76,19 @@ class User(UserBase, table=True):
     )
     hashed_password: str = Field(
         sa_column_kwargs={"comment": "Bcrypt hash of the user's password"},
+    )
+    inserted_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={"comment": "Timestamp when the user was created"},
+    )
+    updated_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={
+            "comment": "Timestamp when the user was last updated",
+            "onupdate": now,
+        },
     )
 
 
