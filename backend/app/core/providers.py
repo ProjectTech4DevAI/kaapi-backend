@@ -65,7 +65,7 @@ def validate_provider(provider: str) -> Provider:
         return Provider(provider.lower())
     except ValueError:
         supported = ", ".join(p.value for p in Provider)
-        logger.error(
+        logger.warning(
             f"[validate_provider] Unsupported provider | provider: {provider}, supported_providers: {supported}"
         )
         raise ValueError(
@@ -89,7 +89,7 @@ def validate_provider_credentials(provider: str, credentials: Dict[str, str]) ->
     if missing_fields := [
         field for field in required_fields if field not in credentials
     ]:
-        logger.error(
+        logger.warning(
             f"[validate_provider_credentials] Missing required fields | provider: {provider}, missing_fields: {', '.join(missing_fields)}"
         )
         raise ValueError(
