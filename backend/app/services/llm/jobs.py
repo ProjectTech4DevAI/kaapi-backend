@@ -1,3 +1,5 @@
+import base64
+import json
 import logging
 import time
 from contextlib import contextmanager
@@ -26,7 +28,12 @@ from app.core.telemetry import (
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
-from app.crud.llm import create_llm_call, serialize_input, update_llm_call_response
+from app.crud.llm import (
+    create_llm_call,
+    serialize_input,
+    update_llm_call_input,
+    update_llm_call_response,
+)
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
 from app.models.llm.request import (
@@ -41,7 +48,15 @@ from app.models.llm.request import (
     TextContent,
     TextInput,
 )
-from app.models.llm.response import LLMCallResponse, LLMResponse, TextOutput, Usage
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.models.llm.response import (
+    AudioOutput,
+    LLMCallResponse,
+    LLMResponse,
+    TextOutput,
+    Usage,
+)
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import (
     list_validators_config,
@@ -52,6 +67,7 @@ from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
     cleanup_temp_file,
+    download_audio_bytes,
     get_webhook_secret,
     resolve_input,
     send_callback,
@@ -623,6 +639,60 @@ def execute_llm_call(
                         error=f"Failed to create LLM call record: {str(e)}"
                     )
 
+            # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
+            # Failures are non-fatal: the job proceeds and the provider still gets the original input.
+            if (
+                isinstance(query.input, AudioInput)
+                and query.input.content.format in ("base64", "url")
+                and llm_call_id
+            ):
+                try:
+                    if query.input.content.format == "url":
+                        stt_bytes, dl_error = download_audio_bytes(
+                            query.input.content.value
+                        )
+                        if dl_error or not stt_bytes:
+                            raise ValueError(dl_error or "Empty audio bytes from URL")
+                        # Rewrite to base64 in-place so the provider resolve path
+                        # reuses these bytes instead of issuing a second HTTP download.
+                        query.input.content.value = base64.b64encode(stt_bytes).decode()
+                        query.input.content.format = "base64"
+                    else:
+                        stt_bytes = base64.b64decode(query.input.content.value)
+
+                    storage = get_cloud_storage(session, project_id)
+                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/stt"
+                    s3_url = upload_audio_bytes_to_s3(
+                        storage,
+                        stt_bytes,
+                        llm_call_id,
+                        query.input.content.mime_type,
+                        subfolder_path,
+                    )
+                    if s3_url:
+                        stt_input_record = json.dumps(
+                            {
+                                "type": "audio",
+                                "format": "uri",
+                                "mime_type": query.input.content.mime_type,
+                                "size_bytes": len(stt_bytes),
+                                "uri": s3_url,
+                            }
+                        )
+                        update_llm_call_input(session, llm_call_id, stt_input_record)
+                        logger.info(
+                            f"[execute_llm_call] STT audio uploaded to S3 | llm_call_id={llm_call_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] STT S3 upload failed | llm_call_id={llm_call_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[execute_llm_call] STT S3 upload error, continuing: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
+
             try:
                 provider_instance = get_llm_provider(
                     session=session,
@@ -738,6 +808,59 @@ def execute_llm_call(
                 )
 
         if response:
+            # db_content is what gets persisted — URI-only for TTS to avoid storing
+            # large base64 payloads. The in-memory response keeps base64 + uri field
+            # so existing clients continue to receive base64 unchanged.
+            db_content = (
+                response.response.output.model_dump()
+                if response.response.output
+                else None
+            )
+
+            tts_output = response.response.output
+            if (
+                isinstance(tts_output, AudioOutput)
+                and tts_output.content.format == "base64"
+                and llm_call_id
+            ):
+                try:
+                    with Session(engine) as s3_session:
+                        storage = get_cloud_storage(s3_session, project_id)
+                    tts_bytes = base64.b64decode(tts_output.content.value)
+                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/tts"
+                    s3_url = upload_audio_bytes_to_s3(
+                        storage,
+                        tts_bytes,
+                        llm_call_id,
+                        tts_output.content.mime_type,
+                        subfolder_path,
+                    )
+                    if s3_url:
+                        # Keep base64 in the response object for backward-compatible clients.
+                        # Set uri so execute_job can swap it for a presigned URL.
+                        tts_output.content.uri = s3_url
+                        # Store only the URI in the DB — not the full base64.
+                        db_content = {
+                            "type": "audio",
+                            "content": {
+                                "format": "uri",
+                                "value": s3_url,
+                                "mime_type": tts_output.content.mime_type,
+                            },
+                        }
+                        logger.info(
+                            f"[execute_llm_call] TTS audio uploaded to S3 | llm_call_id={llm_call_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] TTS S3 upload failed, keeping base64 | llm_call_id={llm_call_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[execute_llm_call] TTS S3 upload error, keeping base64: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
+
             with Session(engine) as session:
                 if llm_call_id:
                     with tracer.start_as_current_span(
@@ -757,7 +880,7 @@ def execute_llm_call(
                                 session,
                                 llm_call_id=llm_call_id,
                                 provider_response_id=response.response.provider_response_id,
-                                content=response.response.output.model_dump(),
+                                content=db_content,
                                 usage=response.usage.model_dump(),
                                 conversation_id=response.response.conversation_id,
                             )
@@ -913,6 +1036,25 @@ def execute_job(
             )
 
             if result.success:
+                # Swap the s3:// URI in content.uri for a short-lived presigned URL.
+                # content.value (base64) is untouched — existing clients keep working.
+                # On failure, clear uri so clients don't receive a raw s3:// address.
+                if result.response:
+                    tts_out = result.response.response.output
+                    if isinstance(tts_out, AudioOutput) and tts_out.content.uri:
+                        try:
+                            with Session(engine) as s3_session:
+                                storage = get_cloud_storage(s3_session, project_id)
+                            tts_out.content.uri = storage.get_signed_url(
+                                tts_out.content.uri, expires_in=3600
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"[execute_job] Failed to generate presigned URL: {e} | job_id={job_uuid}",
+                                exc_info=True,
+                            )
+                            tts_out.content.uri = None
+
                 callback_response = APIResponse.success_response(
                     data=result.response, metadata=result.metadata
                 )
