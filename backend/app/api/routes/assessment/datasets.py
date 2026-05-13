@@ -1,6 +1,7 @@
 """Assessment dataset endpoints."""
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
@@ -12,8 +13,14 @@ from app.crud.assessment.dataset import (
     get_assessment_dataset_by_id,
     list_assessment_datasets,
 )
-from app.models.assessment import AssessmentDatasetResponse
+from app.models.assessment import (
+    AssessmentDatasetPreview,
+    AssessmentDatasetResponse,
+)
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.dataset import (
+    preview_dataset as preview_assessment_dataset,
+)
 from app.services.assessment.dataset import upload_dataset as upload_assessment_dataset
 from app.services.assessment.validators import validate_dataset_file
 from app.utils import APIResponse, load_description
@@ -26,6 +33,7 @@ router = APIRouter()
 def _dataset_to_response(
     dataset: EvaluationDataset,
     signed_url: str | None = None,
+    preview: AssessmentDatasetPreview | None = None,
 ) -> AssessmentDatasetResponse:
     metadata = dataset.dataset_metadata or {}
     return AssessmentDatasetResponse(
@@ -36,6 +44,7 @@ def _dataset_to_response(
         file_extension=metadata.get("file_extension"),
         object_store_url=dataset.object_store_url,
         signed_url=signed_url,
+        preview=preview,
     )
 
 
@@ -111,6 +120,18 @@ def get_dataset(
     include_signed_url: bool = Query(
         False, description="Include a signed URL for downloading the raw file from S3"
     ),
+    limit_rows: Annotated[
+        int | None,
+        Query(
+            ge=1,
+            le=100,
+            description=(
+                "If set, fetch the underlying file and include a preview of the "
+                "first N data rows plus column headers. Skip to avoid the file "
+                "download."
+            ),
+        ),
+    ] = None,
 ) -> APIResponse[AssessmentDatasetResponse]:
     """Get a specific assessment dataset."""
     dataset = get_assessment_dataset_by_id(
@@ -127,8 +148,23 @@ def get_dataset(
         )
         signed_url = storage.get_signed_url(dataset.object_store_url)
 
+    preview: AssessmentDatasetPreview | None = None
+    if limit_rows is not None:
+        headers, rows = preview_assessment_dataset(
+            session=session,
+            dataset=dataset,
+            project_id=auth_context.project_.id,
+            limit=limit_rows,
+        )
+        preview = AssessmentDatasetPreview(
+            headers=headers,
+            rows=rows,
+            returned_rows=len(rows),
+            truncated=len(rows) >= limit_rows,
+        )
+
     return APIResponse.success_response(
-        data=_dataset_to_response(dataset, signed_url=signed_url)
+        data=_dataset_to_response(dataset, signed_url=signed_url, preview=preview)
     )
 
 

@@ -55,9 +55,8 @@ class ResourceCleaner:
                 )
                 return
             except OpenAIError as err:
-                logger.error(
+                logger.warning(
                     f"[ResourceCleaner.call] OpenAI error during cleanup | {{'cleaner_type': '{self}', 'resource': '{resource}', 'error': '{str(err)}'}}",
-                    exc_info=True,
                 )
 
         logger.warning(

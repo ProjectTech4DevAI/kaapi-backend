@@ -266,7 +266,7 @@ def get_evaluation_with_scores(
                     )
                     return eval_run, None
             except Exception as e:
-                logger.error(
+                logger.warning(
                     f"[get_evaluation_with_scores] Error loading traces from S3: {e} | "
                     f"evaluation_id={evaluation_id}",
                     exc_info=True,
