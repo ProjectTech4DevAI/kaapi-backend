@@ -332,7 +332,7 @@ def build_google_jsonl(
 
         jsonl_data.append(
             {
-                "metadata": {"key": f"row_{idx}"},
+                "key": f"row_{idx}",
                 "request": request,
             }
         )
