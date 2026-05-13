@@ -248,7 +248,7 @@ def parse_assessment_output(
                 )
 
         else:
-            logger.error(
+            logger.warning(
                 "[parse_assessment_output] Unknown provider '%s' for row_id=%s — skipping",
                 provider_name,
                 row_id,

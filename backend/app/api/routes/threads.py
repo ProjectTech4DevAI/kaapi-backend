@@ -65,7 +65,7 @@ def validate_thread(client: OpenAI, thread_id: str) -> tuple[bool, str]:
         if runs.data and len(runs.data) > 0:
             latest_run = runs.data[0]
             if latest_run.status in ["queued", "in_progress", "requires_action"]:
-                logger.error(
+                logger.warning(
                     f"[validate_thread] Thread ID {mask_string(thread_id)} is currently {latest_run.status}."
                 )
                 return (
@@ -305,7 +305,7 @@ async def threads(
     )
     client, success = configure_openai(credentials)
     if not success:
-        logger.error(
+        logger.warning(
             f"[threads] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_.id}, project_id: {request.get('project_id')}"
         )
         return APIResponse.failure_response(
@@ -379,7 +379,7 @@ async def threads_sync(
     # Configure OpenAI client
     client, success = configure_openai(credentials)
     if not success:
-        logger.error(
+        logger.warning(
             f"[threads_sync] OpenAI API key not configured for this organization. | organization_id: {_current_user.organization_.id}, project_id: {request.get('project_id')}"
         )
         return APIResponse.failure_response(
@@ -447,7 +447,7 @@ async def start_thread(
     # Configure OpenAI client
     client, success = configure_openai(credentials)
     if not success:
-        logger.error(
+        logger.warning(
             f"[start_thread] OpenAI API key not configured for this organization. | project_id: {_current_user.project_.id}"
         )
         return APIResponse.failure_response(
@@ -501,9 +501,6 @@ async def get_thread(
     result = get_thread_result(db, thread_id)
 
     if not result:
-        logger.error(
-            f"[get_thread] Thread result not found for ID: {mask_string(thread_id)} | org_id: {_current_user.organization_.id}"
-        )
         raise HTTPException(404, "thread not found")
 
     status = result.status or ("success" if result.response else "processing")

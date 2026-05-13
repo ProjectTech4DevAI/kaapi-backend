@@ -141,7 +141,7 @@ class OpenAIProvider(BaseProvider):
             from app.utils import handle_openai_error
 
             error_message = handle_openai_error(e)
-            logger.error(
+            logger.warning(
                 f"[OpenAIProvider.execute] OpenAI API error: {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )

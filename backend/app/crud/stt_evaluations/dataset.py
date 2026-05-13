@@ -82,7 +82,7 @@ def create_stt_dataset(
     except IntegrityError as e:
         session.rollback()
         if "uq_evaluation_dataset_name_org_project" in str(e):
-            logger.error(
+            logger.warning(
                 f"[create_stt_dataset] Dataset name already exists | name: {name}"
             )
             raise HTTPException(

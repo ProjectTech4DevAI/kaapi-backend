@@ -1,11 +1,10 @@
 import logging
 from typing import List, Optional
-from datetime import datetime, timezone
 from sqlmodel import Session, select
 from fastapi import HTTPException
 
-from app.models import Project, ProjectCreate, Organization
 from app.core.util import now
+from app.models import Project, ProjectCreate, Organization
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +16,7 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
         project_name=project_create.name,
     )
     if project:
-        logger.error(
+        logger.warning(
             f"[create_project] Project already exists | 'project_id': {project.id}, 'name': {project.name}"
         )
         raise HTTPException(409, "Project already exists")
@@ -58,15 +57,35 @@ def validate_project(session: Session, project_id: int) -> Project:
     """
     project = get_project_by_id(session=session, project_id=project_id)
     if not project:
-        logger.error(
+        logger.warning(
             f"[validate_project] Project not found | 'project_id': {project_id}"
         )
         raise HTTPException(404, "Project not found")
 
     if not project.is_active:
-        logger.error(
+        logger.warning(
             f"[validate_project] Project is not active | 'project_id': {project_id}"
         )
         raise HTTPException(404, "Project is not active")
 
+    return project
+
+
+def validate_project_belongs_to_organization(
+    session: Session,
+    project_id: int,
+    organization_id: int,
+) -> Project:
+    """Ensure project exists/is active and belongs to the given organization."""
+    project = validate_project(session=session, project_id=project_id)
+    if project.organization_id != organization_id:
+        logger.error(
+            f"[validate_project_belongs_to_organization] Project-org mismatch | "
+            f"'project_id': {project_id}, 'organization_id': {organization_id}, "
+            f"'project_organization_id': {project.organization_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="project_id does not belong to organization_id",
+        )
     return project

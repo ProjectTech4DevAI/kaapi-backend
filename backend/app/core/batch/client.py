@@ -69,7 +69,7 @@ class GeminiClient:
         )
 
         if not credentials:
-            logger.error(
+            logger.warning(
                 f"[from_credentials] Gemini credentials not found | "
                 f"org_id: {org_id}, project_id: {project_id}"
             )
@@ -80,7 +80,7 @@ class GeminiClient:
 
         api_key = credentials.get("api_key")
         if not api_key:
-            logger.error(
+            logger.warning(
                 f"[from_credentials] Invalid Gemini credentials (missing api_key) | "
                 f"org_id: {org_id}, project_id: {project_id}"
             )

@@ -64,7 +64,7 @@ class ModelEvaluator:
             label_col = "label" if "label" in df.columns else None
 
             if not query_col or not label_col:
-                logger.error(
+                logger.warning(
                     "[ModelEvaluator.load_labels_and_prompts] CSV must "
                     "contain a 'label' column and one of: "
                     f"{possible_query_columns}"
