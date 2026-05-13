@@ -6,6 +6,7 @@ from celery.signals import (
     task_failure,
     task_postrun,
     task_prerun,
+    setup_logging,
     worker_process_init,
 )
 from kombu import Exchange, Queue
@@ -14,16 +15,21 @@ from app.core.config import settings
 from app.core.logger import configure_logging
 from app.core.sentry_filters import before_send_transaction_filter
 
-configure_logging(service_name="kaapi-celery")
-
 logger = logging.getLogger(__name__)
 _telemetry_initialized = False
 _sentry_initialized = False
 _flush_hook_registered = False
 
 
+@setup_logging.connect
+def configure_celery_logging(**_: object) -> None:
+    configure_logging(service_name="kaapi-celery")
+
+
 def _initialize_worker_observability() -> None:
     global _telemetry_initialized, _sentry_initialized, _flush_hook_registered
+
+    configure_logging(service_name="kaapi-celery")
 
     if settings.SENTRY_DSN and not _sentry_initialized:
         import sentry_sdk

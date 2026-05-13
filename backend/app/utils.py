@@ -262,7 +262,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     )
 
     if not credentials or "api_key" not in credentials:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] OpenAI credentials not found. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -273,7 +273,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     try:
         return OpenAI(api_key=credentials["api_key"])
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] Failed to configure OpenAI client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -297,7 +297,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
     if not credentials or not all(
         key in credentials for key in ["public_key", "secret_key", "host"]
     ):
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Langfuse credentials not found or incomplete. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -313,7 +313,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             timeout=60,
         )
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -505,7 +505,7 @@ def send_callback(
     try:
         validate_callback_url(str(callback_url))
     except ValueError as ve:
-        logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
+        logger.warning(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
     try:
         raw_body = json.dumps(data, separators=(",", ":")).encode()
@@ -703,7 +703,7 @@ def resolve_input(
             return "", f"Unknown input type: {type(query_input)}"
 
     except Exception as e:
-        logger.error(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
+        logger.warning(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
         return "", f"Failed to resolve input: {str(e)}"
 
 
