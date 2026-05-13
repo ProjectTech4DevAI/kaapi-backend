@@ -194,11 +194,17 @@ def preview_dataset(
             status_code=404, detail="Dataset has no underlying file to preview."
         )
 
-    file_ext = (dataset.dataset_metadata or {}).get("file_extension")
+    raw_ext = (dataset.dataset_metadata or {}).get("file_extension")
+    file_ext = raw_ext.strip().lower() if isinstance(raw_ext, str) else None
     if file_ext == ".xls":
         raise HTTPException(
             status_code=422,
             detail="Legacy Excel format (.xls) is not supported.",
+        )
+    if file_ext not in {".csv", ".xlsx"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Unsupported or missing file extension.",
         )
 
     storage = get_cloud_storage(session=session, project_id=project_id)

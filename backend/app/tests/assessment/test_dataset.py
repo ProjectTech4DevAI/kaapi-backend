@@ -181,6 +181,38 @@ class TestUploadDataset:
             preview_dataset(session=MagicMock(), dataset=ds, project_id=1, limit=10)
         assert exc_info.value.status_code == 404
 
+    def test_preview_dataset_missing_extension_returns_422(self) -> None:
+        ds = MagicMock()
+        ds.object_store_url = "s3://x"
+        ds.dataset_metadata = {}
+        with pytest.raises(HTTPException) as exc_info:
+            preview_dataset(session=MagicMock(), dataset=ds, project_id=1, limit=10)
+        assert exc_info.value.status_code == 422
+        assert "Unsupported or missing" in exc_info.value.detail
+
+    def test_preview_dataset_unknown_extension_returns_422(self) -> None:
+        ds = MagicMock()
+        ds.object_store_url = "s3://x"
+        ds.dataset_metadata = {"file_extension": ".json"}
+        with pytest.raises(HTTPException) as exc_info:
+            preview_dataset(session=MagicMock(), dataset=ds, project_id=1, limit=10)
+        assert exc_info.value.status_code == 422
+
+    def test_preview_dataset_normalizes_extension_case(self) -> None:
+        ds = MagicMock()
+        ds.object_store_url = "s3://x"
+        ds.dataset_metadata = {"file_extension": " .CSV "}
+        storage = MagicMock()
+        storage.get.return_value = b"a,b\n1,2\n"
+        with patch(
+            "app.services.assessment.dataset.get_cloud_storage", return_value=storage
+        ):
+            headers, rows = preview_dataset(
+                session=MagicMock(), dataset=ds, project_id=1, limit=10
+            )
+        assert headers == ["a", "b"]
+        assert rows == [["1", "2"]]
+
     def test_preview_dataset_legacy_xls_returns_422(self) -> None:
         ds = MagicMock()
         ds.object_store_url = "s3://x"
