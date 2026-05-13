@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.crud import JobCrud
+from app.crud.llm import get_llm_call_by_job_id
 from app.crud.config import ConfigVersionCrud
 from app.utils import APIResponse
 from app.models import ConfigVersion, JobStatus, JobType

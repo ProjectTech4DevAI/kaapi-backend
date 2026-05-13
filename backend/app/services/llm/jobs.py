@@ -30,8 +30,11 @@ from app.crud.credentials import get_provider_credential
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
     create_llm_call,
+    create_llm_call_pending,
+    get_llm_call_by_job_id,
     serialize_input,
     update_llm_call_input,
+    update_llm_call_resolved_fields,
     update_llm_call_response,
 )
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
