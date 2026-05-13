@@ -1,4 +1,5 @@
 import base64
+import json
 from uuid import uuid4
 
 import pytest
@@ -8,8 +9,11 @@ from app.crud.llm import (
     create_llm_call,
     get_llm_call_by_id,
     get_llm_calls_by_job_id,
+    serialize_input,
+    update_llm_call_input,
     update_llm_call_response,
 )
+from app.models.llm.request import AudioContent, AudioInput, TextContent, TextInput
 from app.models import Project, Organization
 from app.models.llm import (
     ConfigBlob,
@@ -85,6 +89,38 @@ def tts_config_blob() -> ConfigBlob:
             type="tts",
         )
     )
+
+
+class TestSerializeInput:
+    """Tests for serialize_input — pure unit tests, no DB needed."""
+
+    def test_string_passthrough(self) -> None:
+        assert serialize_input("plain text") == "plain text"
+
+    def test_text_input(self) -> None:
+        ti = TextInput(content=TextContent(value="hello world"))
+        assert serialize_input(ti) == "hello world"
+
+    def test_audio_base64_stores_metadata(self) -> None:
+        b64_value = "AAAA"  # 4 chars → ~3 bytes
+        ai = AudioInput(content=AudioContent(value=b64_value, mime_type="audio/wav"))
+        result = json.loads(serialize_input(ai))
+        assert result["type"] == "audio"
+        assert result["format"] == "base64"
+        assert result["mime_type"] == "audio/wav"
+        assert result["size_bytes"] == len(b64_value) * 3 // 4
+
+    def test_audio_url_stores_url(self) -> None:
+        url = "https://cdn.example.com/audio.wav"
+        ai = AudioInput(
+            content=AudioContent(format="url", value=url, mime_type="audio/wav")
+        )
+        result = json.loads(serialize_input(ai))
+        assert result["type"] == "audio"
+        assert result["format"] == "url"
+        assert result["url"] == url
+        assert result["mime_type"] == "audio/wav"
+        assert "size_bytes" not in result
 
 
 def test_create_llm_call_text(
@@ -540,3 +576,43 @@ def test_update_llm_call_response_with_text_content_no_size_calculation(
     # Should not have audio_size_bytes
     assert updated.content is not None
     assert "audio_size_bytes" not in updated.content
+
+
+def test_update_llm_call_input_overwrites_with_s3_uri(
+    db: Session,
+    test_job,
+    test_project: Project,
+    test_organization: Organization,
+    stt_config_blob: ConfigBlob,
+) -> None:
+    """Test that update_llm_call_input replaces input with an S3 URI."""
+    request = LLMCallRequest(
+        query=QueryParams(input="/tmp/audio_original.wav"),
+        config=LLMCallConfig(blob=stt_config_blob),
+    )
+
+    created = create_llm_call(
+        db,
+        request=request,
+        job_id=test_job.id,
+        project_id=test_project.id,
+        organization_id=test_organization.id,
+        resolved_config=stt_config_blob,
+        original_provider="openai",
+    )
+
+    original_updated_at = created.updated_at
+    s3_uri = "s3://bucket/audio/abc123.wav"
+
+    update_llm_call_input(db, created.id, s3_uri)
+
+    refreshed = get_llm_call_by_id(db, created.id)
+    assert refreshed.input == s3_uri
+    assert refreshed.updated_at > original_updated_at
+
+
+def test_update_llm_call_input_noop_for_missing_id(db: Session) -> None:
+    """Test that update_llm_call_input silently returns when the ID doesn't exist."""
+    fake_id = uuid4()
+    # Should not raise — just logs a warning and returns None
+    update_llm_call_input(db, fake_id, "s3://bucket/does-not-matter.wav")
