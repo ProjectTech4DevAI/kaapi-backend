@@ -1,6 +1,7 @@
 import logging
 
 from sqlmodel import Session
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
@@ -70,40 +71,35 @@ class ChainExecutor:
             self._context.project_id, self._context.organization_id
         )
 
-    def _resolve_presigned_url(self, output) -> None:
-        """Swap the s3:// URI in content.uri for a presigned URL in-place.
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0))
+    def _presign_with_retry(self, storage, uri: str) -> str:
+        return storage.get_signed_url(uri, expires_in=3600)
 
-        Non-fatal: clears uri on failure so clients don't receive a raw s3:// address.
-        """
-        if isinstance(output, AudioOutput) and output.content.uri:
-            try:
-                with Session(engine) as session:
-                    storage = get_cloud_storage(session, self._context.project_id)
-                output.content.uri = storage.get_signed_url(
-                    output.content.uri, expires_in=3600
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[_resolve_presigned_url] Failed to generate presigned URL: {e} | "
-                    f"job_id={self._context.job_id}",
-                    exc_info=True,
-                )
-                output.content.uri = None
+    def _resolve_presigned_url(self, output) -> None:
+        """Swap the s3:// URI in content.uri for a presigned URL in-place."""
+        if not isinstance(output, AudioOutput) or not output.content.uri:
+            return
+        with Session(engine) as session:
+            storage = get_cloud_storage(session, self._context.project_id)
+            output.content.uri = self._presign_with_retry(storage, output.content.uri)
 
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
         if result.success:
             if result.response:
-                self._resolve_presigned_url(result.response.response.output)
+                output = result.response.response.output
 
             final = LLMChainResponse(
                 response=result.response.response,
                 usage=result.usage,
                 provider_raw_response=result.response.provider_raw_response,
             )
+            callback_final = final.model_copy(deep=True)
+            self._resolve_presigned_url(callback_final.response.output)
+
             callback_response = APIResponse.success_response(
-                data=final, metadata=self._request.request_metadata
+                data=callback_final, metadata=self._request.request_metadata
             )
             if self._request.callback_url:
                 send_callback(
@@ -120,7 +116,7 @@ class ChainExecutor:
                     session=session,
                     chain_id=self._context.chain_id,
                     status=ChainStatus.COMPLETED,
-                    output=result.response.response.output.model_dump(),
+                    output=output.model_dump(),
                     total_usage=self._context.aggregated_usage.model_dump(),
                 )
             return callback_response.model_dump()

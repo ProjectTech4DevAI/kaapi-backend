@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
+
 
 class ValidationErrorDetail(BaseModel):
     field: str
@@ -595,9 +597,43 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
 def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
     """Download audio from a public URL. Returns (bytes, error)."""
     try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        return response.content, None
+        validate_callback_url(str(url))
+    except ValueError as e:
+        logger.error(
+            f"[download_audio_bytes] Invalid public url URL, only supports HTTPS prefixed URLs.: {e}",
+            exc_info=True,
+        )
+        return None, f"[download_audio_bytes] Invalid public URL: {e}"
+
+    try:
+        with requests.get(url, timeout=30, stream=True) as resp:
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "")
+            if not content_type.startswith("audio/"):
+                logger.error(
+                    f"[download_audio_bytes] Unexpected Content-Type: {content_type}"
+                )
+                return None, f"Unexpected Content-Type: {content_type}"
+
+            length = resp.headers.get("Content-Length")
+            if length and int(length) > MAX_AUDIO_SIZE:
+                logger.error(
+                    f"[download_audio_bytes] File too large: {length} bytes. Upto 50 MB audio files are allowed."
+                )
+                return None, f"File too large : {length} bytes."
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > MAX_AUDIO_SIZE:
+                    logger.error(
+                        f"[download_audio_bytes] File size exceeded max size of 50MB during download."
+                    )
+                    return None, "File exceeded max size during download."
+                chunks.append(chunk)
+
+            return b"".join(chunks), None
     except requests.exceptions.Timeout:
         return None, f"Timed out downloading audio from URL: {url}"
     except requests.exceptions.HTTPError as e:
