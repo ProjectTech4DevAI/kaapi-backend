@@ -619,7 +619,7 @@ def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
             length = resp.headers.get("Content-Length")
             if length and int(length) > MAX_AUDIO_SIZE:
                 logger.error(
-                    f"Fiile too large: {length} bytes. Upto 50 MB audio files are allowed."
+                    f"[download_audio_bytes] File too large: {length} bytes. Upto 50 MB audio files are allowed."
                 )
                 return None, f"File too large : {length} bytes."
             chunks = []
