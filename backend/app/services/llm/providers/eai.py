@@ -301,7 +301,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
-            logger.error(
+            logger.warning(
                 f"[ElevenlabsAIProvider.execute] {error_message} | provider={provider_name}",
                 exc_info=True,
             )

@@ -162,7 +162,7 @@ class EndpointInvoker:
                     logger.info("Shutting down gracefully...")
                     break
                 except Exception as e:
-                    logger.error(f"Error during invocation: {e}")
+                    logger.warning(f"Error during invocation: {e}")
                     # Wait before retrying on error
                     logger.info(f"Waiting {self.interval_seconds} seconds before retry")
                     await asyncio.sleep(self.interval_seconds)
