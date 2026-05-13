@@ -77,7 +77,7 @@ class ChainExecutor:
 
     def _resolve_presigned_url(self, output) -> None:
         """Swap the s3:// URI in content.uri for a presigned URL in-place."""
-        if isinstance(output, AudioOutput) and output.content.uri:
+        if not isinstance(output, AudioOutput) or not output.content.uri:
             return
         with Session(engine) as session:
             storage = get_cloud_storage(session, self._context.project_id)

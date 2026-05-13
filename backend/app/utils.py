@@ -628,7 +628,7 @@ def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
                 downloaded += len(chunk)
                 if downloaded > MAX_AUDIO_SIZE:
                     logger.error(
-                        f"File size exceeded max size of 50MB during download."
+                        f"[download_audio_bytes] File size exceeded max size of 50MB during download."
                     )
                     return None, "File exceeded max size during download."
                 chunks.append(chunk)
