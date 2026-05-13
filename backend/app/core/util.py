@@ -40,5 +40,5 @@ def configure_openai(credentials: dict) -> tuple[OpenAI, bool]:
         client = OpenAI(api_key=credentials["api_key"])
         return client, True
     except Exception as e:
-        logger.error(f"Failed to configure OpenAI client: {str(e)}")
+        logger.warning(f"Failed to configure OpenAI client: {str(e)}")
         return None, False

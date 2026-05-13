@@ -5,8 +5,15 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.models import User
-from app.api.permissions import Permission, has_permission, require_permission
+from app.api.permissions import (
+    Permission,
+    has_permission,
+    require_feature,
+    require_permission,
+)
 from app.api.deps import get_auth_context
+from app.core.feature_flags import FeatureFlag
+
 from app.tests.utils.test_data import create_test_api_key
 
 
@@ -169,6 +176,73 @@ class TestRequirePermission:
             permission_checker(auth_context, db)
 
         assert exc_info.value.status_code == 403
+
+
+class TestRequireFeature:
+    """Test suite for require_feature dependency factory."""
+
+    def test_returns_valid_feature_checker(self) -> None:
+        feature_checker = require_feature(FeatureFlag.ASSESSMENT)
+        assert callable(feature_checker)
+
+    def test_feature_checker_passes_when_feature_enabled(
+        self, db: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api_key_response = create_test_api_key(db)
+        auth_context = get_auth_context(
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
+        )
+
+        monkeypatch.setattr("app.core.feature_flags.is_enabled", lambda **kwargs: True)
+
+        feature_checker = require_feature(FeatureFlag.ASSESSMENT)
+        feature_checker(auth_context, db)
+
+    def test_feature_checker_raises_403_when_feature_disabled(
+        self, db: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api_key_response = create_test_api_key(db)
+        auth_context = get_auth_context(
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
+        )
+
+        monkeypatch.setattr("app.core.feature_flags.is_enabled", lambda **kwargs: False)
+
+        feature_checker = require_feature(FeatureFlag.ASSESSMENT)
+
+        with pytest.raises(HTTPException) as exc_info:
+            feature_checker(auth_context, db)
+
+        assert exc_info.value.status_code == 403
+        assert "not enabled" in str(exc_info.value.detail)
+
+    def test_feature_checker_raises_403_without_organization(
+        self, db: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api_key_response = create_test_api_key(db)
+        auth_context = get_auth_context(
+            request=_mock_request(),
+            session=db,
+            token=None,
+            api_key=api_key_response.key,
+        )
+        auth_context.organization = None
+
+        monkeypatch.setattr("app.core.feature_flags.is_enabled", lambda **kwargs: True)
+
+        feature_checker = require_feature(FeatureFlag.ASSESSMENT)
+
+        with pytest.raises(HTTPException) as exc_info:
+            feature_checker(auth_context, db)
+
+        assert exc_info.value.status_code == 403
+        assert "not enabled" in str(exc_info.value.detail)
 
 
 class TestPermissionEnum:

@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
+
 
 class ValidationErrorDetail(BaseModel):
     field: str
@@ -262,7 +264,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     )
 
     if not credentials or "api_key" not in credentials:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] OpenAI credentials not found. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -273,7 +275,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     try:
         return OpenAI(api_key=credentials["api_key"])
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] Failed to configure OpenAI client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -297,7 +299,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
     if not credentials or not all(
         key in credentials for key in ["public_key", "secret_key", "host"]
     ):
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Langfuse credentials not found or incomplete. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -313,7 +315,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             timeout=60,
         )
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -443,6 +445,18 @@ def sign_webhook_payload(
     return signature, timestamp_ms
 
 
+def require_organization_for_project(
+    project_id: int | None,
+    organization_id: int | None,
+) -> None:
+    """Raise 400 if project_id is provided without organization_id."""
+    if project_id is not None and organization_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="organization_id is required when project_id is set",
+        )
+
+
 def get_webhook_secret(
     project_id: int | None, organization_id: int | None
 ) -> str | None:
@@ -493,7 +507,7 @@ def send_callback(
     try:
         validate_callback_url(str(callback_url))
     except ValueError as ve:
-        logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
+        logger.warning(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
     try:
         raw_body = json.dumps(data, separators=(",", ":")).encode()
@@ -580,6 +594,73 @@ def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
         return "", f"Failed to write audio to temp file: {str(e)}"
 
 
+def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
+    """Download audio from a public URL. Returns (bytes, error)."""
+    try:
+        validate_callback_url(str(url))
+    except ValueError as e:
+        logger.error(
+            f"[download_audio_bytes] Invalid public url URL, only supports HTTPS prefixed URLs.: {e}",
+            exc_info=True,
+        )
+        return None, f"[download_audio_bytes] Invalid public URL: {e}"
+
+    try:
+        with requests.get(url, timeout=30, stream=True) as resp:
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "")
+            if not content_type.startswith("audio/"):
+                logger.error(
+                    f"[download_audio_bytes] Unexpected Content-Type: {content_type}"
+                )
+                return None, f"Unexpected Content-Type: {content_type}"
+
+            length = resp.headers.get("Content-Length")
+            if length and int(length) > MAX_AUDIO_SIZE:
+                logger.error(
+                    f"[download_audio_bytes] File too large: {length} bytes. Upto 50 MB audio files are allowed."
+                )
+                return None, f"File too large : {length} bytes."
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > MAX_AUDIO_SIZE:
+                    logger.error(
+                        f"[download_audio_bytes] File size exceeded max size of 50MB during download."
+                    )
+                    return None, "File exceeded max size during download."
+                chunks.append(chunk)
+
+            return b"".join(chunks), None
+    except requests.exceptions.Timeout:
+        return None, f"Timed out downloading audio from URL: {url}"
+    except requests.exceptions.HTTPError as e:
+        return None, f"HTTP {e.response.status_code} downloading audio from URL: {url}"
+    except Exception as e:
+        return None, f"Failed to download audio from URL: {str(e)}"
+
+
+def resolve_audio_url(url: str, mime_type: str) -> tuple[str, str | None]:
+    """Download audio from a public URL and write to temp file. Returns (file_path, error)."""
+    audio_bytes, error = download_audio_bytes(url)
+    if error:
+        return "", error
+
+    ext = get_file_extension(mime_type)
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=ext, delete=False, prefix="audio_"
+        ) as tmp:
+            tmp.write(audio_bytes)
+            temp_path = tmp.name
+        logger.info(f"[resolve_audio_url] Downloaded audio to temp file: {temp_path}")
+        return temp_path, None
+    except Exception as e:
+        return "", f"Failed to write audio to temp file: {str(e)}"
+
+
 def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
     contents = (
         image_input.content
@@ -623,6 +704,8 @@ def resolve_input(
 
         elif isinstance(query_input, AudioInput):
             mime_type = query_input.content.mime_type or "audio/wav"
+            if query_input.content.format == "url":
+                return resolve_audio_url(query_input.content.value, mime_type)
             return resolve_audio_base64(query_input.content.value, mime_type)
 
         elif isinstance(query_input, ImageInput):
@@ -656,7 +739,7 @@ def resolve_input(
             return "", f"Unknown input type: {type(query_input)}"
 
     except Exception as e:
-        logger.error(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
+        logger.warning(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
         return "", f"Failed to resolve input: {str(e)}"
 
 

@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
     OTEL_ENABLED: bool = False
     OTEL_SERVICE_NAME: str = "kaapi-backend"
+    BACKEND_SERVICE_NAME: str = "kaapi-backend"
+    CRON_SERVICE_NAME: str = "kaapi-cron"
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None

@@ -16,6 +16,7 @@ class BatchJobType(str, Enum):
     STT_EVALUATION = "stt_evaluation"
     TTS_EVALUATION = "tts_evaluation"
     EMBEDDING = "embedding"
+    ASSESSMENT = "assessment"
 
 
 if TYPE_CHECKING:
