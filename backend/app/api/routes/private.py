@@ -73,7 +73,7 @@ def migrate_tts_base64_to_s3(session: SessionDep) -> dict:
             LlmCall.output_type == "audio",
             col(LlmCall.deleted_at).is_(None),
         )
-        .order_by(col(LlmCall.created_at).desc())
+        .order_by(col(LlmCall.inserted_at).desc())
         .execution_options(yield_per=100)
     )
 
