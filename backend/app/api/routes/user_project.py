@@ -1,25 +1,21 @@
 import logging
-import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import select
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
-from app.core.security import get_password_hash
 from app.crud.organization import get_organization_by_id, validate_organization
 from app.crud.project import get_project_by_id, validate_project
 from app.crud.user_project import (
+    add_user_to_project,
     get_users_by_project,
     remove_user_from_project,
 )
 from app.models import (
     AddUsersToProjectRequest,
     Message,
-    User,
-    UserProject,
     UserProjectPublic,
 )
 from app.services.auth import generate_invite_token
@@ -66,59 +62,21 @@ def add_project_users(
     validate_organization(session=session, org_id=body.organization_id)
     validate_project(session=session, project_id=body.project_id)
 
-    emails = [str(entry.email) for entry in body.users]
-
-    existing_users = session.exec(select(User).where(User.email.in_(emails))).all()
-    users_by_email: dict[str, User] = {u.email: u for u in existing_users}
-
-    if existing_users:
-        existing_memberships = session.exec(
-            select(UserProject).where(
-                UserProject.user_id.in_([u.id for u in existing_users])
-            )
-        ).all()
-    else:
-        existing_memberships = []
-    memberships_by_user: dict[int, UserProject] = {
-        m.user_id: m for m in existing_memberships
-    }
-
     same_project_emails: list[str] = []
     different_project_emails: list[str] = []
 
     for entry in body.users:
-        email = str(entry.email)
-        user = users_by_email.get(email)
-
-        if user is None:
-            user = User(
-                email=email,
-                full_name=entry.full_name,
-                is_active=False,
-                hashed_password=get_password_hash(secrets.token_urlsafe(16)),
-            )
-            session.add(user)
-            session.flush()
-            users_by_email[email] = user
-        elif entry.full_name and not user.full_name:
-            user.full_name = entry.full_name
-
-        membership = memberships_by_user.get(user.id)
-        if membership is not None:
-            if membership.project_id == body.project_id:
-                same_project_emails.append(email)
-            else:
-                different_project_emails.append(email)
-            continue
-
-        new_membership = UserProject(
-            user_id=user.id,
+        _, add_status = add_user_to_project(
+            session=session,
+            email=str(entry.email),
             organization_id=body.organization_id,
             project_id=body.project_id,
+            full_name=entry.full_name,
         )
-        session.add(new_membership)
-        session.flush()
-        memberships_by_user[user.id] = new_membership
+        if add_status == "same_project":
+            same_project_emails.append(str(entry.email))
+        elif add_status == "different_project":
+            different_project_emails.append(str(entry.email))
 
     if same_project_emails or different_project_emails:
         session.rollback()
