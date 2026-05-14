@@ -52,8 +52,10 @@ class FineTuningJobCreate(SQLModel):
         return v.strip()
 
 
-class Fine_Tuning(FineTuningJobBase, table=True):
+class FineTuning(FineTuningJobBase, table=True):
     """Database model for tracking fine-tuning jobs."""
+
+    __tablename__ = "fine_tuning"
 
     id: int = Field(
         primary_key=True,
@@ -107,12 +109,6 @@ class Fine_Tuning(FineTuningJobBase, table=True):
         description="Error message for when something failed",
         sa_column_kwargs={"comment": "Error message if the job failed"},
     )
-    is_deleted: bool = Field(
-        default=False,
-        nullable=False,
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
-
     # Foreign keys
     document_id: UUID = Field(
         foreign_key="document.id",

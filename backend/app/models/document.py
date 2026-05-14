@@ -37,10 +37,6 @@ class Document(DocumentBase, table=True):
     object_store_url: str = Field(
         sa_column_kwargs={"comment": "Cloud storage URL for the document"},
     )
-    is_deleted: bool = Field(
-        default=False,
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
     file_size_kb: float | None = Field(
         default=None,
         description="The size of the document in kilobytes",

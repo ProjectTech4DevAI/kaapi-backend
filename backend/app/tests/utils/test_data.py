@@ -10,7 +10,7 @@ from app.models import (
     ConfigBlob,
     CredsCreate,
     FineTuningJobCreate,
-    Fine_Tuning,
+    FineTuning,
     ModelEvaluation,
     ModelEvaluationBase,
     ModelEvaluationStatus,
@@ -167,7 +167,7 @@ def create_test_credential(db: Session) -> tuple[list[Credential], Project]:
 def create_test_fine_tuning_jobs(
     db: Session,
     ratios: list[float],
-) -> tuple[list[Fine_Tuning], bool]:
+) -> tuple[list[FineTuning], bool]:
     project = get_project(db, "Dalgo")
     document = get_document(db, "dalgo_sample.json")
     jobs = []
@@ -197,7 +197,7 @@ def create_test_fine_tuning_jobs(
 def create_test_finetuning_job_with_extra_fields(
     db: Session,
     ratios: list[float],
-) -> tuple[list[Fine_Tuning], bool]:
+) -> tuple[list[FineTuning], bool]:
     jobs, _ = create_test_fine_tuning_jobs(db, ratios)
 
     if jobs:

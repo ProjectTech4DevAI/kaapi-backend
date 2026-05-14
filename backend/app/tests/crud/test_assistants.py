@@ -376,7 +376,6 @@ class TestAssistantCrud:
 
         result = delete_assistant(db, assistant.assistant_id, assistant.project_id)
 
-        assert result.is_deleted is True
         assert result.deleted_at is not None
         with pytest.raises(ValueError) as exc_info:
             get_assistant(db, name=assistant.name)
@@ -402,7 +401,7 @@ class TestAssistantCrud:
         assert result is not None
         assert result.assistant_id == assistant.assistant_id
         assert result.project_id == assistant.project_id
-        assert result.is_deleted is False
+        assert result.deleted_at is None
 
     def test_get_assistant_by_id_not_found(self, db: Session) -> None:
         """Returns None when assistant is not found"""
@@ -464,7 +463,7 @@ class TestAssistantCrud:
         assert assistant2.assistant_id in assistant_ids
         for assistant in result:
             assert assistant.project_id == project.id
-            assert assistant.is_deleted is False
+            assert assistant.deleted_at is None
 
     def test_get_assistants_by_project_empty(self, db: Session) -> None:
         """Returns empty list when project has no assistants"""

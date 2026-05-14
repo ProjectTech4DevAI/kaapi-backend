@@ -47,6 +47,14 @@ class UserProject(UserProjectBase, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the mapping was created"},
     )
+    updated_at: datetime = Field(
+        default_factory=now,
+        nullable=False,
+        sa_column_kwargs={
+            "comment": "Timestamp when the mapping was last updated",
+            "onupdate": now,
+        },
+    )
 
 
 class UserEntry(SQLModel):

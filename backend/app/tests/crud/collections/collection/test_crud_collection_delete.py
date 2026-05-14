@@ -57,7 +57,7 @@ class TestCollectionDelete:
         documents = store.fill(1)
 
         stmt = select(APIKey).where(
-            APIKey.project_id == project.id, APIKey.is_deleted == False
+            APIKey.project_id == project.id, APIKey.deleted_at.is_(None)
         )
         api_key = db.exec(stmt).first()
 

@@ -27,7 +27,7 @@ class TestDatabaseDelete:
         assert document is not None
 
     def test_delete_marks_deleted(self, document: Document) -> None:
-        assert document.is_deleted is True
+        assert document.deleted_at is not None
 
     def test_delete_follows_insert(self, document: Document) -> None:
         assert document.inserted_at <= document.deleted_at

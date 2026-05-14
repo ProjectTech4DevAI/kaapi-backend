@@ -100,7 +100,7 @@ from .feature_flag import (
 )
 from .file import AudioUploadResponse, File, FilePublic, FileType
 from .fine_tuning import (
-    Fine_Tuning,
+    FineTuning,
     FineTuningJobBase,
     FineTuningJobCreate,
     FineTuningJobPublic,
@@ -170,7 +170,7 @@ from .response import (
     ResponsesAPIRequest,
     ResponsesSyncAPIRequest,
 )
-from .threads import OpenAI_Thread, OpenAIThreadBase, OpenAIThreadCreate
+from .threads import OpenAIThread, OpenAIThreadBase, OpenAIThreadCreate
 from .user import (
     NewPassword,
     UpdatePassword,

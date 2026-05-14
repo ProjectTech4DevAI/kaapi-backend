@@ -63,7 +63,7 @@ class TestDocumentRouteRemove:
             statement = select(Document).where(Document.id == document.id)
             result = db.exec(statement).one()
 
-            assert result.is_deleted is True
+            assert result.deleted_at is not None
 
     @openai_responses.mock()
     @patch("app.api.routes.documents.get_openai_client")
