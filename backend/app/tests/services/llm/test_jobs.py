@@ -1174,6 +1174,62 @@ class TestExecuteJob:
             result["data"]["response"]["output"]["content"]["value"] == "Rephrased text"
         )
 
+    def test_guardrails_rephrase_saves_original_input_and_safe_text_in_db(
+        self, db, job_env, job_for_execution
+    ):
+        from app.models.llm.request import LlmCall
+
+        env = job_env
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Please rephrase the query without unsafe content. Input is outside the allowed topic scope.",
+                    "rephrase_needed": True,
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "policy", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": "unsafe user query"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+            }
+            self._execute_job(job_for_execution, db, request_data)
+
+        llm_call = db.exec(
+            select(LlmCall).where(LlmCall.job_id == job_for_execution.id)
+        ).first()
+
+        assert llm_call is not None
+        assert llm_call.input == "unsafe user query"
+        assert llm_call.content == {
+            "type": "text",
+            "content": {
+                "format": "text",
+                "value": "Please rephrase the query without unsafe content. Input is outside the allowed topic scope.",
+            },
+        }
+
     def test_execute_job_fetches_validator_configs_from_blob_refs(
         self, db, job_env, job_for_execution
     ):
