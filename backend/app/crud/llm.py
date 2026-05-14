@@ -284,24 +284,32 @@ def save_rephrase_guardrail_call(
             original_provider=str(config_blob.completion.provider),
             chain_id=chain_id,
         )
-        update_llm_call_response(
-            session,
-            llm_call_id=rephrase_llm_call.id,
-            provider_response_id=str(job_id),
-            content={
-                "type": "text",
-                "content": {
-                    "format": "text",
-                    "value": guardrail_direct_response,
+        try:
+            update_llm_call_response(
+                session,
+                llm_call_id=rephrase_llm_call.id,
+                provider_response_id=None,
+                content={
+                    "type": "text",
+                    "content": {
+                        "format": "text",
+                        "value": guardrail_direct_response,
+                    },
                 },
-            },
-            # No LLM was invoked, so token counts are genuinely zero.
-            usage={
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-            },
-        )
+                # No LLM was invoked, so token counts are genuinely zero.
+                usage={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+        except Exception:
+            try:
+                session.delete(rephrase_llm_call)
+                session.commit()
+            except Exception:
+                pass
+            raise
         return rephrase_llm_call.id
     except Exception as e:
         logger.error(

@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -9,7 +10,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.crud.jobs import JobCrud
 from app.crud.llm import save_rephrase_guardrail_call
-from app.models import JobType
+from app.models import Job, JobType
 from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
@@ -283,14 +284,14 @@ _CONFIG = LLMCallConfig(blob=_CONFIG_BLOB)
 
 class TestSaveRephraseGuardrailCall:
     @pytest.fixture
-    def job(self, db: Session):
+    def job(self, db: Session) -> Job:
         j = JobCrud(session=db).create(
             job_type=JobType.LLM_API, trace_id="rephrase-test"
         )
         db.commit()
         return j
 
-    def _call(self, db: Session, job, **overrides):
+    def _call(self, db: Session, job: Job, **overrides: Any) -> UUID | None:
         project = get_project(db)
         kwargs = dict(
             session=db,
@@ -307,18 +308,20 @@ class TestSaveRephraseGuardrailCall:
         kwargs.update(overrides)
         return save_rephrase_guardrail_call(**kwargs)
 
-    def test_success_returns_uuid(self, db: Session, job) -> None:
+    def test_success_returns_uuid(self, db: Session, job: Job) -> None:
         result = self._call(db, job)
         assert isinstance(result, UUID)
 
-    def test_success_saves_original_input_and_job_id(self, db: Session, job) -> None:
+    def test_success_saves_original_input_and_job_id(
+        self, db: Session, job: Job
+    ) -> None:
         llm_call_id = self._call(db, job)
         llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
         assert llm_call is not None
         assert llm_call.input == "original unsafe input"
         assert llm_call.job_id == job.id
 
-    def test_success_saves_safe_text_as_content(self, db: Session, job) -> None:
+    def test_success_saves_safe_text_as_content(self, db: Session, job: Job) -> None:
         llm_call_id = self._call(db, job)
         llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
         assert llm_call.content == {
@@ -326,7 +329,7 @@ class TestSaveRephraseGuardrailCall:
             "content": {"format": "text", "value": _SAFE_TEXT},
         }
 
-    def test_success_saves_zero_usage(self, db: Session, job) -> None:
+    def test_success_saves_zero_usage(self, db: Session, job: Job) -> None:
         llm_call_id = self._call(db, job)
         llm_call = db.exec(select(LlmCall).where(LlmCall.id == llm_call_id)).first()
         assert llm_call.usage == {
@@ -335,7 +338,7 @@ class TestSaveRephraseGuardrailCall:
             "total_tokens": 0,
         }
 
-    def test_create_llm_call_error_returns_none(self, db: Session, job) -> None:
+    def test_create_llm_call_error_returns_none(self, db: Session, job: Job) -> None:
         with patch(
             "app.crud.llm.create_llm_call",
             side_effect=Exception("DB insert failed"),
@@ -344,7 +347,7 @@ class TestSaveRephraseGuardrailCall:
         assert result is None
 
     def test_update_llm_call_response_error_returns_none(
-        self, db: Session, job
+        self, db: Session, job: Job
     ) -> None:
         with patch(
             "app.crud.llm.update_llm_call_response",
@@ -353,7 +356,7 @@ class TestSaveRephraseGuardrailCall:
             result = self._call(db, job)
         assert result is None
 
-    def test_chain_id_forwarded_to_create_llm_call(self, db: Session, job) -> None:
+    def test_chain_id_forwarded_to_create_llm_call(self, db: Session, job: Job) -> None:
         chain_id = uuid4()
         with patch("app.crud.llm.create_llm_call") as mock_create:
             mock_create.return_value = MagicMock(id=uuid4())
@@ -363,7 +366,7 @@ class TestSaveRephraseGuardrailCall:
         assert kwargs["chain_id"] == chain_id
 
     def test_request_metadata_forwarded_to_llm_call_request(
-        self, db: Session, job
+        self, db: Session, job: Job
     ) -> None:
         metadata = {"request_id": "abc", "user": "test"}
         with patch("app.crud.llm.create_llm_call") as mock_create:
