@@ -7,7 +7,7 @@ from app.tests.utils.utils import get_project
 from app.tests.utils.collection import get_vector_store_collection
 
 
-def create_collections(db: Session, n: int) -> Collection:
+def create_collections(db: Session, n: int) -> int:
     crud = None
     project = get_project(db)
     for _ in range(n):
