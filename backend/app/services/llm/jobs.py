@@ -33,6 +33,7 @@ from app.crud.llm import (
     serialize_input,
     update_llm_call_input,
     update_llm_call_response,
+    save_rephrase_guardrail_call,
 )
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
@@ -61,7 +62,6 @@ from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
-    save_rephrase_guardrail_call,
 )
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider

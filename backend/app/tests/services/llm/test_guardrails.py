@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.jobs import JobCrud
+from app.crud.llm import save_rephrase_guardrail_call
 from app.models import JobType
 from app.models.llm.request import (
     ConfigBlob,
@@ -20,7 +21,6 @@ from app.models.llm.request import (
 from app.services.llm.guardrails import (
     list_validators_config,
     run_guardrails_validation,
-    save_rephrase_guardrail_call,
 )
 from app.tests.utils.utils import get_project
 
@@ -337,7 +337,7 @@ class TestSaveRephraseGuardrailCall:
 
     def test_create_llm_call_error_returns_none(self, db: Session, job) -> None:
         with patch(
-            "app.services.llm.guardrails.create_llm_call",
+            "app.crud.llm.create_llm_call",
             side_effect=Exception("DB insert failed"),
         ):
             result = self._call(db, job)
@@ -347,7 +347,7 @@ class TestSaveRephraseGuardrailCall:
         self, db: Session, job
     ) -> None:
         with patch(
-            "app.services.llm.guardrails.update_llm_call_response",
+            "app.crud.llm.update_llm_call_response",
             side_effect=Exception("DB update failed"),
         ):
             result = self._call(db, job)
@@ -355,9 +355,9 @@ class TestSaveRephraseGuardrailCall:
 
     def test_chain_id_forwarded_to_create_llm_call(self, db: Session, job) -> None:
         chain_id = uuid4()
-        with patch("app.services.llm.guardrails.create_llm_call") as mock_create:
+        with patch("app.crud.llm.create_llm_call") as mock_create:
             mock_create.return_value = MagicMock(id=uuid4())
-            with patch("app.services.llm.guardrails.update_llm_call_response"):
+            with patch("app.crud.llm.update_llm_call_response"):
                 self._call(db, job, chain_id=chain_id)
         _, kwargs = mock_create.call_args
         assert kwargs["chain_id"] == chain_id
@@ -366,9 +366,9 @@ class TestSaveRephraseGuardrailCall:
         self, db: Session, job
     ) -> None:
         metadata = {"request_id": "abc", "user": "test"}
-        with patch("app.services.llm.guardrails.create_llm_call") as mock_create:
+        with patch("app.crud.llm.create_llm_call") as mock_create:
             mock_create.return_value = MagicMock(id=uuid4())
-            with patch("app.services.llm.guardrails.update_llm_call_response"):
+            with patch("app.crud.llm.update_llm_call_response"):
                 self._call(db, job, request_metadata=metadata)
         _, kwargs = mock_create.call_args
         assert kwargs["request"].request_metadata == metadata
