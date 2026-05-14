@@ -14,7 +14,7 @@ from app.api.routes.threads import (
     handle_openai_error,
     poll_run_and_prepare_response,
 )
-from app.models import OpenAI_Thread
+from app.models import OpenAIThread
 from app.crud import get_thread_result
 from app.core.langfuse.langfuse import LangfuseTracer
 
@@ -457,8 +457,8 @@ def test_poll_run_and_prepare_response_openai_error_handling(
     poll_run_and_prepare_response(request, mock_client, db)
 
     # Since thread_id is not the primary key, use select query
-    statement = select(OpenAI_Thread).where(
-        OpenAI_Thread.thread_id == "test_openai_error"
+    statement = select(OpenAIThread).where(
+        OpenAIThread.thread_id == "test_openai_error"
     )
     result = db.exec(statement).first()
 
@@ -488,8 +488,8 @@ def test_poll_run_and_prepare_response_non_completed(
     poll_run_and_prepare_response(request, mock_client, db)
 
     # thread_id is not the primary key, so we query using SELECT
-    statement = select(OpenAI_Thread).where(
-        OpenAI_Thread.thread_id == "test_non_complete"
+    statement = select(OpenAIThread).where(
+        OpenAIThread.thread_id == "test_non_complete"
     )
     result = db.exec(statement).first()
 
@@ -537,7 +537,7 @@ def test_threads_result_endpoint_success(client, db, user_api_key_header):
     question = "Capital of France?"
     message = "Paris."
 
-    db.add(OpenAI_Thread(thread_id=thread_id, prompt=question, response=message))
+    db.add(OpenAIThread(thread_id=thread_id, prompt=question, response=message))
     db.commit()
 
     response = client.get(
@@ -557,7 +557,7 @@ def test_threads_result_endpoint_processing(client, db, user_api_key_header):
     thread_id = f"test_processing_{uuid.uuid4()}"
     question = "What is Glific?"
 
-    db.add(OpenAI_Thread(thread_id=thread_id, prompt=question, response=None))
+    db.add(OpenAIThread(thread_id=thread_id, prompt=question, response=None))
     db.commit()
 
     response = client.get(

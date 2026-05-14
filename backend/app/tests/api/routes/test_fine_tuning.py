@@ -11,7 +11,7 @@ import boto3
 from app.tests.utils.test_data import create_test_fine_tuning_jobs
 from app.tests.utils.utils import get_document
 from app.models import (
-    Fine_Tuning,
+    FineTuning,
     FineTuningStatus,
     ModelEvaluation,
     ModelEvaluationStatus,
@@ -105,7 +105,7 @@ class TestCreateFineTuningJobAPI:
         # Verify that the background task was called for each split ratio
         assert mock_process_job.call_count == 3
 
-        jobs = db.query(Fine_Tuning).all()
+        jobs = db.query(FineTuning).all()
         assert len(jobs) == 3
 
         for job in jobs:

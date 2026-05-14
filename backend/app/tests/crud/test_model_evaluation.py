@@ -4,6 +4,7 @@ import pytest
 from sqlmodel import Session
 from fastapi import HTTPException
 
+from app.core.util import now
 from app.tests.utils.utils import get_project, get_non_existent_id
 from app.tests.utils.test_data import (
     create_test_model_evaluation,
@@ -108,6 +109,41 @@ def test_fetch_top_model_by_doc_id_not_found(db: Session) -> None:
     with pytest.raises(HTTPException) as exc:
         fetch_top_model_by_doc_id(db, document_id=valid_uuid, project_id=1)
     assert exc.value.status_code == 404
+
+
+def test_fetch_top_model_by_doc_id_picks_highest_mcc(db: Session) -> None:
+    model_evals = create_test_model_evaluation(db)
+    assert len(model_evals) >= 2
+    assert model_evals[0].document_id == model_evals[1].document_id
+
+    model_evals[0].score = {"mcc_score": 0.5}
+    model_evals[1].score = {"mcc_score": 0.9}
+    db.flush()
+
+    result = fetch_top_model_by_doc_id(
+        db,
+        document_id=model_evals[0].document_id,
+        project_id=model_evals[0].project_id,
+    )
+    assert result.id == model_evals[1].id
+
+
+def test_fetch_top_model_by_doc_id_excludes_soft_deleted(db: Session) -> None:
+    model_evals = create_test_model_evaluation(db)
+    assert len(model_evals) >= 2
+    assert model_evals[0].document_id == model_evals[1].document_id
+
+    model_evals[0].score = {"mcc_score": 0.5}
+    model_evals[1].score = {"mcc_score": 0.9}
+    model_evals[1].deleted_at = now()
+    db.flush()
+
+    result = fetch_top_model_by_doc_id(
+        db,
+        document_id=model_evals[0].document_id,
+        project_id=model_evals[0].project_id,
+    )
+    assert result.id == model_evals[0].id
 
 
 def test_fetch_active_model_evals(db: Session) -> None:

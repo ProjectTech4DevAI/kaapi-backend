@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import Float, cast
 from sqlmodel import Session, select
 
 from app.crud import fetch_by_id
@@ -27,7 +28,7 @@ def create_model_evaluation(
     fine_tuning_job = fetch_by_id(session, request.fine_tuning_id, project_id)
 
     if fine_tuning_job.fine_tuned_model and fine_tuning_job.test_data_s3_object is None:
-        logger.error(
+        logger.warning(
             f"[create_model_evaluation] No fine tuned model or test data found for the given fine tuning ID | fine_tuning_id={request.fine_tuning_id}, project_id={project_id}"
         )
         raise HTTPException(404, "Fine tuned model not found")
@@ -68,9 +69,6 @@ def fetch_by_eval_id(
     ).one_or_none()
 
     if model_eval is None:
-        logger.error(
-            f"[fetch_by_id]Model evaluation not found for eval_id={eval_id}, project_id={project_id}"
-        )
         raise HTTPException(status_code=404, detail="Model evaluation not found")
 
     logger.info(
@@ -96,9 +94,6 @@ def fetch_eval_by_doc_id(
     model_evals = session.exec(query).all()
 
     if not model_evals:
-        logger.error(
-            f"[fetch_eval_by_doc_id]Model evaluation not found for document_id={document_id}, project_id={project_id}"
-        )
         raise HTTPException(status_code=404, detail="Model evaluation not found")
 
     logger.info(
@@ -112,29 +107,25 @@ def fetch_eval_by_doc_id(
 def fetch_top_model_by_doc_id(
     session: Session, document_id: UUID, project_id: int
 ) -> ModelEvaluation:
-    query = (
+    mcc_expr = cast(ModelEvaluation.score["mcc_score"].astext, Float)
+
+    stmt = (
         select(ModelEvaluation)
         .where(
             ModelEvaluation.document_id == document_id,
             ModelEvaluation.project_id == project_id,
+            ModelEvaluation.deleted_at.is_(None),
+            ModelEvaluation.score.is_not(None),
+            mcc_expr.is_not(None),
         )
-        .order_by(ModelEvaluation.updated_at.desc())
+        .order_by(mcc_expr.desc())
+        .limit(1)
     )
 
-    model_evals = session.exec(query).all()
-
-    top_model = None
-    highest_mcc = -float("inf")
-
-    for model_eval in model_evals:
-        if model_eval.score is not None:
-            mcc = model_eval.score.get("mcc_score", None)
-            if mcc is not None and mcc > highest_mcc:
-                highest_mcc = mcc
-                top_model = model_eval
+    top_model = session.exec(stmt).first()
 
     if not top_model:
-        logger.error(
+        logger.warning(
             f"[fetch_top_model_by_doc_id]No model evaluation found with populated score for document_id={document_id}, project_id={project_id}"
         )
         raise HTTPException(status_code=404, detail="No top model found")
@@ -154,14 +145,14 @@ def fetch_active_model_evals(
 ) -> list["ModelEvaluation"]:
     """
     Return all ACTIVE model evaluations for the given document & project.
-    Active = status != failed AND is_deleted is false.
+    Active = status != failed AND not soft-deleted.
     """
     stmt = (
         select(ModelEvaluation)
         .where(
             ModelEvaluation.fine_tuning_id == fine_tuning_id,
             ModelEvaluation.project_id == project_id,
-            ModelEvaluation.is_deleted.is_(False),
+            ModelEvaluation.deleted_at.is_(None),
             ModelEvaluation.status != "failed",
         )
         .order_by(ModelEvaluation.inserted_at.desc())

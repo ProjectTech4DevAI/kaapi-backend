@@ -17,7 +17,7 @@ def get_conversation_by_id(
     statement = select(OpenAIConversation).where(
         OpenAIConversation.id == conversation_id,
         OpenAIConversation.project_id == project_id,
-        OpenAIConversation.is_deleted == False,
+        OpenAIConversation.deleted_at.is_(None),
     )
     result = session.exec(statement).first()
     return result
@@ -32,7 +32,7 @@ def get_conversation_by_response_id(
     statement = select(OpenAIConversation).where(
         OpenAIConversation.response_id == response_id,
         OpenAIConversation.project_id == project_id,
-        OpenAIConversation.is_deleted == False,
+        OpenAIConversation.deleted_at.is_(None),
     )
     result = session.exec(statement).first()
     return result
@@ -49,7 +49,7 @@ def get_conversation_by_ancestor_id(
         .where(
             OpenAIConversation.ancestor_response_id == ancestor_response_id,
             OpenAIConversation.project_id == project_id,
-            OpenAIConversation.is_deleted == False,
+            OpenAIConversation.deleted_at.is_(None),
         )
         .order_by(OpenAIConversation.inserted_at.desc())
         .limit(1)
@@ -108,7 +108,7 @@ def get_conversations_count_by_project(
     """
     statement = select(func.count(OpenAIConversation.id)).where(
         OpenAIConversation.project_id == project_id,
-        OpenAIConversation.is_deleted == False,
+        OpenAIConversation.deleted_at.is_(None),
     )
     result = session.exec(statement).one()
     return result
@@ -127,7 +127,7 @@ def get_conversations_by_project(
         select(OpenAIConversation)
         .where(
             OpenAIConversation.project_id == project_id,
-            OpenAIConversation.is_deleted == False,
+            OpenAIConversation.deleted_at.is_(None),
         )
         .order_by(OpenAIConversation.inserted_at.desc())
         .offset(skip)
@@ -175,7 +175,6 @@ def delete_conversation(
     if not db_conversation:
         return None
 
-    db_conversation.is_deleted = True
     db_conversation.deleted_at = now()
     session.add(db_conversation)
     session.commit()

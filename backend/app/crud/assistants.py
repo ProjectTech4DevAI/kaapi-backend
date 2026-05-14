@@ -24,7 +24,7 @@ def get_assistant_by_id(
         and_(
             Assistant.assistant_id == assistant_id,
             Assistant.project_id == project_id,
-            Assistant.is_deleted == False,
+            Assistant.deleted_at.is_(None),
         )
     )
     return session.exec(statement).first()
@@ -43,7 +43,7 @@ def get_assistants_by_project(
         select(Assistant)
         .where(
             Assistant.project_id == project_id,
-            Assistant.is_deleted == False,
+            Assistant.deleted_at.is_(None),
         )
         .offset(skip)
         .limit(limit)
@@ -62,12 +62,12 @@ def fetch_assistant_from_openai(assistant_id: str, client: OpenAI) -> OpenAIAssi
         assistant = client.beta.assistants.retrieve(assistant_id=assistant_id)
         return assistant
     except openai.NotFoundError as e:
-        logger.error(
+        logger.warning(
             f"[fetch_assistant_from_openai] Assistant not found: {mask_string(assistant_id)} | {e}"
         )
         raise HTTPException(status_code=404, detail="Assistant not found in OpenAI.")
     except openai.OpenAIError as e:
-        logger.error(
+        logger.warning(
             f"[fetch_assistant_from_openai] OpenAI API error while retrieving assistant {mask_string(assistant_id)}: {e}"
         )
         raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
@@ -83,13 +83,13 @@ def verify_vector_store_ids_exist(
         try:
             openai_client.vector_stores.retrieve(vector_store_id)
         except openai.NotFoundError:
-            logger.error(f"Vector store ID {vector_store_id} not found in OpenAI.")
+            logger.warning(f"Vector store ID {vector_store_id} not found in OpenAI.")
             raise HTTPException(
                 status_code=400,
                 detail=f"Vector store ID {vector_store_id} not found in OpenAI.",
             )
         except openai.OpenAIError as e:
-            logger.error(f"Failed to verify vector store ID {vector_store_id}: {e}")
+            logger.warning(f"Failed to verify vector store ID {vector_store_id}: {e}")
             raise HTTPException(
                 status_code=502,
                 detail=f"Error verifying vector store ID {vector_store_id}: {str(e)}",
@@ -178,7 +178,7 @@ def create_assistant(
 
     existing = get_assistant_by_id(session, assistant.assistant_id, project_id)
     if existing:
-        logger.error(
+        logger.warning(
             f"[create_assistant] Assistant with ID {mask_string(assistant.assistant_id)} already exists. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -209,7 +209,7 @@ def update_assistant(
 ) -> Assistant:
     existing_assistant = get_assistant_by_id(session, assistant_id, project_id)
     if not existing_assistant:
-        logger.error(
+        logger.warning(
             f"[update_assistant] Assistant {mask_string(assistant_id)} not found | project_id: {project_id}"
         )
         raise HTTPException(status_code=404, detail="Assistant not found.")
@@ -227,7 +227,7 @@ def update_assistant(
     add_ids = set(assistant_update.vector_store_ids_add or [])
     remove_ids = set(assistant_update.vector_store_ids_remove or [])
     if conflicting_ids := add_ids & remove_ids:
-        logger.error(
+        logger.warning(
             f"[update_assistant] Conflicting vector store IDs in add/remove: {conflicting_ids} | project_id: {project_id}"
         )
         raise HTTPException(
@@ -272,7 +272,6 @@ def delete_assistant(
         )
         raise HTTPException(status_code=404, detail="Assistant not found.")
 
-    existing_assistant.is_deleted = True
     existing_assistant.deleted_at = now()
     session.add(existing_assistant)
     session.commit()

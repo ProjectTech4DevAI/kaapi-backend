@@ -42,7 +42,6 @@
       "user_email": "{{SUPERUSER_EMAIL}}",
       "project_name": "Glific",
       "api_key": "ApiKey No3x47A5qoIGhm0kVKjQ77dhCqEdWRIQZlEPzzzh7i8",
-      "is_deleted": false,
       "deleted_at": null
     },
     {
@@ -50,7 +49,6 @@
       "user_email": "{{ADMIN_EMAIL}}",
       "project_name": "Dalgo",
       "api_key": "ApiKey Px8y47B6roJHin1lWLkR88eiDrFdXSJRZmFQazzai8j",
-      "is_deleted": false,
       "deleted_at": null
     }
   ],

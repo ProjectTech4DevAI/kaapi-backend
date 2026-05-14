@@ -62,8 +62,8 @@ def add_project_users(
     validate_organization(session=session, org_id=body.organization_id)
     validate_project(session=session, project_id=body.project_id)
 
-    same_project_emails = []
-    different_project_emails = []
+    same_project_emails: list[str] = []
+    different_project_emails: list[str] = []
 
     for entry in body.users:
         _, add_status = add_user_to_project(
