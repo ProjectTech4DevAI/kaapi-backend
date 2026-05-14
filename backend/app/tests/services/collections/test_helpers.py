@@ -239,42 +239,10 @@ def test_to_collection_public_vector_store() -> None:
 
     result = to_collection_public(collection)
 
-    # For vector store, should map to knowledge_base fields
     assert result.id == collection.id
     assert result.knowledge_base_id == "vs_123"
     assert result.knowledge_base_provider == "openai vector store"
-    assert result.llm_service_id is None
-    assert result.llm_service_name is None
     assert result.project_id == 1
-    assert result.inserted_at == collection.inserted_at
-    assert result.updated_at == collection.updated_at
-    assert result.deleted_at is None
-
-
-def test_to_collection_public_assistant() -> None:
-    """Test conversion of assistant collection to public model."""
-    collection = Collection(
-        id=uuid4(),
-        project_id=2,
-        provider=ProviderType.openai,
-        llm_service_id="asst_456",
-        llm_service_name="gpt-4",  # Does NOT match vector store name
-        name="Assistant Collection",
-        description="Assistant description",
-        inserted_at=now(),
-        updated_at=now(),
-        deleted_at=None,
-    )
-
-    result = to_collection_public(collection)
-
-    # For assistant, should map to llm_service fields
-    assert result.id == collection.id
-    assert result.llm_service_id == "asst_456"
-    assert result.llm_service_name == "gpt-4"
-    assert result.knowledge_base_id is None
-    assert result.knowledge_base_provider is None
-    assert result.project_id == 2
     assert result.inserted_at == collection.inserted_at
     assert result.updated_at == collection.updated_at
     assert result.deleted_at is None

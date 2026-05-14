@@ -25,32 +25,6 @@ def uuid_increment(value: UUID) -> UUID:
     return UUID(int=inc)
 
 
-def get_assistant_collection(
-    db: Session,
-    project: Project,
-    *,
-    assistant_id: Optional[str] = None,
-    model: str = "gpt-4o",
-    collection_id: Optional[UUID] = None,
-) -> Collection:
-    """
-    Create a Collection configured for the Assistant path.
-    execute_job will treat this as `is_vector = False` and use assistant id.
-    """
-    if assistant_id is None:
-        assistant_id = f"asst_{uuid4().hex}"
-
-    collection = Collection(
-        id=collection_id or uuid4(),
-        project_id=project.id,
-        organization_id=project.organization_id,
-        llm_service_name=model,
-        llm_service_id=assistant_id,
-        provider=ProviderType.openai,
-    )
-    return CollectionCrud(db, project.id).create(collection)
-
-
 def get_vector_store_collection(
     db: Session,
     project: Project,

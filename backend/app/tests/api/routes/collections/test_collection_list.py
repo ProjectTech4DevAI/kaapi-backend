@@ -3,10 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import (
-    get_assistant_collection,
-    get_vector_store_collection,
-)
+from app.tests.utils.collection import get_vector_store_collection
 from app.services.collections.helpers import get_service_name
 
 
@@ -34,14 +31,13 @@ def test_list_collections_returns_api_response(
     assert isinstance(data["data"], list)
 
 
-def test_list_collections_includes_assistant_collection(
+def test_list_collections_includes_new_collection(
     db: Session,
     client: TestClient,
     user_api_key_header: dict[str, str],
 ) -> None:
     """
-    Ensure that a newly created assistant-style collection (get_assistant_collection)
-    appears in the list for the current project.
+    Ensure that a newly created collection appears in the list for the current project.
     """
 
     project = get_project(db, "Dalgo")
@@ -52,7 +48,7 @@ def test_list_collections_includes_assistant_collection(
     )
     assert response_before.status_code == 200
 
-    collection = get_assistant_collection(db, project)
+    collection = get_vector_store_collection(db, project)
 
     response_after = client.get(
         f"{settings.API_V1_STR}/collections",
