@@ -5,10 +5,7 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.crud.llm import create_llm_call, update_llm_call_response
-from app.models.llm import LLMCallRequest
-from app.models.llm.request import ConfigBlob, LLMCallConfig, QueryParams, Validator
-from sqlmodel import Session
+from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +54,7 @@ def run_guardrails_validation(
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=45.0) as client:
             response = client.post(
                 f"{settings.KAAPI_GUARDRAILS_URL}/",
                 json=payload,
