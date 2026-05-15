@@ -66,7 +66,7 @@ def get_test_auth_context(
         select(APIKey)
         .where(APIKey.user_id == user.id)
         .where(APIKey.project_id == project.id)
-        .where(APIKey.is_deleted == False)
+        .where(APIKey.deleted_at.is_(None))
     ).first()
     if not api_key:
         raise ValueError(

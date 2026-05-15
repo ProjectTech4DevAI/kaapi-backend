@@ -9,6 +9,7 @@ from app.models import (
     DocTransformJobUpdate,
 )
 from app.core.exception_handlers import HTTPException
+from app.core.util import now
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project, SequentialUuidGenerator
 from app.tests.utils.test_data import create_test_project
@@ -58,12 +59,12 @@ class TestDocTransformationJobCrudCreate:
         because read filters out deleted documents.
         """
         document = store.put()
-        document.is_deleted = True
+        document.deleted_at = now()
         db.add(document)
         db.commit()
 
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
-        # read_one should 404 due to is_deleted=True on joined document
+        # read_one should 404 due to soft-deleted joined document
         with pytest.raises(HTTPException) as exc_info:
             crud.read_one(job.id)
         assert exc_info.value.status_code == 404
@@ -100,7 +101,7 @@ class TestDocTransformationJobCrudReadOne:
         document = store.put()
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
 
-        document.is_deleted = True
+        document.deleted_at = now()
         db.add(document)
         db.commit()
 

@@ -1,14 +1,14 @@
 import logging
 from sqlmodel import Session, select
 from datetime import datetime
-from app.models import OpenAIThreadCreate, OpenAI_Thread
+from app.models import OpenAIThreadCreate, OpenAIThread
 from app.utils import mask_string
 
 logger = logging.getLogger(__name__)
 
 
 def upsert_thread_result(session: Session, data: OpenAIThreadCreate):
-    statement = select(OpenAI_Thread).where(OpenAI_Thread.thread_id == data.thread_id)
+    statement = select(OpenAIThread).where(OpenAIThread.thread_id == data.thread_id)
     existing = session.exec(statement).first()
 
     if existing:
@@ -21,7 +21,7 @@ def upsert_thread_result(session: Session, data: OpenAIThreadCreate):
             f"[upsert_thread_result] Updated existing thread result in the db with ID: {mask_string(data.thread_id)}"
         )
     else:
-        new_thread = OpenAI_Thread(**data.dict())
+        new_thread = OpenAIThread(**data.dict())
         session.add(new_thread)
         logger.info(
             f"[upsert_thread_result] Created new thread result in the db with ID: {mask_string(new_thread.thread_id)}"
@@ -29,6 +29,6 @@ def upsert_thread_result(session: Session, data: OpenAIThreadCreate):
     session.commit()
 
 
-def get_thread_result(session: Session, thread_id: str) -> OpenAI_Thread | None:
-    statement = select(OpenAI_Thread).where(OpenAI_Thread.thread_id == thread_id)
+def get_thread_result(session: Session, thread_id: str) -> OpenAIThread | None:
+    statement = select(OpenAIThread).where(OpenAIThread.thread_id == thread_id)
     return session.exec(statement).first()

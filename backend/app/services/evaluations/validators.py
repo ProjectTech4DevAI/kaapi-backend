@@ -172,5 +172,5 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[parse_csv_items] Failed to parse CSV | {e}", exc_info=True)
+        logger.warning(f"[parse_csv_items] Failed to parse CSV | {e}")
         raise HTTPException(status_code=422, detail=f"Invalid CSV file: {e}")

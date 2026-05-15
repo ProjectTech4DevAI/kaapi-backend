@@ -156,6 +156,39 @@ class TestDatasetRoutes:
         assert resp.data is not None
         assert resp.data.signed_url == "signed-url"
 
+    def test_get_dataset_with_limit_rows_includes_preview(self) -> None:
+        with patch(
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
+            return_value=_dataset(),
+        ), patch(
+            "app.api.routes.assessment.datasets.preview_assessment_dataset",
+            return_value=(["a", "b"], [["1", "2"], ["3", "4"]]),
+        ) as preview_mock:
+            resp = get_dataset(
+                7,
+                session=MagicMock(),
+                auth_context=_auth_context(),
+                limit_rows=2,
+            )
+        preview_mock.assert_called_once()
+        assert resp.data is not None
+        assert resp.data.preview is not None
+        assert resp.data.preview.headers == ["a", "b"]
+        assert resp.data.preview.returned_rows == 2
+        assert resp.data.preview.truncated is True
+
+    def test_get_dataset_without_limit_rows_skips_preview(self) -> None:
+        with patch(
+            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
+            return_value=_dataset(),
+        ), patch(
+            "app.api.routes.assessment.datasets.preview_assessment_dataset"
+        ) as preview_mock:
+            resp = get_dataset(7, session=MagicMock(), auth_context=_auth_context())
+        preview_mock.assert_not_called()
+        assert resp.data is not None
+        assert resp.data.preview is None
+
     def test_delete_dataset_success_and_error(self) -> None:
         with patch(
             "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",

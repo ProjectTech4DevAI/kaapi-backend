@@ -34,7 +34,7 @@ class TestDatabaseReadMany:
     ) -> None:
         crud = DocumentCrud(db, store.project.id)
         docs, _ = crud.read_many()
-        assert all(x.is_deleted is False for x in docs)
+        assert all(x.deleted_at is None for x in docs)
 
     def test_skip_is_respected(
         self,

@@ -101,7 +101,7 @@ class DataPreprocessor:
             self.label_col = "label" if "label" in df.columns else None
 
             if not self.query_col or not self.label_col:
-                logger.error(
+                logger.warning(
                     f"[DataPreprocessor] Dataset does not contain a 'label' column and one of: {possible_query_columns}"
                 )
                 raise ValueError(
