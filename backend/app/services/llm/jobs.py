@@ -33,6 +33,7 @@ from app.crud.llm import (
     serialize_input,
     update_llm_call_input,
     update_llm_call_response,
+    save_rephrase_guardrail_call,
 )
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
 from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
@@ -523,6 +524,12 @@ def execute_llm_call(
                 else:
                     config_blob = config.blob
 
+            original_input_value = (
+                query.input.content.value
+                if isinstance(query.input, TextInput)
+                else None
+            )
+
             if config_blob.prompt_template and isinstance(query.input, TextInput):
                 template = config_blob.prompt_template.template
                 interpolated = template.replace("{{input}}", query.input.content.value)
@@ -561,10 +568,25 @@ def execute_llm_call(
                         ),
                         usage=guardrail_usage,
                     )
+                    if original_input_value is not None:
+                        query.input.content.value = original_input_value
+                    llm_call_id = save_rephrase_guardrail_call(
+                        session=session,
+                        query=query,
+                        config=config,
+                        request_metadata=request_metadata,
+                        config_blob=config_blob,
+                        guardrail_direct_response=guardrail_direct_response,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        chain_id=chain_id,
+                    )
                     return BlockResult(
                         response=llm_response,
                         usage=guardrail_usage,
                         metadata=request_metadata,
+                        llm_call_id=llm_call_id,
                     )
                 if input_error:
                     guard_span.set_status(

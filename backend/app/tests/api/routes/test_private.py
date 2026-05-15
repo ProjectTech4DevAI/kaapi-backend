@@ -79,12 +79,21 @@ def _uri_content() -> dict:
 
 
 def _mock_session(rows: list) -> MagicMock:
-    """Build a mock session whose .exec() returns count then rows."""
+    """Build a mock session whose .exec() returns count then IDs,
+    and .get() returns the corresponding row object."""
     session = MagicMock()
     count_result = MagicMock()
     count_result.one.return_value = len(rows)
-    # First exec call → count, second → row iterator
-    session.exec.side_effect = [count_result, iter(rows)]
+
+    id_result = MagicMock()
+    id_result.all.return_value = [r.id for r in rows]
+
+    # First exec → count, second → ID list
+    session.exec.side_effect = [count_result, id_result]
+
+    # .get(LlmCall, call_id) → look up by id
+    row_map = {r.id: r for r in rows}
+    session.get.side_effect = lambda _model, call_id: row_map.get(call_id)
     return session
 
 

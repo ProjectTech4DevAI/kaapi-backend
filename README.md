@@ -1,4 +1,4 @@
-# Kaapi
+# KAAPI
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 ![](https://github.com/ProjectTech4DevAI/kaapi-backend/workflows/Continuous%20Integration/badge.svg)

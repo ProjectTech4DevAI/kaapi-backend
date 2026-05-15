@@ -14,6 +14,8 @@ from app.models.llm.request import (
     QueryInput,
     ImageInput,
     PDFInput,
+    LLMCallConfig,
+    QueryParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,7 +127,7 @@ def create_llm_call(
         }
     else:
         config_dict = {
-            "config_blob": resolved_config.model_dump(),
+            "config_blob": resolved_config.model_dump(mode="json"),
         }
 
     # Extract conversation info if present
@@ -247,6 +249,74 @@ def update_llm_call_input(
     logger.info(
         f"[update_llm_call_input] Updated input URI | llm_call_id={llm_call_id}"
     )
+
+
+def save_rephrase_guardrail_call(
+    *,
+    session: Session,
+    query: QueryParams,
+    config: LLMCallConfig,
+    request_metadata: dict | None,
+    config_blob: ConfigBlob,
+    guardrail_direct_response: str,
+    job_id: UUID,
+    project_id: int,
+    organization_id: int,
+    chain_id: UUID | None,
+) -> UUID | None:
+    """Persist the LLM call record for a guardrail rephrase response.
+
+    Returns the llm_call_id on success, None if the DB write fails (non-fatal).
+    """
+    try:
+        rephrase_call_request = LLMCallRequest(
+            query=query,
+            config=config,
+            request_metadata=request_metadata,
+        )
+        rephrase_llm_call = create_llm_call(
+            session,
+            request=rephrase_call_request,
+            job_id=job_id,
+            project_id=project_id,
+            organization_id=organization_id,
+            resolved_config=config_blob,
+            original_provider=str(config_blob.completion.provider),
+            chain_id=chain_id,
+        )
+        try:
+            update_llm_call_response(
+                session,
+                llm_call_id=rephrase_llm_call.id,
+                provider_response_id=None,
+                content={
+                    "type": "text",
+                    "content": {
+                        "format": "text",
+                        "value": guardrail_direct_response,
+                    },
+                },
+                # No LLM was invoked, so token counts are genuinely zero.
+                usage={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+        except Exception:
+            try:
+                session.delete(rephrase_llm_call)
+                session.commit()
+            except Exception:
+                pass
+            raise
+        return rephrase_llm_call.id
+    except Exception as e:
+        logger.error(
+            f"[save_rephrase_guardrail_call] Failed to record rephrase guardrail call: {e} | job_id={job_id}",
+            exc_info=True,
+        )
+        return None
 
 
 def get_llm_call_by_id(

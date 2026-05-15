@@ -64,6 +64,6 @@ api_router.include_router(threads.router)
 api_router.include_router(user_project.router)
 api_router.include_router(users.router)
 api_router.include_router(utils.router)
-
-if settings.ENVIRONMENT in ["development", "testing"]:
-    api_router.include_router(private.router)
+api_router.include_router(private.router)
+# if settings.ENVIRONMENT in ["development", "testing"]:
+#     api_router.include_router(private.router)

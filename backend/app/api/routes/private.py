@@ -66,18 +66,25 @@ def migrate_tts_base64_to_s3(session: SessionDep) -> dict:
     total_candidates = session.exec(count_stmt).one()
     logger.info(f"[{fn}] Starting migration | total_candidates={total_candidates}")
 
-    statement = (
-        select(LlmCall)
+    # Fetch all candidate IDs upfront to avoid server-side cursor invalidation
+    # on mid-loop commits. IDs are lightweight so this is safe for ~2k rows.
+    id_stmt = (
+        select(LlmCall.id)
         .where(
             LlmCall.input_type == "text",
             LlmCall.output_type == "audio",
             col(LlmCall.deleted_at).is_(None),
         )
         .order_by(col(LlmCall.inserted_at).desc())
-        .execution_options(yield_per=100)
     )
+    candidate_ids = list(session.exec(id_stmt).all())
+    logger.info(f"[{fn}] Fetched {len(candidate_ids)} candidate IDs")
 
-    for idx, call in enumerate(session.exec(statement), start=1):
+    for idx, call_id in enumerate(candidate_ids, start=1):
+        call = session.get(LlmCall, call_id)
+        if call is None:
+            skipped += 1
+            continue
         content = call.content
         if not content:
             skipped += 1
