@@ -10,6 +10,11 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.core.config import settings
 from app.crud import get_user_by_email
 from app.crud.auth import get_user_accessible_projects
+from app.crud.notification import (
+    create_pending_notification,
+    mark_notification_failed,
+    mark_notification_sent,
+)
 from app.crud.organization import validate_organization
 from app.crud.project import validate_project
 from app.models import (
@@ -17,6 +22,9 @@ from app.models import (
     GoogleAuthResponse,
     MagicLinkRequest,
     Message,
+    NotificationEntityType,
+    NotificationProvider,
+    NotificationType,
     SelectProjectRequest,
     Token,
 )
@@ -281,33 +289,58 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
 
     token = generate_magic_link_token(email=body.email)
 
-    if settings.emails_enabled:
-        try:
-            email_data = generate_magic_link_email(
-                email_to=body.email,
-                magic_link_token=token,
-            )
-            send_email(
-                email_to=body.email,
-                subject=email_data.subject,
-                html_content=email_data.html_content,
-            )
-            logger.info(
-                f"[request_magic_link] Magic link email sent | email: {body.email}"
-            )
-        except Exception as e:
-            logger.error(
-                f"[request_magic_link] Failed to send magic link email | email: {body.email}, error: {e}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send login email. Please try again later.",
-            )
-    else:
+    if not settings.emails_enabled:
         logger.warning("[request_magic_link] Email sending is not configured")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Email service is not configured",
+        )
+
+    email_data = generate_magic_link_email(
+        email_to=body.email,
+        magic_link_token=token,
+    )
+    notification = create_pending_notification(
+        session=session,
+        notification_type=NotificationType.MAGIC_LINK_LOGIN.value,
+        provider=NotificationProvider.EMAIL.value,
+        recipient_user_id=user.id,
+        entity_type=NotificationEntityType.USER.value,
+        entity_id=user.id,
+        subject=email_data.subject,
+        body_template="magic_link_login_v1",
+        payload={
+            "email": body.email,
+            "valid_minutes": settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES,
+        },
+    )
+    session.commit()
+    session.refresh(notification)
+
+    try:
+        send_email(
+            email_to=body.email,
+            subject=email_data.subject,
+            html_content=email_data.html_content,
+        )
+        mark_notification_sent(session=session, notification=notification)
+        session.commit()
+        logger.info(
+            f"[request_magic_link] Magic link email sent | "
+            f"email: {body.email}, notification_id: {notification.id}"
+        )
+    except Exception as e:
+        mark_notification_failed(
+            session=session, notification=notification, reason=str(e)
+        )
+        session.commit()
+        logger.error(
+            f"[request_magic_link] Failed to send magic link email | "
+            f"email: {body.email}, notification_id: {notification.id}, error: {e}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send login email. Please try again later.",
         )
 
     return APIResponse.success_response(

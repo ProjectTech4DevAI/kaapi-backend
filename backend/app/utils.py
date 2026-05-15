@@ -211,6 +211,33 @@ def generate_invite_email(
     return EmailData(html_content=html_content, subject=subject)
 
 
+def generate_eval_completion_email(
+    *,
+    run_name: str,
+    project_name: str,
+    status: str,
+    completed_at: str,
+    link: str,
+    error_message: str | None = None,
+) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    status_label = "Completed" if status == "completed" else "Failed"
+    subject = f"{app_name} - Evaluation {status_label}: {run_name}"
+    html_content = render_email_template(
+        template_name="eval_completion.html",
+        context={
+            "app_name": app_name,
+            "run_name": run_name,
+            "project_name": project_name,
+            "status_label": status_label,
+            "completed_at": completed_at,
+            "link": link,
+            "error_message": error_message,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
 def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailData:
     app_name = settings.PROJECT_NAME
     subject = f"{app_name} - Sign in to your account"
