@@ -42,7 +42,6 @@ class APIKeyData(BaseModel):
     project_name: str
     user_email: EmailStr
     api_key: str
-    is_deleted: bool
     deleted_at: Optional[str] = None
 
 
@@ -167,7 +166,6 @@ def create_api_key(session: Session, api_key_data_raw: dict[str, Any]) -> APIKey
             user_id=user.id,
             key_prefix=key_prefix,
             key_hash=key_hash,
-            is_deleted=api_key_data.is_deleted,
             deleted_at=api_key_data.deleted_at,
         )
         session.add(api_key)

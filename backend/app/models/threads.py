@@ -17,8 +17,10 @@ class OpenAIThreadCreate(OpenAIThreadBase):
     pass  # Used for requests, no `id` or timestamps
 
 
-class OpenAI_Thread(OpenAIThreadBase, table=True):
+class OpenAIThread(OpenAIThreadBase, table=True):
     """Stores OpenAI thread interactions and their responses."""
+
+    __tablename__ = "openai_thread"
 
     id: int = Field(
         default=None,

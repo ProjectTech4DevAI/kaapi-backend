@@ -30,7 +30,7 @@ class APIKeyCrud:
             and_(
                 APIKey.id == key_id,
                 APIKey.project_id == self.project_id,
-                APIKey.is_deleted.is_(False),
+                APIKey.deleted_at.is_(None),
             )
         )
         return self.session.exec(statement).one_or_none()
@@ -44,7 +44,7 @@ class APIKeyCrud:
             .where(
                 and_(
                     APIKey.project_id == self.project_id,
-                    APIKey.is_deleted.is_(False),
+                    APIKey.deleted_at.is_(None),
                 )
             )
             .offset(skip)
@@ -105,7 +105,6 @@ class APIKeyCrud:
         if not api_key:
             raise HTTPException(status_code=404, detail="API Key not found")
 
-        api_key.is_deleted = True
         api_key.deleted_at = now()
         api_key.updated_at = now()
         self.session.add(api_key)

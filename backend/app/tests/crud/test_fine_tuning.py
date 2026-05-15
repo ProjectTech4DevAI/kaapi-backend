@@ -135,4 +135,4 @@ def test_fetch_active_jobs_by_document_id(db: Session) -> None:
     assert len(result) == 1
     assert result[0].id == active_job.id
     assert result[0].status == FineTuningStatus.running
-    assert result[0].is_deleted is False
+    assert result[0].deleted_at is None

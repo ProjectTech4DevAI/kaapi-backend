@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .assistants import Assistant
     from .collection import Collection
     from .credentials import Credential
-    from .fine_tuning import Fine_Tuning
+    from .fine_tuning import FineTuning
     from .openai_conversation import OpenAIConversation
     from .organization import Organization
 
@@ -99,7 +99,7 @@ class Project(ProjectBase, table=True):
     collections: list["Collection"] = Relationship(
         back_populates="project", cascade_delete=True
     )
-    fine_tuning: list["Fine_Tuning"] = Relationship(
+    fine_tuning: list["FineTuning"] = Relationship(
         back_populates="project", cascade_delete=True
     )
     openai_conversations: list["OpenAIConversation"] = Relationship(

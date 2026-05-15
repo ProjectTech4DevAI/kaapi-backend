@@ -42,7 +42,7 @@ class TestDatabaseUpdate:
         crud = DocumentCrud(db, documents.project_id)
         document = crud.update(next(documents))
 
-        assert document.is_deleted is False
+        assert document.deleted_at is None
 
     def test_update_sets_default_owner(
         self,

@@ -317,7 +317,7 @@ class APIKeyManager:
                 .where(
                     and_(
                         APIKey.key_prefix == key_prefix,
-                        APIKey.is_deleted.is_(False),
+                        APIKey.deleted_at.is_(None),
                     )
                 )
                 .join(User, User.id == APIKey.user_id)

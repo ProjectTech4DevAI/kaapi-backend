@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.user_project import add_user_to_project
@@ -197,6 +197,74 @@ class TestAddProjectUsers:
         )
         assert resp.status_code == 409
         assert "Already assigned to another project" in resp.json()["error"]
+
+    def test_add_bulk_surfaces_all_same_project_conflicts(
+        self,
+        db: Session,
+        client: TestClient,
+        superuser_token_headers: dict[str, str],
+    ):
+        """All emails already on the project should appear in the 409 error."""
+        project = create_test_project(db)
+        email_a = random_email()
+        email_b = random_email()
+        for email in (email_a, email_b):
+            add_user_to_project(
+                session=db,
+                email=email,
+                organization_id=project.organization_id,
+                project_id=project.id,
+            )
+        db.commit()
+
+        resp = client.post(
+            f"{USER_PROJECTS_URL}/",
+            json={
+                "organization_id": project.organization_id,
+                "project_id": project.id,
+                "users": [{"email": email_a}, {"email": email_b}],
+            },
+            headers=superuser_token_headers,
+        )
+        assert resp.status_code == 409
+        body = resp.json()["error"]
+        assert "Already added to this project" in body
+        assert email_a in body
+        assert email_b in body
+
+    def test_add_duplicate_email_in_same_request_rolls_back(
+        self,
+        db: Session,
+        client: TestClient,
+        superuser_token_headers: dict[str, str],
+    ):
+        """Submitting the same email twice in one request rolls back the whole batch.
+
+        Pins current behaviour: the second occurrence is detected as a
+        same-project conflict because the first occurrence was just added.
+        """
+        project = create_test_project(db)
+        project_id = project.id
+        organization_id = project.organization_id
+        email = random_email()
+
+        resp = client.post(
+            f"{USER_PROJECTS_URL}/",
+            json={
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "users": [{"email": email}, {"email": email}],
+            },
+            headers=superuser_token_headers,
+        )
+        assert resp.status_code == 409
+        assert "Already added to this project" in resp.json()["error"]
+
+        # Confirm rollback: no UserProject row was persisted.
+        rows = db.exec(
+            select(UserProject).where(UserProject.project_id == project_id)
+        ).all()
+        assert rows == []
 
 
 class TestDeleteProjectUser:
