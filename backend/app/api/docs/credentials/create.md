@@ -43,17 +43,18 @@ Credentials are encrypted and stored securely for provider integrations (OpenAI,
       "host": "https://cloud.langfuse.com"
     },
     "webhook_secret": {
-      "webhook_secret: "webhook_secret"
-    },
+      "webhook_secret": "webhook_secret"
+    }
   }
 }
 ```
 #### For registering Webhook Secret
 ```json
 {
-  "credential":{
-    "webhook_secret":"your-webhook-secret"
+  "credential": {
+    "webhook_secret": {
+      "webhook_secret": "webhook_secret"
+    }
   }
-
 }
 ```

@@ -1,8 +1,6 @@
-Perform a delete of the document. This makes the
-document invisible. It does not delete the document from cloud storage
-or its information from the database.
+Perform a delete of the document.
 
-If the document is part of an active collection, those collections
-will be deleted using the collections delete interface. Noteably, this
-means all OpenAI Vector Store's and Assistant's to which this document
-belongs will be deleted.
+This marks the document as deleted and hides it from all API responses. It does not delete the document
+from cloud storage or its information from the database.
+
+If the document belongs to any active collections, those collections will also be deleted. This includes all associated knowledge bases — for example, any OpenAI vector stores that were created through this platform with this document.
