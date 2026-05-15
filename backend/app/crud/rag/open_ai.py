@@ -149,3 +149,19 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         logger.info(
             f"[OpenAIVectorStoreCrud.delete] Vector store deleted | {{'vector_store_id': '{vector_store_id}'}}"
         )
+
+
+class OpenAIFileCrud(OpenAICrud):
+    def delete(self, file_id: str) -> None:
+        logger.info(
+            f"[OpenAIFileCrud.delete] Deleting OpenAI file | {{'file_id': '{file_id}'}}"
+        )
+        try:
+            self.client.files.delete(file_id)
+            logger.info(
+                f"[OpenAIFileCrud.delete] OpenAI file deleted | {{'file_id': '{file_id}'}}"
+            )
+        except OpenAIError as err:
+            logger.warning(
+                f"[OpenAIFileCrud.delete] Failed to delete OpenAI file | {{'file_id': '{file_id}', 'error': '{str(err)}'}}"
+            )

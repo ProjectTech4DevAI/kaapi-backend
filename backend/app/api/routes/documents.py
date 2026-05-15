@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud import CollectionCrud, DocumentCrud
-from app.crud.rag import OpenAIVectorStoreCrud
+from app.crud.rag import OpenAIFileCrud, OpenAIVectorStoreCrud
 from app.models import (
     Document,
     DocumentPublic,
@@ -198,11 +198,14 @@ def remove_doc(
     )
 
     v_crud = OpenAIVectorStoreCrud(client)
+    f_crud = OpenAIFileCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
     c_crud = CollectionCrud(session, current_user.project_.id)
     document = d_crud.read_one(doc_id)
 
     c_crud.delete(document, v_crud)
+    if document.openai_file_id:
+        f_crud.delete(document.openai_file_id)
     d_crud.delete(doc_id)
 
     return APIResponse.success_response(
@@ -225,6 +228,7 @@ def permanent_delete_doc(
         session, current_user.organization_.id, current_user.project_.id
     )
     v_crud = OpenAIVectorStoreCrud(client)
+    f_crud = OpenAIFileCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
     c_crud = CollectionCrud(session, current_user.project_.id)
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
@@ -232,7 +236,8 @@ def permanent_delete_doc(
     document = d_crud.read_one(doc_id)
 
     c_crud.delete(document, v_crud)
-
+    if document.openai_file_id:
+        f_crud.delete(document.openai_file_id)
     storage.delete(document.object_store_url)
     d_crud.delete(doc_id)
 
