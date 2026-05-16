@@ -21,7 +21,7 @@ fastapi run --reload app/main.py
 uv run pre-commit run --all-files
 
 # Generate database migration (rev-id should be latest existing revision ID + 1)
-alembic revision --autogenerate -m "Description" --rev-id 040
+uv run alembic revision --autogenerate -m "Description" --rev-id 061
 
 # Seed database with test data
 uv run python -m app.seed_data.seed_data
@@ -93,47 +93,31 @@ The application uses different environment files:
 
 ## Coding Conventions
 
-### Type Hints
+Layer-specific conventions live in `.claude/agents/*.md` and are enforced by the matching specialist subagent (e.g., `route-writer` for `app/api/routes/`, `model-writer` for `app/models/`, `migration-writer` for alembic). CLAUDE.md only covers rules that apply across every layer.
 
-Always add type hints to all function parameters and return values.
+### Cross-cutting rules
 
-### Logging Format
+- **Type hints** on every parameter and return value. `-> Any` is not an annotation — narrow it or drop it.
+- **Logging prefix:** every log line starts with the function name in square brackets.
+  ```python
+  logger.info(f"[function_name] Message | key: {value}")
+  ```
+- **`uv` is the runner**, not `pip`. Examples: `uv run pytest`, `uv run alembic ...`, `uv run pre-commit run --all-files`.
+- **No magic values** in code — extract repeated literals to constants / `Enum` / settings.
+- **Naming:** `list_*` for plural fetch, `get_*` for singletons; snake_case funcs/vars, PascalCase classes, UPPER_SNAKE constants; `Enum` suffix on enum classes.
+- **Timestamps** are `inserted_at` / `updated_at` (not `created_at`).
 
-Prefix all log messages with the function name in square brackets.
+## Specialist subagents
 
-```python
-logger.info(f"[function_name] Message {mask_string(sensitive_value)}")
-```
+When working in a specific layer, the matching agent under `.claude/agents/` handles the layer's conventions automatically. Pick by layer, or just describe the task and let the main agent route:
 
-### Database Column Comments
-
-Use sa_column_kwargs["comment"] to describe database columns, especially when the purpose isn’t obvious. This helps non-developers understand column purposes directly from the database schema:
-
-```python
-field_name: int = Field(
-    foreign_key="table.id",
-    nullable=False,
-    ondelete="CASCADE",
-    sa_column_kwargs={"comment": "What this column represents"}
-)
-```
-
-Prioritize comments for:
-- Columns with non-obvious purposes
-- Status/type fields (document valid values)
-- JSON/metadata columns (describe expected structure)
-- Foreign keys (clarify the relationship)
-
-### Endpoint Documentation
-
-Load Swagger descriptions from external markdown files instead of inline strings:
-
-```python
-@router.post(
-    "/endpoint",
-    description=load_description("domain/action.md"),
-    response_model=APIResponse[ResponseModel],
-)
-```
-
-Store documentation files in `backend/app/api/docs/<domain>/<action>.md`
+| Agent | Layer |
+|---|---|
+| `route-writer` | `app/api/routes/` |
+| `crud-writer` | `app/crud/` |
+| `service-writer` | `app/services/` |
+| `model-writer` | `app/models/` |
+| `migration-writer` | `app/alembic/versions/` |
+| `celery-task-writer` | `app/celery/tasks/` |
+| `test-writer` | `app/tests/` |
+| `convention-reviewer` | Cross-cutting pre-commit gate (mirrors `/pr-review`) |
