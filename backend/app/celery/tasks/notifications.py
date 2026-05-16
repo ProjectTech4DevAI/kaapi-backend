@@ -29,10 +29,7 @@ EVAL_COMPLETION_TEMPLATE = "eval_completion_v1"
 
 
 def _build_eval_results_link(eval_run: EvaluationRun) -> str:
-    return (
-        f"{settings.FRONTEND_HOST}/projects/{eval_run.project_id}"
-        f"/evaluations/{eval_run.id}"
-    )
+    return f"{settings.FRONTEND_HOST}/evaluations/{eval_run.id}"
 
 
 def _notification_type_for_status(status: str) -> str:
@@ -136,7 +133,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
             project_name=project_name,
             status=eval_run.status,
             completed_at=(
-                eval_run.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                eval_run.updated_at.strftime("%B %d, %Y at %-I:%M %p")
                 if eval_run.updated_at
                 else ""
             ),
