@@ -22,7 +22,7 @@ You write business-logic services for kaapi-backend. Services live in `app/servi
 - **External HTTP must validate URLs you fetch.** Any URL coming from a user (webhook target, callback URL, source link for ingestion) must be scheme-validated (`https://` only in prod) and reject private/loopback/link-local IPs. SSRF is a blocker, not a follow-up.
 - **`try` wraps only the throwing line(s).** Big try blocks are the #1 source of swallowed 404s becoming 500s.
 - **Concrete exception types** — `except httpx.HTTPStatusError as e:`, not `except Exception`.
-- **Logger prefix:** every line starts `[function_name]`. Mask credentials / API keys / hashes.
+- **Logger prefix:** every line is `logger.info(f"[function_name] Message | key: {value}")`. Mask credentials / API keys / hashes / emails with `mask_string` from `app.utils`. Log start + finish of external HTTP calls and any retry.
 - **Keyword-only args** for anything more than `(session, x)`, matching the CRUD convention.
 - **Type hints on every parameter and return.** No `-> Any`.
 
@@ -38,6 +38,7 @@ from datetime import timedelta
 
 from app.core import security
 from app.core.config import settings
+from app.utils import mask_string
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ def create_token_pair(
         organization_id=organization_id,
         project_id=project_id,
     )
+    logger.info(f"[create_token_pair] Token pair issued | user_id: {user_id}, access_token: {mask_string(access_token)}")
     return access_token, refresh_token
 ```
 

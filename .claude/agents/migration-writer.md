@@ -66,7 +66,7 @@ def downgrade():
 ## What you DO NOT do
 
 - Don't add `HTTPException`, route handlers, business logic, or external HTTP calls in a migration.
-- Don't write `print(...)` debug statements — use the migration docstring.
+- Don't write `print(...)` debug statements — use the migration docstring. If a long backfill genuinely needs progress logging, use `logging.getLogger("alembic.runtime.migration")` with the standard `[<revision_id>] ...` prefix.
 - Don't skip the docstring. The docstring is what someone debugging at 2am will read.
 - Don't import from `app.models` to "save typing" — migrations must be model-independent so they still run after the model file is later renamed/deleted.
 

@@ -64,8 +64,7 @@ Document the choice in a comment if it's not obvious.
 ## Logging
 
 - `logger = logging.getLogger(__name__)` at the module top.
-- Every log line prefixed `[task_name]` — e.g., `logger.info(f"[run_my_job] Starting | project_id: {project_id}, job_id: {job_id}")`.
-- Log start, finish, and any retry. **Don't log payload contents** if they may contain PII / credentials.
+- Every line is `logger.info(f"[task_name] Message | key: {value}")`. Log start, finish, and any retry. Mask PII / credentials with `mask_string` from `app.utils` — **never log raw payloads** if they may contain sensitive data.
 
 ## What you DO NOT do
 

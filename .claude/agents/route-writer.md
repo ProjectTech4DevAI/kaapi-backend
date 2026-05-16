@@ -74,6 +74,10 @@ Returning `404` instead of `403` for cross-tenant access is intentional — it d
 - Short fire-and-forget (send an email, write an audit log) → `BackgroundTasks`.
 - Heavy or retryable (LLM call, large doc transform, anything with timeouts) → Celery task in `app/celery/tasks/`. Hand off to `celery-task-writer`.
 
+## Logging
+
+`logger = logging.getLogger(__name__)` at the module top. Every line is `logger.info(f"[handler_name] Message | key: {value}")`. Log non-trivial actions (creates, deletes, ownership failures) — don't spam `info` on every GET. Mask sensitive values with `mask_string` from `app.utils`.
+
 ## What you DO NOT do
 
 - Don't add the route registration in `app/api/main.py` (or wherever the aggregator lives) without checking the existing alphabetical / grouped order.

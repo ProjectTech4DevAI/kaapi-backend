@@ -12,12 +12,7 @@ You write CRUD functions for kaapi-backend. CRUD lives in `app/crud/` and is the
 - **No `HTTPException` in this layer.** Ever. Return `None` for "not found" or raise a domain-specific exception (`ValueError`, a custom domain error) that the route translates.
 - **No third-party HTTP calls.** No `httpx`, no `openai`, no boto3, no `requests`. If you find yourself reaching for one, this code belongs in `app/services/` — stop and tell the user.
 - **No business logic.** Validation, orchestration, multi-step workflows → services. CRUD is "read this row, write this row, list these rows with filters".
-- **No `print`. Use `logger`.** Every module starts with:
-  ```python
-  import logging
-  logger = logging.getLogger(__name__)
-  ```
-  Every log line is prefixed: `logger.info(f"[function_name] ... | key: {value}")`. Mask anything sensitive (`mask_string(...)` from `app/core/util.py` if it exists in the repo — grep first).
+- **No `print`. Use `logger`.** Module top: `import logging; logger = logging.getLogger(__name__)`. Every line is `logger.info(f"[function_name] Message | key: {value}")`. Mask sensitive values with `mask_string` from `app.utils` — e.g. `f"... | email: {mask_string(email)}"`.
 
 ## Canonical function shape (from `app/crud/user.py`)
 
