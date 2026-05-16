@@ -42,7 +42,7 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
         "value": PENDING_JOB_MONITOR_INTERVAL_MINUTES,
         "unit": "minute",
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Kolkata",
     "checkin_margin": 2,
     "max_runtime": 2 * PENDING_JOB_MONITOR_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,

@@ -19,7 +19,7 @@ from app.models.doc_transformation_job import (
 )
 from app.models.job import Job, JobStatus
 
-PENDING_ID_SAMPLE_CAP = 100
+MAX_IDS = 100
 
 
 class StaleGroup(TypedDict, total=False):
@@ -55,7 +55,7 @@ def _sample_ids(
     model: type[Any],
     timestamp_column: InstrumentedAttribute,
     conditions: tuple[Any, ...],
-    cap: int = PENDING_ID_SAMPLE_CAP,
+    cap: int = MAX_IDS,
 ) -> list[str]:
     """Oldest-first ID sample, capped. Oldest first = most actionable."""
     statement = (
@@ -179,7 +179,7 @@ def count_stale_pending_doc_transformation_jobs(
 
 
 __all__ = [
-    "PENDING_ID_SAMPLE_CAP",
+    "MAX_IDS",
     "StaleGroup",
     "StalePendingResult",
     "count_stale_pending_collection_jobs",
