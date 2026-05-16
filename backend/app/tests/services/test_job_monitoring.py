@@ -139,10 +139,16 @@ def test_monitor_pending_jobs_reports_stale_pending_rows(db: Session) -> None:
         by_table["doc_transformation_job"]["contexts"]["pending_jobs"]["stale_count"]
         == 1
     )
-    for event in events:
-        assert event["message"] == (
-            "Some jobs have been pending for longer than expected"
-        )
+    expected_titles = {
+        "job": "[TEST]: LLM job pending for longer than expected",
+        "collection_jobs": "[TEST]: Collection job pending for longer than expected",
+        "doc_transformation_job": (
+            "[TEST]: Document job pending for longer than expected"
+        ),
+    }
+    for table, event in by_table.items():
+        assert event["message"] == expected_titles[table]
+        assert event["logentry"]["formatted"].startswith(expected_titles[table])
 
 
 def test_monitor_pending_jobs_ignores_fresh_and_non_pending_rows(
