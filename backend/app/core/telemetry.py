@@ -1,9 +1,10 @@
 import json
 import logging
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 import sentry_sdk
 from opentelemetry import context as otel_context
@@ -400,6 +401,58 @@ def record_db_pool_stats(
     _emit_sentry_metric("gauge", "db.pool.overflow", overflow)
 
 
+def record_stale_pending_jobs(
+    *,
+    table: str,
+    status: str,
+    stale_count: int,
+    oldest_age_seconds: int | None,
+    job_type: str | None = None,
+    action_type: str | None = None,
+    dimensional: bool = False,
+) -> None:
+    """Emit aggregate pending-job monitor metrics to Sentry.
+
+    When ``dimensional`` is True, the metric is emitted under a separate
+    name so per-group counts (grouped by job_type/action_type) do not get
+    summed together with the table-level count in Sentry dashboards.
+    """
+    attrs: dict[str, str] = {
+        "job.table": table,
+        "job.status": status,
+    }
+    if job_type:
+        attrs["job.type"] = job_type
+    if action_type:
+        attrs["job.action_type"] = action_type
+
+    count_metric = (
+        "jobs.pending.stale.by_dimension.count"
+        if dimensional
+        else "jobs.pending.stale.count"
+    )
+    age_metric = (
+        "jobs.pending.oldest_age_seconds.by_dimension"
+        if dimensional
+        else "jobs.pending.oldest_age_seconds"
+    )
+
+    _emit_sentry_metric(
+        "gauge",
+        count_metric,
+        stale_count,
+        attributes=attrs,
+    )
+    if oldest_age_seconds is not None:
+        _emit_sentry_metric(
+            "gauge",
+            age_metric,
+            oldest_age_seconds,
+            unit="second",
+            attributes=attrs,
+        )
+
+
 def flush_telemetry(timeout_millis: int = 10000) -> None:
     """Force-flush OTel spans into Sentry, then flush Sentry's transport.
 
@@ -515,5 +568,5 @@ def instrument_db_engine(engine: object) -> None:
         del dbapi_connection, connection_record
         _emit_pool_metrics(engine.pool)
 
-    setattr(engine, "_kaapi_db_telemetry_instrumented", True)
+    engine._kaapi_db_telemetry_instrumented = True
     logger.debug("[instrument_db_engine] SQLAlchemy DB telemetry enabled")

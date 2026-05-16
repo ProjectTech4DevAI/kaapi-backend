@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 
-
 PROTECTED_ENDPOINTS = [
     (f"{settings.API_V1_STR}/collections", "GET"),
     (f"{settings.API_V1_STR}/collections", "POST"),
@@ -25,6 +24,7 @@ PROTECTED_ENDPOINTS = [
         "GET",
     ),
     (f"{settings.API_V1_STR}/cron/evaluations", "GET"),
+    (f"{settings.API_V1_STR}/cron/pending-jobs", "GET"),
     (f"{settings.API_V1_STR}/evaluations/datasets", "POST"),
     (f"{settings.API_V1_STR}/evaluations/datasets", "GET"),
     (
