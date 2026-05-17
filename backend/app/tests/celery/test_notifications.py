@@ -81,6 +81,28 @@ class _MultiPatch:
         return False
 
 
+def _add_active_member(db: Session, *, project: Project) -> str:
+    """Add a fresh active user to the project and return their email.
+
+    `add_user_to_project` creates new users with `is_active=False` (so they
+    have to verify via invite before they can log in). The notification task
+    filters those out — so for the fan-out tests we flip the flag immediately
+    after creation to simulate an already-activated project member.
+    """
+    email = random_email()
+    user, _ = add_user_to_project(
+        session=db,
+        email=email,
+        organization_id=project.organization_id,
+        project_id=project.id,
+        full_name="Tester",
+    )
+    user.is_active = True
+    db.add(user)
+    db.commit()
+    return email
+
+
 def _make_eval_run(
     db: Session,
     *,
@@ -124,26 +146,26 @@ class TestHelperFunctions:
         # 18:33 UTC + 5:30 = 00:03 IST next day
         assert (
             notif_task._format_completed_at(datetime(2026, 5, 16, 18, 33))
-            == "May 17, 2026 at 12:03 AM IST"
+            == "May 17, 2026 at 12:03 AM"
         )
 
     def test_format_completed_at_strips_leading_zero(self):
         # 00:35 UTC + 5:30 = 06:05 IST
         assert (
             notif_task._format_completed_at(datetime(2026, 5, 16, 0, 35))
-            == "May 16, 2026 at 6:05 AM IST"
+            == "May 16, 2026 at 6:05 AM"
         )
 
     def test_format_completed_at_handles_noon_and_midnight(self):
         # 06:30 UTC + 5:30 = 12:00 IST (noon)
         assert (
             notif_task._format_completed_at(datetime(2026, 5, 16, 6, 30))
-            == "May 16, 2026 at 12:00 PM IST"
+            == "May 16, 2026 at 12:00 PM"
         )
         # 18:35 UTC + 5:30 = 00:05 IST (midnight next day)
         assert (
             notif_task._format_completed_at(datetime(2026, 5, 16, 18, 35))
-            == "May 17, 2026 at 12:05 AM IST"
+            == "May 17, 2026 at 12:05 AM"
         )
 
     def test_format_completed_at_returns_empty_for_none(self):
@@ -179,7 +201,7 @@ class TestHelperFunctions:
             "run_name": "exp1",
             "project_name": "ProjX",
             "status": "completed",
-            "completed_at": "May 17, 2026 at 12:03 AM IST",
+            "completed_at": "May 17, 2026 at 12:03 AM",
             "link": "http://example.com/evaluations/99",
             "error_message": None,
         }
@@ -252,16 +274,9 @@ class TestSendEvalCompletionNotification:
         project = create_test_project(patched_session)
         run = _make_eval_run(patched_session, project=project)
 
-        # Add two project members
-        for _ in range(2):
-            add_user_to_project(
-                session=patched_session,
-                email=random_email(),
-                organization_id=project.organization_id,
-                project_id=project.id,
-                full_name="Tester",
-            )
-        patched_session.commit()
+        # Two activated project members
+        _add_active_member(patched_session, project=project)
+        _add_active_member(patched_session, project=project)
 
         with _emails_enabled(True), patch.object(notif_task, "send_email") as mock_send:
             result = notif_task.send_eval_completion_notification.apply(
@@ -286,13 +301,7 @@ class TestSendEvalCompletionNotification:
     def test_marks_row_failed_when_smtp_raises(self, patched_session: Session):
         project = create_test_project(patched_session)
         run = _make_eval_run(patched_session, project=project)
-        add_user_to_project(
-            session=patched_session,
-            email=random_email(),
-            organization_id=project.organization_id,
-            project_id=project.id,
-        )
-        patched_session.commit()
+        _add_active_member(patched_session, project=project)
 
         with _emails_enabled(True), patch.object(
             notif_task, "send_email", side_effect=RuntimeError("SMTP timeout")
@@ -319,13 +328,7 @@ class TestSendEvalCompletionNotification:
             status="failed",
             error_message="Batch failed",
         )
-        add_user_to_project(
-            session=patched_session,
-            email=random_email(),
-            organization_id=project.organization_id,
-            project_id=project.id,
-        )
-        patched_session.commit()
+        _add_active_member(patched_session, project=project)
 
         with _emails_enabled(True), patch.object(notif_task, "send_email"):
             result = notif_task.send_eval_completion_notification.apply(

@@ -77,10 +77,16 @@
                   Your evaluation run
                   <span style="font-weight: bold">{{ run_name }}</span> in
                   <span style="font-weight: bold">{{ project_name }}</span> has
-                  <span style="font-weight: bold"
+                  {% if status_label == "Completed" %}
+                  <span style="font-weight: bold; color: #047857"
                     >{{ status_label|lower }}</span
                   >
-                  on <span style="font-weight: bold">{{ completed_at }}</span>.
+                  {% else %}
+                  <span style="font-weight: bold; color: #b91c1c"
+                    >{{ status_label|lower }}</span
+                  >
+                  {% endif %} on
+                  <span style="font-weight: bold">{{ completed_at }}</span>.
                 </p>
                 <p
                   style="
