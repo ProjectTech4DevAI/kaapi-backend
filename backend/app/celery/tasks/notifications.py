@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from sqlmodel import Session
 
@@ -38,15 +39,21 @@ def _notification_type_for_status(status: str) -> str:
     return NotificationType.EVAL_COMPLETED.value
 
 
+def _format_completed_at(dt: datetime | None) -> str:
+    if not dt:
+        return ""
+    hour_12 = dt.strftime("%I").lstrip("0") or "12"
+    return dt.strftime(f"%B %d, %Y at {hour_12}:%M %p")
+
+
 def _build_eval_completion_payload(
     *, eval_run: EvaluationRun, project_name: str
 ) -> dict:
-    completed_at = eval_run.updated_at.isoformat() if eval_run.updated_at else None
     return {
         "run_name": eval_run.run_name,
         "project_name": project_name,
         "status": eval_run.status,
-        "completed_at": completed_at,
+        "completed_at": _format_completed_at(eval_run.updated_at),
         "link": _build_eval_results_link(eval_run),
         "error_message": eval_run.error_message,
     }
@@ -132,11 +139,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
             run_name=eval_run.run_name,
             project_name=project_name,
             status=eval_run.status,
-            completed_at=(
-                eval_run.updated_at.strftime("%B %d, %Y at %-I:%M %p")
-                if eval_run.updated_at
-                else ""
-            ),
+            completed_at=payload["completed_at"],
             link=payload["link"],
             error_message=eval_run.error_message,
         )

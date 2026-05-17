@@ -84,8 +84,27 @@ class TestHelperFunctions:
         with patch.object(notif_task.settings, "FRONTEND_HOST", "http://example.com"):
             assert (
                 notif_task._build_eval_results_link(eval_run)
-                == "http://example.com/evaluations/"
+                == "http://example.com/evaluations/46"
             )
+
+    def test_format_completed_at_strips_leading_zero(self):
+        assert (
+            notif_task._format_completed_at(datetime(2026, 5, 16, 6, 5))
+            == "May 16, 2026 at 6:05 AM"
+        )
+
+    def test_format_completed_at_handles_noon_and_midnight(self):
+        assert (
+            notif_task._format_completed_at(datetime(2026, 5, 16, 12, 0))
+            == "May 16, 2026 at 12:00 PM"
+        )
+        assert (
+            notif_task._format_completed_at(datetime(2026, 5, 16, 0, 5))
+            == "May 16, 2026 at 12:05 AM"
+        )
+
+    def test_format_completed_at_returns_empty_for_none(self):
+        assert notif_task._format_completed_at(None) == ""
 
     def test_notification_type_for_status_failed(self):
         assert (
@@ -116,8 +135,8 @@ class TestHelperFunctions:
             "run_name": "exp1",
             "project_name": "ProjX",
             "status": "completed",
-            "completed_at": "2026-05-16T18:33:50",
-            "link": "http://example.com/evaluations/",
+            "completed_at": "May 16, 2026 at 6:33 PM",
+            "link": "http://example.com/evaluations/99",
             "error_message": None,
         }
 
