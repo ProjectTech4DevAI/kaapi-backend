@@ -17,6 +17,7 @@ from app.crud.notification import (
 )
 from app.crud.organization import validate_organization
 from app.crud.project import validate_project
+from app.crud.user_project import get_user_projects
 from app.models import (
     GoogleAuthRequest,
     GoogleAuthResponse,
@@ -300,6 +301,9 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
         email_to=body.email,
         magic_link_token=token,
     )
+    user_project_link = next(
+        iter(get_user_projects(session=session, user_id=user.id)), None
+    )
     notification = create_pending_notification(
         session=session,
         notification_type=NotificationType.MAGIC_LINK_LOGIN.value,
@@ -307,6 +311,7 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
         recipient_user_id=user.id,
         entity_type=NotificationEntityType.USER.value,
         entity_id=user.id,
+        project_id=user_project_link.project_id if user_project_link else None,
         subject=email_data.subject,
         body_template="magic_link_login_v1",
         payload={

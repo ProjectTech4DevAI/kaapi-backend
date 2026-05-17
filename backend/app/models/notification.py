@@ -27,6 +27,7 @@ class NotificationType(str, Enum):
     EVAL_COMPLETED = "eval_completed"
     EVAL_FAILED = "eval_failed"
     MAGIC_LINK_LOGIN = "magic_link_login"
+    INVITE_USER = "invite_user"
 
 
 class NotificationEntityType(str, Enum):
