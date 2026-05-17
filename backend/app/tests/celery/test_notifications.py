@@ -48,6 +48,39 @@ def patched_session(db: Session):
         yield db
 
 
+def _emails_enabled(enabled: bool):
+    """Toggle `settings.emails_enabled` by setting the underlying raw fields.
+
+    `emails_enabled` is a Pydantic `@computed_field`, so `patch.object` can't
+    override it on the instance — it's read-only. Instead, patch the two raw
+    settings it derives from (`SMTP_HOST` + `EMAILS_FROM_EMAIL`) which is what
+    `bool(SMTP_HOST and EMAILS_FROM_EMAIL)` evaluates against.
+    """
+    smtp_host = "smtp.test.local" if enabled else ""
+    from_email = "noreply@test.local" if enabled else ""
+    return _MultiPatch(
+        patch.object(notif_task.settings, "SMTP_HOST", smtp_host),
+        patch.object(notif_task.settings, "EMAILS_FROM_EMAIL", from_email),
+    )
+
+
+class _MultiPatch:
+    """Tiny context manager that enters/exits multiple `patch` objects together."""
+
+    def __init__(self, *patches):
+        self._patches = patches
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for p in reversed(self._patches):
+            p.stop()
+        return False
+
+
 def _make_eval_run(
     db: Session,
     *,
@@ -87,20 +120,30 @@ class TestHelperFunctions:
                 == "http://example.com/evaluations/46"
             )
 
-    def test_format_completed_at_strips_leading_zero(self):
+    def test_format_completed_at_converts_utc_to_ist(self):
+        # 18:33 UTC + 5:30 = 00:03 IST next day
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 6, 5))
-            == "May 16, 2026 at 6:05 AM"
+            notif_task._format_completed_at(datetime(2026, 5, 16, 18, 33))
+            == "May 17, 2026 at 12:03 AM IST"
+        )
+
+    def test_format_completed_at_strips_leading_zero(self):
+        # 00:35 UTC + 5:30 = 06:05 IST
+        assert (
+            notif_task._format_completed_at(datetime(2026, 5, 16, 0, 35))
+            == "May 16, 2026 at 6:05 AM IST"
         )
 
     def test_format_completed_at_handles_noon_and_midnight(self):
+        # 06:30 UTC + 5:30 = 12:00 IST (noon)
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 12, 0))
-            == "May 16, 2026 at 12:00 PM"
+            notif_task._format_completed_at(datetime(2026, 5, 16, 6, 30))
+            == "May 16, 2026 at 12:00 PM IST"
         )
+        # 18:35 UTC + 5:30 = 00:05 IST (midnight next day)
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 0, 5))
-            == "May 16, 2026 at 12:05 AM"
+            notif_task._format_completed_at(datetime(2026, 5, 16, 18, 35))
+            == "May 17, 2026 at 12:05 AM IST"
         )
 
     def test_format_completed_at_returns_empty_for_none(self):
@@ -131,11 +174,12 @@ class TestHelperFunctions:
             payload = notif_task._build_eval_completion_payload(
                 eval_run=eval_run, project_name="ProjX"
             )
+        # 18:33 UTC -> 00:03 IST next day
         assert payload == {
             "run_name": "exp1",
             "project_name": "ProjX",
             "status": "completed",
-            "completed_at": "May 16, 2026 at 6:33 PM",
+            "completed_at": "May 17, 2026 at 12:03 AM IST",
             "link": "http://example.com/evaluations/99",
             "error_message": None,
         }
@@ -181,7 +225,7 @@ class TestSendEvalCompletionNotification:
         project = create_test_project(patched_session)
         run = _make_eval_run(patched_session, project=project)
 
-        with patch.object(notif_task.settings, "emails_enabled", False):
+        with _emails_enabled(False):
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result
@@ -197,7 +241,7 @@ class TestSendEvalCompletionNotification:
         project = create_test_project(patched_session)
         run = _make_eval_run(patched_session, project=project)
 
-        with patch.object(notif_task.settings, "emails_enabled", True):
+        with _emails_enabled(True):
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result
@@ -219,9 +263,7 @@ class TestSendEvalCompletionNotification:
             )
         patched_session.commit()
 
-        with patch.object(notif_task.settings, "emails_enabled", True), patch.object(
-            notif_task, "send_email"
-        ) as mock_send:
+        with _emails_enabled(True), patch.object(notif_task, "send_email") as mock_send:
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result
@@ -252,7 +294,7 @@ class TestSendEvalCompletionNotification:
         )
         patched_session.commit()
 
-        with patch.object(notif_task.settings, "emails_enabled", True), patch.object(
+        with _emails_enabled(True), patch.object(
             notif_task, "send_email", side_effect=RuntimeError("SMTP timeout")
         ):
             result = notif_task.send_eval_completion_notification.apply(
@@ -285,9 +327,7 @@ class TestSendEvalCompletionNotification:
         )
         patched_session.commit()
 
-        with patch.object(notif_task.settings, "emails_enabled", True), patch.object(
-            notif_task, "send_email"
-        ):
+        with _emails_enabled(True), patch.object(notif_task, "send_email"):
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result

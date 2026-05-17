@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlmodel import Session
 
@@ -27,6 +28,7 @@ from app.utils import generate_eval_completion_email, send_email
 logger = logging.getLogger(__name__)
 
 EVAL_COMPLETION_TEMPLATE = "eval_completion_v1"
+IST_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def _build_eval_results_link(eval_run: EvaluationRun) -> str:
@@ -42,8 +44,11 @@ def _notification_type_for_status(status: str) -> str:
 def _format_completed_at(dt: datetime | None) -> str:
     if not dt:
         return ""
-    hour_12 = dt.strftime("%I").lstrip("0") or "12"
-    return dt.strftime(f"%B %d, %Y at {hour_12}:%M %p")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(IST_TZ)
+    hour_12 = local.strftime("%I").lstrip("0") or "12"
+    return local.strftime(f"%B %d, %Y at {hour_12}:%M %p")
 
 
 def _build_eval_completion_payload(
