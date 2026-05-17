@@ -14,7 +14,10 @@ from app.models import (
     NotificationType,
     Project,
 )
-from app.tests.utils.test_data import create_test_project
+from app.tests.utils.test_data import (
+    create_test_evaluation_dataset,
+    create_test_project,
+)
 from app.tests.utils.utils import random_email
 
 
@@ -52,10 +55,15 @@ def _make_eval_run(
     status: str = "completed",
     error_message: str | None = None,
 ) -> EvaluationRun:
+    dataset = create_test_evaluation_dataset(
+        db,
+        organization_id=project.organization_id,
+        project_id=project.id,
+    )
     run = EvaluationRun(
         run_name=f"test_run_{random_email()}",
-        dataset_name="dataset_x",
-        dataset_id=1,
+        dataset_name=dataset.name,
+        dataset_id=dataset.id,
         type="text",
         status=status,
         organization_id=project.organization_id,
