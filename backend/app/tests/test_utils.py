@@ -413,9 +413,6 @@ class TestSendCallbackWithSigning:
         assert result is False
 
 
-# ---------------------------------------------------------------------------
-# generate_eval_completion_email
-# ---------------------------------------------------------------------------
 class TestGenerateEvalCompletionEmail:
     def test_completed_renders_expected_fields(self) -> None:
         data = generate_eval_completion_email(
