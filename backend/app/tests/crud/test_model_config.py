@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from app.crud import model_config as model_config_crud
 
@@ -160,3 +161,133 @@ def test_estimate_model_cost_returns_none_for_non_numeric_prices(
     )
 
     assert result is None
+
+
+def _make_blob(provider, completion_type, params):
+    completion = SimpleNamespace(provider=provider, type=completion_type, params=params)
+    return SimpleNamespace(completion=completion)
+
+
+def _patch_validators(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    row: Any | None,
+    supported: bool,
+    allowed: list[str] | None = None,
+) -> None:
+    monkeypatch.setattr(
+        model_config_crud,
+        "get_model_config",
+        lambda session, provider, model_name: row,
+    )
+    monkeypatch.setattr(
+        model_config_crud,
+        "is_model_supported",
+        lambda session, provider, completion_type, model_name: supported,
+    )
+    monkeypatch.setattr(
+        model_config_crud,
+        "list_supported_models",
+        lambda session, provider, completion_type: allowed or [],
+    )
+
+
+def test_validate_blob_native_provider_short_circuits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native pass-through never hits DB."""
+    called = {"hit": False}
+
+    def boom(*a, **kw):
+        called["hit"] = True
+        return None
+
+    monkeypatch.setattr(model_config_crud, "get_model_config", boom)
+    monkeypatch.setattr(model_config_crud, "is_model_supported", boom)
+
+    blob = _make_blob("openai-native", "text", {"model": "anything"})
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+    assert called["hit"] is False
+
+
+def test_validate_blob_none_provider_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    blob = _make_blob(None, "text", {"model": "gpt-4o"})
+    # No patches — should never reach helpers
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+
+def test_validate_blob_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    blob = _make_blob("openai", "text", {"temperature": 0.5})
+    with pytest.raises(HTTPException) as exc:
+        model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+    assert "model is required" in exc.value.detail
+
+
+def test_validate_blob_unsupported_model_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_validators(
+        monkeypatch,
+        row=None,
+        supported=False,
+        allowed=["gpt-4o", "gpt-4o-mini"],
+    )
+    blob = _make_blob("openai", "text", {"model": "gpt-4-turbo"})
+    with pytest.raises(HTTPException) as exc:
+        model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+    assert "gpt-4-turbo" in exc.value.detail
+    assert "gpt-4o" in exc.value.detail
+
+
+def test_validate_blob_supported_text_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = SimpleNamespace(config={})
+    _patch_validators(monkeypatch, row=row, supported=True)
+    blob = _make_blob("openai", "text", {"model": "gpt-4o"})
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+
+def test_validate_blob_tts_invalid_voice_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = SimpleNamespace(
+        config={"voice": {"type": "enum", "options": ["Kore", "Orus"]}}
+    )
+    _patch_validators(monkeypatch, row=row, supported=True)
+    blob = _make_blob(
+        "google",
+        "tts",
+        {"model": "gemini-2.5-flash-preview-tts", "voice": "Sarah"},
+    )
+    with pytest.raises(HTTPException) as exc:
+        model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+    assert "Sarah" in exc.value.detail
+    assert "Kore" in exc.value.detail
+
+
+def test_validate_blob_tts_valid_voice_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = SimpleNamespace(
+        config={"voice": {"type": "enum", "options": ["Kore", "Orus"]}}
+    )
+    _patch_validators(monkeypatch, row=row, supported=True)
+    blob = _make_blob(
+        "google",
+        "tts",
+        {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+    )
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+
+def test_validate_blob_tts_no_voice_spec_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If model_config row has no voice schema, voice value is not enforced."""
+    row = SimpleNamespace(config={})
+    _patch_validators(monkeypatch, row=row, supported=True)
+    blob = _make_blob("sarvamai", "tts", {"model": "bulbul:v3", "voice": "anything"})
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]

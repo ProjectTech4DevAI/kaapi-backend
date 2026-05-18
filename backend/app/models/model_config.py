@@ -9,12 +9,12 @@ from app.core.util import now
 
 
 class ModelConfigBase(SQLModel):
-    provider: Literal["openai", "google"] = Field(
+    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] = Field(
         default="openai",
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="provider name (e.g. openai, google)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs)",
         ),
     )
 

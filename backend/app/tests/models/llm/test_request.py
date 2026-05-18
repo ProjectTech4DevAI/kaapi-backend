@@ -1,6 +1,3 @@
-import pytest
-from pydantic import ValidationError
-
 from app.models.llm.request import KaapiCompletionConfig
 
 
@@ -49,63 +46,6 @@ class TestKaapiCompletionConfigTemperature:
         assert config.params["temperature"] == 0.0
 
 
-class TestNewSupportedModels:
-    """Test that newly added models are accepted for openai/text provider."""
-
-    @pytest.mark.parametrize(
-        "model",
-        [
-            "gpt-5.4-pro",
-            "gpt-5.4-mini",
-            "gpt-5.4-nano",
-            "gpt-5",
-            "gpt-4-turbo",
-            "gpt-4",
-            "gpt-3.5-turbo",
-        ],
-    )
-    def test_new_model_accepted(self, model: str) -> None:
-        """New models should be accepted for openai text provider."""
-        config = KaapiCompletionConfig(
-            provider="openai",
-            type="text",
-            params={"model": model},
-        )
-
-        assert config.params["model"] == model
-
-    @pytest.mark.parametrize(
-        "model",
-        [
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4.1",
-            "gpt-4.1-mini",
-            "gpt-4.1-nano",
-            "gpt-5.4",
-            "gpt-5.1",
-            "gpt-5-mini",
-            "gpt-5-nano",
-            "o1",
-            "o1-preview",
-            "o1-mini",
-        ],
-    )
-    def test_existing_models_still_accepted(self, model: str) -> None:
-        """Previously supported models should still be accepted."""
-        config = KaapiCompletionConfig(
-            provider="openai",
-            type="text",
-            params={"model": model},
-        )
-
-        assert config.params["model"] == model
-
-    def test_unsupported_model_rejected(self) -> None:
-        """An unsupported model should raise a validation error."""
-        with pytest.raises(ValidationError, match="not supported"):
-            KaapiCompletionConfig(
-                provider="openai",
-                type="text",
-                params={"model": "unsupported-model-xyz"},
-            )
+# Model-allowlist enforcement moved from KaapiCompletionConfig.validate_params to
+# the CRUD layer (crud.model_config.validate_blob_model_or_raise) which consults
+# the model_config table. See tests/crud/config/* for coverage.

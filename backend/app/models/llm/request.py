@@ -13,8 +13,6 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
-    SUPPORTED_MODELS,
-    SUPPORTED_VOICES,
 )
 
 
@@ -272,49 +270,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        provider = self.provider
-        provider_was_auto_assigned = False
-        if self.type in ("stt", "tts") and provider is None:
+        if self.type in ("stt", "tts") and self.provider is None:
             self.provider = "google"
-            provider = self.provider
-            provider_was_auto_assigned = True
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
-
-        if provider is not None:
-            key = (provider, self.type)
-
-            allowed_models = SUPPORTED_MODELS.get(key)
-            if allowed_models and validated.model not in allowed_models:
-                if provider_was_auto_assigned:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported. "
-                        f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires models: {allowed_models}. "
-                        f"Either specify a supported model or explicitly set 'provider' to match your model."
-                    )
-                else:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported for provider='{provider}' type='{self.type}'. "
-                        f"Allowed: {allowed_models}"
-                    )
-
-            if self.type == "tts":
-                # voice = self.params.get("voice")
-                voice = validated.voice
-                allowed_voices = SUPPORTED_VOICES.get(key)
-                if allowed_voices and voice and voice not in allowed_voices:
-                    if provider_was_auto_assigned:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported. "
-                            f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires voices: {allowed_voices}. "
-                            f"Either specify a supported voice or explicitly set 'provider' to match your voice."
-                        )
-                    else:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported for provider='{provider}'. "
-                            f"Allowed: {allowed_voices}"
-                        )
 
         self.params = validated.model_dump(exclude_none=True)
         if not user_provided_temperature:

@@ -1,13 +1,24 @@
 from typing import Any, Literal
 
+from fastapi import HTTPException
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.sql import sqltypes
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
 
+Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
+CompletionType = Literal["text", "stt", "tts"]
+
+
+def _normalize_provider(raw: str) -> str:
+    """Map NativeCompletionConfig providers (e.g. 'openai-native') to model_config provider names."""
+    return raw[: -len("-native")] if raw.endswith("-native") else raw
+
 
 def list_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> tuple[list[ModelConfig], bool]:
@@ -30,7 +41,7 @@ def list_active_model_configs(
 
 def list_all_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
 ) -> list[ModelConfig]:
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
@@ -42,7 +53,7 @@ def list_all_active_model_configs(
 
 
 def get_model_config(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+    session: Session, provider: Provider, model_name: str
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
@@ -52,9 +63,127 @@ def get_model_config(
     return session.exec(statement).first()
 
 
-def is_reasoning_model(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+def _modality_filter(stmt, completion_type: CompletionType):
+    """Restrict query to models matching the completion type via modalities."""
+    str_array = ARRAY(sqltypes.String)
+    input_col = ModelConfig.input_modalities
+    output_col = ModelConfig.output_modalities
+
+    if completion_type == "stt":
+        return stmt.where(
+            input_col.cast(str_array).contains(["AUDIO"]),
+            output_col.cast(str_array).contains(["TEXT"]),
+        )
+    if completion_type == "tts":
+        return stmt.where(
+            input_col.cast(str_array).contains(["TEXT"]),
+            output_col.cast(str_array).contains(["AUDIO"]),
+        )
+    # text: must produce TEXT and not consume/produce AUDIO
+    return stmt.where(
+        output_col.cast(str_array).contains(["TEXT"]),
+        ~input_col.cast(str_array).contains(["AUDIO"]),
+        ~output_col.cast(str_array).contains(["AUDIO"]),
+    )
+
+
+def list_supported_models(
+    session: Session, provider: Provider, completion_type: CompletionType
+) -> list[str]:
+    """Return active model names for a provider+completion type."""
+    stmt = select(ModelConfig.model_name).where(
+        ModelConfig.provider == provider,
+        ModelConfig.is_active,
+    )
+    stmt = _modality_filter(stmt, completion_type)
+    return list(session.exec(stmt).all())
+
+
+def is_model_supported(
+    session: Session,
+    provider: Provider,
+    completion_type: CompletionType,
+    model_name: str,
 ) -> bool:
+    """Check whether (provider, model_name) is active and matches the completion type."""
+    stmt = select(ModelConfig.id).where(
+        ModelConfig.provider == provider,
+        ModelConfig.model_name == model_name,
+        ModelConfig.is_active,
+    )
+    stmt = _modality_filter(stmt, completion_type)
+    return session.exec(stmt).first() is not None
+
+
+def validate_blob_model_or_raise(session: Session, blob: Any) -> None:
+    """Reject ConfigBlob whose completion.params.model is not in model_config.
+
+    Native configs forward raw provider params; we still expect a `model` key
+    in params for text/stt/tts. Missing model is treated as a validation error.
+    """
+    completion = blob.completion
+    raw_provider = completion.provider
+    completion_type = completion.type
+    if raw_provider is None:
+        return
+
+    if raw_provider.endswith("-native"):
+        return
+
+    provider = _normalize_provider(raw_provider)
+    model_name = (completion.params or {}).get("model")
+    if not model_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"completion.params.model is required for provider='{raw_provider}'",
+        )
+
+    model_row = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+    )
+    if model_row is None or not is_model_supported(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        completion_type=completion_type,
+        model_name=model_name,
+    ):
+        allowed = list_supported_models(
+            session=session,
+            provider=provider,  # type: ignore[arg-type]
+            completion_type=completion_type,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model '{model_name}' is not supported for provider='{provider}' "
+                f"type='{completion_type}'. Allowed: {allowed}"
+            ),
+        )
+
+    # TTS voice check: voice must match options declared in model_config.config.voice
+    if completion_type == "tts":
+        voice = (completion.params or {}).get("voice")
+        voice_spec = (
+            model_row.config.get("voice")
+            if isinstance(model_row.config, dict)
+            else None
+        )
+        allowed_voices = (
+            voice_spec.get("options") if isinstance(voice_spec, dict) else None
+        )
+        if voice and allowed_voices and voice not in allowed_voices:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Voice '{voice}' is not supported for provider='{provider}' "
+                    f"model='{model_name}'. Allowed: {allowed_voices}"
+                ),
+            )
+
+
+def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:
     """Return True if the model is configured with a reasoning `effort` control.
 
     A model is considered reasoning-capable if its `config` JSON contains an
@@ -69,7 +198,7 @@ def is_reasoning_model(
 
 def estimate_model_cost(
     session: Session,
-    provider: Literal["openai", "google"],
+    provider: Provider,
     model_name: str,
     input_tokens: int,
     output_tokens: int,
