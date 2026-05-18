@@ -32,6 +32,7 @@ from app.utils import (
     APIResponse,
     generate_invite_email,
     load_description,
+    mask_string,
     send_email,
 )
 
@@ -115,7 +116,7 @@ def add_project_users(
             invited_user = get_user_by_email(session=session, email=email_str)
             if not invited_user:
                 logger.error(
-                    f"[add_project_users] Inviting user row missing after add | email: {email_str}"
+                    f"[add_project_users] Inviting user row missing after add | email: {mask_string(email_str)}"
                 )
                 continue
 
@@ -160,7 +161,7 @@ def add_project_users(
                 session.commit()
                 logger.info(
                     f"[add_project_users] Invitation email sent | "
-                    f"email: {entry.email}, notification_id: {notification.id}"
+                    f"email: {mask_string(email_str)}, notification_id: {notification.id}"
                 )
             except Exception as e:
                 mark_notification_failed(
@@ -169,7 +170,7 @@ def add_project_users(
                 session.commit()
                 logger.error(
                     f"[add_project_users] Failed to send invitation email | "
-                    f"email: {entry.email}, notification_id: {notification.id}, error: {e}"
+                    f"email: {mask_string(email_str)}, notification_id: {notification.id}, error: {e}"
                 )
 
     # Re-fetch all users for this project to return the full list

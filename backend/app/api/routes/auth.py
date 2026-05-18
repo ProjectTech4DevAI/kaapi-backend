@@ -42,6 +42,7 @@ from app.utils import (
     APIResponse,
     generate_magic_link_email,
     load_description,
+    mask_string,
     send_email,
 )
 
@@ -281,7 +282,7 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
     user = get_user_by_email(session=session, email=body.email)
     if not user:
         logger.info(
-            f"[request_magic_link] Magic link requested for non-existent email: {body.email}"
+            f"[request_magic_link] Magic link requested for non-existent email: {mask_string(body.email)}"
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -332,7 +333,7 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
         session.commit()
         logger.info(
             f"[request_magic_link] Magic link email sent | "
-            f"email: {body.email}, notification_id: {notification.id}"
+            f"email: {mask_string(body.email)}, notification_id: {notification.id}"
         )
     except Exception as e:
         mark_notification_failed(
@@ -341,7 +342,7 @@ def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
         session.commit()
         logger.error(
             f"[request_magic_link] Failed to send magic link email | "
-            f"email: {body.email}, notification_id: {notification.id}, error: {e}"
+            f"email: {mask_string(body.email)}, notification_id: {notification.id}, error: {e}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
