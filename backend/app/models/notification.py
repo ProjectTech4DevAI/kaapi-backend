@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, Index
+from sqlalchemy import Column, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -56,7 +56,7 @@ class Notification(SQLModel, table=True):
         Index("idx_notification_status", "status"),
     )
 
-    id: int = Field(
+    id: int | None = Field(
         default=None,
         primary_key=True,
         sa_column_kwargs={"comment": "Unique identifier for the notification record"},
@@ -84,10 +84,12 @@ class Notification(SQLModel, table=True):
             "comment": "Reference to the user receiving the notification"
         },
     )
-    entity_type: str = Field(
-        max_length=64,
-        nullable=False,
-        sa_column_kwargs={"comment": "Polymorphic entity type, e.g. eval_run, project"},
+    entity_type: NotificationEntityType = Field(
+        sa_column=Column(
+            String(64),
+            nullable=False,
+            comment="Polymorphic entity type, e.g. eval_run, project, user",
+        ),
     )
     entity_id: int = Field(
         nullable=False,
