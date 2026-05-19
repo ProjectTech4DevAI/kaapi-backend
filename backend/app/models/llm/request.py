@@ -18,28 +18,6 @@ from app.models.llm.constants import (
 )
 
 
-# Speech-to-Speech Model Enums
-class STTModel(str, Enum):
-    """Supported STT models for speech-to-speech."""
-
-    GEMINI_PRO = "gemini-2.5-pro"
-    SARVAM = "saaras:v3"
-
-
-class TTSModel(str, Enum):
-    """Supported TTS models for speech-to-speech."""
-
-    GEMINI_PRO = "gemini-2.5-pro-preview-tts"
-    SARVAM = "bulbul:v3"
-
-
-class LLMModel(str, Enum):
-    """Supported LLM models for RAG in speech-to-speech."""
-
-    GPT4O = "gpt-4o"
-    GPT4O_MINI = "gpt-4o-mini"
-
-
 class TextLLMParams(SQLModel):
     model: str
     instructions: str | None = Field(
@@ -871,6 +849,62 @@ class LlmChain(SQLModel, table=True):
     )
 
 
+class _BlockSpecBase(SQLModel):
+    """Common xor logic for per-block specs: provide *either* (config_id +
+    config_version) for a stored config, *or* inline `params`. Not both.
+    """
+
+    config_id: UUID | None = Field(
+        default=None,
+        description="ID of a stored LLM config to use for this block.",
+    )
+    config_version: int | None = Field(
+        default=None,
+        ge=1,
+        description="Version of the stored config (required when config_id is set).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_xor(self):
+        has_ref = self.config_id is not None or self.config_version is not None
+        has_params = getattr(self, "params", None) is not None
+
+        if has_ref and has_params:
+            raise ValueError(
+                "Provide either (config_id + config_version) OR inline 'params', not both."
+            )
+        if has_ref and (self.config_id is None or self.config_version is None):
+            raise ValueError(
+                "Both 'config_id' and 'config_version' must be set together."
+            )
+        return self
+
+    @property
+    def is_stored_ref(self) -> bool:
+        return self.config_id is not None and self.config_version is not None
+
+
+class STTBlockSpec(_BlockSpecBase):
+    params: STTLLMParams | None = Field(
+        default=None,
+        description="Inline STT parameters. Omit to use endpoint defaults.",
+    )
+
+
+class RAGBlockSpec(_BlockSpecBase):
+    params: TextLLMParams | None = Field(
+        default=None,
+        description="Inline RAG (text) parameters. Omit to use endpoint defaults.",
+    )
+
+
+class TTSBlockSpec(_BlockSpecBase):
+    params: TTSLLMParams | None = Field(
+        default=None,
+        description="Inline TTS parameters. Omit to use endpoint defaults.",
+    )
+
+
 class SpeechToSpeechRequest(SQLModel):
     """
     API request for speech-to-speech (STS) with RAG.
@@ -907,16 +941,36 @@ class SpeechToSpeechRequest(SQLModel):
         ),
     )
 
-    # Optional model overrides
-    stt_model: STTModel = Field(
-        STTModel.SARVAM, description="STT model (default: Sarvam Saaras V3)"
+    # Per-block specs. Each spec accepts EITHER (config_id + config_version)
+    # to reference a stored config, OR inline `params` to override the
+    # endpoint defaults. Omit entirely to use defaults only.
+    stt: STTBlockSpec | None = Field(
+        None,
+        description=(
+            "STT block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
     )
-    tts_model: TTSModel = Field(
-        TTSModel.SARVAM, description="TTS model (default: Sarvam Bulbul V3)"
+    rag: RAGBlockSpec | None = Field(
+        None,
+        description=(
+            "RAG block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
     )
-    llm_model: LLMModel = Field(
-        LLMModel.GPT4O, description="LLM model for RAG (default: GPT-4o)"
+    tts: TTSBlockSpec | None = Field(
+        None,
+        description=(
+            "TTS block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
     )
+
+    # Provider hints. Optional — KaapiCompletionConfig auto-defaults to
+    # "google" for stt/tts when omitted.
+    stt_provider: Literal["google", "sarvamai", "elevenlabs"] | None = None
+    tts_provider: Literal["google", "sarvamai", "elevenlabs"] | None = None
+    rag_provider: Literal["openai"] | None = None
 
     # Callback and metadata
     callback_url: HttpUrl | None = Field(
