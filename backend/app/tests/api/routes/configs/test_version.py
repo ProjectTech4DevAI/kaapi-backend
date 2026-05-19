@@ -715,5 +715,3 @@ def test_create_config_with_kaapi_provider_success(
     assert data["data"]["name"] == config_data["name"]
     assert data["data"]["version"]["config_blob"]["completion"]["provider"] == "openai"
     assert data["data"]["version"]["config_blob"]["completion"]["type"] == "text"
-
-
