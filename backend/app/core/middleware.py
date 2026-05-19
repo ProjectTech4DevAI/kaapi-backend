@@ -12,6 +12,13 @@ from app.core.logger import log_service_name
 
 logger = logging.getLogger("http_request_logger")
 
+SILENT_LOG_PATHS: frozenset[str] = frozenset(
+    {
+        "/health",
+        f"{settings.API_V1_STR}/utils/health",
+    }
+)
+
 
 class StripTrailingSlashMiddleware:
     """
@@ -94,7 +101,8 @@ async def _log_http_request(request: Request, call_next) -> Response:
         span.set_attribute("http.response.status_code", status)
         span.set_attribute("http.request.duration_ms", round(duration_ms, 2))
 
-    logger.info(f"{method} {raw_path} - {status} [{duration_ms:.2f}ms]")
+    if raw_path not in SILENT_LOG_PATHS:
+        logger.info(f"{method} {raw_path} - {status} [{duration_ms:.2f}ms]")
 
     try:
         if sentry_sdk.get_client().is_active():
