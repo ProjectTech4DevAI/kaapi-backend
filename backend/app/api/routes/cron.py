@@ -8,10 +8,7 @@ from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
-from app.services.job_monitoring import (
-    PENDING_JOB_MONITOR_INTERVAL_MINUTES,
-    monitor_pending_jobs,
-)
+from app.services.job_monitoring import monitor_pending_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +36,12 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
 PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {
         "type": "interval",
-        "value": PENDING_JOB_MONITOR_INTERVAL_MINUTES,
+        "value": settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
         "unit": "minute",
     },
     "timezone": "Asia/Kolkata",
     "checkin_margin": 2,
-    "max_runtime": 2 * PENDING_JOB_MONITOR_INTERVAL_MINUTES,
+    "max_runtime": 2 * settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
     "recovery_threshold": 1,
 }

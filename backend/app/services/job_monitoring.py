@@ -6,6 +6,7 @@ import sentry_sdk
 from sqlalchemy import text
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.core.telemetry import record_stale_pending_jobs
 from app.core.util import now
 from app.crud.job.pending_monitor import (
@@ -20,14 +21,6 @@ from app.models.doc_transformation_job import TransformationStatus
 from app.models.job import JobStatus
 
 logger = logging.getLogger(__name__)
-
-PENDING_JOB_MONITOR_INTERVAL_MINUTES = 5
-
-PENDING_RECENT_GRACE_MINUTES = 4
-LLM_PENDING_THRESHOLD_MINUTES = 30
-COLLECTION_PENDING_THRESHOLD_MINUTES = 30
-DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES = 30
-PENDING_JOB_QUERY_TIMEOUT_MS = 1000
 
 PENDING_JOBS_EVENT_MESSAGE = "Some jobs have been pending for longer than expected"
 
@@ -138,7 +131,7 @@ def _capture_stale_pending_jobs_event(summary: dict[str, Any]) -> None:
     oldest_str = f"{oldest}s" if oldest is not None else "n/a"
     detail = (
         f"{title} — {stale_count} {domain} row(s) {status} inside stale window "
-        f"[{PENDING_RECENT_GRACE_MINUTES}min, {threshold}min] "
+        f"[{settings.PENDING_RECENT_GRACE_MINUTES}min, {threshold}min] "
         f"(oldest={oldest_str}). breakdown: {breakdown}"
     )
 
@@ -205,18 +198,19 @@ def monitor_pending_jobs(session: Session) -> dict[str, Any]:
     DB-layer queries delegated to ``app.crud.job.pending_monitor``.
     """
     as_of = now()
-    _apply_statement_timeout(session, PENDING_JOB_QUERY_TIMEOUT_MS)
+    _apply_statement_timeout(session, settings.PENDING_JOB_QUERY_TIMEOUT_MS)
 
-    upper_cutoff = as_of - timedelta(minutes=PENDING_RECENT_GRACE_MINUTES)
+    upper_cutoff = as_of - timedelta(minutes=settings.PENDING_RECENT_GRACE_MINUTES)
 
     summaries = [
         _build_summary(
             table="job",
             status=JobStatus.PENDING.value,
-            threshold_minutes=LLM_PENDING_THRESHOLD_MINUTES,
+            threshold_minutes=settings.LLM_PENDING_THRESHOLD_MINUTES,
             result=count_stale_llm_pending_jobs(
                 session,
-                lower_cutoff=as_of - timedelta(minutes=LLM_PENDING_THRESHOLD_MINUTES),
+                lower_cutoff=as_of
+                - timedelta(minutes=settings.LLM_PENDING_THRESHOLD_MINUTES),
                 upper_cutoff=upper_cutoff,
             ),
             as_of=as_of,
@@ -224,11 +218,11 @@ def monitor_pending_jobs(session: Session) -> dict[str, Any]:
         _build_summary(
             table="collection_jobs",
             status=CollectionJobStatus.PENDING.value,
-            threshold_minutes=COLLECTION_PENDING_THRESHOLD_MINUTES,
+            threshold_minutes=settings.COLLECTION_PENDING_THRESHOLD_MINUTES,
             result=count_stale_pending_collection_jobs(
                 session,
                 lower_cutoff=as_of
-                - timedelta(minutes=COLLECTION_PENDING_THRESHOLD_MINUTES),
+                - timedelta(minutes=settings.COLLECTION_PENDING_THRESHOLD_MINUTES),
                 upper_cutoff=upper_cutoff,
             ),
             as_of=as_of,
@@ -236,11 +230,13 @@ def monitor_pending_jobs(session: Session) -> dict[str, Any]:
         _build_summary(
             table="doc_transformation_job",
             status=TransformationStatus.PENDING.value,
-            threshold_minutes=DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES,
+            threshold_minutes=settings.DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES,
             result=count_stale_pending_doc_transformation_jobs(
                 session,
                 lower_cutoff=as_of
-                - timedelta(minutes=DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES),
+                - timedelta(
+                    minutes=settings.DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES
+                ),
                 upper_cutoff=upper_cutoff,
             ),
             as_of=as_of,
@@ -266,10 +262,5 @@ def monitor_pending_jobs(session: Session) -> dict[str, Any]:
 
 
 __all__ = [
-    "COLLECTION_PENDING_THRESHOLD_MINUTES",
-    "DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES",
-    "LLM_PENDING_THRESHOLD_MINUTES",
-    "PENDING_JOB_MONITOR_INTERVAL_MINUTES",
-    "PENDING_RECENT_GRACE_MINUTES",
     "monitor_pending_jobs",
 ]
