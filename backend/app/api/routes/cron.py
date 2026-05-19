@@ -8,6 +8,7 @@ from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
+from app.services.job_monitoring import monitor_pending_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,19 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     # Consecutive failures/missed/timeouts required to open a Sentry issue.
     "failure_issue_threshold": 2,
     # Consecutive successful check-ins required to auto-resolve the issue.
+    "recovery_threshold": 1,
+}
+
+PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
+    "schedule": {
+        "type": "interval",
+        "value": settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
+        "unit": "minute",
+    },
+    "timezone": "Asia/Kolkata",
+    "checkin_margin": 2,
+    "max_runtime": 2 * settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
+    "failure_issue_threshold": 2,
     "recovery_threshold": 1,
 }
 
@@ -103,6 +117,42 @@ async def evaluation_cron_job(
     except Exception as e:
         logger.error(
             f"[evaluation_cron_job] Error executing cron job: {e}",
+            exc_info=True,
+        )
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+@router.get(
+    "/cron/pending-jobs",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="pending-jobs-monitor",
+    monitor_config=PENDING_JOBS_CRON_MONITOR_CONFIG,
+)
+async def pending_jobs_cron_job(
+    session: SessionDep,
+) -> dict:
+    """
+    Cron endpoint for monitoring stale PENDING background jobs.
+
+    Hidden from Swagger documentation.
+    Requires authentication via FIRST_SUPERUSER credentials.
+    """
+    logger.info("[pending_jobs_cron_job] Cron job invoked")
+
+    try:
+        result = monitor_pending_jobs(session=session)
+        logger.info(
+            "[pending_jobs_cron_job] Completed: stale_pending=%s",
+            result.get("total_stale_pending", 0),
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[pending_jobs_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
         sentry_sdk.capture_exception(e)

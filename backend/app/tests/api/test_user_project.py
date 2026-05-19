@@ -135,6 +135,103 @@ class TestAddProjectUsers:
         assert resp.status_code == 201
         mock_send_email.assert_called_once()
 
+    @patch("app.api.routes.user_project.send_email")
+    @patch("app.api.routes.user_project.settings")
+    def test_invite_creates_sent_notification_row(
+        self,
+        mock_settings,
+        mock_send_email,
+        db: Session,
+        client: TestClient,
+        superuser_token_headers: dict[str, str],
+    ):
+        """Each invite send records a 'sent' row in the notification table."""
+        from app.crud import get_user_by_email
+        from app.models import Notification, NotificationStatus, NotificationType
+
+        project = create_test_project(db)
+        email = random_email()
+
+        mock_settings.emails_enabled = True
+        mock_settings.INVITE_TOKEN_EXPIRE_HOURS = 168
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
+        resp = client.post(
+            USER_PROJECTS_URL,
+            json={
+                "organization_id": project.organization_id,
+                "project_id": project.id,
+                "users": [{"email": email}],
+            },
+            headers=superuser_token_headers,
+        )
+        assert resp.status_code == 201
+        invited = get_user_by_email(session=db, email=email)
+        assert invited is not None
+
+        rows = db.exec(
+            select(Notification).where(
+                Notification.recipient_user_id == invited.id,
+                Notification.notification_type == NotificationType.INVITE_USER.value,
+            )
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == NotificationStatus.SENT.value
+        assert rows[0].project_id == project.id
+        assert rows[0].payload["email"] == email
+        assert rows[0].payload["project_name"] == project.name
+
+    @patch(
+        "app.api.routes.user_project.send_email",
+        side_effect=RuntimeError("smtp dead"),
+    )
+    @patch("app.api.routes.user_project.settings")
+    def test_invite_records_failed_notification_on_smtp_error(
+        self,
+        mock_settings,
+        mock_send_email,
+        db: Session,
+        client: TestClient,
+        superuser_token_headers: dict[str, str],
+    ):
+        """SMTP failures during invite write a 'failed' row but the response still succeeds."""
+        from app.crud import get_user_by_email
+        from app.models import Notification, NotificationStatus, NotificationType
+
+        project = create_test_project(db)
+        email = random_email()
+
+        mock_settings.emails_enabled = True
+        mock_settings.INVITE_TOKEN_EXPIRE_HOURS = 168
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
+        resp = client.post(
+            USER_PROJECTS_URL,
+            json={
+                "organization_id": project.organization_id,
+                "project_id": project.id,
+                "users": [{"email": email}],
+            },
+            headers=superuser_token_headers,
+        )
+        # Invite endpoint swallows send failures (just logs) and still returns 201
+        assert resp.status_code == 201
+
+        invited = get_user_by_email(session=db, email=email)
+        rows = db.exec(
+            select(Notification).where(
+                Notification.recipient_user_id == invited.id,
+                Notification.notification_type == NotificationType.INVITE_USER.value,
+            )
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == NotificationStatus.FAILED.value
+        assert "smtp dead" in rows[0].failed_reason
+
     def test_add_duplicate_user_same_project(
         self,
         db: Session,

@@ -12,6 +12,11 @@ from app.crud.job.job import (
     get_batches_by_type,
     update_batch_job,
 )
+from app.crud.job.pending_monitor import (
+    count_stale_pending_collection_jobs,
+    count_stale_pending_doc_transformation_jobs,
+    count_stale_llm_pending_jobs,
+)
 
 __all__ = [
     # CRUD operations
@@ -21,4 +26,8 @@ __all__ = [
     "get_batch_jobs_by_ids",
     "get_batches_by_type",
     "delete_batch_job",
+    # Pending-job monitor reads
+    "count_stale_llm_pending_jobs",
+    "count_stale_pending_collection_jobs",
+    "count_stale_pending_doc_transformation_jobs",
 ]

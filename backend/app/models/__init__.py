@@ -141,6 +141,13 @@ from .model_evaluation import (
     ModelEvaluationStatus,
     ModelEvaluationUpdate,
 )
+from .notification import (
+    Notification,
+    NotificationEntityType,
+    NotificationProvider,
+    NotificationStatus,
+    NotificationType,
+)
 from .onboarding import OnboardingRequest, OnboardingResponse
 from .openai_conversation import (
     OpenAIConversation,

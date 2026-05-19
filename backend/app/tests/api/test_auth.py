@@ -362,6 +362,70 @@ class TestMagicLink:
         assert "login link has been sent" in resp.json()["data"]["message"]
         mock_send.assert_called_once()
 
+    @patch("app.api.routes.auth.send_email")
+    @patch("app.api.routes.auth.settings")
+    def test_magic_link_records_sent_notification(
+        self, mock_settings, mock_send, db: Session, client: TestClient
+    ):
+        """Magic-link send writes a 'sent' row to the notification table."""
+        from sqlmodel import select
+
+        from app.models import Notification, NotificationStatus, NotificationType
+
+        user = create_random_user(db)
+        mock_settings.emails_enabled = True
+        mock_settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES = 15
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
+        resp = client.post(MAGIC_LINK_URL, json={"email": user.email})
+        assert resp.status_code == 200
+
+        rows = db.exec(
+            select(Notification).where(
+                Notification.recipient_user_id == user.id,
+                Notification.notification_type
+                == NotificationType.MAGIC_LINK_LOGIN.value,
+            )
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == NotificationStatus.SENT.value
+        assert rows[0].sent_at is not None
+        assert rows[0].payload["email"] == user.email
+        assert rows[0].payload["valid_minutes"] == 15
+
+    @patch("app.api.routes.auth.send_email", side_effect=RuntimeError("smtp dead"))
+    @patch("app.api.routes.auth.settings")
+    def test_magic_link_records_failed_notification_on_smtp_error(
+        self, mock_settings, mock_send, db: Session, client: TestClient
+    ):
+        """SMTP errors during magic-link send flip the row to 'failed' with a reason."""
+        from sqlmodel import select
+
+        from app.models import Notification, NotificationStatus, NotificationType
+
+        user = create_random_user(db)
+        mock_settings.emails_enabled = True
+        mock_settings.MAGIC_LINK_TOKEN_EXPIRE_MINUTES = 15
+        mock_settings.SECRET_KEY = settings.SECRET_KEY
+        mock_settings.FRONTEND_HOST = "http://localhost:3000"
+        mock_settings.PROJECT_NAME = "Kaapi"
+
+        resp = client.post(MAGIC_LINK_URL, json={"email": user.email})
+        assert resp.status_code == 500
+
+        rows = db.exec(
+            select(Notification).where(
+                Notification.recipient_user_id == user.id,
+                Notification.notification_type
+                == NotificationType.MAGIC_LINK_LOGIN.value,
+            )
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == NotificationStatus.FAILED.value
+        assert "smtp dead" in rows[0].failed_reason
+
 
 class TestMagicLinkVerify:
     """Test suite for GET /auth/magic-link/verify endpoint."""

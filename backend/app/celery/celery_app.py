@@ -163,6 +163,7 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
     include=[
         "app.celery.tasks.job_execution",
+        "app.celery.tasks.notifications",
     ],
 )
 
