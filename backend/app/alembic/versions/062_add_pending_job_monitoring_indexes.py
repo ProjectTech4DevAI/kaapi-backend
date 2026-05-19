@@ -20,19 +20,9 @@ disable_per_migration_transaction = True
 INDEXES = [
     ("ix_job_status_inserted_at", "job", ["status", "inserted_at"]),
     (
-        "ix_job_status_job_type_inserted_at",
-        "job",
-        ["status", "job_type", "inserted_at"],
-    ),
-    (
         "ix_collection_jobs_status_inserted_at",
         "collection_jobs",
         ["status", "inserted_at"],
-    ),
-    (
-        "ix_collection_jobs_status_action_type_inserted_at",
-        "collection_jobs",
-        ["status", "action_type", "inserted_at"],
     ),
     (
         "ix_doc_transformation_job_status_inserted_at",
