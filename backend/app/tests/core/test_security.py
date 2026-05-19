@@ -11,6 +11,7 @@ from app.core.security import (
     get_encryption_key,
     APIKeyManager,
 )
+from app.core.util import now
 from app.models import APIKey, User, Organization, Project, AuthContext
 from app.tests.utils.test_data import create_test_api_key
 
@@ -157,7 +158,7 @@ class TestAPIKeyManager:
         raw_key = api_key_response.key
 
         api_key = db.get(APIKey, api_key_response.id)
-        api_key.is_deleted = True
+        api_key.deleted_at = now()
         db.commit()
 
         auth_context = APIKeyManager.verify(db, raw_key)

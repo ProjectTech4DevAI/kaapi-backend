@@ -295,7 +295,7 @@ class SarvamAIProvider(BaseProvider):
 
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
-            logger.error(
+            logger.warning(
                 f"[SarvamAIProvider.execute] {error_message} | provider={provider_name}",
                 exc_info=True,
             )

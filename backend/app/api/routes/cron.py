@@ -1,14 +1,13 @@
 import logging
 
 import sentry_sdk
+from fastapi import APIRouter, Depends
 from sentry_sdk.types import MonitorConfig
 
-from app.api.permissions import Permission, require_permission
-from fastapi import APIRouter, Depends
-
 from app.api.deps import SessionDep
+from app.api.permissions import Permission, require_permission
 from app.core.config import settings
-from app.crud.evaluations import process_all_pending_evaluations_sync
+from app.crud.evaluations import process_all_pending_evaluations
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     monitor_slug="evaluation-cron-job",
     monitor_config=EVALUATION_CRON_MONITOR_CONFIG,
 )
-def evaluation_cron_job(
+async def evaluation_cron_job(
     session: SessionDep,
 ) -> dict:
     """
@@ -53,7 +52,8 @@ def evaluation_cron_job(
     1. Fetches all evaluation runs with status='processing'
     2. Groups them by project_id
     3. Processes each project with its OpenAI/Langfuse clients
-    4. Returns aggregated results
+    4. Also polls pending assessment evaluations
+    5. Returns aggregated results
 
     Hidden from Swagger documentation.
     Requires authentication via FIRST_SUPERUSER credentials.
@@ -61,7 +61,35 @@ def evaluation_cron_job(
     logger.info("[evaluation_cron_job] Cron job invoked")
 
     try:
-        result = process_all_pending_evaluations_sync(session=session)
+        # Process all pending evaluations across all organizations
+        result = await process_all_pending_evaluations(session=session)
+
+        try:
+            from app.crud.assessment.cron import (
+                poll_all_pending_assessment_evaluations,
+            )
+
+            assessment_result = await poll_all_pending_assessment_evaluations(
+                session=session
+            )
+
+            # Merge assessment results into the main result
+            result["assessment"] = assessment_result
+            result["total_processed"] = result.get(
+                "total_processed", 0
+            ) + assessment_result.get("processed", 0)
+            result["total_failed"] = result.get(
+                "total_failed", 0
+            ) + assessment_result.get("failed", 0)
+            result["total_still_processing"] = result.get(
+                "total_still_processing", 0
+            ) + assessment_result.get("still_processing", 0)
+        except Exception as ae:
+            logger.error(
+                f"[evaluation_cron_job] Assessment polling failed: {ae}",
+                exc_info=True,
+            )
+            result["assessment_error"] = "Assessment polling failed"
 
         logger.info(
             f"[evaluation_cron_job] Completed: "

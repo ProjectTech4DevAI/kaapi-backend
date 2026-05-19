@@ -54,7 +54,7 @@ def run_guardrails_validation(
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=45.0) as client:
             response = client.post(
                 f"{settings.KAAPI_GUARDRAILS_URL}/",
                 json=payload,

@@ -25,7 +25,6 @@ def test_create_api_key(db: Session) -> None:
     assert api_key.organization_id == project.organization_id
     assert api_key.key_prefix is not None
     assert api_key.key_hash is not None
-    assert api_key.is_deleted is False
     assert api_key.deleted_at is None
     assert raw_key is not None
     assert len(raw_key) > 0
@@ -216,7 +215,6 @@ def test_delete_api_key(db: Session) -> None:
 
     db_key = db.get(APIKey, api_key.id)
     assert db_key is not None
-    assert db_key.is_deleted is True
     assert db_key.deleted_at is not None
 
     retrieved_key = api_key_crud.read_one(key_id=api_key.id)
@@ -251,7 +249,7 @@ def test_delete_api_key_from_wrong_project(db: Session) -> None:
 
     db_key = db.get(APIKey, api_key.id)
     assert db_key is not None
-    assert db_key.is_deleted is False
+    assert db_key.deleted_at is None
 
 
 def test_delete_already_deleted_api_key(db: Session) -> None:

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 # Retrieve projects
 @router.get(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[List[ProjectPublic]],
     description=load_description("projects/list.md"),
@@ -44,7 +44,7 @@ def read_projects(
 
 # Create a new project
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/create.md"),
@@ -66,7 +66,6 @@ def read_project(*, session: SessionDep, project_id: int):
     """
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
-        logger.error(f"[read_project] Project not found | project_id={project_id}")
         raise HTTPException(status_code=404, detail="Project not found")
     return APIResponse.success_response(project)
 
@@ -81,7 +80,6 @@ def read_project(*, session: SessionDep, project_id: int):
 def update_project(*, session: SessionDep, project_id: int, project_in: ProjectUpdate):
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
-        logger.error(f"[update_project] Project not found | project_id={project_id}")
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project_in.model_dump(exclude_unset=True)
@@ -106,7 +104,6 @@ def update_project(*, session: SessionDep, project_id: int, project_in: ProjectU
 def delete_project(session: SessionDep, project_id: int):
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
-        logger.error(f"[delete_project] Project not found | project_id={project_id}")
         raise HTTPException(status_code=404, detail="Project not found")
 
     session.delete(project)

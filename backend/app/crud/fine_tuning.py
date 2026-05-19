@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.core.util import now
 from app.models import (
-    Fine_Tuning,
+    FineTuning,
     FineTuningJobCreate,
     FineTuningUpdate,
     FineTuningStatus,
@@ -24,7 +24,7 @@ def create_fine_tuning_job(
     status: FineTuningStatus = FineTuningStatus.pending,
     project_id: int = None,
     organization_id: int = None,
-) -> tuple[Fine_Tuning, bool]:
+) -> tuple[FineTuning, bool]:
     active_jobs = fetch_active_jobs_by_document_id(
         session=session,
         document_id=request.document_id,
@@ -53,7 +53,7 @@ def create_fine_tuning_job(
         "status": status,
     }
 
-    fine_tune = Fine_Tuning(**base_data)
+    fine_tune = FineTuning(**base_data)
     fine_tune.updated_at = now()
 
     session.add(fine_tune)
@@ -68,11 +68,11 @@ def create_fine_tuning_job(
 
 def fetch_by_provider_job_id(
     session: Session, provider_job_id: str, project_id: int
-) -> Fine_Tuning:
+) -> FineTuning:
     job = session.exec(
-        select(Fine_Tuning).where(
-            Fine_Tuning.provider_job_id == provider_job_id,
-            Fine_Tuning.project_id == project_id,
+        select(FineTuning).where(
+            FineTuning.provider_job_id == provider_job_id,
+            FineTuning.project_id == project_id,
         )
     ).one_or_none()
 
@@ -85,15 +85,15 @@ def fetch_by_provider_job_id(
     return job
 
 
-def fetch_by_id(session: Session, job_id: int, project_id: int) -> Fine_Tuning:
+def fetch_by_id(session: Session, job_id: int, project_id: int) -> FineTuning:
     job = session.exec(
-        select(Fine_Tuning).where(
-            Fine_Tuning.id == job_id, Fine_Tuning.project_id == project_id
+        select(FineTuning).where(
+            FineTuning.id == job_id, FineTuning.project_id == project_id
         )
     ).one_or_none()
 
     if job is None:
-        logger.error(
+        logger.warning(
             f"[fetch_by_id]Fine-tune job not found: job_id={job_id}, project_id={project_id}"
         )
         raise HTTPException(status_code=404, detail="Job not found")
@@ -110,15 +110,15 @@ def fetch_by_document_id(
     project_id: int,
     split_ratio: float = None,
     base_model: Optional[str] = None,
-) -> list[Fine_Tuning]:
-    query = select(Fine_Tuning).where(
-        Fine_Tuning.document_id == document_id, Fine_Tuning.project_id == project_id
+) -> list[FineTuning]:
+    query = select(FineTuning).where(
+        FineTuning.document_id == document_id, FineTuning.project_id == project_id
     )
 
     if split_ratio is not None:
-        query = query.where(Fine_Tuning.split_ratio == split_ratio)
+        query = query.where(FineTuning.split_ratio == split_ratio)
     if base_model is not None:
-        query = query.where(Fine_Tuning.base_model == base_model)
+        query = query.where(FineTuning.base_model == base_model)
 
     jobs = session.exec(query).all()
     logger.info(
@@ -134,39 +134,39 @@ def fetch_active_jobs_by_document_id(
     split_ratio: Optional[float] = None,
     base_model: Optional[str] = None,
     exclude_job_id: Optional[int] = None,
-) -> list["Fine_Tuning"]:
+) -> list["FineTuning"]:
     """
     Return all ACTIVE jobs for the given document & project.
-    Active = status != failed AND is_deleted is false.
+    Active = status != failed AND not soft-deleted.
     """
     stmt = (
-        select(Fine_Tuning)
+        select(FineTuning)
         .where(
-            Fine_Tuning.document_id == document_id,
-            Fine_Tuning.project_id == project_id,
-            Fine_Tuning.is_deleted.is_(False),
-            Fine_Tuning.status != FineTuningStatus.failed,
+            FineTuning.document_id == document_id,
+            FineTuning.project_id == project_id,
+            FineTuning.deleted_at.is_(None),
+            FineTuning.status != FineTuningStatus.failed,
         )
-        .order_by(Fine_Tuning.inserted_at.desc())
+        .order_by(FineTuning.inserted_at.desc())
     )
 
     if split_ratio is not None:
-        stmt = stmt.where(Fine_Tuning.split_ratio == split_ratio)
+        stmt = stmt.where(FineTuning.split_ratio == split_ratio)
 
     if base_model is not None:
-        stmt = stmt.where(Fine_Tuning.base_model == base_model)
+        stmt = stmt.where(FineTuning.base_model == base_model)
 
     if exclude_job_id is not None:
-        stmt = stmt.where(Fine_Tuning.id != exclude_job_id)
+        stmt = stmt.where(FineTuning.id != exclude_job_id)
 
     return session.exec(stmt).all()
 
 
 def update_finetune_job(
     session: Session,
-    job: Fine_Tuning,
+    job: FineTuning,
     update: FineTuningUpdate,
-) -> Fine_Tuning:
+) -> FineTuning:
     for key, value in update.model_dump(exclude_unset=True).items():
         setattr(job, key, value)
 

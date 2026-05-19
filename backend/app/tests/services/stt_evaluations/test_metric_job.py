@@ -4,6 +4,10 @@ from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
+
 from app.services.stt_evaluations.metric_job import execute_metric_computation
 
 
@@ -239,3 +243,37 @@ class TestExecuteMetricComputation:
 
         mock_update_run.assert_not_called()
         session.execute.assert_not_called()
+
+    def test_gevent_timeout_marks_run_failed_and_reraises(
+        self, mock_session_cls, _mock_now, _mock_calc, mock_update_run
+    ) -> None:
+        """Test that a gevent Timeout marks the run as failed and re-raises."""
+        session = mock_session_cls.return_value.__enter__.return_value
+        session.exec.side_effect = Timeout()
+
+        with pytest.raises(Timeout):
+            execute_metric_computation(**BASE_KWARGS)
+
+        mock_update_run.assert_called_once_with(
+            session=session,
+            run_id=BASE_KWARGS["run_id"],
+            status="failed",
+            error_message="Task exceeded soft time limit",
+        )
+
+    def test_soft_time_limit_exceeded_marks_run_failed_and_reraises(
+        self, mock_session_cls, _mock_now, _mock_calc, mock_update_run
+    ) -> None:
+        """Test that SoftTimeLimitExceeded marks the run as failed and re-raises."""
+        session = mock_session_cls.return_value.__enter__.return_value
+        session.exec.side_effect = SoftTimeLimitExceeded()
+
+        with pytest.raises(SoftTimeLimitExceeded):
+            execute_metric_computation(**BASE_KWARGS)
+
+        mock_update_run.assert_called_once_with(
+            session=session,
+            run_id=BASE_KWARGS["run_id"],
+            status="failed",
+            error_message="Task exceeded soft time limit",
+        )

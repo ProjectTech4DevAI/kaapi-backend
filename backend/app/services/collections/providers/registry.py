@@ -63,7 +63,7 @@ def get_llm_provider(
             raise ValueError("OpenAI credentials not configured for this project.")
         client = OpenAI(api_key=credentials["api_key"])
     else:
-        logger.error(
+        logger.warning(
             f"[get_llm_provider] Unsupported provider type requested: {provider}"
         )
         raise ValueError(f"Provider '{provider}' is not supported.")

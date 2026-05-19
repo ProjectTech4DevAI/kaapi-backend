@@ -52,6 +52,8 @@ dependencies = [
     "elevenlabs>=2.38.1",
     "google-auth>=2.49.1",
     "gevent>=25.9.1",
+    "openpyxl>=3.1.5",
+    "litellm>=1.83.10",
 ]
 
 [tool.uv]
@@ -60,8 +62,6 @@ override-dependencies = [
     "cryptography>=46.0.5",
     "werkzeu>=3.1.6",
     "pypdf>=3.9.0",
-    # Pinned: avoid supply chain attack in litellm 1.82.7/1.82.8 (Mar 2026)
-    "litellm==1.82.1",
 ]
 dev-dependencies = [
     "pytest>=9.0.3",

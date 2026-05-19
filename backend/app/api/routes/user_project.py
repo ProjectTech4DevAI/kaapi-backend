@@ -6,6 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
+from app.crud import get_user_by_email
+from app.crud.notification import (
+    create_pending_notification,
+    mark_notification_failed,
+    mark_notification_sent,
+)
 from app.crud.organization import get_organization_by_id, validate_organization
 from app.crud.project import get_project_by_id, validate_project
 from app.crud.user_project import (
@@ -16,6 +22,9 @@ from app.crud.user_project import (
 from app.models import (
     AddUsersToProjectRequest,
     Message,
+    NotificationEntityType,
+    NotificationProvider,
+    NotificationType,
     UserProjectPublic,
 )
 from app.services.auth import generate_invite_token
@@ -23,6 +32,7 @@ from app.utils import (
     APIResponse,
     generate_invite_email,
     load_description,
+    mask_string,
     send_email,
 )
 
@@ -32,7 +42,7 @@ router = APIRouter(prefix="/user-projects", tags=["User Projects"])
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("user_project/list.md"),
     response_model=APIResponse[list[UserProjectPublic]],
 )
@@ -47,7 +57,7 @@ def list_project_users(
 
 
 @router.post(
-    "/",
+    "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     description=load_description("user_project/add.md"),
     response_model=APIResponse[list[UserProjectPublic]],
@@ -62,8 +72,8 @@ def add_project_users(
     validate_organization(session=session, org_id=body.organization_id)
     validate_project(session=session, project_id=body.project_id)
 
-    same_project_emails = []
-    different_project_emails = []
+    same_project_emails: list[str] = []
+    different_project_emails: list[str] = []
 
     for entry in body.users:
         _, add_status = add_user_to_project(
@@ -102,29 +112,65 @@ def add_project_users(
 
     if settings.emails_enabled and organization and project:
         for entry in body.users:
+            email_str = str(entry.email)
+            invited_user = get_user_by_email(session=session, email=email_str)
+            if not invited_user:
+                logger.error(
+                    f"[add_project_users] Inviting user row missing after add | email: {mask_string(email_str)}"
+                )
+                continue
+
+            invite_token = generate_invite_token(
+                email=email_str,
+                organization_id=body.organization_id,
+                project_id=body.project_id,
+            )
+            email_data = generate_invite_email(
+                email_to=email_str,
+                project_name=project.name,
+                organization_name=organization.name,
+                invite_token=invite_token,
+            )
+            notification = create_pending_notification(
+                session=session,
+                notification_type=NotificationType.INVITE_USER.value,
+                provider=NotificationProvider.EMAIL.value,
+                recipient_user_id=invited_user.id,
+                entity_type=NotificationEntityType.USER.value,
+                entity_id=invited_user.id,
+                project_id=body.project_id,
+                subject=email_data.subject,
+                body_template="invite_user_v1",
+                payload={
+                    "email": email_str,
+                    "project_name": project.name,
+                    "organization_name": organization.name,
+                    "valid_days": settings.INVITE_TOKEN_EXPIRE_HOURS // 24,
+                },
+            )
+            session.commit()
+            session.refresh(notification)
+
             try:
-                invite_token = generate_invite_token(
-                    email=str(entry.email),
-                    organization_id=body.organization_id,
-                    project_id=body.project_id,
-                )
-                email_data = generate_invite_email(
-                    email_to=str(entry.email),
-                    project_name=project.name,
-                    organization_name=organization.name,
-                    invite_token=invite_token,
-                )
                 send_email(
-                    email_to=str(entry.email),
+                    email_to=email_str,
                     subject=email_data.subject,
                     html_content=email_data.html_content,
                 )
+                mark_notification_sent(session=session, notification=notification)
+                session.commit()
                 logger.info(
-                    f"[add_project_users] Invitation email sent | email: {entry.email}"
+                    f"[add_project_users] Invitation email sent | "
+                    f"email: {mask_string(email_str)}, notification_id: {notification.id}"
                 )
             except Exception as e:
+                mark_notification_failed(
+                    session=session, notification=notification, reason=str(e)
+                )
+                session.commit()
                 logger.error(
-                    f"[add_project_users] Failed to send invitation email | email: {entry.email}, error: {e}"
+                    f"[add_project_users] Failed to send invitation email | "
+                    f"email: {mask_string(email_str)}, notification_id: {notification.id}, error: {e}"
                 )
 
     # Re-fetch all users for this project to return the full list

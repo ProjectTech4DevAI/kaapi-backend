@@ -149,7 +149,7 @@ class LLMChain:
                 on_block_completed(block._index, result)
 
             if not result.success:
-                logger.error(
+                logger.warning(
                     f"[LLMChain.execute] Block {block._index} failed: {result.error} | "
                     f"job_id={self._context.job_id}"
                 )

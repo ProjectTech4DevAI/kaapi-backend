@@ -91,12 +91,6 @@ class OpenAIConversation(OpenAIConversationBase, table=True):
         primary_key=True,
         sa_column_kwargs={"comment": "Unique identifier for the conversation record"},
     )
-    is_deleted: bool = Field(
-        default=False,
-        nullable=False,
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
-
     # Timestamps
     inserted_at: datetime = Field(
         default_factory=now,

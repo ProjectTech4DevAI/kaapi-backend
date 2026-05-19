@@ -1,5 +1,7 @@
 from sqlmodel import SQLModel
 
+from app.models.assessment import Assessment, AssessmentRun  # noqa: F401
+
 from .api_key import (
     APIKey,
     APIKeyBase,
@@ -89,9 +91,16 @@ from .evaluation import (
     EvaluationRunPublic,
     EvaluationRunUpdate,
 )
+from .feature_flag import (
+    FeatureFlag,
+    FeatureFlagCreate,
+    FeatureFlagDelete,
+    FeatureFlagPublic,
+    FeatureFlagUpdate,
+)
 from .file import AudioUploadResponse, File, FilePublic, FileType
 from .fine_tuning import (
-    Fine_Tuning,
+    FineTuning,
     FineTuningJobBase,
     FineTuningJobCreate,
     FineTuningJobPublic,
@@ -132,6 +141,13 @@ from .model_evaluation import (
     ModelEvaluationStatus,
     ModelEvaluationUpdate,
 )
+from .notification import (
+    Notification,
+    NotificationEntityType,
+    NotificationProvider,
+    NotificationStatus,
+    NotificationType,
+)
 from .onboarding import OnboardingRequest, OnboardingResponse
 from .openai_conversation import (
     OpenAIConversation,
@@ -161,7 +177,7 @@ from .response import (
     ResponsesAPIRequest,
     ResponsesSyncAPIRequest,
 )
-from .threads import OpenAI_Thread, OpenAIThreadBase, OpenAIThreadCreate
+from .threads import OpenAIThread, OpenAIThreadBase, OpenAIThreadCreate
 from .user import (
     NewPassword,
     UpdatePassword,
