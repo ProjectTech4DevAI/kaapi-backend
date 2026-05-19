@@ -1,7 +1,7 @@
 """seed stt/tts model_config rows for google, sarvamai, elevenlabs
 
-Revision ID: 061
-Revises: 060
+Revision ID: 063
+Revises: 062
 Create Date: 2026-05-19 00:00:00.000000
 
 """
@@ -9,8 +9,8 @@ Create Date: 2026-05-19 00:00:00.000000
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "061"
-down_revision = "060"
+revision = "063"
+down_revision = "062"
 branch_labels = None
 depends_on = None
 
