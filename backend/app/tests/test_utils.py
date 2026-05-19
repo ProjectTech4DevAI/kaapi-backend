@@ -16,6 +16,7 @@ from app.utils import (
     APIResponse,
     ValidationErrorDetail,
     download_audio_bytes,
+    generate_eval_completion_email,
     handle_openai_error,
     mask_string,
     require_organization_for_project,
@@ -410,3 +411,47 @@ class TestSendCallbackWithSigning:
         mock_validate.side_effect = ValueError("private IP")
         result = send_callback("https://internal/hook", {"x": 1})
         assert result is False
+
+
+class TestGenerateEvalCompletionEmail:
+    def test_completed_renders_expected_fields(self) -> None:
+        data = generate_eval_completion_email(
+            run_name="exp-1",
+            project_name="Demo",
+            status="completed",
+            completed_at="May 16, 2026 at 6:33 PM",
+            link="https://app.example.com/evaluations/",
+            error_message=None,
+        )
+        assert "Completed" in data.subject
+        assert "exp-1" in data.subject
+        assert "Completed" in data.html_content
+        assert "exp-1" in data.html_content
+        assert "Demo" in data.html_content
+        assert "May 16, 2026 at 6:33 PM" in data.html_content
+        assert "https://app.example.com/evaluations/" in data.html_content
+
+    def test_failed_status_changes_label_and_subject(self) -> None:
+        data = generate_eval_completion_email(
+            run_name="exp-1",
+            project_name="Demo",
+            status="failed",
+            completed_at="May 16, 2026 at 6:33 PM",
+            link="https://app.example.com/evaluations/",
+            error_message="Batch failed: timeout",
+        )
+        assert "Failed" in data.subject
+        assert "Failed" in data.html_content
+        assert "Batch failed: timeout" in data.html_content
+
+    def test_no_error_omits_error_block(self) -> None:
+        data = generate_eval_completion_email(
+            run_name="exp-1",
+            project_name="Demo",
+            status="completed",
+            completed_at="May 16, 2026 at 6:33 PM",
+            link="https://app.example.com/evaluations/",
+            error_message=None,
+        )
+        # The error block is only rendered when error_message is truthy
+        assert "Error:" not in data.html_content
