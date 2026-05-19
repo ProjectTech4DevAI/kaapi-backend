@@ -285,3 +285,21 @@ def test_evaluation_cron_job_not_in_schema(
     # Endpoint should not be in the schema due to include_in_schema=False
     assert f"{settings.API_V1_STR}/cron/evaluations" not in paths
     assert f"{settings.API_V1_STR}/cron/pending-jobs" not in paths
+
+
+def test_cron_intervals_match_to_prevent_sentry_monitor_drift() -> None:
+    """
+    The external cron script (scripts/python/invoke-cron.py) drives both
+    /cron/evaluations and /cron/pending-jobs from a single CRON_INTERVAL_MINUTES.
+    Both Sentry monitors must therefore expect the same cadence, otherwise the
+    pending-jobs monitor will report missed/timeout check-ins even when the
+    script is healthy.
+    """
+    assert (
+        settings.CRON_INTERVAL_MINUTES == settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES
+    ), (
+        "CRON_INTERVAL_MINUTES and PENDING_JOB_MONITOR_INTERVAL_MINUTES must "
+        "stay in sync; the cron script uses a single interval to invoke both "
+        "endpoints. Update invoke-cron.py to use independent intervals before "
+        "diverging these settings."
+    )

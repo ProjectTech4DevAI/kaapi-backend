@@ -127,7 +127,7 @@ def _capture_stale_pending_jobs_event(summary: dict[str, Any]) -> None:
     stale_count = summary["stale_count"]
     oldest = summary.get("oldest_age_seconds")
     threshold = summary["threshold_minutes"]
-    title = f"[TEST]: {domain} pending for longer than expected"
+    title = f"{domain} pending for longer than expected"
     oldest_str = f"{oldest}s" if oldest is not None else "n/a"
     detail = (
         f"{title} — {stale_count} {domain} row(s) {status} inside stale window "
@@ -184,7 +184,7 @@ def _capture_stale_pending_jobs_event(summary: dict[str, Any]) -> None:
         )
     except Exception:
         logger.warning(
-            "[job_monitoring] Failed to capture Sentry event for table=%s",
+            "[_capture_stale_pending_jobs_event] Failed to capture Sentry event for table=%s",
             table,
             exc_info=True,
         )
