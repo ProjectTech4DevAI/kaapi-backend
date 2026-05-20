@@ -62,6 +62,7 @@ def create_evaluation_run(
     config_version: int,
     organization_id: int,
     project_id: int,
+    run_mode: str = "batch",
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -75,6 +76,7 @@ def create_evaluation_run(
         config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
+        run_mode: Execution mode ("batch" default, or "fast")
 
     Returns:
         The created EvaluationRun instance
@@ -87,6 +89,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
+        run_mode=run_mode,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),

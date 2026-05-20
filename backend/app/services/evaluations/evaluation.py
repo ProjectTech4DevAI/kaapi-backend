@@ -4,6 +4,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud.evaluations import (
@@ -129,16 +130,31 @@ def start_evaluation(
     )
 
     # Step 3: Create EvaluationRun record with config references
-    eval_run = create_evaluation_run(
-        session=session,
-        run_name=experiment_name,
-        dataset_name=dataset.name,
-        dataset_id=dataset_id,
-        config_id=config_id,
-        config_version=config_version,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
+    try:
+        eval_run = create_evaluation_run(
+            session=session,
+            run_name=experiment_name,
+            dataset_name=dataset.name,
+            dataset_id=dataset_id,
+            config_id=config_id,
+            config_version=config_version,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+    except IntegrityError:
+        session.rollback()
+        logger.warning(
+            f"[start_evaluation] Duplicate run_name | run_name={experiment_name} | "
+            f"org_id={organization_id} | project_id={project_id}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"run_name_already_exists: a run with name '{experiment_name}' "
+                "already exists for this organization and project. Pick a new "
+                "run_name or fetch the existing run via GET /evaluations."
+            ),
+        )
 
     # Step 4: Start the batch evaluation
     try:

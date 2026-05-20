@@ -90,6 +90,7 @@ from .evaluation import (
     EvaluationRunCreate,
     EvaluationRunPublic,
     EvaluationRunUpdate,
+    RunModeEnum,
 )
 from .feature_flag import (
     FeatureFlag,

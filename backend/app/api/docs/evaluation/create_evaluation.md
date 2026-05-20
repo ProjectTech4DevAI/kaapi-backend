@@ -1,16 +1,22 @@
-Start an evaluation run using the OpenAI Batch API.
+Start an evaluation run against a stored dataset.
 
-Evaluations allow you to systematically test LLM configurations against
-predefined datasets with automatic progress tracking and result collection.
+Two execution modes are supported via the optional `run_mode` field:
+
+* `batch` (default) — submits the work to the OpenAI Batch API. Cost-efficient
+  for large datasets; turnaround can take up to 24 hours.
+* `fast` — runs the evaluation synchronously through the OpenAI Responses API
+  and returns results within seconds-to-minutes. Restricted to text
+  evaluations on datasets with at most `EVAL_FAST_MAX_UNIQUE_ROWS` unique rows.
 
 **Key Features:**
-* Fetches dataset items from Langfuse and creates a batch processing job via the OpenAI Batch API
-* Asynchronous processing with automatic progress tracking (checks every 60s)
+* Fetches dataset items from Langfuse and creates a job (batch or fast)
 * Uses a stored config (created via `/configs`) to define the provider parameters
-* Stores results for comparison and analysis
-* Use `GET /evaluations/{evaluation_id}` to monitor progress and retrieve results
+* Same scoring semantics across both modes — cosine similarity, Langfuse traces,
+  and optional LLM-as-Judge correctness
+* Use `GET /evaluations/{evaluation_id}` to monitor progress and retrieve results;
+  the response carries `run_mode` so clients can tell the two paths apart
 
-## Example
+## Example (batch — default)
 
 ```json
 {
@@ -20,3 +26,23 @@ predefined datasets with automatic progress tracking and result collection.
   "config_version": 1
 }
 ```
+
+## Example (fast)
+
+```json
+{
+  "dataset_id": 123,
+  "experiment_name": "may19-temp0.2-gpt4o-fast",
+  "config_id": "f54f0d67-4817-4103-9fdf-b74b3d46733e",
+  "config_version": 1,
+  "run_mode": "fast"
+}
+```
+
+## Fast-mode error responses
+
+| Status | Code | When |
+| --- | --- | --- |
+| 422 | `config_type_unsupported` | Resolved config is not a text-evaluation config |
+| 422 | `dataset_too_large_for_fast` | Dataset exceeds `EVAL_FAST_MAX_UNIQUE_ROWS` unique rows |
+| 409 | `run_name_already_exists` | A run with the same `experiment_name` already exists for this (organization, project) |

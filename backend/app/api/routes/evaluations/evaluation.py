@@ -3,6 +3,7 @@
 import logging
 from uuid import UUID
 
+from asgi_correlation_id import correlation_id
 from fastapi import (
     APIRouter,
     Body,
@@ -14,11 +15,12 @@ from fastapi import (
 from app.api.deps import AuthContextDep, SessionDep
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
 from app.crud.evaluations.core import group_traces_by_question_id
-from app.models.evaluation import EvaluationRunPublic
+from app.models.evaluation import EvaluationRunPublic, RunModeEnum
 from app.api.permissions import Permission, require_permission
 from app.services.evaluations import (
     get_evaluation_with_scores,
     start_evaluation,
+    validate_and_start_fast_evaluation,
 )
 from app.utils import (
     APIResponse,
@@ -45,8 +47,32 @@ def evaluate(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
+    run_mode: RunModeEnum = Body(
+        default=RunModeEnum.BATCH,
+        description="Execution mode: 'batch' (default) or 'fast'",
+    ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
+    logger.info(
+        f"[evaluate] Starting evaluation | run_mode={run_mode.value} | "
+        f"experiment_name={experiment_name} | dataset_id={dataset_id} | "
+        f"org_id={auth_context.organization_.id} | "
+        f"project_id={auth_context.project_.id}"
+    )
+
+    if run_mode == RunModeEnum.FAST:
+        eval_run = validate_and_start_fast_evaluation(
+            session=session,
+            dataset_id=dataset_id,
+            run_name=experiment_name,
+            config_id=config_id,
+            config_version=config_version,
+            organization_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
+            trace_id=correlation_id.get() or "N/A",
+        )
+        return APIResponse.success_response(data=eval_run)
+
     eval_run = start_evaluation(
         session=session,
         dataset_id=dataset_id,

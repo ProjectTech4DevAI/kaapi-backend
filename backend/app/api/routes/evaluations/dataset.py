@@ -22,6 +22,7 @@ from app.crud.evaluations import (
 from app.crud.evaluations.dataset import delete_dataset as delete_dataset_crud
 from app.models.evaluation import DatasetUploadResponse, EvaluationDataset
 from app.services.evaluations import (
+    is_dataset_fast_eligible,
     upload_dataset as upload_evaluation_dataset,
     validate_csv_file,
 )
@@ -39,13 +40,15 @@ def _dataset_to_response(
     dataset: EvaluationDataset, signed_url: str | None = None
 ) -> DatasetUploadResponse:
     """Convert a dataset model to a DatasetUploadResponse."""
+    original_items = dataset.dataset_metadata.get("original_items_count", 0)
     return DatasetUploadResponse(
         dataset_id=dataset.id,
         dataset_name=dataset.name,
         description=dataset.description,
         total_items=dataset.dataset_metadata.get("total_items_count", 0),
-        original_items=dataset.dataset_metadata.get("original_items_count", 0),
+        original_items=original_items,
         duplication_factor=dataset.dataset_metadata.get("duplication_factor", 1),
+        eligible_for_fast=is_dataset_fast_eligible(original_items_count=original_items),
         langfuse_dataset_id=dataset.langfuse_dataset_id,
         object_store_url=dataset.object_store_url,
         signed_url=signed_url,
@@ -104,6 +107,15 @@ def list_datasets(
         default=50, ge=1, le=100, description="Maximum number of datasets to return"
     ),
     offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
+    eligible_for: str
+    | None = Query(
+        default=None,
+        description=(
+            "If 'fast', return only datasets eligible for run_mode='fast' "
+            "(unique-row count within EVAL_FAST_MAX_UNIQUE_ROWS)."
+        ),
+        enum=["fast"],
+    ),
 ) -> APIResponse[list[DatasetUploadResponse]]:
     """List evaluation datasets."""
     datasets = list_evaluation_datasets(
@@ -114,9 +126,11 @@ def list_datasets(
         offset=offset,
     )
 
-    return APIResponse.success_response(
-        data=[_dataset_to_response(dataset) for dataset in datasets]
-    )
+    responses = [_dataset_to_response(dataset) for dataset in datasets]
+    if eligible_for == "fast":
+        responses = [r for r in responses if r.eligible_for_fast]
+
+    return APIResponse.success_response(data=responses)
 
 
 @router.get(

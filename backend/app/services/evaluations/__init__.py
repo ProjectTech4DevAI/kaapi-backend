@@ -5,6 +5,11 @@ from app.services.evaluations.evaluation import (
     get_evaluation_with_scores,
     start_evaluation,
 )
+from app.services.evaluations.fast import (
+    execute_fast_evaluation,
+    is_dataset_fast_eligible,
+    validate_and_start_fast_evaluation,
+)
 from app.services.evaluations.validators import (
     ALLOWED_EXTENSIONS,
     ALLOWED_MIME_TYPES,

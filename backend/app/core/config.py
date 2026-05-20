@@ -171,6 +171,12 @@ class Settings(BaseSettings):
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
+    # Fast evaluation (run_mode="fast") configuration.
+    # See "Fast Evaluation SRD.md" for the full design rationale.
+    EVAL_FAST_MAX_UNIQUE_ROWS: int = 10
+    EVAL_FAST_FAILURE_THRESHOLD: float = 0.5
+    EVAL_FAST_API_CONCURRENCY: int = 10
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:
