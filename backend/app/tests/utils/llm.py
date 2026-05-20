@@ -92,8 +92,8 @@ def create_llm_call_with_audio_uri_response(
         completion=KaapiCompletionConfig(
             provider="openai",
             params={
-                "model": "tts-1",
-                "instructions": "Speak clearly.",
+                "model": "gpt-4o",
+                "instructions": "You are helpful.",
                 "temperature": 0.7,
             },
             type="text",
