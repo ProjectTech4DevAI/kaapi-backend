@@ -1,3 +1,4 @@
+import copy
 import logging
 from uuid import UUID
 
@@ -151,7 +152,7 @@ def get_llm_call_status(
                 # Get the first LLM call from the list which will be the only call for the job id
                 # since we initially won't be using this endpoint for llm chains
                 llm_call = llm_calls[0]
-                output_payload = llm_call.content
+                output_payload = copy.deepcopy(llm_call.content)
                 if (
                     isinstance(output_payload, dict)
                     and output_payload.get("type") == "audio"
@@ -166,7 +167,7 @@ def get_llm_call_status(
                         )
                     except Exception as e:
                         logger.warning(
-                            f"[get_llm_call] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
+                            f"[get_llm_call_status] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
                         )
                         output_payload["content"]["value"] = ""
                     output_payload["content"]["format"] = "url"
@@ -182,7 +183,7 @@ def get_llm_call_status(
                 usage_payload = llm_call.usage
                 if not usage_payload:
                     logger.warning(
-                        f"[get_llm_call] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
+                        f"[get_llm_call_status] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
                     )
                     usage_payload = {
                         "input_tokens": 0,

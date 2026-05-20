@@ -17,7 +17,11 @@ from app.models.llm.request import (
 )
 from app.models.llm import LLMCallRequest
 from app.tests.utils.auth import TestAuthContext
-from app.tests.utils.llm import create_llm_job, create_llm_call_with_response
+from app.tests.utils.llm import (
+    create_llm_job,
+    create_llm_call_with_response,
+    create_llm_call_with_audio_uri_response,
+)
 
 
 @pytest.fixture
@@ -357,3 +361,70 @@ def test_get_llm_call_not_found(
     )
 
     assert response.status_code == 404
+
+
+@pytest.fixture
+def llm_audio_uri_job(db: Session, user_api_key: TestAuthContext) -> Job:
+    job = create_llm_job(db)
+    create_llm_call_with_audio_uri_response(
+        db,
+        job_id=job.id,
+        project_id=user_api_key.project_id,
+        organization_id=user_api_key.organization_id,
+    )
+    return job
+
+
+def test_get_llm_call_audio_uri_swapped_to_presigned_url(
+    client: TestClient,
+    db: Session,
+    user_api_key_header: dict[str, str],
+    llm_audio_uri_job: Job,
+) -> None:
+    """Audio content stored with format='uri' is served as format='url' with a presigned URL."""
+    presigned = (
+        "https://s3.amazonaws.com/kaapi-bucket/audio/output.wav?X-Amz-Signature=abc"
+    )
+    JobCrud(db).update(llm_audio_uri_job.id, JobUpdate(status=JobStatus.SUCCESS))
+
+    with patch("app.api.routes.llm.get_cloud_storage") as mock_storage:
+        mock_storage.return_value.get_signed_url.return_value = presigned
+
+        response = client.get(
+            f"/api/v1/llm/call/{llm_audio_uri_job.id}",
+            headers=user_api_key_header,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    audio = body["data"]["llm_response"]["response"]["output"]["content"]
+    assert audio["format"] == "url"
+    assert audio["value"] == presigned
+
+
+def test_get_llm_call_audio_uri_presigned_failure_returns_empty_value(
+    client: TestClient,
+    db: Session,
+    user_api_key_header: dict[str, str],
+    llm_audio_uri_job: Job,
+) -> None:
+    """When presigned URL generation fails, format is still 'url' and value is empty string."""
+    JobCrud(db).update(llm_audio_uri_job.id, JobUpdate(status=JobStatus.SUCCESS))
+
+    with patch("app.api.routes.llm.get_cloud_storage") as mock_storage:
+        mock_storage.return_value.get_signed_url.side_effect = Exception(
+            "S3 unavailable"
+        )
+
+        response = client.get(
+            f"/api/v1/llm/call/{llm_audio_uri_job.id}",
+            headers=user_api_key_header,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    audio = body["data"]["llm_response"]["response"]["output"]["content"]
+    assert audio["format"] == "url"
+    assert audio["value"] == ""

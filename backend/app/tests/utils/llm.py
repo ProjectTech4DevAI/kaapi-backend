@@ -73,3 +73,64 @@ def create_llm_call_with_response(
     )
 
     return llm_call
+
+
+def create_llm_call_with_audio_uri_response(
+    db: Session,
+    job_id,
+    project_id: int,
+    organization_id: int,
+    s3_path: str = "s3://bucket/audio/output.wav",
+) -> LLMCallResponse:
+    """
+    Create a persisted LlmCall with audio content stored as an S3 URI.
+
+    Simulates the TTS path where audio is uploaded to S3 and stored with
+    format='uri' (internal format, must be swapped to presigned URL on read).
+    """
+    config_blob = ConfigBlob(
+        completion=KaapiCompletionConfig(
+            provider="openai",
+            params={
+                "model": "tts-1",
+                "instructions": "Speak clearly.",
+                "temperature": 0.7,
+            },
+            type="text",
+        )
+    )
+
+    llm_call = create_llm_call(
+        db,
+        request=LLMCallRequest(
+            query=QueryParams(input="Say hello"),
+            config=LLMCallConfig(blob=config_blob),
+        ),
+        job_id=job_id,
+        project_id=project_id,
+        organization_id=organization_id,
+        resolved_config=config_blob,
+        original_provider="openai",
+    )
+
+    update_llm_call_response(
+        db,
+        llm_call_id=llm_call.id,
+        provider_response_id="resp_tts_xyz",
+        content={
+            "type": "audio",
+            "content": {
+                "format": "uri",
+                "value": s3_path,
+                "mime_type": "audio/wav",
+            },
+        },
+        usage={
+            "input_tokens": 5,
+            "output_tokens": 0,
+            "total_tokens": 5,
+            "reasoning_tokens": None,
+        },
+    )
+
+    return llm_call
