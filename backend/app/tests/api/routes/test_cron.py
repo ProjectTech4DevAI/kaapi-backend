@@ -25,13 +25,16 @@ def test_evaluation_cron_job_success(
         ],
     }
 
-    with patch(
-        "app.api.routes.cron.process_all_pending_evaluations",
-        new=AsyncMock(return_value=mock_result),
-    ), patch(
-        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-        new=AsyncMock(
-            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+    with (
+        patch(
+            "app.api.routes.cron.process_all_pending_evaluations",
+            new=AsyncMock(return_value=mock_result),
+        ),
+        patch(
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(
+                return_value={"processed": 0, "failed": 0, "still_processing": 0}
+            ),
         ),
     ):
         response = client.get(
@@ -60,13 +63,16 @@ def test_evaluation_cron_job_no_pending(
         "results": [],
     }
 
-    with patch(
-        "app.api.routes.cron.process_all_pending_evaluations",
-        new=AsyncMock(return_value=mock_result),
-    ), patch(
-        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-        new=AsyncMock(
-            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+    with (
+        patch(
+            "app.api.routes.cron.process_all_pending_evaluations",
+            new=AsyncMock(return_value=mock_result),
+        ),
+        patch(
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(
+                return_value={"processed": 0, "failed": 0, "still_processing": 0}
+            ),
         ),
     ):
         response = client.get(
@@ -100,13 +106,16 @@ def test_evaluation_cron_job_with_failures(
         ],
     }
 
-    with patch(
-        "app.api.routes.cron.process_all_pending_evaluations",
-        new=AsyncMock(return_value=mock_result),
-    ), patch(
-        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-        new=AsyncMock(
-            return_value={"processed": 0, "failed": 0, "still_processing": 0}
+    with (
+        patch(
+            "app.api.routes.cron.process_all_pending_evaluations",
+            new=AsyncMock(return_value=mock_result),
+        ),
+        patch(
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(
+                return_value={"processed": 0, "failed": 0, "still_processing": 0}
+            ),
         ),
     ):
         response = client.get(
@@ -135,12 +144,15 @@ def test_evaluation_cron_job_merges_assessment_totals(
     }
     assessment_result = {"processed": 4, "failed": 2, "still_processing": 1}
 
-    with patch(
-        "app.api.routes.cron.process_all_pending_evaluations",
-        new=AsyncMock(return_value=mock_result),
-    ), patch(
-        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-        new=AsyncMock(return_value=assessment_result),
+    with (
+        patch(
+            "app.api.routes.cron.process_all_pending_evaluations",
+            new=AsyncMock(return_value=mock_result),
+        ),
+        patch(
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(return_value=assessment_result),
+        ),
     ):
         response = client.get(
             f"{settings.API_V1_STR}/cron/evaluations",
@@ -169,12 +181,15 @@ def test_evaluation_cron_job_assessment_polling_failure(
         "results": [],
     }
 
-    with patch(
-        "app.api.routes.cron.process_all_pending_evaluations",
-        new=AsyncMock(return_value=mock_result),
-    ), patch(
-        "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-        new=AsyncMock(side_effect=RuntimeError("assessment poll failure")),
+    with (
+        patch(
+            "app.api.routes.cron.process_all_pending_evaluations",
+            new=AsyncMock(return_value=mock_result),
+        ),
+        patch(
+            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
+            new=AsyncMock(side_effect=RuntimeError("assessment poll failure")),
+        ),
     ):
         response = client.get(
             f"{settings.API_V1_STR}/cron/evaluations",
@@ -206,6 +221,57 @@ def test_evaluation_cron_job_requires_superuser(
     assert "superuser" in response_data["error"].lower()
 
 
+def test_pending_jobs_cron_job_success(
+    client: TestClient,
+    superuser_api_key: TestAuthContext,
+) -> None:
+    """Test successful pending jobs monitor cron execution."""
+    mock_result = {
+        "status": "ok",
+        "checked_at": "2026-05-13T00:00:00",
+        "total_stale_pending": 2,
+        "tables": [
+            {
+                "table": "job",
+                "status": "PENDING",
+                "threshold_minutes": 15,
+                "stale_count": 2,
+                "oldest_age_seconds": 1200,
+                "groups": [],
+            }
+        ],
+    }
+
+    with patch(
+        "app.api.routes.cron.monitor_pending_jobs",
+        return_value=mock_result,
+    ) as monitor:
+        response = client.get(
+            f"{settings.API_V1_STR}/cron/pending-jobs",
+            headers={"X-API-KEY": superuser_api_key.key},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == mock_result
+    monitor.assert_called_once()
+
+
+def test_pending_jobs_cron_job_requires_superuser(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test that non-superuser cannot access pending jobs cron endpoint."""
+    response = client.get(
+        f"{settings.API_V1_STR}/cron/pending-jobs",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 403
+    response_data = response.json()
+    assert "Insufficient permissions" in response_data["error"]
+    assert "superuser" in response_data["error"].lower()
+
+
 def test_evaluation_cron_job_not_in_schema(
     client: TestClient,
 ) -> None:
@@ -218,3 +284,22 @@ def test_evaluation_cron_job_not_in_schema(
 
     # Endpoint should not be in the schema due to include_in_schema=False
     assert f"{settings.API_V1_STR}/cron/evaluations" not in paths
+    assert f"{settings.API_V1_STR}/cron/pending-jobs" not in paths
+
+
+def test_cron_intervals_match_to_prevent_sentry_monitor_drift() -> None:
+    """
+    The external cron script (scripts/python/invoke-cron.py) drives both
+    /cron/evaluations and /cron/pending-jobs from a single CRON_INTERVAL_MINUTES.
+    Both Sentry monitors must therefore expect the same cadence, otherwise the
+    pending-jobs monitor will report missed/timeout check-ins even when the
+    script is healthy.
+    """
+    assert (
+        settings.CRON_INTERVAL_MINUTES == settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES
+    ), (
+        "CRON_INTERVAL_MINUTES and PENDING_JOB_MONITOR_INTERVAL_MINUTES must "
+        "stay in sync; the cron script uses a single interval to invoke both "
+        "endpoints. Update invoke-cron.py to use independent intervals before "
+        "diverging these settings."
+    )

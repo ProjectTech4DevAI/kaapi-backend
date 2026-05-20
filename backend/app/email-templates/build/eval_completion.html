@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>You're invited to {{ project_name }}</title>
+    <title>{{ app_name }} - Evaluation {{ status_label }}</title>
   </head>
   <body
     style="
@@ -52,7 +52,7 @@
                   {{ app_name }}
                 </h1>
                 <p style="margin: 0 0 20px; font-size: 14px; color: #a1a1aa">
-                  {{ organization_name }}
+                  Evaluation {{ status_label|lower }}
                 </p>
                 <table
                   role="presentation"
@@ -74,8 +74,19 @@
                     color: #3f3f46;
                   "
                 >
-                  You have been invited to join the
-                  <strong>{{ project_name }}</strong> project on {{ app_name }}.
+                  Your evaluation run
+                  <span style="font-weight: bold">{{ run_name }}</span> in
+                  <span style="font-weight: bold">{{ project_name }}</span> has
+                  {% if status_label == "Completed" %}
+                  <span style="font-weight: bold; color: #047857"
+                    >{{ status_label|lower }}</span
+                  >
+                  {% else %}
+                  <span style="font-weight: bold; color: #b91c1c"
+                    >{{ status_label|lower }}</span
+                  >
+                  {% endif %} on
+                  <span style="font-weight: bold">{{ completed_at }}</span>.
                 </p>
                 <p
                   style="
@@ -85,9 +96,21 @@
                     color: #3f3f46;
                   "
                 >
-                  Click the button below to accept the invitation and get
-                  started.
+                  Click the button below to view the results and detailed
+                  traces.
                 </p>
+                {% if error_message %}
+                <p
+                  style="
+                    margin: 0 0 20px;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #b91c1c;
+                  "
+                >
+                  Error: {{ error_message }}
+                </p>
+                {% endif %}
                 <table
                   role="presentation"
                   cellspacing="0"
@@ -96,10 +119,7 @@
                   style="margin: 0 auto"
                 >
                   <tr>
-                    <td
-                      align="center"
-                      style="background-color: #1f4496; border-radius: 999px"
-                    >
+                    <td style="background-color: #1f4496; border-radius: 999px">
                       <a
                         href="{{ link }}"
                         target="_blank"
@@ -112,7 +132,7 @@
                           text-decoration: none;
                         "
                       >
-                        Accept Invitation
+                        View Results
                       </a>
                     </td>
                   </tr>
@@ -125,9 +145,8 @@
                     line-height: 1.6;
                   "
                 >
-                  This invitation expires in {{ valid_days }} days.<br />
-                  If you did not expect this invitation, you can safely ignore
-                  this email.
+                  You're receiving this because you're a member of the {{
+                  project_name }} project on {{ app_name }}.
                 </p>
               </td>
             </tr>
