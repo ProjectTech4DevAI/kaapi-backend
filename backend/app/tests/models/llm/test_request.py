@@ -44,8 +44,3 @@ class TestKaapiCompletionConfigTemperature:
 
         assert "temperature" in config.params
         assert config.params["temperature"] == 0.0
-
-
-# Model-allowlist enforcement moved from KaapiCompletionConfig.validate_params to
-# the CRUD layer (crud.model_config.validate_blob_model_or_raise) which consults
-# the model_config table. See tests/crud/config/* for coverage.
