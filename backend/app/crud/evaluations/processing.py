@@ -9,6 +9,7 @@ This module coordinates the evaluation-specific workflow:
 """
 
 import ast
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -20,13 +21,17 @@ from openai import OpenAI
 from sqlmodel import Session, select
 
 from app.core.batch import (
+    GeminiBatchProvider,
     OpenAIBatchProvider,
     download_batch_results,
     poll_batch_status,
     upload_batch_results_to_object_store,
 )
-from app.core.batch.base import BATCH_KEY
+from app.core.batch.base import BATCH_KEY, BatchProvider
+from app.core.batch.client import GeminiClient
+from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.evaluations.batch import fetch_dataset_items
+from app.services.llm.providers.registry import LLMProvider
 from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
 from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
@@ -45,6 +50,32 @@ from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
+
+
+def _get_batch_provider(
+    session: Session,
+    provider_name: str,
+    organization_id: int,
+    project_id: int,
+) -> BatchProvider:
+    """Get appropriate batch provider instance for the main response batch."""
+    if provider_name in (LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE):
+        openai_client = get_openai_client(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
+        return OpenAIBatchProvider(client=openai_client)
+
+    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
+        gemini_client = GeminiClient.from_credentials(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
+        return GeminiBatchProvider(client=gemini_client.client)
+
+    raise ValueError(f"Unsupported provider for evaluation polling: {provider_name}")
 
 
 def _extract_batch_error_message(
@@ -115,8 +146,35 @@ def _extract_batch_error_message(
     return error_msg
 
 
+def _extract_gemini_usage(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Map Gemini usageMetadata to OpenAI-style usage dict for cost tracking."""
+    usage_metadata = response.get("usageMetadata") or response.get("usage_metadata")
+    if not isinstance(usage_metadata, dict):
+        return None
+    input_tokens = usage_metadata.get("promptTokenCount") or usage_metadata.get(
+        "prompt_token_count"
+    )
+    output_tokens = usage_metadata.get("candidatesTokenCount") or usage_metadata.get(
+        "candidates_token_count"
+    )
+    total_tokens = usage_metadata.get("totalTokenCount") or usage_metadata.get(
+        "total_token_count"
+    )
+    reasoning_tokens = usage_metadata.get("thoughtsTokenCount") or usage_metadata.get(
+        "thoughts_token_count"
+    )
+    return {
+        "input_tokens": input_tokens or 0,
+        "output_tokens": output_tokens or 0,
+        "total_tokens": total_tokens or 0,
+        "reasoning_tokens": reasoning_tokens or 0,
+    }
+
+
 def parse_evaluation_output(
-    raw_results: list[dict[str, Any]], dataset_items: list[dict[str, Any]]
+    raw_results: list[dict[str, Any]],
+    dataset_items: list[dict[str, Any]],
+    provider_name: str = LLMProvider.OPENAI,
 ) -> list[dict[str, Any]]:
     """
     Parse batch output into evaluation results.
@@ -148,20 +206,19 @@ def parse_evaluation_output(
     """
     # Create lookup map for dataset items by ID
     dataset_map = {item["id"]: item for item in dataset_items}
+    is_google = provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE)
 
     results = []
 
     for line_num, response in enumerate(raw_results, 1):
         try:
-            # Extract BATCH_KEY (which is our dataset item ID)
-            item_id = response.get(BATCH_KEY)
+            item_id = response.get(BATCH_KEY) or response.get("key")
             if not item_id:
                 logger.warning(
-                    f"[parse_evaluation_output] No {BATCH_KEY} found, skipping | line={line_num}"
+                    f"[parse_evaluation_output] No item_id found, skipping | line={line_num}"
                 )
                 continue
 
-            # Get original dataset item
             dataset_item = dataset_map.get(item_id)
             if not dataset_item:
                 logger.warning(
@@ -169,64 +226,70 @@ def parse_evaluation_output(
                 )
                 continue
 
-            # Extract the response body
-            response_body = response.get("response", {}).get("body", {})
+            generated_output = ""
+            response_id: str | None = None
+            usage: dict[str, Any] | None = None
 
-            # Extract response ID from response.body.id
-            response_id = response_body.get("id")
-
-            # Extract usage information for cost tracking
-            usage = response_body.get("usage")
-
-            # Handle errors in batch processing
-            if response.get("error"):
-                error_msg = response["error"].get("message", "Unknown error")
-                logger.warning(
-                    f"[parse_evaluation_output] Item had error | item_id={item_id} | {error_msg}"
-                )
-                generated_output = f"ERROR: {error_msg}"
-            else:
-                # Extract text from output (can be string, list, or complex structure)
-                output = response_body.get("output", "")
-
-                # If string, try to parse it (may be JSON or Python repr of list)
-                if isinstance(output, str):
-                    try:
-                        output = json.loads(output)
-                    except (json.JSONDecodeError, ValueError):
-                        try:
-                            output = ast.literal_eval(output)
-                        except (ValueError, SyntaxError):
-                            # Keep as string if parsing fails
-                            generated_output = output
-                            output = None
-
-                # If we have a list structure, extract text from message items
-                if isinstance(output, list):
-                    generated_output = ""
-                    for item in output:
-                        if isinstance(item, dict) and item.get("type") == "message":
-                            for content in item.get("content", []):
-                                if (
-                                    isinstance(content, dict)
-                                    and content.get("type") == "output_text"
-                                ):
-                                    generated_output = content.get("text", "")
-                                    break
-                            if generated_output:
-                                break
-                elif output is not None:
-                    # output was not a string and not a list
-                    generated_output = ""
+            if is_google:
+                gemini_response = response.get("response")
+                error = response.get("error")
+                if error:
+                    error_msg = str(error)
                     logger.warning(
-                        f"[parse_evaluation_output] Unexpected output type | item_id={item_id} | type={type(output)}"
+                        f"[parse_evaluation_output] Item had error | item_id={item_id} | {error_msg}"
                     )
+                    generated_output = f"ERROR: {error_msg}"
+                elif isinstance(gemini_response, dict):
+                    text = extract_text_from_response_dict(gemini_response)
+                    generated_output = text or ""
+                    response_id = gemini_response.get(
+                        "responseId"
+                    ) or gemini_response.get("response_id")
+                    usage = _extract_gemini_usage(gemini_response)
+            else:
+                response_body = response.get("response", {}).get("body", {})
+                response_id = response_body.get("id")
+                usage = response_body.get("usage")
 
-            # Extract question and ground truth from dataset item
+                if response.get("error"):
+                    error_msg = response["error"].get("message", "Unknown error")
+                    logger.warning(
+                        f"[parse_evaluation_output] Item had error | item_id={item_id} | {error_msg}"
+                    )
+                    generated_output = f"ERROR: {error_msg}"
+                else:
+                    output = response_body.get("output", "")
+
+                    if isinstance(output, str):
+                        try:
+                            output = json.loads(output)
+                        except (json.JSONDecodeError, ValueError):
+                            try:
+                                output = ast.literal_eval(output)
+                            except (ValueError, SyntaxError):
+                                generated_output = output
+                                output = None
+
+                    if isinstance(output, list):
+                        for item in output:
+                            if isinstance(item, dict) and item.get("type") == "message":
+                                for content in item.get("content", []):
+                                    if (
+                                        isinstance(content, dict)
+                                        and content.get("type") == "output_text"
+                                    ):
+                                        generated_output = content.get("text", "")
+                                        break
+                                if generated_output:
+                                    break
+                    elif output is not None:
+                        generated_output = ""
+                        logger.warning(
+                            f"[parse_evaluation_output] Unexpected output type | item_id={item_id} | type={type(output)}"
+                        )
+
             question = dataset_item["input"].get("question", "")
             ground_truth = dataset_item["expected_output"].get("answer", "")
-
-            # Extract question_id from dataset item metadata
             question_id = dataset_item.get("metadata", {}).get("question_id")
 
             results.append(
@@ -300,8 +363,15 @@ async def process_completed_evaluation(
         logger.info(
             f"[process_completed_evaluation] {log_prefix} Downloading batch results | batch_job_id={batch_job.id}"
         )
-        provider = OpenAIBatchProvider(client=openai_client)
-        raw_results = download_batch_results(provider=provider, batch_job=batch_job)
+        provider = _get_batch_provider(
+            session=session,
+            provider_name=batch_job.provider,
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        )
+        raw_results = await asyncio.to_thread(
+            download_batch_results, provider=provider, batch_job=batch_job
+        )
 
         # Step 2a: Upload raw results to object store for evaluation_run
         object_store_url = None
@@ -318,13 +388,17 @@ async def process_completed_evaluation(
         logger.info(
             f"[process_completed_evaluation] {log_prefix} Fetching dataset items | dataset={eval_run.dataset_name}"
         )
-        dataset_items = fetch_dataset_items(
-            langfuse=langfuse, dataset_name=eval_run.dataset_name
+        dataset_items = await asyncio.to_thread(
+            fetch_dataset_items,
+            langfuse=langfuse,
+            dataset_name=eval_run.dataset_name,
         )
 
         # Step 4: Parse evaluation results
         results = parse_evaluation_output(
-            raw_results=raw_results, dataset_items=dataset_items
+            raw_results=raw_results,
+            dataset_items=dataset_items,
+            provider_name=batch_job.provider,
         )
 
         if not results:
@@ -348,7 +422,8 @@ async def process_completed_evaluation(
             update=EvaluationRunUpdate(cost=eval_run.cost),
         )
 
-        trace_id_mapping = create_langfuse_dataset_run(
+        trace_id_mapping = await asyncio.to_thread(
+            create_langfuse_dataset_run,
             langfuse=langfuse,
             dataset_name=eval_run.dataset_name,
             model=model,
@@ -365,7 +440,8 @@ async def process_completed_evaluation(
         # Step 6: Start embedding batch for similarity scoring
         # Pass trace_id_mapping directly without storing in DB
         try:
-            eval_run = start_embedding_batch(
+            eval_run = await asyncio.to_thread(
+                start_embedding_batch,
                 session=session,
                 openai_client=openai_client,
                 eval_run=eval_run,
@@ -463,8 +539,10 @@ async def process_completed_embedding_batch(
 
         # Step 2: Create provider and download results
         provider = OpenAIBatchProvider(client=openai_client)
-        raw_results = download_batch_results(
-            provider=provider, batch_job=embedding_batch_job
+        raw_results = await asyncio.to_thread(
+            download_batch_results,
+            provider=provider,
+            batch_job=embedding_batch_job,
         )
 
         # Step 3: Parse embedding results
@@ -497,7 +575,8 @@ async def process_completed_embedding_batch(
         per_item_scores = similarity_stats.get("per_item_scores", [])
         if per_item_scores:
             try:
-                update_traces_with_cosine_scores(
+                await asyncio.to_thread(
+                    update_traces_with_cosine_scores,
                     langfuse=langfuse,
                     per_item_scores=per_item_scores,
                 )
@@ -594,8 +673,11 @@ async def check_and_process_evaluation(
             if embedding_batch_job:
                 # Poll embedding batch status
                 provider = OpenAIBatchProvider(client=openai_client)
-                poll_batch_status(
-                    session=session, provider=provider, batch_job=embedding_batch_job
+                await asyncio.to_thread(
+                    poll_batch_status,
+                    session=session,
+                    provider=provider,
+                    batch_job=embedding_batch_job,
                 )
                 session.refresh(embedding_batch_job)
 
@@ -666,23 +748,41 @@ async def check_and_process_evaluation(
                 f"BatchJob {eval_run.batch_job_id} not found for evaluation {eval_run.id}"
             )
 
-        # IMPORTANT: Poll OpenAI to get the latest status before checking
-        provider = OpenAIBatchProvider(client=openai_client)
-        status_result = poll_batch_status(
-            session=session, provider=provider, batch_job=batch_job
+        # Build batch provider from batch_job.provider (OpenAI or Gemini)
+        provider = _get_batch_provider(
+            session=session,
+            provider_name=batch_job.provider,
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        )
+        status_result = await asyncio.to_thread(
+            poll_batch_status,
+            session=session,
+            provider=provider,
+            batch_job=batch_job,
         )
 
         # Refresh batch_job to get the updated provider_status
         session.refresh(batch_job)
         provider_status = batch_job.provider_status
+        is_openai = batch_job.provider in (
+            LLMProvider.OPENAI,
+            LLMProvider.OPENAI_NATIVE,
+        )
 
         # Handle different provider statuses
-        if provider_status == "completed":
-            # Check if batch completed but all requests failed
-            # (output_file_id is absent, error_file_id is present)
-            if not status_result.get(
-                "provider_output_file_id", batch_job.provider_output_file_id
-            ) and status_result.get("error_file_id"):
+        if (
+            provider_status == "completed"
+            or provider_status == BatchJobState.SUCCEEDED.value
+        ):
+            # OpenAI-only: batch completed but all requests failed (error file present, output file absent)
+            if (
+                is_openai
+                and not status_result.get(
+                    "provider_output_file_id", batch_job.provider_output_file_id
+                )
+                and status_result.get("error_file_id")
+            ):
                 error_msg = _extract_batch_error_message(
                     provider=provider,
                     error_file_id=status_result["error_file_id"],
@@ -730,7 +830,14 @@ async def check_and_process_evaluation(
                 "action": "processed",
             }
 
-        elif provider_status in ["failed", "expired", "cancelled"]:
+        elif provider_status in (
+            "failed",
+            "expired",
+            "cancelled",
+            BatchJobState.FAILED.value,
+            BatchJobState.CANCELLED.value,
+            BatchJobState.EXPIRED.value,
+        ):
             # Mark evaluation as failed based on provider status
             error_msg = batch_job.error_message or f"Provider batch {provider_status}"
 

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from app.crud.evaluations.batch import build_evaluation_jsonl
+from app.crud.evaluations.batch import build_openai_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
 from app.models.llm.request import TextLLMParams
 from app.tests.utils.auth import TestAuthContext

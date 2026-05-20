@@ -3,9 +3,11 @@
 import logging
 from uuid import UUID
 
+from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.celery.utils import start_evaluation_batch_submission
 from app.crud.evaluations import (
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
@@ -13,12 +15,11 @@ from app.crud.evaluations import (
     get_evaluation_run_by_id,
     resolve_evaluation_config,
     save_score,
-    start_evaluation_batch,
 )
-from app.models.evaluation import EvaluationRun
-from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
+from app.models.evaluation import EvaluationRun, EvaluationRunUpdate
+from app.crud.evaluations.core import update_evaluation_run
 from app.services.llm.providers import LLMProvider
-from app.utils import get_langfuse_client, get_openai_client
+from app.utils import get_langfuse_client
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 
@@ -106,29 +107,16 @@ def start_evaluation(
             status_code=400,
             detail=f"Failed to resolve config from stored config: {error}",
         )
-    elif config.completion.provider != LLMProvider.OPENAI:
+    elif config.completion.provider not in (LLMProvider.OPENAI, LLMProvider.GOOGLE):
         raise HTTPException(
             status_code=422,
-            detail="Only 'openai' provider is supported for evaluation configs",
+            detail="Only 'openai' and 'google' providers are supported for evaluation configs",
         )
 
     logger.info(
         "[start_evaluation] Successfully resolved config from config management"
     )
 
-    # Get API clients
-    openai_client = get_openai_client(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-    )
-    langfuse = get_langfuse_client(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-    )
-
-    # Step 3: Create EvaluationRun record with config references
     eval_run = create_evaluation_run(
         session=session,
         run_name=experiment_name,
@@ -140,39 +128,34 @@ def start_evaluation(
         project_id=project_id,
     )
 
-    # Step 4: Start the batch evaluation
+    trace_id = correlation_id.get() or "N/A"
     try:
-        # Convert params dict to appropriate model instance based on type
-        param_models = {
-            "text": TextLLMParams,
-            "stt": STTLLMParams,
-            "tts": TTSLLMParams,
-        }
-        model_class = param_models[config.completion.type]
-        validated_params = model_class.model_validate(config.completion.params)
-
-        eval_run = start_evaluation_batch(
-            langfuse=langfuse,
-            openai_client=openai_client,
-            session=session,
-            eval_run=eval_run,
-            config=validated_params,
+        celery_task_id = start_evaluation_batch_submission(
+            project_id=project_id,
+            job_id=str(eval_run.id),
+            trace_id=trace_id,
+            organization_id=organization_id,
+            config_id=str(config_id),
+            config_version=config_version,
         )
-
         logger.info(
-            f"[start_evaluation] Evaluation started successfully | "
-            f"batch_job_id={eval_run.batch_job_id} | total_items={eval_run.total_items}"
+            f"[start_evaluation] Batch submission queued | "
+            f"run_id={eval_run.id} | celery_task_id={celery_task_id}"
         )
-
         return eval_run
-
     except Exception as e:
         logger.error(
-            f"[start_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
+            f"[start_evaluation] Failed to queue batch submission | run_id={eval_run.id} | {e}",
             exc_info=True,
         )
-        # Error is already handled in start_evaluation_batch
-        session.refresh(eval_run)
+        eval_run = update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Failed to queue batch submission: {e}",
+            ),
+        )
         return eval_run
 
 

@@ -1,20 +1,28 @@
 from typing import Any, Literal
 
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.sql import sqltypes
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
 
+Provider = str
+CompletionType = Literal["text", "stt", "tts"]
+
 
 def list_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> tuple[list[ModelConfig], bool]:
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
     if provider:
-        statement = statement.where(ModelConfig.provider == provider)
+        try:
+            statement = statement.where(ModelConfig.provider == provider)
+        except Exception:
+            return [], False
 
     statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
     statement = statement.offset(skip).limit(limit + 1)
@@ -30,19 +38,22 @@ def list_active_model_configs(
 
 def list_all_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
 ) -> list[ModelConfig]:
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
     if provider:
-        statement = statement.where(ModelConfig.provider == provider)
+        try:
+            statement = statement.where(ModelConfig.provider == provider)
+        except Exception:
+            return []
 
     statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
     return list(session.exec(statement).all())
 
 
 def get_model_config(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+    session: Session, provider: Provider, model_name: str
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
@@ -52,9 +63,57 @@ def get_model_config(
     return session.exec(statement).first()
 
 
-def is_reasoning_model(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+def _modality_filter(stmt, completion_type: CompletionType):
+    """Restrict query to models matching the completion type via modalities."""
+    str_array = ARRAY(sqltypes.String)
+    input_col = ModelConfig.input_modalities
+    output_col = ModelConfig.output_modalities
+
+    if completion_type == "stt":
+        return stmt.where(
+            input_col.cast(str_array).contains(["AUDIO"]),
+            output_col.cast(str_array).contains(["TEXT"]),
+        )
+    if completion_type == "tts":
+        return stmt.where(
+            input_col.cast(str_array).contains(["TEXT"]),
+            output_col.cast(str_array).contains(["AUDIO"]),
+        )
+    return stmt.where(
+        input_col.cast(str_array).contains(["TEXT"]),
+        output_col.cast(str_array).contains(["TEXT"]),
+    )
+
+
+def list_supported_models(
+    session: Session, provider: Provider, completion_type: CompletionType
+) -> list[str]:
+    """Return active model names for a provider+completion type."""
+    stmt = select(ModelConfig.model_name).where(
+        ModelConfig.provider == provider,
+        ModelConfig.is_active,
+    )
+    stmt = _modality_filter(stmt, completion_type)
+    return list(session.exec(stmt).all())
+
+
+def is_model_supported(
+    session: Session,
+    provider: Provider,
+    completion_type: CompletionType,
+    model_name: str,
 ) -> bool:
+    """Check whether (provider, model_name) is active and matches the completion type."""
+    stmt = select(ModelConfig.id).where(
+        ModelConfig.provider == provider,
+        ModelConfig.model_name == model_name,
+        ModelConfig.is_active,
+    )
+    stmt = _modality_filter(stmt, completion_type)
+    return session.exec(stmt).first() is not None
+
+
+def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:
     """Return True if the model is configured with a reasoning `effort` control.
 
     A model is considered reasoning-capable if its `config` JSON contains an
@@ -69,7 +128,7 @@ def is_reasoning_model(
 
 def estimate_model_cost(
     session: Session,
-    provider: Literal["openai", "google"],
+    provider: Provider,
     model_name: str,
     input_tokens: int,
     output_tokens: int,

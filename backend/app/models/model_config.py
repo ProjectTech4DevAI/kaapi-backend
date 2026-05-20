@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -9,12 +9,12 @@ from app.core.util import now
 
 
 class ModelConfigBase(SQLModel):
-    provider: Literal["openai", "google"] = Field(
+    provider: str = Field(
         default="openai",
         sa_column=sa.Column(
             sa.String,
             nullable=False,
-            comment="provider name (e.g. openai, google)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs)",
         ),
     )
 

@@ -145,11 +145,17 @@ def create_langfuse_dataset_run(
                     trace_id_mapping[item_id] = trace_id
 
             except Exception as e:
-                logger.error(
-                    f"[create_langfuse_dataset_run] Failed to create trace | "
-                    f"item_id={item_id} | {e}",
-                    exc_info=True,
-                )
+                if getattr(e, "status_code", None) == 429:
+                    logger.error(
+                        f"[create_langfuse_dataset_run] Langfuse rate limit (429) | "
+                        f"item_id={item_id}"
+                    )
+                else:
+                    logger.error(
+                        f"[create_langfuse_dataset_run] Failed to create trace | "
+                        f"item_id={item_id} | {e}",
+                        exc_info=True,
+                    )
                 continue
 
         langfuse.flush()
