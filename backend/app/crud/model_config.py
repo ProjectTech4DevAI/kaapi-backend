@@ -1,15 +1,13 @@
 from typing import Any, Literal
 
 from fastapi import HTTPException
-from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.sql import sqltypes
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
 from app.models.llm.request import ConfigBlob
+from app.models.model_config import CompletionType
 
 Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
-CompletionType = Literal["text", "stt", "tts"]
 
 
 def _normalize_provider(raw: str) -> str:
@@ -64,39 +62,15 @@ def get_model_config(
     return session.exec(statement).first()
 
 
-def _modality_filter(stmt: Any, completion_type: CompletionType) -> Any:
-    """Restrict query to models matching the completion type via modalities."""
-    str_array = ARRAY(sqltypes.String)
-    input_col = ModelConfig.input_modalities
-    output_col = ModelConfig.output_modalities
-
-    if completion_type == "stt":
-        return stmt.where(
-            input_col.cast(str_array).contains(["AUDIO"]),
-            output_col.cast(str_array).contains(["TEXT"]),
-        )
-    if completion_type == "tts":
-        return stmt.where(
-            input_col.cast(str_array).contains(["TEXT"]),
-            output_col.cast(str_array).contains(["AUDIO"]),
-        )
-    # text: must produce TEXT and not consume/produce AUDIO
-    return stmt.where(
-        output_col.cast(str_array).contains(["TEXT"]),
-        ~input_col.cast(str_array).contains(["AUDIO"]),
-        ~output_col.cast(str_array).contains(["AUDIO"]),
-    )
-
-
 def list_supported_models(
     session: Session, provider: Provider, completion_type: CompletionType
 ) -> list[str]:
-    """Return active model names for a provider+completion type."""
+    """Return active model names for a provider + completion type."""
     stmt = select(ModelConfig.model_name).where(
         ModelConfig.provider == provider,
+        ModelConfig.completion_type == completion_type,
         ModelConfig.is_active,
     )
-    stmt = _modality_filter(stmt, completion_type)
     return list(session.exec(stmt).all())
 
 
@@ -110,9 +84,9 @@ def is_model_supported(
     stmt = select(ModelConfig.id).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
+        ModelConfig.completion_type == completion_type,
         ModelConfig.is_active,
     )
-    stmt = _modality_filter(stmt, completion_type)
     return session.exec(stmt).first() is not None
 
 
