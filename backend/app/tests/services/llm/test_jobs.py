@@ -1012,7 +1012,10 @@ class TestExecuteJob:
             mock_guardrails.return_value = {
                 "success": True,
                 "bypassed": False,
-                "data": {"safe_text": "Your Aadhar number is [REDACTED]", "rephrase_needed": False},
+                "data": {
+                    "safe_text": "Your Aadhar number is [REDACTED]",
+                    "rephrase_needed": False,
+                },
             }
             mock_fetch_configs.return_value = (
                 [],
@@ -1029,7 +1032,9 @@ class TestExecuteJob:
                             "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [],
-                        "output_guardrails": [{"validator_config_id": VALIDATOR_CONFIG_ID_2}],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
                     }
                 },
             }
@@ -1073,14 +1078,19 @@ class TestExecuteJob:
                             "params": {"model": "gpt-4o"},
                         },
                         "input_guardrails": [],
-                        "output_guardrails": [{"validator_config_id": VALIDATOR_CONFIG_ID_2}],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
                     }
                 },
             }
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert result["success"] is True
-        assert result["data"]["response"]["output"]["content"]["value"] == original_llm_output
+        assert (
+            result["data"]["response"]["output"]["content"]["value"]
+            == original_llm_output
+        )
 
     def test_guardrails_skip_output_validation_for_audio_output(
         self, db, job_env, job_for_execution
