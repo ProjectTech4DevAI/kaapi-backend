@@ -213,7 +213,7 @@ def _build_metadata(
 
 
 @router.post(
-    "/llm/sts",
+    "/llm/chain/sts",
     description=load_description("llm/speech_to_speech.md"),
     response_model=APIResponse[Message],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

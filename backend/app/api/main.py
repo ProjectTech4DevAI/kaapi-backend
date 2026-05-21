@@ -18,6 +18,7 @@ from app.api.routes import (
     languages,
     llm,
     llm_chain,
+    llm_sts,
     login,
     model_config,
     model_evaluation,
