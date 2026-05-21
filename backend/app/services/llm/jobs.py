@@ -425,6 +425,7 @@ def apply_output_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
+    input_text: str | None = None,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
@@ -451,14 +452,15 @@ def apply_output_guardrails(
     if not output_guardrails:
         return result, None
 
-    output_text = result.response.response.output.content.value
+    llm_output = result.response.response.output.content.value
     safe = run_guardrails_validation(
-        output_text,
+        input_text or "",
         output_guardrails,
         job_id,
         project_id,
         organization_id,
         suppress_pass_logs=True,
+        output_text=llm_output,
     )
 
     logger.info(
@@ -956,6 +958,7 @@ def execute_llm_call(
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
+                    input_text=original_input_value,
                 )
                 if output_error:
                     out_guard_span.set_status(
