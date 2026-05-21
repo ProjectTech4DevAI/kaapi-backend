@@ -53,7 +53,7 @@ def kb_ids() -> list[str]:
 
 def _post(client: TestClient, headers: dict[str, str], payload: SpeechToSpeechRequest):
     return client.post(
-        "api/v1/llm/sts",
+        "/api/v1/llm/chain/sts",
         json=payload.model_dump(mode="json"),
         headers=headers,
     )
