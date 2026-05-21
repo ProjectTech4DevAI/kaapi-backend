@@ -73,9 +73,8 @@ def _resolve_languages(request: SpeechToSpeechRequest) -> tuple[str, str]:
     return input_lang, ("auto" if input_lang == "auto" else input_lang)
 
 
-# ---------- Defaults + merge per block ----------
-
-
+# override defaults with user specified inputs
+# then merges
 def _merge_stt(user: STTLLMParams | None, input_lang: str) -> STTLLMParams:
     base = STTLLMParams(model=DEFAULT_STT_MODEL, input_language=input_lang)
     if user is None:
