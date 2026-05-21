@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
@@ -163,7 +164,7 @@ def test_estimate_model_cost_returns_none_for_non_numeric_prices(
     assert result is None
 
 
-def _make_blob(provider, completion_type, params):
+def _make_blob(provider: str | None, completion_type: str, params: Mapping[str, Any]) -> SimpleNamespace:
     completion = SimpleNamespace(provider=provider, type=completion_type, params=params)
     return SimpleNamespace(completion=completion)
 
@@ -198,9 +199,8 @@ def test_validate_blob_native_provider_short_circuits(
     """Native pass-through never hits DB."""
     called = {"hit": False}
 
-    def boom(*a, **kw):
+    def boom(*_args: Any, **_kwargs: Any) -> None:
         called["hit"] = True
-        return None
 
     monkeypatch.setattr(model_config_crud, "get_model_config", boom)
     monkeypatch.setattr(model_config_crud, "is_model_supported", boom)

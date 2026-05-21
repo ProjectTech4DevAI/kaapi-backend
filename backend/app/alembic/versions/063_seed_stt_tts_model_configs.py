@@ -128,24 +128,6 @@ def upgrade():
 
 
 def downgrade():
-    op.execute(
-        """
-        DELETE FROM global.model_config
-        WHERE (provider, model_name) IN (
-            ('google',     'gemini-2.5-pro'),
-            ('google',     'gemini-3.1-pro-preview'),
-            ('google',     'gemini-3-flash-preview'),
-            ('google',     'gemini-2.5-flash'),
-            ('google',     'gemini-2.5-flash-preview-tts'),
-            ('google',     'gemini-2.5-pro-preview-tts'),
-            ('sarvamai',   'saaras:v3'),
-            ('sarvamai',   'bulbul:v3'),
-            ('elevenlabs', 'scribe_v2'),
-            ('elevenlabs', 'eleven_v3')
-        )
-        """
-    )
-
     op.execute("DROP INDEX IF EXISTS global.ix_model_config_output_modalities")
     op.execute("DROP INDEX IF EXISTS global.ix_model_config_input_modalities")
     op.execute("DROP INDEX IF EXISTS global.ix_model_config_provider_type_active")
