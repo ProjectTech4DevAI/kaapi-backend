@@ -201,6 +201,14 @@ class CollectionIDPublic(SQLModel):
 
 class CollectionPublic(SQLModel):
     id: UUID
+    name: str | None = Field(
+        default=None,
+        description="Name of the collection",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the collection",
+    )
     llm_service_id: str | None = Field(
         default=None,
         description="LLM service ID (e.g., Assistant ID) when model and instructions were provided",
