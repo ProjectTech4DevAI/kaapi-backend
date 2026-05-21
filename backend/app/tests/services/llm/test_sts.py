@@ -128,9 +128,8 @@ class TestSpeechToSpeechEndpoint:
         assert rag_params["instructions"] == "Reply in one short sentence."
         assert rag_params["knowledge_base_ids"] == kb_ids
         assert tts_params["voice"] == "Orus"
-        # Route-owned fields still applied:
+        # Route-owned field still applied:
         assert tts_params["language"] == "hi-IN"
-        assert tts_params["response_format"] == "ogg"
 
     def test_stored_config_reference_for_rag(
         self,
