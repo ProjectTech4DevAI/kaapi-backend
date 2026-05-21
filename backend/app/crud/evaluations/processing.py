@@ -1039,6 +1039,16 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     )
                     total_failed_count += 1
 
+            # Flush background ingestion threads before discarding this client.
+            # Each Langfuse() instance spawns TaskManager threads; without flush,
+            # they accumulate across cron runs and pile up concurrent API calls.
+            try:
+                langfuse.flush()
+            except Exception as flush_err:
+                logger.warning(
+                    f"[poll_all_pending_evaluations] Langfuse flush failed | project_id={project_id} | {flush_err}"
+                )
+
         except Exception as e:
             logger.error(
                 f"[poll_all_pending_evaluations] Failed to process project | project_id={project_id} | {e}",
