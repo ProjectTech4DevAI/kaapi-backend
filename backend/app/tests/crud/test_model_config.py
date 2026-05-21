@@ -164,7 +164,9 @@ def test_estimate_model_cost_returns_none_for_non_numeric_prices(
     assert result is None
 
 
-def _make_blob(provider: str | None, completion_type: str, params: Mapping[str, Any]) -> SimpleNamespace:
+def _make_blob(
+    provider: str | None, completion_type: str, params: Mapping[str, Any]
+) -> SimpleNamespace:
     completion = SimpleNamespace(provider=provider, type=completion_type, params=params)
     return SimpleNamespace(completion=completion)
 

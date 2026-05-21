@@ -14,7 +14,14 @@ class ModelConfigBase(SQLModel):
     provider: Literal["openai", "google", "sarvamai", "elevenlabs"] = Field(
         default="openai",
         sa_column=sa.Column(
-            sa.Enum("openai", "google", "sarvamai", "elevenlabs", name="provider_enum", schema="global"),
+            sa.Enum(
+                "openai",
+                "google",
+                "sarvamai",
+                "elevenlabs",
+                name="provider_enum",
+                schema="global",
+            ),
             nullable=False,
             comment="provider name (e.g. openai, google, sarvamai, elevenlabs)",
         ),
@@ -93,9 +100,22 @@ class ModelConfig(ModelConfigBase, table=True):
     __table_args__ = (
         sa.UniqueConstraint("provider", "model_name"),
         sa.Index("ix_model_config_provider_active", "provider", "is_active"),
-        sa.Index("ix_model_config_provider_type_active", "provider", "completion_type", "is_active"),
-        sa.Index("ix_model_config_input_modalities", "input_modalities", postgresql_using="gin"),
-        sa.Index("ix_model_config_output_modalities", "output_modalities", postgresql_using="gin"),
+        sa.Index(
+            "ix_model_config_provider_type_active",
+            "provider",
+            "completion_type",
+            "is_active",
+        ),
+        sa.Index(
+            "ix_model_config_input_modalities",
+            "input_modalities",
+            postgresql_using="gin",
+        ),
+        sa.Index(
+            "ix_model_config_output_modalities",
+            "output_modalities",
+            postgresql_using="gin",
+        ),
         {"schema": "global"},
     )
 

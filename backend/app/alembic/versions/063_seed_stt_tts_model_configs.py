@@ -31,7 +31,9 @@ SEEDED_MODELS = [
 
 def upgrade():
     # 1. Create enum types
-    op.execute("CREATE TYPE global.provider_enum AS ENUM ('openai', 'google', 'sarvamai', 'elevenlabs')")
+    op.execute(
+        "CREATE TYPE global.provider_enum AS ENUM ('openai', 'google', 'sarvamai', 'elevenlabs')"
+    )
     op.execute("CREATE TYPE global.completion_type_enum AS ENUM ('text', 'stt', 'tts')")
 
     # 2. Alter provider column to use enum; add completion_type column
