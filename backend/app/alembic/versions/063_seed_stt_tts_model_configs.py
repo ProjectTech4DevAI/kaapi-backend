@@ -30,13 +30,6 @@ SEEDED_MODELS = [
 
 
 def upgrade():
-    # Re-align identity sequence to MAX(id) so new rows get contiguous ids
-    # even if dev/test DBs drifted from manual inserts/deletes.
-    op.execute(
-        "SELECT setval(pg_get_serial_sequence('global.model_config', 'id'), "
-        "(SELECT COALESCE(MAX(id), 1) FROM global.model_config))"
-    )
-
     op.execute(
         """
         INSERT INTO global.model_config
@@ -54,12 +47,6 @@ def upgrade():
             ('elevenlabs', 'eleven_v3',                     '{"voice": {"type": "enum", "default": "Sarah", "options": ["Sarah", "George", "Callum", "Liam"], "description": "TTS voice."}}', '{TEXT}',  '{AUDIO}', NULL, true, NOW(), NOW())
         ON CONFLICT (provider, model_name) DO NOTHING
         """
-    )
-
-    # Keep sequence in sync after insert
-    op.execute(
-        "SELECT setval(pg_get_serial_sequence('global.model_config', 'id'), "
-        "(SELECT MAX(id) FROM global.model_config))"
     )
 
 

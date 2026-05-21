@@ -6,6 +6,7 @@ from sqlalchemy.sql import sqltypes
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
+from app.models.llm.request import ConfigBlob
 
 Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
 CompletionType = Literal["text", "stt", "tts"]
@@ -63,7 +64,7 @@ def get_model_config(
     return session.exec(statement).first()
 
 
-def _modality_filter(stmt, completion_type: CompletionType):
+def _modality_filter(stmt: Any, completion_type: CompletionType) -> Any:
     """Restrict query to models matching the completion type via modalities."""
     str_array = ARRAY(sqltypes.String)
     input_col = ModelConfig.input_modalities
@@ -115,11 +116,11 @@ def is_model_supported(
     return session.exec(stmt).first() is not None
 
 
-def validate_blob_model_or_raise(session: Session, blob: Any) -> None:
+def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     """Reject ConfigBlob whose completion.params.model is not in model_config.
 
-    Native configs forward raw provider params; we still expect a `model` key
-    in params for text/stt/tts. Missing model is treated as a validation error.
+    model_config is the source of truth — all providers/types validated.
+    Native configs are exempt (they forward raw params to the provider).
     """
     completion = blob.completion
     raw_provider = completion.provider
@@ -131,6 +132,7 @@ def validate_blob_model_or_raise(session: Session, blob: Any) -> None:
         return
 
     provider = _normalize_provider(raw_provider)
+
     model_name = (completion.params or {}).get("model")
     if not model_name:
         raise HTTPException(
@@ -143,7 +145,13 @@ def validate_blob_model_or_raise(session: Session, blob: Any) -> None:
         provider=provider,  # type: ignore[arg-type]
         model_name=model_name,
     )
-    if model_row is None or not is_model_supported(
+    if model_row is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model_name}' not found for provider='{provider}'.",
+        )
+
+    if not is_model_supported(
         session=session,
         provider=provider,  # type: ignore[arg-type]
         completion_type=completion_type,
@@ -162,7 +170,6 @@ def validate_blob_model_or_raise(session: Session, blob: Any) -> None:
             ),
         )
 
-    # TTS voice check: voice must match options declared in model_config.config.voice
     if completion_type == "tts":
         voice = (completion.params or {}).get("voice")
         voice_spec = (

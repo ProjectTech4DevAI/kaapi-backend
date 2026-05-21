@@ -682,6 +682,192 @@ def test_create_version_partial_update_params_only(
     assert config_blob_result["completion"]["params"]["temperature"] == 0.9
 
 
+def test_create_version_cannot_change_type_from_stt_to_tts(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test that config type cannot be changed from 'stt' to 'tts' in a new version."""
+    from app.models.llm.request import KaapiCompletionConfig
+
+    config_blob = ConfigBlob(
+        completion=KaapiCompletionConfig(
+            provider="google",
+            type="stt",
+            params={"model": "gemini-2.5-pro"},
+        )
+    )
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="google-stt-config",
+        config_blob=config_blob,
+    )
+
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "google",
+                "type": "tts",
+                "params": {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+            }
+        },
+        "commit_message": "Attempting to change type from stt to tts",
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
+    assert response.status_code == 400
+    error_detail = response.json().get("error", "")
+    assert "cannot change config type" in error_detail.lower()
+    assert "stt" in error_detail
+    assert "tts" in error_detail
+
+
+def test_create_version_cannot_change_type_from_tts_to_text(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test that config type cannot be changed from 'tts' to 'text' in a new version."""
+    from app.models.llm.request import KaapiCompletionConfig
+
+    config_blob = ConfigBlob(
+        completion=KaapiCompletionConfig(
+            provider="google",
+            type="tts",
+            params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+        )
+    )
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="google-tts-config",
+        config_blob=config_blob,
+    )
+
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "openai",
+                "type": "text",
+                "params": {"model": "gpt-4o", "temperature": 0.7},
+            }
+        },
+        "commit_message": "Attempting to change type from tts to text",
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
+    assert response.status_code == 400
+    error_detail = response.json().get("error", "")
+    assert "cannot change config type" in error_detail.lower()
+    assert "tts" in error_detail
+    assert "text" in error_detail
+
+
+def test_create_version_with_kaapi_stt_provider_success(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating a new STT version with tweaked params succeeds."""
+    from app.models.llm.request import KaapiCompletionConfig
+
+    config_blob = ConfigBlob(
+        completion=KaapiCompletionConfig(
+            provider="google",
+            type="stt",
+            params={"model": "gemini-2.5-pro"},
+        )
+    )
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="google-stt-version-config",
+        config_blob=config_blob,
+    )
+
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "google",
+                "type": "stt",
+                "params": {"model": "gemini-2.5-pro", "temperature": 0.3},
+            }
+        },
+        "commit_message": "Tweak temperature for STT",
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["version"] == 2
+    assert data["data"]["config_blob"]["completion"]["type"] == "stt"
+    assert data["data"]["config_blob"]["completion"]["provider"] == "google"
+
+
+def test_create_version_with_kaapi_tts_provider_success(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Test creating a new TTS version switching model and voice succeeds."""
+    from app.models.llm.request import KaapiCompletionConfig
+
+    config_blob = ConfigBlob(
+        completion=KaapiCompletionConfig(
+            provider="google",
+            type="tts",
+            params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+        )
+    )
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="google-tts-version-config",
+        config_blob=config_blob,
+    )
+
+    version_data = {
+        "config_blob": {
+            "completion": {
+                "provider": "google",
+                "type": "tts",
+                "params": {"model": "gemini-2.5-pro-preview-tts", "voice": "Orus"},
+            }
+        },
+        "commit_message": "Switch to pro TTS model with Orus voice",
+    }
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json=version_data,
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["version"] == 2
+    assert data["data"]["config_blob"]["completion"]["type"] == "tts"
+    assert (
+        data["data"]["config_blob"]["completion"]["params"]["model"]
+        == "gemini-2.5-pro-preview-tts"
+    )
+    assert data["data"]["config_blob"]["completion"]["params"]["voice"] == "Orus"
+
+
 def test_create_config_with_kaapi_provider_success(
     db: Session,
     client: TestClient,

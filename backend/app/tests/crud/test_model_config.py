@@ -225,20 +225,34 @@ def test_validate_blob_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> 
     assert "model is required" in exc.value.detail
 
 
-def test_validate_blob_unsupported_model_raises(
+def test_validate_blob_model_not_found_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_validators(
-        monkeypatch,
-        row=None,
-        supported=False,
-        allowed=["gpt-4o", "gpt-4o-mini"],
-    )
+    """Model that doesn't exist in model_config raises 400 with model name in detail."""
+    _patch_validators(monkeypatch, row=None, supported=False)
     blob = _make_blob("openai", "text", {"model": "gpt-4-turbo"})
     with pytest.raises(HTTPException) as exc:
         model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
     assert exc.value.status_code == 400
     assert "gpt-4-turbo" in exc.value.detail
+
+
+def test_validate_blob_wrong_type_for_model_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Model that exists but is wrong type (e.g. TTS model used as text) raises 400 with allowed list."""
+    row = SimpleNamespace(config={})
+    _patch_validators(
+        monkeypatch,
+        row=row,
+        supported=False,
+        allowed=["gpt-4o", "gpt-4o-mini"],
+    )
+    blob = _make_blob("openai", "text", {"model": "some-audio-model"})
+    with pytest.raises(HTTPException) as exc:
+        model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+    assert "some-audio-model" in exc.value.detail
     assert "gpt-4o" in exc.value.detail
 
 
@@ -290,4 +304,36 @@ def test_validate_blob_tts_no_voice_spec_passes(
     row = SimpleNamespace(config={})
     _patch_validators(monkeypatch, row=row, supported=True)
     blob = _make_blob("sarvamai", "tts", {"model": "bulbul:v3", "voice": "anything"})
+    model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+
+def test_validate_blob_stt_model_rejected_for_text_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """STT-only model (audio input) must be rejected when type=text.
+
+    Regression: previously only stt/tts triggered is_model_supported; type=text
+    only checked model existence, so gemini-2.5-pro (STT) passed as a text model.
+    """
+    row = SimpleNamespace(config={})
+    _patch_validators(
+        monkeypatch,
+        row=row,
+        supported=False,  # modality filter excludes AUDIO-input models for type=text
+        allowed=["gpt-4o", "gpt-4o-mini"],
+    )
+    blob = _make_blob("google", "text", {"model": "gemini-2.5-pro"})
+    with pytest.raises(HTTPException) as exc:
+        model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
+    assert "gemini-2.5-pro" in exc.value.detail
+
+
+def test_validate_blob_text_model_accepted_for_text_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid text model passes for type=text."""
+    row = SimpleNamespace(config={})
+    _patch_validators(monkeypatch, row=row, supported=True)
+    blob = _make_blob("openai", "text", {"model": "gpt-4o"})
     model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
