@@ -110,7 +110,14 @@ class CollectionCrud:
             setattr(collection, field, value)
 
         collection.updated_at = now()
-        return self._update(collection)
+        try:
+            return self._update(collection)
+        except IntegrityError:
+            self.session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Collection name already exists. Choose a different name.",
+            )
 
     def exists_by_name(self, collection_name: str) -> bool:
         statement = (

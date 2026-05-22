@@ -213,7 +213,7 @@ def update_collection(
     current_user: AuthContextDep,
     patch: CollectionUpdate,
     collection_id: UUID = FastPath(description="Collection to update"),
-):
+) -> APIResponse[CollectionPublic]:
     with log_context(
         tag="collection",
         system="collection",
