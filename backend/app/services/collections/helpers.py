@@ -171,6 +171,8 @@ def to_collection_public(collection: Collection) -> CollectionPublic:
     if is_vector_store:
         return CollectionPublic(
             id=collection.id,
+            name=collection.name,
+            description=collection.description,
             knowledge_base_id=collection.llm_service_id,
             knowledge_base_provider=collection.llm_service_name,
             project_id=collection.project_id,
@@ -181,6 +183,8 @@ def to_collection_public(collection: Collection) -> CollectionPublic:
     else:
         return CollectionPublic(
             id=collection.id,
+            name=collection.name,
+            description=collection.description,
             llm_service_id=collection.llm_service_id,
             llm_service_name=collection.llm_service_name,
             project_id=collection.project_id,
