@@ -15,6 +15,14 @@ from app.crud.document_collection import DocumentCollectionCrud
 logger = logging.getLogger(__name__)
 
 
+class CollectionNameConflictError(Exception):
+    """Raised when a collection name conflicts with an existing active collection."""
+
+    def __init__(self, name: str | None) -> None:
+        self.name = name
+        super().__init__(f"Collection name '{name}' already exists")
+
+
 class CollectionCrud:
     def __init__(self, session: Session, project_id: int):
         self.session = session
@@ -94,17 +102,20 @@ class CollectionCrud:
         return collections
 
     def update(self, collection_id: UUID, patch: CollectionUpdate) -> Collection:
-        """Update editable fields of a collection (name, description)."""
+        """Update editable fields of a collection (name, description).
+
+        Raises:
+            CollectionNameConflictError: when the requested name is already taken
+                by another active collection in the same project (caught either by
+                the pre-check or by a unique-index IntegrityError on commit).
+        """
         collection = self.read_one(collection_id)
 
         changes = patch.model_dump(exclude_unset=True, exclude_none=True)
 
         if "name" in changes and changes["name"] != collection.name:
             if self.exists_by_name(changes["name"]):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Collection '{changes['name']}' already exists. Choose a different name.",
-                )
+                raise CollectionNameConflictError(changes["name"])
 
         for field, value in changes.items():
             setattr(collection, field, value)
@@ -114,10 +125,7 @@ class CollectionCrud:
             return self._update(collection)
         except IntegrityError:
             self.session.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Collection name already exists. Choose a different name.",
-            )
+            raise CollectionNameConflictError(changes.get("name"))
 
     def exists_by_name(self, collection_name: str) -> bool:
         statement = (

@@ -93,9 +93,16 @@ class Collection(SQLModel, table=True):
 
 # Request models
 class CollectionOptions(SQLModel):
-    name: str | None = Field(default=None, description="Name of the collection")
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Name of the collection",
+    )
     description: str | None = Field(
-        default=None, description="Description of the collection"
+        default=None,
+        max_length=2000,
+        description="Description of the collection",
     )
     documents: list[UUID] = Field(
         description="List of document IDs",
@@ -195,10 +202,13 @@ class DeletionRequest(CallbackRequest):
 class CollectionUpdate(SQLModel):
     name: str | None = Field(
         default=None,
+        min_length=1,
+        max_length=255,
         description="New name for the collection",
     )
     description: str | None = Field(
         default=None,
+        max_length=2000,
         description="New description for the collection",
     )
 
@@ -214,10 +224,13 @@ class CollectionPublic(SQLModel):
     id: UUID
     name: str | None = Field(
         default=None,
+        min_length=1,
+        max_length=255,
         description="Name of the collection",
     )
     description: str | None = Field(
         default=None,
+        max_length=2000,
         description="Description of the collection",
     )
     llm_service_id: str | None = Field(

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud import CollectionCrud
+from app.crud.collection.collection import CollectionNameConflictError
 from app.models import CollectionUpdate
 from app.tests.utils.utils import get_project
 from app.tests.utils.collection import get_assistant_collection
@@ -47,7 +48,7 @@ class TestCollectionCrudUpdate:
 
         assert again.name == "same"
 
-    def test_update_rename_to_existing_name_raises_409(self, db: Session) -> None:
+    def test_update_rename_to_existing_name_raises_conflict(self, db: Session) -> None:
         project = get_project(db, "Dalgo")
         crud = CollectionCrud(db, project.id)
 
@@ -56,11 +57,10 @@ class TestCollectionCrudUpdate:
 
         target = get_assistant_collection(db, project)
 
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(CollectionNameConflictError) as excinfo:
             crud.update(target.id, CollectionUpdate(name="taken"))
 
-        assert excinfo.value.status_code == 409
-        assert "already exists" in excinfo.value.detail
+        assert excinfo.value.name == "taken"
 
     def test_update_nonexistent_collection_raises_404(self, db: Session) -> None:
         project = get_project(db, "Dalgo")
@@ -71,11 +71,12 @@ class TestCollectionCrudUpdate:
 
         assert excinfo.value.status_code == 404
 
-    def test_update_integrity_error_returns_409(self, db: Session) -> None:
+    def test_update_integrity_error_raises_conflict(self, db: Session) -> None:
         """
         Simulate a concurrent insert: pre-check passes, but the DB commit
         races and raises IntegrityError on the unique index. The CRUD should
-        catch it, roll back, and surface a clean 409.
+        catch it, roll back, and raise the domain CollectionNameConflictError
+        (the route is responsible for translating it into HTTP 409).
         """
         project = get_project(db, "Dalgo")
         collection = get_assistant_collection(db, project)
@@ -86,8 +87,7 @@ class TestCollectionCrudUpdate:
             "_update",
             side_effect=IntegrityError("stmt", {}, Exception("duplicate")),
         ):
-            with pytest.raises(HTTPException) as excinfo:
+            with pytest.raises(CollectionNameConflictError) as excinfo:
                 crud.update(collection.id, CollectionUpdate(name="race-condition"))
 
-        assert excinfo.value.status_code == 409
-        assert "already exists" in excinfo.value.detail
+        assert excinfo.value.name == "race-condition"
