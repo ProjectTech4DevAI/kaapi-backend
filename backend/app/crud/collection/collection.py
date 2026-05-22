@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select, and_
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Document, Collection, DocumentCollection
+from app.models import Document, Collection, CollectionUpdate, DocumentCollection
 from app.core.util import now
 from app.crud.document_collection import DocumentCollectionCrud
 
@@ -92,6 +92,25 @@ class CollectionCrud:
 
         collections = self.session.exec(statement).all()
         return collections
+
+    def update(self, collection_id: UUID, patch: CollectionUpdate) -> Collection:
+        """Update editable fields of a collection (name, description)."""
+        collection = self.read_one(collection_id)
+
+        changes = patch.model_dump(exclude_unset=True, exclude_none=True)
+
+        if "name" in changes and changes["name"] != collection.name:
+            if self.exists_by_name(changes["name"]):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Collection '{changes['name']}' already exists. Choose a different name.",
+                )
+
+        for field, value in changes.items():
+            setattr(collection, field, value)
+
+        collection.updated_at = now()
+        return self._update(collection)
 
     def exists_by_name(self, collection_name: str) -> bool:
         statement = (

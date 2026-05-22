@@ -31,6 +31,7 @@ from .collection import (
     Collection,
     CollectionIDPublic,
     CollectionPublic,
+    CollectionUpdate,
     CollectionWithDocsPublic,
     CreationRequest,
     DeletionRequest,

@@ -192,6 +192,17 @@ class DeletionRequest(CallbackRequest):
     collection_id: UUID = Field(description="Collection to delete")
 
 
+class CollectionUpdate(SQLModel):
+    name: str | None = Field(
+        default=None,
+        description="New name for the collection",
+    )
+    description: str | None = Field(
+        default=None,
+        description="New description for the collection",
+    )
+
+
 # Response models
 
 
