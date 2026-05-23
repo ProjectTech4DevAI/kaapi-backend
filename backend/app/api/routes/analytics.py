@@ -18,8 +18,10 @@ from app.models import (
     AnalyticsMonthlyMetricPoint,
     Modality,
 )
+from app.models.config.version import ConfigVersion
 from app.models.evaluation import EvaluationRun
 from app.models.llm.request import LlmCall, LlmChain
+from app.models.model_config import ModelConfig
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -237,7 +239,26 @@ def _aggregate_live(
             continue
         buckets[(row.month, chain_modality, chain_provider)]["llm_chain_requests"] += 1
 
-    # ---- evaluation_run --------------------------------------------------
+    # ---- evaluation_run ----
+    mc_lookup = (
+        select(ModelConfig.model_name, ModelConfig.provider)
+        .distinct(ModelConfig.model_name)
+        .order_by(ModelConfig.model_name, ModelConfig.provider)
+        .subquery()
+    )
+
+    cv_provider_normalized = sa.func.split_part(
+        sa.cast(ConfigVersion.config_blob["completion"]["provider"].astext, sa.String),
+        "-native",
+        1,
+    )
+
+    eval_provider_expr = sa.func.coalesce(
+        mc_lookup.c.provider,
+        sa.func.nullif(cv_provider_normalized, ""),
+        "unknown",
+    )
+
     eval_month_col = (
         sa.func.date_trunc("month", EvaluationRun.inserted_at)
         .cast(sa.Date)
@@ -246,9 +267,7 @@ def _aggregate_live(
     eval_type_lower = sa.func.lower(sa.func.coalesce(EvaluationRun.type, "")).label(
         "type_lower"
     )
-    eval_provider_col = sa.func.coalesce(
-        EvaluationRun.providers[0].astext, "unknown"
-    ).label("provider")
+    eval_provider_col = eval_provider_expr.label("provider")
     eval_count_col = sa.func.count().label("eval_count")
     eval_cost_col = sa.func.coalesce(
         sa.func.sum(sa.cast(EvaluationRun.cost["total_cost_usd"].astext, sa.Numeric)),
@@ -263,6 +282,18 @@ def _aggregate_live(
             eval_count_col,
             eval_cost_col,
         )
+        .select_from(EvaluationRun)
+        .outerjoin(
+            mc_lookup,
+            mc_lookup.c.model_name == EvaluationRun.providers[0].astext,
+        )
+        .outerjoin(
+            ConfigVersion,
+            sa.and_(
+                ConfigVersion.config_id == EvaluationRun.config_id,
+                ConfigVersion.version == EvaluationRun.config_version,
+            ),
+        )
         .where(EvaluationRun.organization_id == organization_id)
         .group_by(eval_month_col, eval_type_lower, eval_provider_col)
     )
@@ -273,10 +304,7 @@ def _aggregate_live(
     if project_id is not None:
         eval_stmt = eval_stmt.where(EvaluationRun.project_id == project_id)
     if provider_filter is not None:
-        eval_stmt = eval_stmt.where(
-            sa.func.coalesce(EvaluationRun.providers[0].astext, "unknown")
-            == provider_filter
-        )
+        eval_stmt = eval_stmt.where(eval_provider_expr == provider_filter)
 
     for row in session.exec(eval_stmt).all():
         eval_modality = _EVAL_TYPE_TO_MODALITY.get(row.type_lower, Modality.OTHER)
