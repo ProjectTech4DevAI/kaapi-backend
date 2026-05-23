@@ -93,8 +93,7 @@ class EndpointInvoker:
 
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
-        logger.debug(f"Request URL: {self.base_url}{endpoint}")
-        logger.debug(f"Request headers: {headers}")
+        logger.debug(f"[invoke_endpoint] Request URL: {self.base_url}{endpoint}")
 
         try:
             response = await client.get(
@@ -103,12 +102,13 @@ class EndpointInvoker:
                 timeout=REQUEST_TIMEOUT,
             )
 
-            logger.debug(f"Response status: {response.status_code}")
-            logger.debug(f"Response headers: {dict(response.headers)}")
+            logger.debug(f"[invoke_endpoint] Response status: {response.status_code}")
 
             # If unauthorized or forbidden (token expired/invalid), re-authenticate and retry once
             if response.status_code in (401, 403):
-                logger.info("Token expired or invalid, re-authenticating...")
+                logger.info(
+                    "[invoke_endpoint] Token expired or invalid, re-authenticating..."
+                )
                 await self.authenticate(client)
                 headers = {"Authorization": f"Bearer {self.access_token}"}
                 response = await client.get(
@@ -122,11 +122,11 @@ class EndpointInvoker:
 
         except httpx.HTTPStatusError as e:
             logger.error(
-                f"Endpoint invocation failed with status {e.response.status_code}: {e.response.text}"
+                f"[invoke_endpoint] Endpoint invocation failed with status {e.response.status_code}: {e.response.text}"
             )
             raise
         except Exception as e:
-            logger.error(f"Endpoint invocation error: {e}")
+            logger.error(f"[invoke_endpoint] Endpoint invocation error: {e}")
             raise
 
     async def run(self):
@@ -147,8 +147,13 @@ class EndpointInvoker:
                     logger.info(f"Invoking endpoint at {start_time}")
 
                     for endpoint in self.endpoints:
-                        result = await self.invoke_endpoint(client, endpoint)
-                        logger.info(f"[{endpoint}] invoked successfully: {result}")
+                        try:
+                            result = await self.invoke_endpoint(client, endpoint)
+                            logger.info(f"[{endpoint}] invoked successfully: {result}")
+                        except Exception as endpoint_error:
+                            logger.error(
+                                f"[{endpoint}] invocation failed: {endpoint_error}"
+                            )
 
                     # Calculate next invocation time
                     elapsed = (datetime.now() - start_time).total_seconds()
