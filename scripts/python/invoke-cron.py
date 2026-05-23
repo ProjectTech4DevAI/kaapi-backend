@@ -15,7 +15,10 @@ import httpx
 from dotenv import load_dotenv
 
 # Configuration
-ENDPOINT = "/api/v1/cron/evaluations"  # Endpoint to invoke
+ENDPOINTS = [
+    "/api/v1/cron/evaluations",
+    "/api/v1/cron/pending-jobs",
+]
 REQUEST_TIMEOUT = 30  # Timeout for requests in seconds
 
 # Setup logging
@@ -33,7 +36,7 @@ class EndpointInvoker:
         # Load BASE_URL from environment with default fallback
         base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
         self.base_url = base_url.rstrip("/")
-        self.endpoint = ENDPOINT
+        self.endpoints = ENDPOINTS
 
         # Load interval from environment with default of 5 minutes
         self.interval_minutes = int(os.getenv("CRON_INTERVAL_MINUTES", "5"))
@@ -83,25 +86,23 @@ class EndpointInvoker:
             logger.error(f"Authentication error: {e}")
             raise
 
-    async def invoke_endpoint(self, client: httpx.AsyncClient) -> dict:
-        """Invoke the configured endpoint."""
+    async def invoke_endpoint(self, client: httpx.AsyncClient, endpoint: str) -> dict:
+        """Invoke a single endpoint."""
         if not self.access_token:
             await self.authenticate(client)
 
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
-        # Debug: Log what we're sending
-        logger.debug(f"Request URL: {self.base_url}{self.endpoint}")
+        logger.debug(f"Request URL: {self.base_url}{endpoint}")
         logger.debug(f"Request headers: {headers}")
 
         try:
             response = await client.get(
-                f"{self.base_url}{self.endpoint}",
+                f"{self.base_url}{endpoint}",
                 headers=headers,
                 timeout=REQUEST_TIMEOUT,
             )
 
-            # Debug: Log response headers and first part of body
             logger.debug(f"Response status: {response.status_code}")
             logger.debug(f"Response headers: {dict(response.headers)}")
 
@@ -111,7 +112,7 @@ class EndpointInvoker:
                 await self.authenticate(client)
                 headers = {"Authorization": f"Bearer {self.access_token}"}
                 response = await client.get(
-                    f"{self.base_url}{self.endpoint}",
+                    f"{self.base_url}{endpoint}",
                     headers=headers,
                     timeout=REQUEST_TIMEOUT,
                 )
@@ -132,7 +133,7 @@ class EndpointInvoker:
         """Main loop to invoke endpoint periodically."""
         logger.info(f"Using API Base URL: {self.base_url}")
         logger.info(
-            f"Starting cron job - invoking {self.endpoint} every {self.interval_minutes} minutes"
+            f"Starting cron job - invoking {self.endpoints} every {self.interval_minutes} minutes"
         )
 
         # Use async context manager to ensure proper cleanup
@@ -145,8 +146,9 @@ class EndpointInvoker:
                     start_time = datetime.now()
                     logger.info(f"Invoking endpoint at {start_time}")
 
-                    result = await self.invoke_endpoint(client)
-                    logger.info(f"Endpoint invoked successfully: {result}")
+                    for endpoint in self.endpoints:
+                        result = await self.invoke_endpoint(client, endpoint)
+                        logger.info(f"[{endpoint}] invoked successfully: {result}")
 
                     # Calculate next invocation time
                     elapsed = (datetime.now() - start_time).total_seconds()
