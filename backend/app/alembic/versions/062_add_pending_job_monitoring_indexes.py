@@ -1,7 +1,7 @@
 """add pending job monitoring indexes
 
-Revision ID: 061
-Revises: 060
+Revision ID: 062
+Revises: 061
 Create Date: 2026-05-13 00:00:00.000000
 
 """
