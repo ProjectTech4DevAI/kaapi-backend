@@ -78,7 +78,10 @@ def upgrade():
         "CREATE INDEX ix_model_config_output_modalities ON global.model_config USING gin (output_modalities)"
     )
 
-    # 6. Seed rows — pricing per 1M tokens (USD): response/batch = text i/o; audio = audio-modal i/o
+    op.execute(
+        "SELECT setval(pg_get_serial_sequence('global.model_config', 'id'), MAX(id)) FROM global.model_config"
+    )
+
     op.execute(
         """
         INSERT INTO global.model_config
