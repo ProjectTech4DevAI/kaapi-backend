@@ -1,16 +1,12 @@
 import logging
-from collections import defaultdict
 from datetime import date
 from decimal import Decimal
-from typing import get_args
 
-import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud.model_config import Provider, estimate_model_cost
+from app.crud.model_config import KNOWN_PROVIDERS
 from app.models import (
     AnalyticsChartGroupBy,
     AnalyticsChartResponse,
@@ -19,44 +15,12 @@ from app.models import (
     AnalyticsMonthlyMetricPoint,
     Modality,
 )
-from app.models.config.version import ConfigVersion
-from app.models.evaluation import EvaluationRun
-from app.models.llm.request import LlmCall, LlmChain
-from app.models.model_config import ModelConfig
+from app.services.analytics import Bucket, aggregate_monthly_metrics
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
-
-
-# (input_type, output_type) -> modality bucket for llm_call rows.
-_LLM_MODALITY: dict[tuple[str | None, str | None], Modality] = {
-    ("text", "text"): Modality.T_FS_T,
-    ("audio", "audio"): Modality.S_FS_S,
-    ("audio", "text"): Modality.STT,
-    ("text", "audio"): Modality.TTS,
-}
-
-# evaluation_run.type (lowercased) -> modality bucket.
-_EVAL_TYPE_TO_MODALITY: dict[str, Modality] = {
-    "text": Modality.T_FS_T,
-    "stt": Modality.STT,
-    "tts": Modality.TTS,
-}
-
-# Values accepted by the `global.provider_enum` column on model_config.
-_KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
-
-
-def _derive_llm_modality(input_type: str | None, output_type: str | None) -> Modality:
-    return _LLM_MODALITY.get((input_type, output_type), Modality.OTHER)
-
-
-def _first_of_next_month(d: date) -> date:
-    if d.month == 12:
-        return date(d.year + 1, 1, 1)
-    return date(d.year, d.month + 1, 1)
 
 
 # Default lookback when the caller omits `from_month`. Caps the worst-case
@@ -75,254 +39,38 @@ def _default_from_month(anchor: date) -> date:
     return date(year, month, 1)
 
 
-def _llm_modality_case() -> sa.sql.ColumnElement[str]:
-    """SQL CASE mapping llm_call.input_type/output_type to a modality string."""
-    return sa.case(
-        (
-            sa.and_(LlmCall.input_type == "text", LlmCall.output_type == "text"),
-            Modality.T_FS_T.value,
-        ),
-        (
-            sa.and_(LlmCall.input_type == "audio", LlmCall.output_type == "audio"),
-            Modality.S_FS_S.value,
-        ),
-        (
-            sa.and_(LlmCall.input_type == "audio", LlmCall.output_type == "text"),
-            Modality.STT.value,
-        ),
-        (
-            sa.and_(LlmCall.input_type == "text", LlmCall.output_type == "audio"),
-            Modality.TTS.value,
-        ),
-        else_=Modality.OTHER.value,
-    )
+def _snap_to_first_of_month(d: date | None) -> date | None:
+    """Coerce a date to the first of its month.
 
-
-def _empty_bucket() -> dict[str, int | Decimal]:
-    return {
-        "llm_call_requests": 0,
-        "llm_chain_requests": 0,
-        "cost_usd": Decimal("0"),
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "eval_runs": 0,
-        "eval_cost_usd": Decimal("0"),
-    }
-
-
-def _aggregate_live(
-    session: Session,
-    *,
-    organization_id: int,
-    from_month: date | None,
-    to_month: date | None,
-    modality_filter: Modality | None,
-    provider_filter: str | None,
-    project_id: int | None,
-) -> dict[tuple[date, Modality, str], dict[str, int | Decimal]]:
-    """Live aggregation against llm_call, llm_chain, evaluation_run.
-
-    Each source is GROUP BY'd in Postgres; per-group cost for llm_call is
-    computed in Python via estimate_model_cost using the summed tokens.
-    estimate_model_cost is linear in tokens, so summing first and pricing
-    once per (provider, model) is equivalent to per-row pricing.
-
-    Returns: {(month, modality, provider) -> totals dict}.
+    The analytics window is bucketed monthly, so a caller passing
+    `2026-03-15` would otherwise filter `inserted_at >= 2026-03-15` and
+    return a partial March bucket that looks indistinguishable from a
+    real month. Snap to `2026-03-01` so the response always represents
+    whole months.
     """
-    end_date = _first_of_next_month(to_month) if to_month else None
-    buckets: dict[tuple[date, Modality, str], dict[str, int | Decimal]] = defaultdict(
-        _empty_bucket
-    )
+    if d is None:
+        return None
+    return date(d.year, d.month, 1)
 
-    # ---- For the llm_call ----
-    month_col = (
-        sa.func.date_trunc("month", LlmCall.inserted_at).cast(sa.Date).label("month")
-    )
-    modality_col = _llm_modality_case().label("modality")
-    provider_col = sa.func.coalesce(LlmCall.provider, "unknown").label("provider")
-    input_tokens_col = sa.func.coalesce(
-        sa.func.sum(sa.cast(LlmCall.usage["input_tokens"].astext, sa.Integer)),
-        0,
-    ).label("input_tokens")
-    output_tokens_col = sa.func.coalesce(
-        sa.func.sum(sa.cast(LlmCall.usage["output_tokens"].astext, sa.Integer)),
-        0,
-    ).label("output_tokens")
-    count_col = sa.func.count().label("request_count")
 
-    llm_stmt = (
-        select(
-            month_col,
-            modality_col,
-            provider_col,
-            LlmCall.model,
-            count_col,
-            input_tokens_col,
-            output_tokens_col,
-        )
-        .where(
-            LlmCall.deleted_at.is_(None),
-            LlmCall.organization_id == organization_id,
-        )
-        .group_by(month_col, modality_col, provider_col, LlmCall.model)
-    )
-    if from_month is not None:
-        llm_stmt = llm_stmt.where(LlmCall.inserted_at >= from_month)
-    if end_date is not None:
-        llm_stmt = llm_stmt.where(LlmCall.inserted_at < end_date)
-    if project_id is not None:
-        llm_stmt = llm_stmt.where(LlmCall.project_id == project_id)
-    if provider_filter is not None:
-        llm_stmt = llm_stmt.where(LlmCall.provider == provider_filter)
+def _validate_provider_filter(provider: str | None) -> None:
+    """Reject provider filters that aren't one of the canonical enum values.
 
-    for row in session.exec(llm_stmt).all():
-        modality_enum = Modality(row.modality)
-        if modality_filter is not None and modality_enum is not modality_filter:
-            continue
-        key = (row.month, modality_enum, row.provider)
-        bucket = buckets[key]
-        bucket["llm_call_requests"] += row.request_count
-
-        input_tokens = int(row.input_tokens or 0)
-        output_tokens = int(row.output_tokens or 0)
-        bucket["input_tokens"] += input_tokens
-        bucket["output_tokens"] += output_tokens
-        if (input_tokens or output_tokens) and row.provider in _KNOWN_PROVIDERS:
-            estimate = estimate_model_cost(
-                session=session,
-                provider=row.provider,  # type: ignore[arg-type]
-                model_name=row.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
-            if estimate is not None:
-                bucket["cost_usd"] += Decimal(str(estimate.get("total_cost", 0)))
-
-    # ---- llm_chain ----
-    # A chain is attributed to the modality+provider of its first child call.
-    # Fetch chains with the first-block UUID, then do one batched lookup
-    # against llm_call to resolve modality+provider.
-    chain_first_block = LlmChain.block_sequences[0].astext.label("first_call_id")
-    chain_month_col = (
-        sa.func.date_trunc("month", LlmChain.inserted_at).cast(sa.Date).label("month")
-    )
-
-    chain_stmt = select(chain_month_col, chain_first_block).where(
-        LlmChain.organization_id == organization_id,
-    )
-    if from_month is not None:
-        chain_stmt = chain_stmt.where(LlmChain.inserted_at >= from_month)
-    if end_date is not None:
-        chain_stmt = chain_stmt.where(LlmChain.inserted_at < end_date)
-    if project_id is not None:
-        chain_stmt = chain_stmt.where(LlmChain.project_id == project_id)
-
-    chain_rows = session.exec(chain_stmt).all()
-    first_call_ids = {row.first_call_id for row in chain_rows if row.first_call_id}
-
-    first_call_map: dict[str, sa.Row] = {}
-    if first_call_ids:
-        lookup_stmt = select(
-            LlmCall.id, LlmCall.input_type, LlmCall.output_type, LlmCall.provider
-        ).where(LlmCall.id.in_(first_call_ids))
-        for call_row in session.exec(lookup_stmt).all():
-            first_call_map[str(call_row.id)] = call_row
-
-    for row in chain_rows:
-        first = first_call_map.get(row.first_call_id) if row.first_call_id else None
-        if first is not None:
-            chain_modality = _derive_llm_modality(first.input_type, first.output_type)
-            chain_provider = first.provider or "unknown"
-        else:
-            chain_modality = Modality.OTHER
-            chain_provider = "unknown"
-
-        if modality_filter is not None and chain_modality is not modality_filter:
-            continue
-        if provider_filter is not None and chain_provider != provider_filter:
-            continue
-        buckets[(row.month, chain_modality, chain_provider)]["llm_chain_requests"] += 1
-
-    # ---- evaluation_run ----
-    mc_lookup = (
-        select(ModelConfig.model_name, ModelConfig.provider)
-        .distinct(ModelConfig.model_name)
-        .order_by(ModelConfig.model_name, ModelConfig.provider)
-        .subquery()
-    )
-
-    cv_provider_normalized = sa.func.split_part(
-        sa.cast(ConfigVersion.config_blob["completion"]["provider"].astext, sa.String),
-        "-native",
-        1,
-    )
-
-    eval_provider_expr = sa.func.coalesce(
-        sa.cast(mc_lookup.c.provider, sa.String),
-        sa.func.nullif(cv_provider_normalized, ""),
-        "unknown",
-    )
-
-    eval_month_col = (
-        sa.func.date_trunc("month", EvaluationRun.inserted_at)
-        .cast(sa.Date)
-        .label("month")
-    )
-    eval_type_lower = sa.func.lower(sa.func.coalesce(EvaluationRun.type, "")).label(
-        "type_lower"
-    )
-    eval_provider_col = eval_provider_expr.label("provider")
-    eval_count_col = sa.func.count().label("eval_count")
-    eval_cost_col = sa.func.coalesce(
-        sa.func.sum(sa.cast(EvaluationRun.cost["total_cost_usd"].astext, sa.Numeric)),
-        0,
-    ).label("eval_cost_usd")
-
-    eval_stmt = (
-        select(
-            eval_month_col,
-            eval_type_lower,
-            eval_provider_col,
-            eval_count_col,
-            eval_cost_col,
-        )
-        .select_from(EvaluationRun)
-        .outerjoin(
-            mc_lookup,
-            mc_lookup.c.model_name == EvaluationRun.providers[0].astext,
-        )
-        .outerjoin(
-            ConfigVersion,
-            sa.and_(
-                ConfigVersion.config_id == EvaluationRun.config_id,
-                ConfigVersion.version == EvaluationRun.config_version,
+    A typo like `opena1` would otherwise silently return an empty result
+    set, which is indistinguishable from "no activity for openai". Surface
+    it as a 400 instead.
+    """
+    if provider is not None and provider not in KNOWN_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown provider '{provider}'. "
+                f"Expected one of: {sorted(KNOWN_PROVIDERS)}."
             ),
         )
-        .where(EvaluationRun.organization_id == organization_id)
-        .group_by(eval_month_col, eval_type_lower, eval_provider_col)
-    )
-    if from_month is not None:
-        eval_stmt = eval_stmt.where(EvaluationRun.inserted_at >= from_month)
-    if end_date is not None:
-        eval_stmt = eval_stmt.where(EvaluationRun.inserted_at < end_date)
-    if project_id is not None:
-        eval_stmt = eval_stmt.where(EvaluationRun.project_id == project_id)
-    if provider_filter is not None:
-        eval_stmt = eval_stmt.where(eval_provider_expr == provider_filter)
-
-    for row in session.exec(eval_stmt).all():
-        eval_modality = _EVAL_TYPE_TO_MODALITY.get(row.type_lower, Modality.OTHER)
-        if modality_filter is not None and eval_modality is not modality_filter:
-            continue
-        key = (row.month, eval_modality, row.provider)
-        bucket = buckets[key]
-        bucket["eval_runs"] += row.eval_count
-        bucket["eval_cost_usd"] += Decimal(str(row.eval_cost_usd or 0))
-
-    return buckets
 
 
-def _bucket_value(bucket: dict[str, int | Decimal], metric: AnalyticsMetric) -> Decimal:
+def _bucket_value(bucket: Bucket, metric: AnalyticsMetric) -> Decimal:
     if metric is AnalyticsMetric.REQUESTS:
         return Decimal(
             int(bucket["llm_call_requests"]) + int(bucket["llm_chain_requests"])
@@ -378,7 +126,12 @@ def get_monthly_analytics(
     | None = Query(None, description="Filter to a single modality bucket."),
     provider: str
     | None = Query(
-        None, description="Filter to a single provider (e.g. 'openai', 'google')."
+        None,
+        description=(
+            "Filter to a single provider. Must be one of the canonical "
+            "model_config values: 'openai', 'google', 'sarvamai', 'elevenlabs'. "
+            "Anything else returns 400."
+        ),
     ),
     project_id: int
     | None = Query(
@@ -403,8 +156,11 @@ def get_monthly_analytics(
         if project_id is not None
         else (current_user.project.id if current_user.project else None)
     )
+    _validate_provider_filter(provider)
+    from_month = _snap_to_first_of_month(from_month)
+    to_month = _snap_to_first_of_month(to_month)
     effective_from_month = from_month or _default_from_month(to_month or date.today())
-    buckets = _aggregate_live(
+    buckets = aggregate_monthly_metrics(
         session=session,
         organization_id=current_user.organization_.id,
         from_month=effective_from_month,
@@ -465,7 +221,15 @@ def get_monthly_analytics_chart(
     ),
     modality: Modality
     | None = Query(None, description="Filter to a single modality bucket."),
-    provider: str | None = Query(None, description="Filter to a single provider."),
+    provider: str
+    | None = Query(
+        None,
+        description=(
+            "Filter to a single provider. Must be one of the canonical "
+            "model_config values: 'openai', 'google', 'sarvamai', 'elevenlabs'. "
+            "Anything else returns 400."
+        ),
+    ),
     project_id: int
     | None = Query(
         None,
@@ -496,8 +260,11 @@ def get_monthly_analytics_chart(
         if project_id is not None
         else (current_user.project.id if current_user.project else None)
     )
+    _validate_provider_filter(provider)
+    from_month = _snap_to_first_of_month(from_month)
+    to_month = _snap_to_first_of_month(to_month)
     effective_from_month = from_month or _default_from_month(to_month or date.today())
-    buckets = _aggregate_live(
+    buckets = aggregate_monthly_metrics(
         session=session,
         organization_id=current_user.organization_.id,
         from_month=effective_from_month,
