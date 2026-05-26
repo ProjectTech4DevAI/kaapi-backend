@@ -38,6 +38,7 @@ def model_pricing(db: Session) -> ModelConfig:
     model = ModelConfig(
         provider="openai",
         model_name=f"gpt-4o-analytics-test-{uuid4().hex[:8]}",
+        completion_type="text",
         pricing={
             "response": {"input_token_cost": 1.0, "output_token_cost": 2.0},
         },
