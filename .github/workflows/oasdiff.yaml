@@ -1,16 +1,68 @@
-# generate a changelog
+# Generate an API changelog by diffing the OpenAPI schema between base and HEAD.
 name: oasdiff
+
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
 jobs:
   breaking-changes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - run: git fetch --depth=1 origin ${{ github.base_ref }}
-      - uses: oasdiff/oasdiff-action/breaking@v0.0.48
+      - name: Checkout PR head
+        uses: actions/checkout@v4
         with:
-          base: 'origin/${{ github.base_ref }}:openapi.yaml'
-          revision: 'HEAD:openapi.yaml'
+          path: head
+          fetch-depth: 0
+
+      - name: Checkout base ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Prepare env file
+        run: cp head/.env.test.example .env
+
+      - name: Export base OpenAPI schema
+        working-directory: base/backend
+        env:
+          ENVIRONMENT: testing
+        run: |
+          uv sync --frozen
+          if [ -f scripts/export_openapi.py ]; then
+            uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+          else
+            # Base ref predates this workflow; copy the HEAD script in to bootstrap.
+            cp "$GITHUB_WORKSPACE/head/backend/scripts/export_openapi.py" scripts/
+            uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+          fi
+
+      - name: Export HEAD OpenAPI schema
+        working-directory: head/backend
+        env:
+          ENVIRONMENT: testing
+        run: |
+          uv sync --frozen
+          uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
+
+      - name: Diff (breaking changes)
+        uses: oasdiff/oasdiff-action/breaking@v0.0.48
+        with:
+          base: ${{ github.workspace }}/base-openapi.yaml
+          revision: ${{ github.workspace }}/head-openapi.yaml
           fail-on: WARN
+
+      - name: Diff (changelog comment)
+        uses: oasdiff/oasdiff-action/changelog@v0.0.48
+        with:
+          base: ${{ github.workspace }}/base-openapi.yaml
+          revision: ${{ github.workspace }}/head-openapi.yaml
