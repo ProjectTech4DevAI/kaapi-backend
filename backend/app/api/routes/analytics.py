@@ -2,11 +2,10 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud.model_config import KNOWN_PROVIDERS
 from app.models import (
     AnalyticsChartGroupBy,
     AnalyticsChartResponse,
@@ -51,23 +50,6 @@ def _snap_to_first_of_month(d: date | None) -> date | None:
     if d is None:
         return None
     return date(d.year, d.month, 1)
-
-
-def _validate_provider_filter(provider: str | None) -> None:
-    """Reject provider filters that aren't one of the canonical enum values.
-
-    A typo like `opena1` would otherwise silently return an empty result
-    set, which is indistinguishable from "no activity for openai". Surface
-    it as a 400 instead.
-    """
-    if provider is not None and provider not in KNOWN_PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unknown provider '{provider}'. "
-                f"Expected one of: {sorted(KNOWN_PROVIDERS)}."
-            ),
-        )
 
 
 def _bucket_value(bucket: Bucket, metric: AnalyticsMetric) -> Decimal:
@@ -128,9 +110,9 @@ def get_monthly_analytics(
     | None = Query(
         None,
         description=(
-            "Filter to a single provider. Must be one of the canonical "
-            "model_config values: 'openai', 'google', 'sarvamai', 'elevenlabs'. "
-            "Anything else returns 400."
+            "Filter to a single provider (exact match against "
+            "`llm_call.provider`, e.g. 'openai', 'google', 'openai-native'). "
+            "Free-form: passes through to the SQL filter as-is."
         ),
     ),
     project_id: int
@@ -156,7 +138,6 @@ def get_monthly_analytics(
         if project_id is not None
         else (current_user.project.id if current_user.project else None)
     )
-    _validate_provider_filter(provider)
     from_month = _snap_to_first_of_month(from_month)
     to_month = _snap_to_first_of_month(to_month)
     effective_from_month = from_month or _default_from_month(to_month or date.today())
@@ -225,9 +206,9 @@ def get_monthly_analytics_chart(
     | None = Query(
         None,
         description=(
-            "Filter to a single provider. Must be one of the canonical "
-            "model_config values: 'openai', 'google', 'sarvamai', 'elevenlabs'. "
-            "Anything else returns 400."
+            "Filter to a single provider (exact match against "
+            "`llm_call.provider`, e.g. 'openai', 'google', 'openai-native'). "
+            "Free-form: passes through to the SQL filter as-is."
         ),
     ),
     project_id: int
@@ -260,7 +241,6 @@ def get_monthly_analytics_chart(
         if project_id is not None
         else (current_user.project.id if current_user.project else None)
     )
-    _validate_provider_filter(provider)
     from_month = _snap_to_first_of_month(from_month)
     to_month = _snap_to_first_of_month(to_month)
     effective_from_month = from_month or _default_from_month(to_month or date.today())
