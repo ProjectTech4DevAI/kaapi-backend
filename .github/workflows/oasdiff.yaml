@@ -1,0 +1,16 @@
+# generate a changelog
+name: oasdiff
+on:
+  pull_request:
+    branches: [ "main" ]
+jobs:
+  breaking-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: git fetch --depth=1 origin ${{ github.base_ref }}
+      - uses: oasdiff/oasdiff-action/breaking@v0.0.48
+        with:
+          base: 'origin/${{ github.base_ref }}:openapi.yaml'
+          revision: 'HEAD:openapi.yaml'
+          fail-on: WARN
