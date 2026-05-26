@@ -446,7 +446,7 @@ def test_create_model_duplicate_fails(
         headers=superuser_token_headers,
         json=payload,
     )
-    assert r2.status_code >= 400
+    assert r2.status_code == 409
 
     _delete(client, superuser_token_headers, payload["provider"], payload["model_name"])
 
@@ -503,8 +503,7 @@ def test_list_models_invalid_provider_filter(
         f"{settings.API_V1_STR}/models?provider=bogus",
         headers=superuser_token_headers,
     )
-    assert response.status_code == 200
-    assert response.json()["data"]["count"] == 0
+    assert response.status_code == 422
 
 
 def test_inactive_model_excluded_from_list(

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
@@ -181,7 +182,14 @@ def bulk_create_model_configs(
 ) -> list[ModelConfig]:
     models = [ModelConfig.model_validate(item) for item in items]
     session.add_all(models)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate (provider, model_name) — entry already exists",
+        ) from e
     for m in models:
         session.refresh(m)
     return models

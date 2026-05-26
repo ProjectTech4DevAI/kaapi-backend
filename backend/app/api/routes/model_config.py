@@ -34,7 +34,7 @@ router = APIRouter(prefix="/models", tags=["Model Config"])
 )
 def list_models(
     session: SessionDep,
-    provider: str | None = None,
+    provider: Provider | None = None,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
 ) -> APIResponse[ModelConfigListPublic]:
