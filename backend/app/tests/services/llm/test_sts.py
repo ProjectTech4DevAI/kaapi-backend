@@ -762,7 +762,7 @@ class TestErrorPaths:
             ),
         )
         assert response.status_code == 422
-        assert "input language" in response.json()["detail"].lower()
+        assert "input language" in response.json()["error"].lower()
 
     def test_invalid_output_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -777,7 +777,7 @@ class TestErrorPaths:
             ),
         )
         assert response.status_code == 422
-        assert "output language" in response.json()["detail"].lower()
+        assert "output language" in response.json()["error"].lower()
 
     def test_unknown_as_output_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
