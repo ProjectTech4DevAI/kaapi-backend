@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
+from app.crud.model_config import validate_blob_model_or_raise
 from app.models import (
     Config,
     ConfigCreate,
@@ -32,6 +33,8 @@ class ConfigCrud:
         Create a new configuration with an initial version.
         """
         self._check_unique_name_or_raise(config_create.name)
+
+        validate_blob_model_or_raise(self.session, config_create.config_blob)
 
         try:
             config = Config(
