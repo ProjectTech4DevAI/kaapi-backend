@@ -1,6 +1,7 @@
 DEFAULT_STT_MODEL = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"
+DEFAULT_RAG_MODEL = "gpt-4o"
 
 # BCP-47 to language tag -> Gemini ISO 639-1 code (Indic + English)
 BCP47_LOCALE_TO_GEMINI_LANG: dict[str, str] = {

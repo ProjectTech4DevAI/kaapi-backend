@@ -187,15 +187,6 @@ class SarvamAIProvider(BaseProvider):
         )
 
         try:
-            # Call SarvamAI TTS with all mapped parameters
-            sarvam_response = self.client.text_to_speech.convert(
-                text=parsed_text,
-                target_language_code=target_language_code,
-                model=model,
-                speaker=speaker,
-                speech_sample_rate=16000,
-                output_audio_codec=output_audio_codec,
-            )
             # Build kwargs for API call, only including non-None parameters
             tts_kwargs = {
                 "text": parsed_text,

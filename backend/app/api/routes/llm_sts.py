@@ -4,12 +4,13 @@ import logging
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.models import Message
 from app.models.llm.constants import (
+    DEFAULT_RAG_MODEL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -41,24 +42,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["LLM"])
 
 
-# Endpoint-level defaults. Defined here so the chain layer stays
-# STS-agnostic; only this route knows what STS should default to.
-DEFAULT_RAG_MODEL = "gpt-4o"
 DEFAULT_RAG_TEMPERATURE = 0.1
 DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 
 BlockType = Literal["stt", "text", "tts"]
-
-
-# ---------- Validation ----------
-
-
-def _unsupported_language_error(field: str, code: str) -> APIResponse:
-    supported = ", ".join(sorted(SUPPORTED_LANGUAGE_CODES))
-    return APIResponse.failure_response(
-        error=f"Unsupported {field} language code: {code}. Supported: {supported}",
-        metadata={"status_code": 400},
-    )
 
 
 def _resolve_languages(request: SpeechToSpeechRequest) -> tuple[str, str]:
@@ -73,8 +60,6 @@ def _resolve_languages(request: SpeechToSpeechRequest) -> tuple[str, str]:
     return input_lang, ("auto" if input_lang == "auto" else input_lang)
 
 
-# override defaults with user specified inputs
-# then merges
 def _merge_stt(user: STTLLMParams | None, input_lang: str) -> STTLLMParams:
     base = STTLLMParams(model=DEFAULT_STT_MODEL, input_language=input_lang)
     if user is None:
@@ -112,12 +97,6 @@ def _merge_tts(user: TTSLLMParams | None, output_lang: str) -> TTSLLMParams:
     overrides = user.model_dump(exclude_unset=True)
     overrides["language"] = output_lang  # route owns this
     return base.model_copy(update=overrides)
-
-
-# ---------- Spec → LLMCallConfig ----------
-# The chain executor (services/llm/jobs.py::execute_llm_call) already branches
-# on LLMCallConfig.is_stored_config and resolves stored configs via
-# resolve_config_blob. So we just construct the right LLMCallConfig shape.
 
 
 def _inline_call_config(
@@ -181,7 +160,9 @@ def _resolve_tts_block(
 # ---------- Metadata ----------
 
 
-def _model_for_metadata(spec, default: str) -> str:
+def _model_for_metadata(
+    spec: STTBlockSpec | RAGBlockSpec | TTSBlockSpec | None, default: str
+) -> str:
     """Best-effort model label for logs/metadata."""
     if spec is None:
         return default
@@ -220,9 +201,9 @@ def _build_metadata(
 )
 def speech_to_speech(
     _current_user: AuthContextDep,
-    _session: SessionDep,
+    session: SessionDep,
     request: SpeechToSpeechRequest,
-):
+) -> APIResponse[Message]:
     """Run the STT → RAG → TTS chain for a single voice input."""
     project_id = _current_user.project_.id
     organization_id = _current_user.organization_.id
@@ -234,13 +215,20 @@ def speech_to_speech(
         request.input_language
         and request.input_language not in SUPPORTED_LANGUAGE_CODES
     ):
-        return _unsupported_language_error("input", request.input_language)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported input language code: {request.input_language}. Supported: {', '.join(SUPPORTED_LANGUAGE_CODES)}",
+        )
 
-    if (
-        request.output_language
-        and request.output_language not in SUPPORTED_LANGUAGE_CODES
+    if request.output_language and (
+        request.output_language not in SUPPORTED_LANGUAGE_CODES
+        or request.output_language in ("auto", "unknown")
     ):
-        return _unsupported_language_error("output", request.output_language)
+        tts_supported = SUPPORTED_LANGUAGE_CODES - {"auto", "unknown"}
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported output language code: {request.output_language}. Supported: {', '.join(tts_supported)}",
+        )
 
     input_lang, output_lang = _resolve_languages(request)
 
@@ -266,7 +254,7 @@ def speech_to_speech(
     )
 
     start_chain_job(
-        db=_session,
+        db=session,
         request=chain_request,
         project_id=project_id,
         organization_id=organization_id,
