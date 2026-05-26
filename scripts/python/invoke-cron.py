@@ -144,7 +144,7 @@ class EndpointInvoker:
             while True:
                 try:
                     start_time = datetime.now()
-                    logger.info(f"Invoking endpoint at {start_time}")
+                    logger.info(f"Invoking {len(self.endpoints)} endpoints at {start_time}")
 
                     for endpoint in self.endpoints:
                         try:
