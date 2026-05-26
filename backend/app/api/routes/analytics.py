@@ -2,6 +2,7 @@ import logging
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
+from typing import get_args
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
@@ -9,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud.model_config import estimate_model_cost
+from app.crud.model_config import Provider, estimate_model_cost
 from app.models import (
     AnalyticsChartGroupBy,
     AnalyticsChartResponse,
@@ -43,6 +44,9 @@ _EVAL_TYPE_TO_MODALITY: dict[str, Modality] = {
     "stt": Modality.STT,
     "tts": Modality.TTS,
 }
+
+# Values accepted by the `global.provider_enum` column on model_config.
+_KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
 
 
 def _derive_llm_modality(input_type: str | None, output_type: str | None) -> Modality:
@@ -183,7 +187,7 @@ def _aggregate_live(
         output_tokens = int(row.output_tokens or 0)
         bucket["input_tokens"] += input_tokens
         bucket["output_tokens"] += output_tokens
-        if input_tokens or output_tokens:
+        if (input_tokens or output_tokens) and row.provider in _KNOWN_PROVIDERS:
             estimate = estimate_model_cost(
                 session=session,
                 provider=row.provider,  # type: ignore[arg-type]
@@ -254,7 +258,7 @@ def _aggregate_live(
     )
 
     eval_provider_expr = sa.func.coalesce(
-        mc_lookup.c.provider,
+        sa.cast(mc_lookup.c.provider, sa.String),
         sa.func.nullif(cv_provider_normalized, ""),
         "unknown",
     )
