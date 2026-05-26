@@ -130,7 +130,7 @@ def _aggregate_live(
         _empty_bucket
     )
 
-    # ---- llm_call --------------------------------------------------------
+    # ---- For the llm_call ----
     month_col = (
         sa.func.date_trunc("month", LlmCall.inserted_at).cast(sa.Date).label("month")
     )
@@ -194,7 +194,7 @@ def _aggregate_live(
             if estimate is not None:
                 bucket["cost_usd"] += Decimal(str(estimate.get("total_cost", 0)))
 
-    # ---- llm_chain -------------------------------------------------------
+    # ---- llm_chain ----
     # A chain is attributed to the modality+provider of its first child call.
     # Fetch chains with the first-block UUID, then do one batched lookup
     # against llm_call to resolve modality+provider.
