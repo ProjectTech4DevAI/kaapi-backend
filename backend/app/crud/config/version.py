@@ -8,6 +8,7 @@ from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
+from app.crud.model_config import validate_blob_model_or_raise
 from app.models import (
     Config,
     ConfigVersion,
@@ -80,6 +81,8 @@ class ConfigVersionCrud:
                 f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"
             )
             raise HTTPException(status_code=400, detail=validation_errors)
+
+        validate_blob_model_or_raise(self.session, validated_blob)
 
         try:
             next_version = self._get_next_version(self.config_id)
