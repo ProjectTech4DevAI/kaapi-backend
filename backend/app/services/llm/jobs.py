@@ -27,6 +27,7 @@ from app.core.telemetry import (
 )
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
+from app.crud.model_config import validate_blob_model_or_raise
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
     create_llm_call,
@@ -132,6 +133,9 @@ def start_job(
     db: Session, request: LLMCallRequest, project_id: int, organization_id: int
 ) -> UUID:
     """Create an LLM job and schedule Celery task."""
+    if not request.config.is_stored_config and request.config.blob:
+        validate_blob_model_or_raise(db, request.config.blob)
+
     with log_context(
         tag="llm-call",
         lifecycle="llm.call.start_job",
@@ -188,6 +192,10 @@ def start_chain_job(
     db: Session, request: LLMChainRequest, project_id: int, organization_id: int
 ) -> UUID:
     """Create an LLM Chain job and schedule Celery task."""
+    for block in request.blocks:
+        if not block.config.is_stored_config and block.config.blob:
+            validate_blob_model_or_raise(db, block.config.blob)
+
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
     job = job_crud.create(
@@ -339,7 +347,7 @@ def resolve_config_blob(
         return None, "Unexpected error occurred while retrieving stored configuration"
 
     try:
-        return ConfigBlob(**config_version.config_blob), None
+        blob = ConfigBlob(**config_version.config_blob)
     except (TypeError, ValueError) as e:
         return None, f"Stored configuration blob is invalid: {str(e)}"
     except Exception:
@@ -349,6 +357,13 @@ def resolve_config_blob(
             exc_info=True,
         )
         return None, "Unexpected error occurred while parsing stored configuration"
+
+    try:
+        validate_blob_model_or_raise(config_crud.session, blob)
+    except HTTPException as e:
+        return None, e.detail
+
+    return blob, None
 
 
 def apply_input_guardrails(
@@ -528,6 +543,13 @@ def execute_llm_call(
                         return BlockResult(error=error)
                 else:
                     config_blob = config.blob
+                    try:
+                        validate_blob_model_or_raise(session, config_blob)
+                    except HTTPException as e:
+                        cfg_span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, e.detail)
+                        )
+                        return BlockResult(error=e.detail)
 
             original_input_value = (
                 query.input.content.value
