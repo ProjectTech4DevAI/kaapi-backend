@@ -13,6 +13,8 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
+    Provider,
 )
 
 
@@ -236,7 +238,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -248,11 +250,11 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
+    provider: Provider | None = Field(
         None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(

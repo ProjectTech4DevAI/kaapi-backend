@@ -1,13 +1,17 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
+from app.models.llm.constants import CompletionType, Provider
 from app.models.llm.request import ConfigBlob
-from app.models.model_config import CompletionType
-
-Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
+from app.models.model_config import (
+    ModelConfigBulkUpdateItem,
+    ModelConfigCreate,
+    ModelConfigUpdate,
+)
 
 
 def _normalize_provider(raw: str) -> str:
@@ -68,7 +72,7 @@ def list_supported_models(
     """Return active model names for a provider + completion type."""
     stmt = select(ModelConfig.model_name).where(
         ModelConfig.provider == provider,
-        ModelConfig.completion_type == completion_type,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
     return list(session.exec(stmt).all())
@@ -80,11 +84,11 @@ def is_model_supported(
     completion_type: CompletionType,
     model_name: str,
 ) -> bool:
-    """Check whether (provider, model_name) is active and matches the completion type."""
+    """Check whether (provider, model_name) is active and supports the completion type."""
     stmt = select(ModelConfig.id).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
-        ModelConfig.completion_type == completion_type,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
     return session.exec(stmt).first() is not None
@@ -162,6 +166,79 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
                     f"model='{model_name}'. Allowed: {allowed_voices}"
                 ),
             )
+
+
+def create_model_config(session: Session, data: ModelConfigCreate) -> ModelConfig:
+    model = ModelConfig.model_validate(data)
+    session.add(model)
+    session.commit()
+    session.refresh(model)
+    return model
+
+
+def bulk_create_model_configs(
+    session: Session, items: list[ModelConfigCreate]
+) -> list[ModelConfig]:
+    models = [ModelConfig.model_validate(item) for item in items]
+    session.add_all(models)
+    session.commit()
+    for m in models:
+        session.refresh(m)
+    return models
+
+
+def update_model_config(
+    session: Session, provider: str, model_name: str, data: ModelConfigUpdate
+) -> ModelConfig:
+    model = get_model_config(session=session, provider=provider, model_name=model_name)  # type: ignore[arg-type]
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(model, field, value)
+    model.updated_at = datetime.utcnow()
+    session.add(model)
+    session.commit()
+    session.refresh(model)
+    return model
+
+
+def bulk_update_model_configs(
+    session: Session, items: list[ModelConfigBulkUpdateItem]
+) -> list[ModelConfig]:
+    keys = [(item.provider, item.model_name) for item in items]
+    existing: dict[tuple, ModelConfig] = {}
+    for provider, model_name in keys:
+        m = get_model_config(session=session, provider=provider, model_name=model_name)
+        if m is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_name}' not found for provider='{provider}'",
+            )
+        existing[(provider, model_name)] = m
+    updated = []
+    now = datetime.utcnow()
+    for item in items:
+        model = existing[(item.provider, item.model_name)]
+        for field, value in item.model_dump(
+            exclude_unset=True, exclude={"provider", "model_name"}
+        ).items():
+            setattr(model, field, value)
+        model.updated_at = now
+        session.add(model)
+        updated.append(model)
+    session.commit()
+    for m in updated:
+        session.refresh(m)
+    return updated
+
+
+def delete_model_config(session: Session, provider: str, model_name: str) -> None:
+    model = get_model_config(session=session, provider=provider, model_name=model_name)  # type: ignore[arg-type]
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    session.delete(model)
+    session.commit()
 
 
 def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:
