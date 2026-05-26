@@ -137,6 +137,54 @@ def test_run_guardrails_validation_serializes_validator_models(mock_client_cls) 
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_includes_output_in_payload(mock_client_cls) -> None:
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"success": True}
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+        output_text="some llm response",
+    )
+
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["input"] == TEST_TEXT
+    assert kwargs["json"]["output"] == "some llm response"
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_omits_output_from_payload_by_default(
+    mock_client_cls,
+) -> None:
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"success": True}
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
+
+    _, kwargs = mock_client.post.call_args
+    assert "output" not in kwargs["json"]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
 def test_run_guardrails_validation_allows_disable_suppress_pass_logs(
     mock_client_cls,
 ) -> None:
