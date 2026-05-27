@@ -1,9 +1,9 @@
 """Assessment run orchestration service."""
 
 import logging
-from typing import Any
 from uuid import UUID
 
+from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlmodel import Session
 
@@ -13,9 +13,7 @@ from app.crud.assessment import (
     get_assessment_dataset_by_id,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
-    update_assessment_run_status,
 )
-from app.crud.assessment.batch import submit_assessment_batch
 from app.crud.config import ConfigCrud
 from app.crud.evaluations.core import resolve_evaluation_config
 from app.models.assessment import (
@@ -81,6 +79,7 @@ def _build_retry_request(
         attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
         output_schema=assessment_input.get("output_schema"),
         configs=configs,
+        l1_config=assessment_input.get("l1_config"),
     )
 
 
@@ -90,11 +89,13 @@ def start_assessment(
     organization_id: int,
     project_id: int,
 ) -> AssessmentResponse:
-    """Start an assessment run request.
+    """Validate, create Assessment + AssessmentRun records, dispatch Celery tasks.
 
-    Validates the dataset, resolves each config, creates one AssessmentRun per config,
-    and kicks off batch processing for each.
+    Each run is created with status='pending' and handed off to a Celery worker
+    that runs L1 filtering then submits the L2 batch.
     """
+    from app.celery.tasks.job_execution import run_assessment_run
+
     logger.info(
         "[start_assessment] Starting | experiment=%s | dataset_id=%s | configs=%s | org_id=%s",
         request.experiment_name,
@@ -110,7 +111,7 @@ def start_assessment(
         project_id=project_id,
     )
 
-    assessment_input: dict[str, Any] = {
+    assessment_input: dict = {
         "prompt_template": request.prompt_template,
         "system_instruction": request.system_instruction,
         "text_columns": request.text_columns,
@@ -118,12 +119,13 @@ def start_assessment(
     }
     if request.output_schema:
         assessment_input["output_schema"] = request.output_schema
+    if request.l1_config:
+        assessment_input["l1_config"] = request.l1_config
 
     config_crud = ConfigCrud(session=session, project_id=project_id)
 
     resolved_configs = []
     for cfg in request.configs:
-        # Assessment runs must use configs explicitly tagged for assessment use.
         parent_config = config_crud.read_one(cfg.config_id)
         if parent_config is not None and parent_config.tag != ConfigTag.ASSESSMENT:
             tag_value = (
@@ -165,7 +167,7 @@ def start_assessment(
                     f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
                 ),
             )
-        resolved_configs.append((cfg, config_blob))
+        resolved_configs.append(cfg)
 
     assessment = create_assessment(
         session=session,
@@ -176,54 +178,30 @@ def start_assessment(
     )
 
     runs: list[AssessmentRun] = []
-    try:
-        for cfg, config_blob in resolved_configs:
-            run = create_assessment_run(
-                session=session,
-                assessment_id=assessment.id,
-                config_id=cfg.config_id,
-                config_version=cfg.config_version,
-                assessment_input=assessment_input,
-            )
+    trace_id = correlation_id.get() or ""
 
-            try:
-                batch_job = submit_assessment_batch(
-                    session=session,
-                    run=run,
-                    assessment=assessment,
-                    dataset=dataset,
-                    config_blob=config_blob,
-                    assessment_input=assessment_input,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
+    for cfg in resolved_configs:
+        run = create_assessment_run(
+            session=session,
+            assessment_id=assessment.id,
+            config_id=cfg.config_id,
+            config_version=cfg.config_version,
+            assessment_input=assessment_input,
+        )
+        runs.append(run)
 
-                run = update_assessment_run_status(
-                    session=session,
-                    run=run,
-                    status="processing",
-                    batch_job_id=batch_job.id,
-                    total_items=batch_job.total_items,
-                )
+        run_assessment_run.delay(
+            run_id=run.id,
+            organization_id=organization_id,
+            project_id=project_id,
+            trace_id=trace_id,
+        )
 
-            except Exception as e:
-                logger.error(
-                    "[start_assessment] Failed to submit batch for run %s: %s",
-                    run.id,
-                    e,
-                    exc_info=True,
-                )
-                run = update_assessment_run_status(
-                    session=session,
-                    run=run,
-                    status="failed",
-                    error_message="Batch submission failed. Please try again or contact support.",
-                )
-
-            runs.append(run)
-    except Exception:
-        recompute_assessment_status(session=session, assessment_id=assessment.id)
-        raise
+        logger.info(
+            "[start_assessment] Dispatched Celery task | run_id=%s | config_id=%s",
+            run.id,
+            cfg.config_id,
+        )
 
     recompute_assessment_status(session=session, assessment_id=assessment.id)
 
@@ -242,13 +220,13 @@ def start_assessment(
         num_configs=len(runs),
         runs=[
             AssessmentRunSummary(
-                run_id=completed_run.id,
-                assessment_id=completed_run.assessment_id,
-                config_id=str(completed_run.config_id),
-                config_version=completed_run.config_version,
-                status=completed_run.status,
+                run_id=run.id,
+                assessment_id=run.assessment_id,
+                config_id=str(run.config_id),
+                config_version=run.config_version,
+                status=run.status,
             )
-            for completed_run in runs
+            for run in runs
         ],
     )
 

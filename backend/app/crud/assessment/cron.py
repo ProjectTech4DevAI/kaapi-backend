@@ -78,7 +78,7 @@ async def poll_all_pending_assessment_evaluations(
         runs = get_assessment_runs_for_assessment(
             session=session, assessment_id=assessment.id
         )
-        active_runs = [run for run in runs if run.status == "processing"]
+        active_runs = [run for run in runs if run.status == "l2_processing"]
 
         if not active_runs:
             refreshed = recompute_assessment_status(

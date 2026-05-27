@@ -65,6 +65,9 @@ def _build_run_public(
         total_items=run.total_items,
         error_message=run.error_message,
         input=run.input,
+        l1_total_rows=run.l1_total_rows,
+        l1_total_passed=run.l1_total_passed,
+        l1_total_rejected=run.l1_total_rejected,
         inserted_at=run.inserted_at,
         updated_at=run.updated_at,
     )

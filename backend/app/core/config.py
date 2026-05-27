@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
+    # Assessment
+    ASSESSMENT_L1_GEMINI_MODEL: str = "gemini-3.1-flash-lite"
+    ASSESSMENT_L1_CONCURRENT_WORKERS: int = 8
+    ASSESSMENT_L1_DUPLICATE_STORE_NAME: str = (
+        "fileSearchStores/inquilabcorpus-782mxjcwisaz"
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

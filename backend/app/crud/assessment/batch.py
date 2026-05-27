@@ -161,6 +161,7 @@ def build_openai_jsonl(
     attachments: list[AssessmentAttachment],
     prompt_template: str | None,
     openai_params: dict,
+    row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build OpenAI batch JSONL data from dataset rows.
 
@@ -174,7 +175,8 @@ def build_openai_jsonl(
     """
     jsonl_data = []
 
-    for idx, row in enumerate(rows):
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
         # Build input array
         input_parts: list[dict[str, Any]] = []
 
@@ -219,6 +221,7 @@ def build_google_jsonl(
     attachments: list[AssessmentAttachment],
     prompt_template: str | None,
     google_params: dict,
+    row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build Google (Gemini) batch JSONL data from dataset rows.
 
@@ -230,7 +233,8 @@ def build_google_jsonl(
     """
     jsonl_data = []
 
-    for idx, row in enumerate(rows):
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
         parts: list[dict[str, Any]] = []
 
         # Text prompt
@@ -349,6 +353,8 @@ def submit_assessment_batch(
     assessment_input: dict[str, Any],
     organization_id: int,
     project_id: int,
+    preloaded_rows: list[dict[str, str]] | None = None,
+    row_indices: list[int] | None = None,
 ) -> BatchJob:
     """Build JSONL and submit a batch for one assessment run.
 
@@ -371,8 +377,11 @@ def submit_assessment_batch(
     output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
-    # Load dataset rows
-    rows = _load_dataset_rows(session, dataset)
+    # Use preloaded rows (post-L1 filtered) if provided, else load from dataset.
+    if preloaded_rows is not None:
+        rows = preloaded_rows
+    else:
+        rows = _load_dataset_rows(session, dataset)
     if not rows:
         raise ValueError(f"Dataset {dataset.id} has no rows")
 
@@ -412,6 +421,7 @@ def submit_assessment_batch(
             attachments=attachments,
             prompt_template=prompt_template,
             openai_params=mapped_params,
+            row_indices=row_indices,
         )
 
         # Get OpenAI client and submit
@@ -452,6 +462,7 @@ def submit_assessment_batch(
             attachments=attachments,
             prompt_template=prompt_template,
             google_params=mapped_params,
+            row_indices=row_indices,
         )
 
         # Get Gemini client and submit
