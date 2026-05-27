@@ -428,6 +428,68 @@ def map_kaapi_to_elevenlabs_params(
     return elevenlabs_params, warnings
 
 
+def map_kaapi_to_anthropic_params(
+    kaapi_params: dict,
+) -> tuple[dict, list[str]]:
+    """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
+
+    Supported Mapping:
+        - model → model
+        - instructions → system
+        - temperature → temperature
+        - top_p → top_p
+        - max_output_tokens → max_tokens (Anthropic requires this;
+          provider defaults if absent)
+
+    Unsupported Kaapi params:
+        - knowledge_base_ids / max_num_results: Anthropic has no native
+          vector-store / file_search tool, dropped with warning.
+        - reasoning / effort / summary: Messages API does not expose a
+          reasoning-effort knob, dropped with warning.
+    """
+    anthropic_params: dict = {}
+    warnings: list[str] = []
+
+    model = kaapi_params.get("model")
+    instructions = kaapi_params.get("instructions")
+    temperature = kaapi_params.get("temperature")
+    top_p = kaapi_params.get("top_p")
+    max_output_tokens = kaapi_params.get("max_output_tokens")
+    knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
+    reasoning = kaapi_params.get("reasoning")
+    effort = kaapi_params.get("effort")
+    summary = kaapi_params.get("summary")
+
+    if model:
+        anthropic_params["model"] = model
+
+    if instructions:
+        anthropic_params["system"] = instructions
+
+    if temperature is not None:
+        anthropic_params["temperature"] = temperature
+
+    if top_p is not None:
+        anthropic_params["top_p"] = top_p
+
+    if max_output_tokens is not None:
+        anthropic_params["max_tokens"] = max_output_tokens
+
+    if knowledge_base_ids:
+        warnings.append(
+            "Parameter 'knowledge_base_ids' was ignored because Anthropic has no "
+            "native vector-store/file_search tool. Inline document content blocks instead."
+        )
+
+    if reasoning is not None or effort is not None or summary is not None:
+        warnings.append(
+            "Parameters 'reasoning'/'effort'/'summary' were ignored because the "
+            "Anthropic Messages API does not expose a reasoning-effort knob."
+        )
+
+    return anthropic_params, warnings
+
+
 def transform_kaapi_config_to_native(
     session: Session,
     kaapi_config: KaapiCompletionConfig,
@@ -486,6 +548,21 @@ def transform_kaapi_config_to_native(
         return (
             NativeCompletionConfig(
                 provider="elevenlabs-native",
+                params=mapped_params,
+                type=kaapi_config.type,
+            ),
+            warnings,
+        )
+
+    if kaapi_config.provider == "anthropic":
+        if kaapi_config.type != "text":
+            raise ValueError(
+                f"Anthropic provider does not support completion type '{kaapi_config.type}'"
+            )
+        mapped_params, warnings = map_kaapi_to_anthropic_params(kaapi_config.params)
+        return (
+            NativeCompletionConfig(
+                provider="anthropic-native",
                 params=mapped_params,
                 type=kaapi_config.type,
             ),
