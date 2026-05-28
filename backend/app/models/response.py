@@ -19,6 +19,7 @@ class ResponsesSyncAPIRequest(SQLModel):
     temperature: float = 0.1
     response_id: str | None = None
     question: str
+    lorem: str | None
 
     class Config:
         extra = "allow"
@@ -45,8 +46,8 @@ class FileResultChunk(SQLModel):
 
 
 class CallbackResponse(SQLModel):
-    status: str
-    response_id: str
+    # status: str
+    # response_id: str
     message: str
     diagnostics: Diagnostics | None = None
 
