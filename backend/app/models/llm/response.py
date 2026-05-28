@@ -114,7 +114,7 @@ class LLMJobImmediatePublic(SQLModel):
     status: str
     # message: str
     # job_inserted_at: datetime
-    job_updated_at: datetime
+    # job_updated_at: datetime
 
 
 class LLMJobPublic(SQLModel):
