@@ -29,8 +29,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Prepare env file
-        run: cp head/.env.test.example .env
+      - name: Prepare env files
+        # get_settings() loads `../.env.test` relative to the backend cwd when
+        # ENVIRONMENT=testing, so the file must sit at the repo root of each checkout.
+        run: |
+          cp head/.env.test.example head/.env.test
+          cp head/.env.test.example base/.env.test
 
       - name: Export base OpenAPI schema
         working-directory: base/backend
