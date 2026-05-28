@@ -110,7 +110,7 @@ class IntermediateChainResponse(SQLModel):
 class LLMJobImmediatePublic(SQLModel):
     """Immediate response after creating an LLM job."""
 
-    job_id: UUID
+    # job_id: UUID
     status: str
     message: str
     job_inserted_at: datetime
