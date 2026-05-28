@@ -8,11 +8,19 @@ from fastapi import HTTPException
 from sqlmodel import Session, select, and_
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Document, Collection, DocumentCollection
+from app.models import Document, Collection, CollectionUpdate, DocumentCollection
 from app.core.util import now
 from app.crud.document_collection import DocumentCollectionCrud
 
 logger = logging.getLogger(__name__)
+
+
+class CollectionNameConflictError(Exception):
+    """Raised when a collection name conflicts with an existing active collection."""
+
+    def __init__(self, name: str | None) -> None:
+        self.name = name
+        super().__init__(f"Collection name '{name}' already exists")
 
 
 class CollectionCrud:
@@ -117,6 +125,32 @@ class CollectionCrud:
 
         collections = self.session.exec(statement).all()
         return collections
+
+    def update(self, collection_id: UUID, patch: CollectionUpdate) -> Collection:
+        """Update editable fields of a collection (name, description).
+
+        Raises:
+            CollectionNameConflictError: when the requested name is already taken
+                by another active collection in the same project (caught either by
+                the pre-check or by a unique-index IntegrityError on commit).
+        """
+        collection = self.read_one(collection_id)
+
+        changes = patch.model_dump(exclude_unset=True, exclude_none=True)
+
+        if "name" in changes and changes["name"] != collection.name:
+            if self.exists_by_name(changes["name"]):
+                raise CollectionNameConflictError(changes["name"])
+
+        for field, value in changes.items():
+            setattr(collection, field, value)
+
+        collection.updated_at = now()
+        try:
+            return self._update(collection)
+        except IntegrityError:
+            self.session.rollback()
+            raise CollectionNameConflictError(changes.get("name"))
 
     def exists_by_name(self, collection_name: str) -> bool:
         statement = (

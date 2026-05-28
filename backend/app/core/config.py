@@ -164,6 +164,13 @@ class Settings(BaseSettings):
     # this same value so its expected schedule stays aligned with the trigger.
     CRON_INTERVAL_MINUTES: int = 5
 
+    PENDING_JOB_MONITOR_INTERVAL_MINUTES: int = 5
+    PENDING_RECENT_GRACE_MINUTES: int = 3
+    LLM_PENDING_THRESHOLD_MINUTES: int = 30
+    COLLECTION_PENDING_THRESHOLD_MINUTES: int = 30
+    DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
+    PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

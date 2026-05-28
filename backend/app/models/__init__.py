@@ -31,6 +31,7 @@ from .collection import (
     Collection,
     CollectionIDPublic,
     CollectionPublic,
+    CollectionUpdate,
     CollectionWithDocsPublic,
     CreationRequest,
     DeletionRequest,
@@ -140,6 +141,13 @@ from .model_evaluation import (
     ModelEvaluationPublic,
     ModelEvaluationStatus,
     ModelEvaluationUpdate,
+)
+from .notification import (
+    Notification,
+    NotificationEntityType,
+    NotificationProvider,
+    NotificationStatus,
+    NotificationType,
 )
 from .onboarding import OnboardingRequest, OnboardingResponse
 from .openai_conversation import (

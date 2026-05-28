@@ -131,6 +131,8 @@ def ensure_unique_name(
 def to_collection_public(collection: Collection) -> CollectionPublic:
     return CollectionPublic(
         id=collection.id,
+        name=collection.name,
+        description=collection.description,
         knowledge_base_id=collection.llm_service_id,
         knowledge_base_provider=collection.llm_service_name,
         project_id=collection.project_id,

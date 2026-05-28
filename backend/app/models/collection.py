@@ -93,9 +93,16 @@ class Collection(SQLModel, table=True):
 
 # Request models
 class CollectionOptions(SQLModel):
-    name: str | None = Field(default=None, description="Name of the collection")
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Name of the collection",
+    )
     description: str | None = Field(
-        default=None, description="Description of the collection"
+        default=None,
+        max_length=2000,
+        description="Description of the collection",
     )
     documents: list[UUID] = Field(
         description="List of document IDs",
@@ -135,6 +142,20 @@ class DeletionRequest(CallbackRequest):
     collection_id: UUID = Field(description="Collection to delete")
 
 
+class CollectionUpdate(SQLModel):
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="New name for the collection",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="New description for the collection",
+    )
+
+
 # Response models
 
 
@@ -146,6 +167,21 @@ class CollectionPublic(SQLModel):
     id: UUID
     knowledge_base_id: str = Field(
         description="Knowledge base ID (e.g., Vector Store ID)",
+    )
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Name of the collection",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Description of the collection",
+    )
+    llm_service_id: str | None = Field(
+        default=None,
+        description="LLM service ID (e.g., Assistant ID) when model and instructions were provided",
     )
     knowledge_base_provider: str = Field(
         description="Knowledge base provider name",

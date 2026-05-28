@@ -7,14 +7,23 @@ from sqlmodel import Field, SQLModel
 
 from app.core.util import now
 
+CompletionType = Literal["text", "stt", "tts"]
+
 
 class ModelConfigBase(SQLModel):
-    provider: Literal["openai", "google"] = Field(
+    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] = Field(
         default="openai",
         sa_column=sa.Column(
-            sa.String,
+            sa.Enum(
+                "openai",
+                "google",
+                "sarvamai",
+                "elevenlabs",
+                name="provider_enum",
+                schema="global",
+            ),
             nullable=False,
-            comment="provider name (e.g. openai, google)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs)",
         ),
     )
 
@@ -24,6 +33,15 @@ class ModelConfigBase(SQLModel):
             sa.String,
             nullable=False,
             comment="model name (e.g. gpt-4o, gemini-3-flash-preview)",
+        ),
+    )
+
+    completion_type: CompletionType = Field(
+        ...,
+        sa_column=sa.Column(
+            sa.Enum("text", "stt", "tts", name="completion_type_enum", schema="global"),
+            nullable=False,
+            comment="text | stt | tts — drives routing and validation",
         ),
     )
 
@@ -60,7 +78,8 @@ class ModelConfigBase(SQLModel):
             comment=(
                 "pricing per 1M tokens in USD. "
                 "Structure: {response: {input_token_cost, output_token_cost}, "
-                "batch: {input_token_cost, output_token_cost}}"
+                "batch: {input_token_cost, output_token_cost}, "
+                "audio: {input_token_cost, output_token_cost}}"
             ),
         ),
     )
@@ -80,6 +99,23 @@ class ModelConfig(ModelConfigBase, table=True):
     __tablename__ = "model_config"
     __table_args__ = (
         sa.UniqueConstraint("provider", "model_name"),
+        sa.Index("ix_model_config_provider_active", "provider", "is_active"),
+        sa.Index(
+            "ix_model_config_provider_type_active",
+            "provider",
+            "completion_type",
+            "is_active",
+        ),
+        sa.Index(
+            "ix_model_config_input_modalities",
+            "input_modalities",
+            postgresql_using="gin",
+        ),
+        sa.Index(
+            "ix_model_config_output_modalities",
+            "output_modalities",
+            postgresql_using="gin",
+        ),
         {"schema": "global"},
     )
 
