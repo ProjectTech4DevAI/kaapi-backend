@@ -61,12 +61,12 @@ jobs:
       - name: Diff (breaking changes)
         uses: oasdiff/oasdiff-action/breaking@v0.0.48
         with:
-          base: ${{ github.workspace }}/base-openapi.yaml
-          revision: ${{ github.workspace }}/head-openapi.yaml
+          base: base-openapi.yaml
+          revision: head-openapi.yaml
           fail-on: WARN
 
       - name: Diff (changelog comment)
         uses: oasdiff/oasdiff-action/changelog@v0.0.48
         with:
-          base: ${{ github.workspace }}/base-openapi.yaml
-          revision: ${{ github.workspace }}/head-openapi.yaml
+          base: base-openapi.yaml
+          revision: head-openapi.yaml
