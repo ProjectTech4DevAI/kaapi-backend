@@ -112,8 +112,8 @@ class LLMJobImmediatePublic(SQLModel):
 
     # job_id: UUID
     status: str
-    message: str
-    job_inserted_at: datetime
+    # message: str
+    # job_inserted_at: datetime
     job_updated_at: datetime
 
 
