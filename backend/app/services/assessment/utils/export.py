@@ -154,7 +154,7 @@ def _parse_json_col(raw: Any) -> dict[str, Any] | None:
 
 def _expand_output_columns(
     row_payload: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[str], list[str]]:
     """Expand ``output``, ``topic_relevance``, and ``duplicate_detection`` JSON columns
     into separate flat columns when they contain valid JSON objects.
 
@@ -225,7 +225,7 @@ def _expand_output_columns(
     if not all_output_keys:
         fieldnames = input_col_names + list(AssessmentExportRow.model_fields.keys())
         fieldnames = [f for f in fieldnames if f != "input_data"]
-        return row_payload, fieldnames
+        return row_payload, fieldnames, input_col_names, [], []
 
     fieldnames = input_col_names + l1_keys + output_keys + base_fields
     if has_unparsed_output:
@@ -233,7 +233,7 @@ def _expand_output_columns(
             len(input_col_names) + len(l1_keys) + len(output_keys), "output_raw"
         )
 
-    return expanded, fieldnames
+    return expanded, fieldnames, input_col_names, l1_keys, output_keys
 
 
 def serialize_export_rows(
@@ -244,13 +244,13 @@ def serialize_export_rows(
     row_payload = [row.model_dump(mode="json") for row in export_rows]
 
     if export_format == "json":
-        expanded, _ = _expand_output_columns(row_payload)
+        expanded, *_ = _expand_output_columns(row_payload)
         return (
             json.dumps(expanded, ensure_ascii=False, indent=2).encode("utf-8"),
             "application/json",
         )
 
-    expanded, fieldnames = _expand_output_columns(row_payload)
+    expanded, fieldnames, input_col_names, l1_keys, output_keys = _expand_output_columns(row_payload)
 
     if export_format == "csv":
         output = io.StringIO()
@@ -267,14 +267,10 @@ def serialize_export_rows(
             detail="XLSX export requires pandas/openpyxl support in the backend runtime",
         ) from exc
 
-    metadata_fields = {
-        field
-        for field in AssessmentExportRow.model_fields.keys()
-        if field not in ("output", "input_data")
-    }
-    excel_fields = [field for field in fieldnames if field not in metadata_fields]
+    # Explicit ordering: inputs → L1 topic relevance → L1 duplicate detection → L2 output
+    excel_fields = input_col_names + l1_keys + output_keys
     if not excel_fields:
-        excel_fields = ["output"]
+        excel_fields = output_keys or ["output"]
 
     # Drop columns where every row is null/empty
     expanded, excel_fields = _drop_empty_columns(expanded, excel_fields)
@@ -294,7 +290,7 @@ def build_json_export_rows(
 ) -> list[dict[str, Any]]:
     """Return JSON rows with structured output expanded into top-level keys."""
     row_payload = [row.model_dump(mode="json") for row in export_rows]
-    expanded, _ = _expand_output_columns(row_payload)
+    expanded, *_ = _expand_output_columns(row_payload)
     return expanded
 
 
