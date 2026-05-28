@@ -232,6 +232,7 @@ class NativeCompletionConfig(SQLModel):
         "sarvamai-native",
         "elevenlabs-native",
         "anthropic-native",
+        "google-vertex-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -253,10 +254,20 @@ class KaapiCompletionConfig(SQLModel):
     """
 
     provider: (
-        Literal["openai", "google", "sarvamai", "elevenlabs", "anthropic"] | None
+        Literal[
+            "openai",
+            "google",
+            "sarvamai",
+            "elevenlabs",
+            "anthropic",
+            "google-vertex",
+        ]
+        | None
     ) = Field(
         None,
-        description="LLM provider (openai, google, sarvamai, elevenlabs, anthropic)",
+        description=(
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+        ),
     )
 
     type: Literal["text", "stt", "tts"] = Field(

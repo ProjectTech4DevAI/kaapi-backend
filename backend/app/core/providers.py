@@ -15,6 +15,7 @@ class Provider(str, Enum):
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
+    GOOGLE_VERTEX = "google-vertex"
     WEBHOOK_SECRET = "webhook_secret"
 
 
@@ -46,6 +47,10 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     ),
     Provider.ANTHROPIC: ProviderConfig(
         required_fields=["api_key"], sensitive_fields=["api_key"]
+    ),
+    Provider.GOOGLE_VERTEX: ProviderConfig(
+        required_fields=["api_key", "project_id", "location"],
+        sensitive_fields=["api_key"],
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
         required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]

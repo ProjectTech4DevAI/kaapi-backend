@@ -7,6 +7,7 @@ from app.services.llm.providers.gai import GoogleAIProvider
 from app.services.llm.providers.sai import SarvamAIProvider
 from app.services.llm.providers.eai import ElevenlabsAIProvider
 from app.services.llm.providers.claude import ClaudeProvider
+from app.services.llm.providers.gai_vertex import GoogleVertexAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +18,13 @@ class LLMProvider:
     ELEVENLABS = "elevenlabs"
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
+    GOOGLE_VERTEX = "google-vertex"
     OPENAI_NATIVE = "openai-native"
     GOOGLE_NATIVE = "google-native"
     SARVAMAI_NATIVE = "sarvamai-native"
     ELEVENLABS_NATIVE = "elevenlabs-native"
     ANTHROPIC_NATIVE = "anthropic-native"
+    GOOGLE_VERTEX_NATIVE = "google-vertex-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
@@ -29,11 +32,13 @@ class LLMProvider:
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
+        GOOGLE_VERTEX: GoogleVertexAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
         GOOGLE_NATIVE: GoogleAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
         ELEVENLABS_NATIVE: ElevenlabsAIProvider,
         ANTHROPIC_NATIVE: ClaudeProvider,
+        GOOGLE_VERTEX_NATIVE: GoogleVertexAIProvider,
     }
 
     @classmethod

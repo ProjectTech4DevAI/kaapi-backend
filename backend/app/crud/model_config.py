@@ -7,7 +7,9 @@ from app.models import ModelConfig
 from app.models.llm.request import ConfigBlob
 from app.models.model_config import CompletionType
 
-Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
+Provider = Literal[
+    "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+]
 
 
 def _normalize_provider(raw: str) -> str:
