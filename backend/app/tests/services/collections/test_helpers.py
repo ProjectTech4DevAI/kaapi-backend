@@ -144,12 +144,14 @@ def test_batch_documents_doc_exactly_at_size_limit_stays_in_same_batch() -> None
     assert len(batches[0]) == 1
 
 
-def test_batch_documents_with_none_file_size_raises() -> None:
-    """Test that documents with None file_size raise TypeError — sizes must be backfilled before batching."""
+def test_batch_documents_with_none_file_size_treated_as_zero() -> None:
+    """Documents with None file_size are treated as 0 KB — no crash, single batch by count."""
     docs = create_fake_documents(10, file_size_kb=None)
 
-    with pytest.raises(TypeError):
-        helpers.batch_documents(docs)
+    batches = helpers.batch_documents(docs)
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 10
 
 
 def test_batch_documents_empty_input() -> None:

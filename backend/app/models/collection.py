@@ -179,10 +179,6 @@ class CollectionPublic(SQLModel):
         max_length=2000,
         description="Description of the collection",
     )
-    llm_service_id: str | None = Field(
-        default=None,
-        description="LLM service ID (e.g., Assistant ID) when model and instructions were provided",
-    )
     knowledge_base_provider: str = Field(
         description="Knowledge base provider name",
     )
