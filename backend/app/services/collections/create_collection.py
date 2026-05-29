@@ -226,8 +226,8 @@ def execute_setup_job(
                 len(flat_docs),
             )
 
-            total_size_kb = sum(doc.file_size_kb for doc in flat_docs)
-            total_size_mb = total_size_kb / 1024
+            total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
+            total_size_mb = round(total_size_kb / 1024, 2)
 
             docs_batches = batch_documents(flat_docs)
             total_batches = len(docs_batches)
@@ -238,8 +238,6 @@ def execute_setup_job(
                 collection_job = collection_job_crud.update(
                     job_uuid,
                     CollectionJobUpdate(
-                        task_id=task_id,
-                        status=CollectionJobStatus.PROCESSING,
                         total_size_mb=total_size_mb,
                         current_batch_number=0,
                         total_batches=total_batches,

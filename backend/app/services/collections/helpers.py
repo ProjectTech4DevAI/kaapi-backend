@@ -80,7 +80,7 @@ def batch_documents(documents: list[Document]) -> list[list[Document]]:
     current_batch_size_kb = 0
 
     for doc in documents:
-        doc_size_kb = doc.file_size_kb
+        doc_size_kb = doc.file_size_kb or 0
 
         would_exceed_size = (current_batch_size_kb + doc_size_kb) > MAX_BATCH_SIZE_KB
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT

@@ -410,14 +410,23 @@ def test_vector_store_update_raises_on_openai_error() -> None:
         crud.update("vs_123", [_make_openai_doc()])
 
 
+def _make_failed_file(message: str) -> MagicMock:
+    f = MagicMock()
+    f.last_error.message = message
+    return f
+
+
 def test_vector_store_update_raises_on_partial_failures() -> None:
     client = MagicMock()
     client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
         completed=2, failed=1
     )
+    client.vector_stores.file_batches.list_files.return_value = [
+        _make_failed_file("unsupported file type")
+    ]
     crud = OpenAIVectorStoreCrud(client)
 
-    with pytest.raises(RuntimeError, match="1 failed file"):
+    with pytest.raises(RuntimeError, match="unsupported file type"):
         crud.update("vs_123", [_make_openai_doc() for _ in range(3)])
 
 
@@ -426,9 +435,13 @@ def test_vector_store_update_raises_on_all_failures() -> None:
     client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
         completed=0, failed=2
     )
+    client.vector_stores.file_batches.list_files.return_value = [
+        _make_failed_file("invalid pdf"),
+        _make_failed_file("parse error"),
+    ]
     crud = OpenAIVectorStoreCrud(client)
 
-    with pytest.raises(RuntimeError, match="2 failed file"):
+    with pytest.raises(RuntimeError, match="invalid pdf"):
         crud.update("vs_123", [_make_openai_doc() for _ in range(2)])
 
 

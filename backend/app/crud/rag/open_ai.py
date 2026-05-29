@@ -127,11 +127,15 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
         )
         if batch.file_counts.failed > 0:
-            raise RuntimeError(
-                f"Batch attach to vector store {vector_store_id!r} completed with "
-                f"{batch.file_counts.failed} failed file(s) "
-                f"({batch.file_counts.completed} succeeded)"
+            failed_files = self.client.vector_stores.file_batches.list_files(
+                vector_store_id=vector_store_id,
+                batch_id=batch.id,
+                filter="failed",
             )
+            openai_errors = "; ".join(
+                f.last_error.message for f in failed_files if f.last_error
+            )
+            raise RuntimeError(openai_errors)
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:
