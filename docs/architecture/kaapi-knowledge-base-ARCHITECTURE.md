@@ -262,7 +262,7 @@ sequenceDiagram
     loop each batch k = 1..N
         BR->>BA: deliver batch task (batch k, vector_store_id)
         BA->>Prov: provider.create(batch_docs, vector_store_id)
-        Note over Prov: k=1 creates the vector store;\nevery k attaches its file IDs (file_batches.upload_and_poll)
+        Note over Prov: k=1 creates the vector store, every batch attaches its file IDs via file_batches.upload_and_poll
         BA->>DB: checkpoint: current_batch_number=k, documents_uploaded += batch k
         alt batches remain
             BA->>BR: enqueue batch k+1 (vector_store_id threaded through)
