@@ -180,7 +180,7 @@ flowchart TD
     T --> Ttts["tts   → TTSLLMParams"]
 ```
 
-- **`completion`** decides *mode* (`type`: text/stt/tts) and *provider*. This is the single field that routes the entire execution flow.
+- **`completion`** decides *mode* (`type`: text/stt/tts) and *provider*. This is the single field that routes the entire execution flow. For `text` configs it can also attach a knowledge base for **File Search / RAG** via `knowledge_base_ids` (see §3.5).
 - **`Validator`** in a guardrails list is just `{ "validator_config_id": "<uuid>" }` — a pointer into the Guardrails service's saved validator presets. The actual validator definition lives in the sister service.
 - **Stored configs** are versioned: `Config` (named, project‑scoped) → many `ConfigVersion` (immutable JSONB `config_blob`). Production callers pin `id + version` for reproducibility.
 
@@ -190,6 +190,41 @@ flowchart TD
 - **Native** (`provider: "openai-native"`): `params` are forwarded verbatim to the provider SDK. No mapping, no model‑allowlist check.
 
 **Model allow‑listing:** for Kaapi configs, `validate_blob_model_or_raise()` ([crud/model_config.py](../../backend/app/crud/model_config.py)) checks the `model` (and TTS `voice`) against the DB‑driven `model_config` table — the source of truth — and 400s on unknown/unsupported combos. Native configs are exempt.
+
+### 3.5 File Search / knowledge bases (RAG)
+
+Retrieval over a **knowledge base** — a managed vector store built via
+`POST /collections` — is one of the most common reasons to use a `text` config.
+It is wired in through a single Kaapi completion param, with no extra endpoint or
+tool plumbing on the caller's side:
+
+```jsonc
+"completion": {
+  "type": "text",
+  "provider": "openai",
+  "model": "gpt-4.1",
+  "knowledge_base_ids": ["vs_abc…", "vs_def…"],  // collection.llm_service_id values
+  "max_num_results": 20                            // optional, defaults to 20
+}
+```
+
+- **`knowledge_base_ids`** are vector store IDs — exactly the `knowledge_base_id`
+  (`collection.llm_service_id`) values the Collections API returns once a
+  knowledge base finishes building. A config may attach several. It is a
+  `TextLLMParams` field, so it has **no meaning for `stt` / `tts`** modes.
+- At execution, `map_kaapi_to_openai_params()` ([mappers.py](../../backend/app/services/llm/mappers.py))
+  turns them into the OpenAI **Responses API `file_search` tool** —
+  `tools: [{ "type": "file_search", "vector_store_ids": [...], "max_num_results": … }]`
+  (`max_num_results` defaults to `20`). The model then retrieves from those vector
+  stores during the call.
+- **Provider support:** OpenAI today. On **Gemini** the param is currently
+  **ignored with a warning** (`"… not supported by Google AI and was ignored."`)
+  until Google File Search is wired up; the warning rides back in
+  `response.metadata.warnings`. Native configs (`openai-native`) must specify the
+  `file_search` tool themselves.
+
+> See `kaapi-knowledge-base-ARCHITECTURE.md` for how these vector stores are built
+> (upload → batch → attach) and how their IDs are minted.
 
 ---
 
@@ -348,8 +383,8 @@ flowchart LR
 
 | Provider (key) | text | stt | tts | Notes |
 |---|:--:|:--:|:--:|---|
-| `openai` / `openai-native` | ✅ | — | — | Responses API; vision + PDF via `format_parts`; conversation `id` / `auto_create`. |
-| `google` / `google-native` | ✅ | ✅ | ✅ | Gemini. TTS outputs 24 kHz PCM → wrapped to WAV, optionally transcoded to MP3/OGG. STT uploads the audio file then prompts for transcription/translation. |
+| `openai` / `openai-native` | ✅ | — | — | Responses API; vision + PDF via `format_parts`; conversation `id` / `auto_create`; **File Search / RAG** via `knowledge_base_ids` → `file_search` tool (§3.5). |
+| `google` / `google-native` | ✅ | ✅ | ✅ | Gemini. TTS outputs 24 kHz PCM → wrapped to WAV, optionally transcoded to MP3/OGG. STT uploads the audio file then prompts for transcription/translation. `knowledge_base_ids` ignored with a warning (File Search not yet supported). |
 | `sarvamai` / `sarvamai-native` | — | ✅ | ✅ | Indian‑language STT (`saaras`/`saarika`) + TTS (`bulbul`). |
 | `elevenlabs` / `elevenlabs-native` | — | ✅ | ✅ | Voice‑id + language mapping via mappers. |
 | `claude-native` | 🔜 | — | — | Scaffolded in the registry, not yet wired. |
@@ -535,4 +570,5 @@ flowchart TD
 ## Related
 
 - `kaapi-guardrails-ARCHITECTURE.md` — the sister microservice this endpoint delegates all validation to.
+- `kaapi-knowledge-base-ARCHITECTURE.md` — how the vector stores referenced by `knowledge_base_ids` (File Search / RAG, §3.5) are built and managed via `/documents` + `/collections`.
 - **LLM chains** — `POST /llm/chain` (`start_chain_job` / `execute_chain_job` in the same `jobs.py`) reuse `execute_llm_call` per block, threading each block's output into the next block's input. The single `/llm/call` is one un‑chained block.
