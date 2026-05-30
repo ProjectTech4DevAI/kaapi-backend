@@ -127,15 +127,26 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
         )
         if batch.file_counts.failed > 0:
-            failed_files = self.client.vector_stores.file_batches.list_files(
-                vector_store_id=vector_store_id,
-                batch_id=batch.id,
-                filter="failed",
-            )
-            openai_errors = "; ".join(
-                f.last_error.message for f in failed_files if f.last_error
-            )
-            raise RuntimeError(openai_errors)
+            try:
+                failed_files = self.client.vector_stores.file_batches.list_files(
+                    vector_store_id=vector_store_id,
+                    batch_id=batch.id,
+                    filter="failed",
+                )
+                doc_by_file_id = {d.openai_file_id: d for d in docs}
+                parts = []
+                for f in failed_files:
+                    d = doc_by_file_id.get(f.id)
+                    label = d.fname if d else f.id
+                    msg = f.last_error.message if f.last_error else "no error detail"
+                    parts.append(f"{label}: {msg}")
+                raise RuntimeError("; ".join(parts))
+            except OpenAIError as err:
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] Could not fetch per-file errors | "
+                    f"{{'batch_id': '{batch.id}', 'error': '{str(err)}'}}"
+                )
+                raise
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:

@@ -226,7 +226,7 @@ def execute_setup_job(
                 len(flat_docs),
             )
 
-            total_size_kb = sum(doc.file_size_kb or 0 for doc in flat_docs)
+            total_size_kb = sum(doc.file_size_kb for doc in flat_docs)
             total_size_mb = round(total_size_kb / 1024, 2)
 
             docs_batches = batch_documents(flat_docs)

@@ -376,9 +376,10 @@ def _make_batch(completed: int, failed: int) -> MagicMock:
     return batch
 
 
-def _make_openai_doc(file_id: str = "file-abc") -> MagicMock:
+def _make_openai_doc(file_id: str = "file-abc", fname: str = "doc.pdf") -> MagicMock:
     doc = MagicMock()
     doc.openai_file_id = file_id
+    doc.fname = fname
     return doc
 
 
