@@ -53,66 +53,48 @@ Key architectural properties:
 
 ## 1. The 10,000-ft view
 
+**The lifecycle** — every run, regardless of family, walks the same six phases:
+
 ```mermaid
 flowchart LR
-    Caller([Client / Kaapi Console])
-
-    subgraph API["FastAPI process (web)"]
-        DS["upload dataset\nroutes/evaluations/dataset.py"]
-        Run["start run\nroutes/.../evaluation.py"]
-        Poll["GET run / results"]
-    end
-
-    subgraph Sched["External scheduler"]
-        Cron["GET /cron/evaluations\n(superuser, Sentry-monitored)"]
-    end
-
-    subgraph Worker["Celery worker (gevent, low_priority)"]
-        STTsub["run_stt_batch_submission"]
-        TTSsub["run_tts_batch_submission"]
-        TTSproc["run_tts_result_processing"]
-        Metric["run_stt_metric_computation"]
-    end
-
-    subgraph External["External services"]
-        OAI["OpenAI Batch API\n(/v1/responses · /v1/embeddings)"]
-        GEM["Gemini Batch + File API"]
-        LF["Langfuse\n(datasets · traces · scores · LLM-judge)"]
-        S3[("Object storage / S3")]
-    end
-
-    DB[("PostgreSQL\nevaluation_dataset · evaluation_run\nbatch_job · stt_sample/result · tts_result")]
-
-    Caller -- "1. upload CSV / audio / text" --> DS
-    DS -- "items + duplication" --> LF
-    DS --> DB
-    DS --> S3
-
-    Caller -- "2. start run (config / models)" --> Run
-    Run -- "text: submit inline" --> OAI
-    Run -- "stt/tts: enqueue" --> Worker
-    Run --> DB
-
-    STTsub --> GEM
-    TTSsub --> GEM
-
-    Cron -- "3. poll status (per project)" --> DB
-    Cron --> OAI
-    Cron --> GEM
-    Cron -- "on done: dispatch" --> Worker
-    TTSproc --> GEM
-    TTSproc --> S3
-    Metric --> DB
-
-    Cron -- "text: traces + cosine" --> LF
-    Poll -- "4. status + scores" --> Caller
-    Poll -- "fetch + cache scores" --> LF
-    Poll --> S3
+    U["1 · Upload dataset\nCSV / audio / text"] --> R["2 · Start run\nconfig + model(s)"]
+    R --> P["3 · Provider Batch API\nOpenAI / Gemini\n(async · mins–24h)"]
+    P --> C["4 · Cron poll loop\ndetects completion"]
+    C --> S["5 · Score\nauto + human"]
+    S --> G["6 · Read results\nstatus + scores"]
 ```
 
-The web process is thin on the read/start side. **All long-running work happens
-either in the provider's batch backend or on the cron-driven poll loop** —
-there is no synchronous "wait for the model" anywhere in the request path.
+What differs between families is only the *fill-in-the-blanks* of three phases —
+**who** runs step 3 (OpenAI for `text`, Gemini for `stt`/`tts`), **where**
+submission happens (step 2: inline in the web request for `text` vs. a Celery
+worker for `stt`/`tts`), and **how** step 5 scores (cosine + LLM-judge for
+`text`, WER-family for `stt`, human-only for `tts`). Those specifics are the
+whole of §5 (`text` — the worked example), §6 (`stt`) and §7 (`tts`).
+
+**Who runs what** — the one structural fact to internalise: the web process is
+**thin**. It only registers/enqueues work and later reads results back; it
+*never* blocks waiting on a model. All the slow work lives in the provider's
+batch backend and the cron-driven poll loop (§9).
+
+```mermaid
+flowchart LR
+    Web["Kaapi web — thin / synchronous\nsteps 1 · 2 · 6\nupload · start run · read results\n(never blocks on a model)"]
+
+    subgraph Async["Async backend — all the heavy lifting"]
+        Prov["Provider Batch · step 3\nOpenAI / Gemini work through items"]
+        Cron["Cron poll loop · steps 4 · 5\npoll status · trigger scoring"]
+        Cel["Celery worker\naudio upload · result post-processing (stt/tts)"]
+    end
+
+    Store[("Postgres · Langfuse · S3")]
+
+    Web -- "text: register batch" --> Prov
+    Web -. "stt/tts: enqueue" .-> Cel
+    Cel --> Prov
+    Cron -- "poll until done" --> Prov
+    Web --- Store
+    Cron --- Store
+```
 
 ---
 
@@ -717,7 +699,7 @@ window. Benefits, given it actually invokes `/llm/call`:
 
 **Real-time, incremental results (the core UX goal).** Rather than block until
 the whole run finishes, fast evals should stream results to the UI *as each
-piece lands* — reusing `/llm/call`'s existing **callback/webhook** mechanism
+piece lands* — similar to `/llm/call`'s existing **callback/webhook** mechanism
 (§4 of the llm-call doc) as the delivery channel:
 
 - **Per item** — the moment a golden question is answered by the model, push
