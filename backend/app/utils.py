@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.core import security
+from app.core.audio_utils import AudioRef
 from app.core.config import settings
 from app.crud.credentials import get_provider_credential
 from app.models.llm.request import (
@@ -600,25 +601,15 @@ def get_file_extension(mime_type: str) -> str:
     return mime_to_ext.get(mime_type, ".audio")
 
 
-def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
-    """Decode base64 audio and write to temp file. Returns (file_path, error)."""
+def resolve_audio_base64(
+    data: str, mime_type: str
+) -> tuple["AudioRef | None", str | None]:
+    """Decode base64 audio into an in-memory AudioRef."""
     try:
         audio_bytes = base64.b64decode(data)
     except Exception as e:
-        return "", f"Invalid base64 audio data: {str(e)}"
-
-    ext = get_file_extension(mime_type)
-    try:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, prefix="audio_"
-        ) as tmp:
-            tmp.write(audio_bytes)
-            temp_path = tmp.name
-
-        logger.info(f"[resolve_audio_base64] Wrote audio to temp file: {temp_path}")
-        return temp_path, None
-    except Exception as e:
-        return "", f"Failed to write audio to temp file: {str(e)}"
+        return None, f"Invalid base64 audio data: {str(e)}"
+    return AudioRef(bytes_=audio_bytes, mime_type=mime_type), None
 
 
 def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
@@ -669,23 +660,12 @@ def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
         return None, f"Failed to download audio from URL: {str(e)}"
 
 
-def resolve_audio_url(url: str, mime_type: str) -> tuple[str, str | None]:
-    """Download audio from a public URL and write to temp file. Returns (file_path, error)."""
+def resolve_audio_url(url: str, mime_type: str) -> tuple["AudioRef | None", str | None]:
+    """Download audio from a public URL into an in-memory AudioRef."""
     audio_bytes, error = download_audio_bytes(url)
-    if error:
-        return "", error
-
-    ext = get_file_extension(mime_type)
-    try:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, prefix="audio_"
-        ) as tmp:
-            tmp.write(audio_bytes)
-            temp_path = tmp.name
-        logger.info(f"[resolve_audio_url] Downloaded audio to temp file: {temp_path}")
-        return temp_path, None
-    except Exception as e:
-        return "", f"Failed to write audio to temp file: {str(e)}"
+    if error or not audio_bytes:
+        return None, error
+    return AudioRef(bytes_=audio_bytes, mime_type=mime_type), None
 
 
 def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
@@ -714,15 +694,19 @@ def resolve_pdf_content(pdf_input: PDFInput) -> list[PDFContent]:
 
 def resolve_input(
     query_input,
-) -> tuple[str | list[ImageContent] | list[PDFContent] | "MultiModalInput", str | None]:
+) -> tuple[
+    "str | AudioRef | list[ImageContent] | list[PDFContent] | MultiModalInput | None",
+    str | None,
+]:
     """Resolve query input to provider-ready format.
 
     Returns:
-        - TextInput/AudioInput: (str, None)
+        - TextInput: (str, None)
+        - AudioInput: (AudioRef, None)
         - ImageInput: (list[ImageContent], None)
         - PDFInput: (list[PDFContent], None)
         - list[QueryInput]: (MultiModalInput, None)
-        - Error: ("", error_message)
+        - Error: (None, error_message)
     """
 
     try:
@@ -752,22 +736,22 @@ def resolve_input(
                     parts.extend(resolve_pdf_content(item))
                 elif isinstance(item, AudioInput):
                     return (
-                        "",
+                        None,
                         "Audio input is not supported in multimodal. Please use completion type 'stt' for audio processing.",
                     )
                 else:
                     return (
-                        "",
+                        None,
                         "Unsupported input type in multimodal list. Multimodal only supports text, image, and pdf inputs.",
                     )
             return MultiModalInput(parts=parts), None
 
         else:
-            return "", f"Unknown input type: {type(query_input)}"
+            return None, f"Unknown input type: {type(query_input)}"
 
     except Exception as e:
         logger.warning(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
-        return "", f"Failed to resolve input: {str(e)}"
+        return None, f"Failed to resolve input: {str(e)}"
 
 
 def cleanup_temp_file(file_path: str) -> None:

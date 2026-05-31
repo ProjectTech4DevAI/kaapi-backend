@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
 
+    # GCP Vertex AI — single shared service-account fetched from AWS Secrets Manager.
+    # BYOK (per-project credentials) lands later.
+    GCP_SA_SECRET_NAME: str = ""
+    GCP_SA_SECRET_REGION: str = ""
+    GCP_PROJECT_ID: str = ""
+    GCS_AUDIO_BUCKET: str = ""
+
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672

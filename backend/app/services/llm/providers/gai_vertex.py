@@ -6,7 +6,14 @@ from typing import Any
 
 import requests
 
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg, pcm_to_wav
+from app.core.audio_utils import (
+    AudioRef,
+    convert_pcm_to_mp3,
+    convert_pcm_to_ogg,
+    pcm_to_wav,
+)
+from app.core.cloud.storage import get_gcp_service_account, upload_audio_to_gcs
+from app.core.config import settings
 from app.models.llm import (
     LLMCallResponse,
     LLMResponse,
@@ -27,24 +34,39 @@ from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModa
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 60
-MAX_INLINE_AUDIO_BYTES = 20 * 1024 * 1024  # Vertex inline-data cap (~20 MB)
-AUDIO_MIME_BY_EXT = {
-    ".wav": "audio/wav",
-    ".mp3": "audio/mp3",
-    ".aiff": "audio/aiff",
-    ".aac": "audio/aac",
-    ".ogg": "audio/ogg",
-    ".flac": "audio/flac",
+SUPPORTED_AUDIO_MIMES = {
+    "audio/wav",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/aiff",
+    "audio/aac",
+    "audio/ogg",
+    "audio/flac",
 }
 
 
 class VertexClient:
-    """Holds Vertex AI connection details. Pure config — no SDK session."""
+    """Holds Vertex AI connection details. Pure config — no SDK session.
 
-    def __init__(self, api_key: str, project_id: str, location: str):
+    BYOK: per-project SA secret + GCS bucket can be passed via credentials;
+    falls back to platform-shared values in settings.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        project_id: str,
+        location: str,
+        gcp_sa_secret_name: str | None = None,
+        gcp_sa_secret_region: str | None = None,
+        gcs_bucket: str | None = None,
+    ):
         self.api_key = api_key
         self.project_id = project_id
         self.location = location
+        self.gcp_sa_secret_name = gcp_sa_secret_name
+        self.gcp_sa_secret_region = gcp_sa_secret_region
+        self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
         return (
@@ -76,9 +98,12 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"Google Vertex AI credentials missing required fields: {', '.join(missing)}"
             )
         return VertexClient(
-            api_key=credentials["api_key"],
-            project_id=credentials["project_id"],
-            location=credentials["location"],
+            api_key=credentials.get("api_key"),
+            project_id=credentials.get("project_id"),
+            location=credentials.get("location"),
+            gcp_sa_secret_name=credentials.get("gcp_sa_secret_name"),
+            gcp_sa_secret_region=credentials.get("gcp_sa_secret_region"),
+            gcs_bucket=credentials.get("gcs_bucket"),
         )
 
     def _post(self, model: str, payload: dict) -> tuple[dict | None, str | None]:
@@ -118,35 +143,43 @@ class GoogleVertexAIProvider(BaseProvider):
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_input: str,
+        resolved_input: "AudioRef",
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         provider = completion_config.provider
         params = completion_config.params
 
-        if not isinstance(resolved_input, str):
-            return None, f"{provider} STT requires file path as string"
+        if not isinstance(resolved_input, AudioRef):
+            return None, f"{provider} STT requires AudioRef input"
 
-        if not os.path.isfile(resolved_input):
-            return None, f"Audio file not found: {resolved_input}"
-
-        ext = os.path.splitext(resolved_input)[1].lower()
-        mime_type = AUDIO_MIME_BY_EXT.get(ext)
-        if not mime_type:
+        mime_type = resolved_input.mime_type or "audio/wav"
+        if mime_type not in SUPPORTED_AUDIO_MIMES:
             return None, (
-                f"Unsupported audio extension '{ext}' for Vertex STT. "
-                f"Supported: {', '.join(sorted(AUDIO_MIME_BY_EXT))}"
+                f"Unsupported audio mime '{mime_type}' for Vertex STT. "
+                f"Supported: {', '.join(sorted(SUPPORTED_AUDIO_MIMES))}"
             )
 
-        file_size = os.path.getsize(resolved_input)
-        if file_size > MAX_INLINE_AUDIO_BYTES:
-            return None, (
-                f"Audio file is {file_size} bytes; Vertex inline-data limit is "
-                f"{MAX_INLINE_AUDIO_BYTES} bytes (~20 MB)"
+        # Push bytes straight to GCS — no disk I/O. fileData.fileUri bypasses
+        # the 20 MB inline cap.
+        try:
+            sa_info = get_gcp_service_account(
+                secret_name=self.client.gcp_sa_secret_name,
+                region_name=self.client.gcp_sa_secret_region,
             )
-
-        with open(resolved_input, "rb") as f:
-            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+            gs_uri = upload_audio_to_gcs(
+                audio_bytes=resolved_input.bytes_,
+                bucket_name=self.client.gcs_bucket,
+                sa_info=sa_info,
+                project_id=self.client.project_id,
+                content_type=mime_type,
+            )
+        except Exception as e:
+            logger.error(
+                f"[GoogleVertexAIProvider._execute_stt] GCS upload failed | "
+                f"provider={provider}, error={e}",
+                exc_info=True,
+            )
+            return None, f"Failed to stage audio for Vertex STT: {str(e)}"
 
         model = params.get("model") or DEFAULT_STT_MODEL
         instructions = params.get("instructions")
@@ -184,7 +217,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 {
                     "role": "user",
                     "parts": [
-                        {"inlineData": {"mimeType": mime_type, "data": audio_b64}},
+                        {"fileData": {"mimeType": mime_type, "fileUri": gs_uri}},
                         {"text": prompt},
                     ],
                 }
