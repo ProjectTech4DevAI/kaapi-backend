@@ -703,7 +703,10 @@ bulk). The accepted costs:
 
 The intended remedy for 12.1's feedback-loop problem: a **"fast evals"** mode for
 *small* golden sets that runs over the live **`/llm/call`** endpoint instead of a
-batch. Benefits, if it actually invokes `/llm/call`:
+batch. Fast evals are **still fully scored** (cosine similarity *and*
+LLM-as-judge, §5.3) — the differentiator is **time-to-result**, not rigor: the
+user must be able to *see results fast* and iterate, not wait out a batch
+window. Benefits, given it actually invokes `/llm/call`:
 
 - a real **latency** signal (impossible with batch),
 - **prod-parity** — same execution path, so prod-only failures surface during
@@ -711,6 +714,22 @@ batch. Benefits, if it actually invokes `/llm/call`:
 - **free coverage** — every provider/modality already wired into `/llm/call`
   (text/image/pdf/stt/tts, all providers) comes along with no eval-specific
   duct-tape.
+
+**Real-time, incremental results (the core UX goal).** Rather than block until
+the whole run finishes, fast evals should stream results to the UI *as each
+piece lands* — reusing `/llm/call`'s existing **callback/webhook** mechanism
+(§4 of the llm-call doc) as the delivery channel:
+
+- **Per item** — the moment a golden question is answered by the model, push
+  that answer back; don't wait for the rest of the set.
+- **Per score** — cosine similarity and LLM-as-judge complete independently and
+  at different times. Emit whichever arrives first and update the row when the
+  other lands, so the UI fills in progressively instead of all-at-once.
+
+The net effect: the user watches answers and scores populate live, reads the
+trend early, and can act on it fast — tweak the prompt/config/model or the
+golden set and re-run. **Interrupting** an in-flight fast-eval run to start a
+fresh one is a desirable follow-on (nice-to-have, later).
 
 To keep fast evals from starving production on the shared `high_priority` queue,
 throttle the fan-out. Two candidate strategies (undecided):
@@ -726,10 +745,10 @@ muddling production analytics/dashboards, add a discriminator column on
 trivially filterable — set it from the eval-originated call and exclude it by
 default in production queries.
 
-> Open: which throttle; whether fast evals reuse `evaluation_run`/scoring or get
-> their own lighter records; whether they share the cosine/judge scoring or
-> return raw outputs for eyeballing; and the exact name/values of the `llm_call`
-> discriminator column.
+> Open: which throttle; the exact name/values of the `llm_call` discriminator
+> column; and how partial/streamed results + per-score updates are persisted and
+> surfaced (a streaming-friendly record model rather than a single terminal
+> `evaluation_run.score` blob).
 
 ### 12.3 LLM-as-judge lives in Langfuse, and that's the friction
 
