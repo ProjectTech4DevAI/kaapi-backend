@@ -80,6 +80,7 @@ def _build_retry_request(
         output_schema=assessment_input.get("output_schema"),
         configs=configs,
         l1_config=assessment_input.get("l1_config"),
+        post_processing_config=assessment_input.get("post_processing_config"),
     )
 
 
@@ -121,6 +122,8 @@ def start_assessment(
         assessment_input["output_schema"] = request.output_schema
     if request.l1_config:
         assessment_input["l1_config"] = request.l1_config
+    if request.post_processing_config:
+        assessment_input["post_processing_config"] = request.post_processing_config
 
     config_crud = ConfigCrud(session=session, project_id=project_id)
 

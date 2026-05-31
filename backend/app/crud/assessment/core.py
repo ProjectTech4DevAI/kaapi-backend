@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -126,6 +127,30 @@ def create_assessment_run(
         f"assessment_id={assessment_id} | "
         f"config_id={config_id} v{config_version}"
     )
+    return run
+
+
+def update_run_post_processing_config(
+    session: Session,
+    run: AssessmentRun,
+    config: dict[str, Any] | None,
+) -> AssessmentRun:
+    """Set post_processing_config inside the run's input JSON blob and persist."""
+    run.input = {**(run.input or {}), "post_processing_config": config}
+    flag_modified(run, "input")
+    session.add(run)
+    try:
+        session.commit()
+        session.refresh(run)
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            f"[update_run_post_processing_config] Failed for run id={run.id}: {e}",
+            exc_info=True,
+        )
+        raise
+
+    logger.info(f"[update_run_post_processing_config] Updated run id={run.id}")
     return run
 
 

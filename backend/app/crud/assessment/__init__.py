@@ -15,6 +15,7 @@ from app.crud.assessment.core import (
     recompute_assessment_status,
     update_assessment_run_l1_stats,
     update_assessment_run_status,
+    update_run_post_processing_config,
 )
 from app.crud.assessment.dataset import (
     create_assessment_dataset,
@@ -45,4 +46,5 @@ __all__ = [
     "recompute_assessment_status",
     "update_assessment_run_l1_stats",
     "update_assessment_run_status",
+    "update_run_post_processing_config",
 ]

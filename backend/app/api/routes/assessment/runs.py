@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
@@ -12,6 +12,7 @@ from app.crud.assessment import (
     get_assessment_by_id,
     get_assessment_run_by_id as get_run_by_id,
     list_assessment_runs as list_runs,
+    update_run_post_processing_config,
 )
 from app.models.assessment import (
     Assessment,
@@ -33,6 +34,7 @@ from app.services.assessment.utils import (
     load_export_rows_for_run,
     sort_export_rows,
 )
+from app.services.assessment.utils.post_processing import apply_post_processing
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ def _build_run_public(
         l1_total_rows=run.l1_total_rows,
         l1_total_passed=run.l1_total_passed,
         l1_total_rejected=run.l1_total_rejected,
+        post_processing_config=(run.input or {}).get("post_processing_config"),
         inserted_at=run.inserted_at,
         updated_at=run.updated_at,
     )
@@ -215,12 +218,44 @@ def export_assessment_run_results(
         )
     )
 
+    post_processing_config = (run.input or {}).get("post_processing_config") or None
     base_label = assessment.experiment_name if assessment else f"run_{run.id}"
+
     if export_format != "json":
         return build_export_response(
             export_rows=export_rows,
             export_format=export_format,
             base_name=f"{base_label}_run_{run.id}_results",
+            post_processing_config=post_processing_config,
         )
 
-    return APIResponse.success_response(data=build_json_export_rows(export_rows))
+    rows = build_json_export_rows(export_rows)
+    rows = apply_post_processing(rows, post_processing_config)
+    return APIResponse.success_response(data=rows)
+
+
+@router.patch(
+    "/runs/{run_id}/post-processing",
+    description=load_description("assessment/update_post_processing.md"),
+    response_model=APIResponse[AssessmentRunPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def update_post_processing(
+    run_id: int,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    config: dict[str, Any] | None = Body(default=None),
+) -> APIResponse[AssessmentRunPublic]:
+    """Save post-processing config (computed columns, sort, filter) for a run."""
+    run = get_run_by_id(
+        session=session,
+        run_id=run_id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    run = update_run_post_processing_config(session=session, run=run, config=config)
+
+    return APIResponse.success_response(data=_build_run_public(session, run))

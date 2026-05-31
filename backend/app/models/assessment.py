@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Index, Text
+from sqlalchemy import JSON, Column, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
@@ -253,6 +253,7 @@ class AssessmentRunPublic(BaseModel):
     l1_total_rows: int | None = None
     l1_total_passed: int | None = None
     l1_total_rejected: int | None = None
+    post_processing_config: dict[str, Any] | None = None
     inserted_at: datetime
     updated_at: datetime
 
@@ -320,6 +321,13 @@ class AssessmentCreate(BaseModel):
         description=(
             "L1 pipeline config. Keys: topic_relevance (columns, prompt), "
             "duplicate_detection (columns). Omit to skip L1."
+        ),
+    )
+    post_processing_config: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Post-processing config applied at export. "
+            "Keys: computed_columns, sort, filter."
         ),
     )
 

@@ -239,22 +239,43 @@ def _expand_output_columns(
 def serialize_export_rows(
     export_rows: list[AssessmentExportRow],
     export_format: Literal["json", "csv", "xlsx"],
+    post_processing_config: dict[str, Any] | None = None,
 ) -> tuple[bytes, str]:
     """Serialize export rows into the requested file format."""
+    from app.services.assessment.utils.post_processing import apply_post_processing
+
     row_payload = [row.model_dump(mode="json") for row in export_rows]
 
     if export_format == "json":
         expanded, *_ = _expand_output_columns(row_payload)
+        expanded = apply_post_processing(expanded, post_processing_config)
         return (
             json.dumps(expanded, ensure_ascii=False, indent=2).encode("utf-8"),
             "application/json",
         )
 
-    expanded, fieldnames, input_col_names, l1_keys, output_keys = _expand_output_columns(row_payload)
+    (
+        expanded,
+        fieldnames,
+        input_col_names,
+        l1_keys,
+        output_keys,
+    ) = _expand_output_columns(row_payload)
+    expanded = apply_post_processing(expanded, post_processing_config)
+
+    # Add any new computed columns to fieldnames so they appear in output
+    existing = set(fieldnames)
+    computed_names = [
+        c["name"]
+        for c in (post_processing_config or {}).get("computed_columns") or []
+        if c.get("name") and c["name"] not in existing
+    ]
+    if computed_names:
+        fieldnames = fieldnames + computed_names
 
     if export_format == "csv":
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(expanded)
         return output.getvalue().encode("utf-8"), "text/csv"
@@ -267,12 +288,11 @@ def serialize_export_rows(
             detail="XLSX export requires pandas/openpyxl support in the backend runtime",
         ) from exc
 
-    # Explicit ordering: inputs → L1 topic relevance → L1 duplicate detection → L2 output
-    excel_fields = input_col_names + l1_keys + output_keys
+    # Explicit ordering: inputs → L1 → L2 → computed columns
+    excel_fields = input_col_names + l1_keys + output_keys + computed_names
     if not excel_fields:
         excel_fields = output_keys or ["output"]
 
-    # Drop columns where every row is null/empty
     expanded, excel_fields = _drop_empty_columns(expanded, excel_fields)
 
     buf = io.BytesIO()
@@ -290,17 +310,20 @@ def build_json_export_rows(
 ) -> list[dict[str, Any]]:
     """Return JSON rows with structured output expanded into top-level keys."""
     row_payload = [row.model_dump(mode="json") for row in export_rows]
-    expanded, *_ = _expand_output_columns(row_payload)
-    return expanded
+    expanded, fieldnames, *_ = _expand_output_columns(row_payload)
+    return [{k: row.get(k) for k in fieldnames if k in row} for row in expanded]
 
 
 def build_export_response(
     export_rows: list[AssessmentExportRow],
     export_format: Literal["json", "csv", "xlsx"],
     base_name: str,
+    post_processing_config: dict[str, Any] | None = None,
 ) -> StreamingResponse:
     """Return a file download response for assessment exports."""
-    payload, media_type = serialize_export_rows(export_rows, export_format)
+    payload, media_type = serialize_export_rows(
+        export_rows, export_format, post_processing_config
+    )
     filename = generate_timestamped_filename(
         _safe_filename_part(base_name),
         extension=export_format,
