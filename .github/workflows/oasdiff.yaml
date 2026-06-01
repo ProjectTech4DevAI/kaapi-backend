@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  
+  # One run per PR. A new commit (or label toggle) cancels the in-flight run instead
+concurrency:
+  group: api-changes-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   breaking-changes:
