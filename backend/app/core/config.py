@@ -104,11 +104,14 @@ class Settings(BaseSettings):
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
 
-    # GCP Vertex AI — single shared service-account fetched from AWS Secrets Manager.
-    # BYOK (per-project credentials) lands later.
+    # GCP Vertex AI platform defaults. Used when a project does not register
+    # its own google-vertex credential row (BYOK is all-or-nothing — see the
+    # Provider.GOOGLE_VERTEX comment in app/core/providers.py).
+    GCP_VERTEX_API_KEY: str = ""
+    GCP_VERTEX_LOCATION: str = ""
+    GCP_PROJECT_ID: str = ""
     GCP_SA_SECRET_NAME: str = ""
     GCP_SA_SECRET_REGION: str = ""
-    GCP_PROJECT_ID: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
     # RabbitMQ configuration for Celery broker

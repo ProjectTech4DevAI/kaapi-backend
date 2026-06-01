@@ -48,8 +48,28 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.ANTHROPIC: ProviderConfig(
         required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
+    # google-vertex BYOK is all-or-nothing: if a credential row is registered
+    # for this provider, it must carry the full kit. Partial registrations
+    # would mix the user's api_key (scoped to their GCP project) with the
+    # platform SA / bucket (different GCP project) — Vertex cannot read across
+    # projects without explicit cross-project IAM, so we forbid that shape.
+    #
+    # Projects that omit the credential row entirely fall through to the
+    # platform-shared defaults (GCP_VERTEX_API_KEY, GCP_PROJECT_ID,
+    # GCP_VERTEX_LOCATION, GCP_SA_SECRET_NAME, GCS_AUDIO_BUCKET) in settings.
+    #
+    # sa_key (dict) is the raw GCP service-account JSON. It's stripped before
+    # DB storage by upsert_byok_secret_for_provider and uploaded to AWS
+    # Secrets Manager; the persisted dict carries gcp_sa_secret_name /
+    # gcp_sa_secret_region in its place.
     Provider.GOOGLE_VERTEX: ProviderConfig(
-        required_fields=["api_key", "project_id", "location"],
+        required_fields=[
+            "api_key",
+            "project_id",
+            "location",
+            "sa_key",
+            "gcs_bucket",
+        ],
         sensitive_fields=["api_key"],
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(

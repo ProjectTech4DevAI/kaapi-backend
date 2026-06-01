@@ -104,3 +104,39 @@ class TestGetLLMProvider:
                 )
 
             assert "not configured for this project" in str(exc_info.value)
+
+    def test_google_vertex_falls_back_to_platform_settings(self, db: Session):
+        """No credential row for google-vertex → registry synthesizes platform
+        defaults from settings (the BYOK-or-platform contract)."""
+        from app.services.llm.providers.gai_vertex import (
+            GoogleVertexAIProvider,
+            VertexClient,
+        )
+
+        project = get_project(db)
+
+        with patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds, patch("app.core.config.settings") as mock_settings:
+            mock_get_creds.return_value = None
+            mock_settings.GCP_VERTEX_API_KEY = "platform-key"
+            mock_settings.GCP_PROJECT_ID = "platform-project"
+            mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+            mock_settings.GCP_SA_SECRET_NAME = "platform/secret"
+            mock_settings.GCP_SA_SECRET_REGION = "ap-south-1"
+            mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google-vertex-native",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+        assert isinstance(provider, GoogleVertexAIProvider)
+        assert isinstance(provider.client, VertexClient)
+        assert provider.client.api_key == "platform-key"
+        assert provider.client.project_id == "platform-project"
+        assert provider.client.location == "us-central1"
+        assert provider.client.gcp_sa_secret_name == "platform/secret"
+        assert provider.client.gcs_bucket == "platform-bucket"

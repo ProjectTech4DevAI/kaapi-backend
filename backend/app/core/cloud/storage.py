@@ -338,6 +338,99 @@ class SecretsManagerError(Exception):
     pass
 
 
+def upsert_byok_secret_for_provider(
+    provider: str,
+    credentials: dict,
+    *,
+    org_id: int,
+    project_id: int,
+) -> dict:
+    """Persist provider-specific BYOK secrets to AWS Secrets Manager and
+    rewrite the credentials dict so only references (not raw secrets) are
+    stored in the DB.
+
+    Currently only ``google-vertex`` needs this: when ``sa_key`` is present,
+    the SA JSON is uploaded to SM under a deterministic per-project name,
+    and the dict is rewritten to carry ``gcp_sa_secret_name`` /
+    ``gcp_sa_secret_region`` instead.
+
+    Returns the (possibly rewritten) credentials dict. No-op for providers
+    without BYOK secrets or when the optional ``sa_key`` field is absent.
+    """
+    if provider == "google-vertex":
+        sa_key = credentials.get("sa_key")
+        # The validator only checks key presence, not shape/truthiness — so
+        # null, empty dict, or a JSON string would slip through and leave a
+        # partial-BYOK row (user api_key + platform SA), which is exactly
+        # the broken hybrid BYOK enforcement is meant to prevent.
+        if not isinstance(sa_key, dict) or not sa_key:
+            raise ValueError(
+                "google-vertex 'sa_key' must be a non-empty service-account JSON object"
+            )
+        secret_name = (
+            f"kaapi/{settings.ENVIRONMENT}/orgs/{org_id}"
+            f"/projects/{project_id}/google-vertex/sa"
+        )
+        put_gcp_service_account(sa_key, secret_name=secret_name)
+        rewritten = {k: v for k, v in credentials.items() if k != "sa_key"}
+        rewritten["gcp_sa_secret_name"] = secret_name
+        rewritten["gcp_sa_secret_region"] = settings.GCP_SA_SECRET_REGION
+        return rewritten
+    return credentials
+
+
+def put_gcp_service_account(
+    sa_info: dict,
+    *,
+    secret_name: str,
+    region_name: str | None = None,
+) -> None:
+    """Create or update a GCP service-account JSON key in AWS Secrets Manager.
+
+    Idempotent: tries CreateSecret first, falls back to PutSecretValue when
+    the secret already exists. Validates SA shape upfront so we never store
+    junk. Invalidates the ``get_gcp_service_account`` LRU cache on success
+    so the next read picks up the rotated key.
+    """
+    if sa_info.get("type") != "service_account":
+        raise SecretsManagerError(
+            f"Refusing to write secret '{secret_name}': not a GCP service-account key "
+            f"(got type={sa_info.get('type')!r})"
+        )
+
+    region = region_name or settings.GCP_SA_SECRET_REGION
+    payload = json.dumps(sa_info)
+
+    sm_client = boto3.session.Session().client(
+        service_name="secretsmanager", region_name=region
+    )
+
+    try:
+        try:
+            sm_client.create_secret(Name=secret_name, SecretString=payload)
+            action = "created"
+        except sm_client.exceptions.ResourceExistsException:
+            sm_client.put_secret_value(SecretId=secret_name, SecretString=payload)
+            action = "updated"
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "Unknown")
+        logger.error(
+            f"[put_gcp_service_account] Secret write failed | "
+            f"secret={_mask(secret_name)}, region={region}, code={code}"
+        )
+        raise SecretsManagerError(
+            f"Failed to write secret '{secret_name}' (code={code}): {e}"
+        ) from e
+
+    get_gcp_service_account.cache_clear()
+    logger.info(
+        f"[put_gcp_service_account] Secret {action} | "
+        f"secret={_mask(secret_name)}, region={region}, "
+        f"project_id={sa_info.get('project_id')}, "
+        f"client_email={_mask(sa_info.get('client_email', ''))}"
+    )
+
+
 @ft.lru_cache(maxsize=32)
 def get_gcp_service_account(
     secret_name: str | None = None,

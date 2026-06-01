@@ -76,9 +76,25 @@ def get_llm_provider(
     )
 
     if not credentials:
-        raise ValueError(
-            f"Credentials for provider '{credential_provider}' not configured for this project."
-        )
+        # google-vertex falls back to platform-shared defaults from settings
+        # when no project credential row exists. BYOK is all-or-nothing for
+        # this provider (see Provider.GOOGLE_VERTEX in app/core/providers.py),
+        # so projects either register the full kit or use the platform set.
+        if credential_provider == "google-vertex":
+            from app.core.config import settings
+
+            credentials = {
+                "api_key": settings.GCP_VERTEX_API_KEY,
+                "project_id": settings.GCP_PROJECT_ID,
+                "location": settings.GCP_VERTEX_LOCATION,
+                "gcp_sa_secret_name": settings.GCP_SA_SECRET_NAME,
+                "gcp_sa_secret_region": settings.GCP_SA_SECRET_REGION,
+                "gcs_bucket": settings.GCS_AUDIO_BUCKET,
+            }
+        else:
+            raise ValueError(
+                f"Credentials for provider '{credential_provider}' not configured for this project."
+            )
 
     try:
         client = provider_class.create_client(credentials=credentials)
