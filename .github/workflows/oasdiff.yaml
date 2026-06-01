@@ -73,14 +73,21 @@ jobs:
 
       - name: Generate diff (JSON)
         run: |
-          # JSON output gives structured fields (level, operation, path, text)
-          # so we can render a clean table instead of oasdiff's raw markdown.
-          docker run --rm -v "$PWD:/specs" tufin/oasdiff \
-            changelog /specs/base-openapi.yaml /specs/head-openapi.yaml \
-            --format json > changelog.json || echo "[]" > changelog.json
-          docker run --rm -v "$PWD:/specs" tufin/oasdiff \
-            breaking /specs/base-openapi.yaml /specs/head-openapi.yaml \
-            --format json > breaking.json || echo "[]" > breaking.json
+          set -euo pipefail
+          
+          run_diff() {
+            local cmd="$1" out="$2"
+            docker run --rm -v "$PWD:/specs" "$OASDIFF_IMAGE" \
+              "$cmd" /specs/base-openapi.yaml /specs/head-openapi.yaml \
+              --format json > "$out" || true
+            if ! jq -e . "$out" >/dev/null 2>&1; then
+              echo "[]" > "$out"
+            fi
+          }
+          run_diff changelog changelog.json
+          run_diff breaking  breaking.json
+ 
+          echo "breaking=$(jq 'length' breaking.json) changelog=$(jq 'length' changelog.json)"
 
       - name: Debug raw oasdiff output
         run: |
