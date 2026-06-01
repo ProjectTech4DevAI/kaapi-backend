@@ -125,6 +125,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     if model_row is None:
         logger.warning(
             f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
         )
 
     if completion_type == "tts" and model_row is not None:
