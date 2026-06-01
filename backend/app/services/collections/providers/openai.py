@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(BaseProvider):
-    """OpenAI-specific collection provider for vector stores and assistants."""
+    """OpenAI-specific collection provider for vector stores."""
 
     def __init__(self, client: OpenAI):
         super().__init__(client)

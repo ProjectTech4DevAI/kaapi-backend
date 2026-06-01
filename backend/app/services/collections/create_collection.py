@@ -426,7 +426,7 @@ def execute_batch_job(
                 )
                 return
 
-            # Final batch: collection_result already has assistant/vector_store finalized
+            # Final batch: collection_result already has vector_store finalized
             finalize_start_time = time.time()
 
             with Session(engine) as session:
