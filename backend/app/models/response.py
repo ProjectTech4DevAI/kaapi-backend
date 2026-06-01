@@ -19,7 +19,7 @@ class ResponsesSyncAPIRequest(SQLModel):
     temperature: float = 0.1
     response_id: str | None = None
     question: str
-    lorem: str | None
+    lorem: str | None = None
 
     class Config:
         extra = "allow"
