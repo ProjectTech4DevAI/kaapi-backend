@@ -995,6 +995,103 @@ class TestExecuteJob:
 
         assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
 
+    def test_guardrails_output_validation_sends_input_output_pair(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        user_query = "What is my Aadhar number?"
+        llm_output = "Your Aadhar number is 1234-5678-9012"
+
+        env["mock_llm_response"].response.output.content.value = llm_output
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Your Aadhar number is [REDACTED]",
+                    "rephrase_needed": False,
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": user_query},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            self._execute_job(job_for_execution, db, request_data)
+
+        mock_guardrails.assert_called_once()
+        _, kwargs = mock_guardrails.call_args
+        assert kwargs.get("output_text") == llm_output
+        assert mock_guardrails.call_args[0][0] == user_query
+
+    def test_guardrails_bypass_does_not_modify_output(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+        original_llm_output = "Your Aadhar number is 1234-5678-9012"
+
+        env["mock_llm_response"].response.output.content.value = original_llm_output
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": False,
+                "bypassed": True,
+                "data": {"safe_text": original_llm_output, "rephrase_needed": False},
+            }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "some question"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"] is True
+        assert (
+            result["data"]["response"]["output"]["content"]["value"]
+            == original_llm_output
+        )
+
     def test_guardrails_skip_output_validation_for_audio_output(
         self, db, job_env, job_for_execution
     ):
