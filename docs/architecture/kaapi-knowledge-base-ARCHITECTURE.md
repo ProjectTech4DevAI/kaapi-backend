@@ -56,7 +56,7 @@ flowchart LR
         Q[["low_priority queue"]]
     end
 
-    subgraph Worker["Celery worker (gevent)"]
+    subgraph Worker["Celery worker (prefork)"]
         Setup["run_collection_setup_job\n→ execute_setup_job()"]
         Batch["run_collection_batch_job\n→ execute_batch_job()  (×N)"]
     end
@@ -125,6 +125,9 @@ backend/app/
 │   ├── tasks/job_execution.py      run_collection_setup_job · run_collection_batch_job ·
 │   │                                 run_delete_collection_job  (low_priority, priority=1)
 │   └── utils.py                    start_collection_setup_job / _batch_job / _delete_collection_job
+
+> **Worker concurrency model:** Celery currently runs with the **prefork** pool.
+> Gevent is being evaluated and will replace prefork once validated in production.
 │
 ├── crud/
 │   ├── document/document.py        DocumentCrud (read_each · update · soft delete)
@@ -656,7 +659,7 @@ store, the remote vector store can be left orphaned:
 |---|---|
 | **Async** | `POST /collections` returns `job_id` immediately; work runs on the Celery `low_priority` (priority 1) queue. |
 | **Batching** | One task per batch (≤30 MB / ≤200 docs), self-chaining; progress checkpointed to the job row across tasks. |
-| **Timeout** | `SoftTimeLimitExceeded` / gevent `Timeout` → job `FAILED` ("Task exceeded soft time limit") + failure callback, then re-raised. |
+| **Timeout** | `SoftTimeLimitExceeded` → job `FAILED` ("Task exceeded soft time limit") + failure callback, then re-raised. |
 | **Provider / attach error** | `OpenAIVectorStoreCrud.update` raises if any file fails to attach → job `FAILED`; see §11.4 for the orphan-cleanup gap. |
 | **Upload then DB failure** | The just-uploaded provider file is deleted to avoid an orphan; the job fails. |
 | **Credentials missing** | `get_llm_provider` raises `ValueError` → clean job failure. |

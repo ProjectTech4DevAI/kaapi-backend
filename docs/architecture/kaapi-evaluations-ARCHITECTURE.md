@@ -156,6 +156,9 @@ backend/app/
 │   ├── tasks/job_execution.py          run_stt/tts_* tasks (low_priority, priority=1)
 │   ├── tasks/notifications.py          send_eval_completion_notification (text)
 │   └── utils.py                        start_stt/tts_* enqueue helpers (OTel headers)
+
+> **Worker concurrency model:** Celery currently runs with the **prefork** pool.
+> Gevent is being evaluated and will replace prefork once validated in production.
 │
 └── models/
     ├── evaluation.py                   EvaluationDataset · EvaluationRun (+ Public/Create)
@@ -644,7 +647,7 @@ erDiagram
 | Concern | Behaviour |
 |---|---|
 | **Async model** | Provider Batch APIs do the heavy lifting; Kaapi only submits + polls. Completion window up to 24h (OpenAI). |
-| **Submission path** | text = **synchronous** (cheap JSONL register); stt/tts = **Celery `low_priority` (priority 1)** with a gevent soft time limit (audio upload is slow). This is the opposite end of the queue from `/llm/call`'s `high_priority` (9). |
+| **Submission path** | text = **synchronous** (cheap JSONL register); stt/tts = **Celery `low_priority` (priority 1)** with a soft time limit (audio upload is slow). This is the opposite end of the queue from `/llm/call`'s `high_priority` (9). |
 | **Two-batch text run** | response batch → embedding batch; run stays `processing` across both; embeddings failing degrades to `completed` *without* cosine rather than failing the run. |
 | **Partial batch failure** | text: all-requests-failed is detected via the OpenAI error file and surfaced as the top error string. stt/tts: per-item failures are recorded on the result row; the run still completes with an `error_message` summary. |
 | **Multi-model gating** | a run completes only when every model's batch is terminal. |

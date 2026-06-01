@@ -31,7 +31,7 @@ flowchart LR
         Q[["high_priority queue"]]
     end
 
-    subgraph Worker["Celery worker (gevent)"]
+    subgraph Worker["Celery worker (prefork)"]
         Task["run_llm_job\ntasks/job_execution.py"]
         ExecJob["execute_job()"]
         ExecCall["execute_llm_call()\n— the pipeline —"]
@@ -90,6 +90,9 @@ backend/app/
 ├── celery/
 │   ├── tasks/job_execution.py     run_llm_job (high_priority, priority=9, soft timeout)
 │   └── utils.py                   start_llm_job() — enqueue with OTel trace headers
+
+> **Worker concurrency model:** Celery currently runs with the **prefork** pool.
+> Gevent is being evaluated and will replace prefork once validated in production.
 │
 ├── models/
 │   ├── llm/request.py             LLMCallRequest · QueryParams · ConfigBlob · CompletionConfig · LlmCall (table)
@@ -546,8 +549,8 @@ flowchart TD
 
 | Concern | Behaviour |
 |---|---|
-| **Async** | The endpoint returns `job_id` immediately; the LLM call runs on a Celery `high_priority` (priority 9) task with a gevent soft time limit (`CELERY_TASK_SOFT_TIME_LIMIT`). |
-| **Timeout** | `SoftTimeLimitExceeded` / gevent `Timeout` → job FAILED with "Task exceeded soft time limit" + failure callback, then re‑raised. |
+| **Async** | The endpoint returns `job_id` immediately; the LLM call runs on a Celery `high_priority` (priority 9) task with a soft time limit (`CELERY_TASK_SOFT_TIME_LIMIT`). |
+| **Timeout** | `SoftTimeLimitExceeded` → job FAILED with "Task exceeded soft time limit" + failure callback, then re‑raised. |
 | **Provider error** | Normalised to an error string in `BlockResult` → failure `APIResponse` → job FAILED. Provider exceptions never crash the worker. |
 | **Guardrails down** | Fail‑open (bypassed) — the call proceeds without guardrails. |
 | **Credentials missing** | `get_llm_provider` raises `ValueError` → clean `BlockResult(error)`. |
