@@ -91,13 +91,13 @@ jobs:
           plural() { [ "$1" -ne 1 ] && echo s; }
 
           # Render an oasdiff JSON array as a markdown table.
-          # Severity dot: red for breaking/warn, white for info.
+          # Severity dot: red only for breaking (ERR), green for everything else
+          # (WARN / INFO — non-breaking additions like optional params).
           to_table() {
             jq -r '
               def dot(lvl):
                 if lvl >= 2 then "🔴"
-                elif lvl == 1 then "🔴"
-                else "⚪" end;
+                else "🟢" end;
               if (. // []) | length == 0 then "_No entries._"
               else
                 "|  | Method | Path | Change |",
