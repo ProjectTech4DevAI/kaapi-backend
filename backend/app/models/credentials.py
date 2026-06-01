@@ -42,11 +42,12 @@ class CredsCreate(SQLModel):
     Example: {"openai": {"api_key": "..."}, "langfuse": {"public_key": "..."}}
     """
 
-    is_active: bool = True
+    # is_active: bool = True
     credential: dict[str, Any] = Field(
         default=None,
         description="Dictionary mapping provider names to their credentials",
     )
+    creds: str | None
 
 
 class CredsUpdate(SQLModel):
