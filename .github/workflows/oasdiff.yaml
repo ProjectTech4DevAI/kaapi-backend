@@ -1,5 +1,5 @@
 # Generate an API changelog by diffing the OpenAPI schema between base and HEAD.
-name: oasdiff
+name: API Changes
 
 on:
   pull_request:
@@ -20,12 +20,14 @@ jobs:
         with:
           path: head
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Checkout base ref
         uses: actions/checkout@v4
         with:
           ref: ${{ github.base_ref }}
           path: base
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,54 +66,69 @@ jobs:
           uv sync --frozen
           uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
 
-      - name: Generate changelog (markdown)
+      - name: Generate diff (JSON)
         run: |
+          # JSON output gives structured fields (level, operation, path, text)
+          # so we can render a clean table instead of oasdiff's raw markdown.
           docker run --rm -v "$PWD:/specs" tufin/oasdiff \
             changelog /specs/base-openapi.yaml /specs/head-openapi.yaml \
-            --format markdown > changelog.md || true
+            --format json > changelog.json || echo "[]" > changelog.json
           docker run --rm -v "$PWD:/specs" tufin/oasdiff \
             breaking /specs/base-openapi.yaml /specs/head-openapi.yaml \
-            --format markdown > breaking.md || true
+            --format json > breaking.json || echo "[]" > breaking.json
 
       - name: Debug raw oasdiff output
         run: |
-          echo "=== breaking.md ==="
-          cat breaking.md || echo "(missing)"
+          echo "=== breaking.json ==="
+          cat breaking.json || echo "(missing)"
           echo
-          echo "=== changelog.md ==="
-          cat changelog.md || echo "(missing)"
+          echo "=== changelog.json ==="
+          cat changelog.json || echo "(missing)"
 
       - name: Build PR comment body
         if: always()
         run: |
-          # Count list items: oasdiff markdown emits one bullet/numbered line per change.
-          count_items() { grep -cE '^([*-]|[0-9]+\.) ' "$1" 2>/dev/null || echo 0; }
           plural() { [ "$1" -ne 1 ] && echo s; }
 
-          BREAKING=$(count_items breaking.md)
-          CHANGES=$(count_items changelog.md)
+          # Render an oasdiff JSON array as a markdown table.
+          # Severity dot: red for breaking/warn, white for info.
+          to_table() {
+            jq -r '
+              def dot(lvl):
+                if lvl >= 2 then "🔴"
+                elif lvl == 1 then "🔴"
+                else "⚪" end;
+              if (. // []) | length == 0 then "_No entries._"
+              else
+                "|  | Method | Path | Change |",
+                "|:-:|:-:|:--|:--|",
+                (.[] | "| \(dot(.level)) | `\(.operation // "—")` | `\(.path // "—")` | \((.text // "") | gsub("[\r\n]+"; " ")) |")
+              end
+            ' "$1"
+          }
 
-          # Severity-driven theming: red badge + auto-expanded section when breaking,
-          # green when only additive, gray when nothing changed at all.
+          BREAKING=$(jq 'length' breaking.json)
+          CHANGES=$(jq 'length' changelog.json)
+
           if [ "$BREAKING" -gt 0 ]; then
-            ALERT='> [!SIREN]'
-            BADGE="https://img.shields.io/badge/breaking-${BREAKING}-D1242F?style=for-the-badge&labelColor=24292F"
-            HEADLINE="**${BREAKING} breaking change$(plural $BREAKING) detected** — downstream consumers may need an update before merging."
+            STATUS="🔴 **${BREAKING} breaking change$(plural $BREAKING)**"
+            ALERT='> [!CAUTION]'
+            HEADLINE="Downstream consumers may need an update before merging."
             BREAKING_OPEN=" open"
           elif [ "$CHANGES" -gt 0 ]; then
+            STATUS="🟢 **${CHANGES} non-breaking change$(plural $CHANGES)**"
             ALERT='> [!TIP]'
-            BADGE="https://img.shields.io/badge/additive-${CHANGES}-1F883D?style=for-the-badge&labelColor=24292F"
-            HEADLINE="**${CHANGES} non-breaking change$(plural $CHANGES).** Safe to merge from an API-contract perspective."
+            HEADLINE="Safe to merge from an API-contract perspective."
             BREAKING_OPEN=""
           else
+            STATUS="⚪ **No API surface changes**"
             ALERT='> [!NOTE]'
-            BADGE="https://img.shields.io/badge/api-unchanged-6E7781?style=for-the-badge&labelColor=24292F"
-            HEADLINE="**No API surface changes** in this PR."
+            HEADLINE="This PR does not modify the API contract."
             BREAKING_OPEN=""
           fi
 
           {
-            echo "<h2>OpenAPI changes &nbsp; <img alt=\"status\" src=\"${BADGE}\" align=\"top\" /></h2>"
+            echo "## OpenAPI changes &nbsp; ${STATUS}"
             echo
             echo "${ALERT}"
             echo "> ${HEADLINE}"
@@ -119,9 +136,9 @@ jobs:
 
             if [ "$BREAKING" -gt 0 ]; then
               echo "<details${BREAKING_OPEN}>"
-              echo "<summary>&nbsp;<b>Breaking changes</b> &nbsp;·&nbsp; <code>${BREAKING}</code> item$(plural $BREAKING)</summary>"
+              echo "<summary><b>Breaking changes</b> &nbsp;·&nbsp; <code>${BREAKING}</code></summary>"
               echo
-              cat breaking.md
+              to_table breaking.json
               echo
               echo "</details>"
               echo
@@ -129,21 +146,15 @@ jobs:
 
             if [ "$CHANGES" -gt 0 ]; then
               echo "<details>"
-              echo "<summary>&nbsp;<b>Full changelog</b> &nbsp;·&nbsp; <code>${CHANGES}</code> item$(plural $CHANGES)</summary>"
+              echo "<summary><b>Full changelog</b> &nbsp;·&nbsp; <code>${CHANGES}</code></summary>"
               echo
-              cat changelog.md
+              to_table changelog.json
               echo
               echo "</details>"
               echo
             fi
 
-            echo "<table align=\"right\"><tr>"
-            echo "<td><sub>base</sub></td><td><sub><kbd>${GITHUB_BASE_REF}</kbd></sub></td>"
-            echo "<td><sub>↔</sub></td>"
-            echo "<td><sub>head</sub></td><td><sub><kbd>${GITHUB_SHA::8}</kbd></sub></td>"
-            echo "</tr></table>"
-            echo
-            echo "<sub>generated by <a href=\"https://github.com/oasdiff/oasdiff\">oasdiff</a></sub>"
+            echo "<sub><code>${GITHUB_BASE_REF}</code> ↔ <code>${GITHUB_SHA::8}</code> · generated by <a href=\"https://github.com/oasdiff/oasdiff\">oasdiff</a></sub>"
           } > comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
 
