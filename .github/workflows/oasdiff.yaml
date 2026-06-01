@@ -176,7 +176,7 @@ jobs:
           header: oasdiff
           path: comment.md
 
-      - name: Fail on breaking changes
+      - name: Enforce breaking-change gate
         # Skip the hard fail when a reviewer has explicitly acknowledged the breaking change
         # by applying the `breaking-change-approved` label to the PR.
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
