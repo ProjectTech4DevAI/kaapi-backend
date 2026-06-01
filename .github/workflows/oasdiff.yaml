@@ -179,9 +179,12 @@ jobs:
       - name: Enforce breaking-change gate
         # Skip the hard fail when a reviewer has explicitly acknowledged the breaking change
         # by applying the `breaking-change-approved` label to the PR.
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
-        uses: oasdiff/oasdiff-action/breaking@v0.0.48
-        with:
-          base: base-openapi.yaml
-          revision: head-openapi.yaml
-          fail-on: WARN
+if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
+        run: |
+          set -euo pipefail
+          count=$(jq 'length' breaking.json)
+          if [ "$count" -gt 0 ]; then
+            echo "::error::${count} breaking change(s) detected. Apply the 'breaking-change-approved' label to override the gate."
+            exit 1
+          fi
+          echo "No breaking changes detected."
