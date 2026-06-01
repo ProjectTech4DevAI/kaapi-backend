@@ -124,7 +124,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     )
     if model_row is None:
         logger.warning(
-            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'. Proceeding without validation."
+            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
         )
 
     if completion_type == "tts" and model_row is not None:
@@ -140,7 +140,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
         if voice and allowed_voices and voice not in allowed_voices:
             logger.warning(
                 f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
-                f"model='{model_name}'. Allowed: {allowed_voices}. Proceeding anyway."
+                f"model='{model_name}'. Allowed: {allowed_voices}."
             )
 
 
