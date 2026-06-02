@@ -1,7 +1,7 @@
 """Export the FastAPI app's OpenAPI schema to a YAML file.
 
 Usage:
-    uv run python -m scripts.export_openapi [output_path]
+    uv run python -m scripts.kaapi_export_openapi [output_path]
 
 Defaults to ./openapi.yaml relative to the current working directory.
 """

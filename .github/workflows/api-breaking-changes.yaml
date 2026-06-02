@@ -3,14 +3,15 @@ name: API Breaking Changes Check
 
 on:
   pull_request:
-    branches: ["main"]
+    branches:
+      -- '**'
     # Re-run when the approval label is added/removed so merge gating updates immediately.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
   pull-requests: write
-  
+
   # One run per PR. A new commit (or label toggle) cancels the in-flight run instead
 concurrency:
   group: api-changes-pr-${{ github.event.pull_request.number }}
@@ -19,6 +20,7 @@ concurrency:
 jobs:
   breaking-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
@@ -43,8 +45,6 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Prepare env files
-        # get_settings() loads `../.env.test` relative to the backend cwd when
-        # ENVIRONMENT=testing, so the file must sit at the repo root of each checkout.
         run: |
           cp head/.env.test.example head/.env.test
           cp head/.env.test.example base/.env.test
@@ -55,12 +55,12 @@ jobs:
           ENVIRONMENT: testing
         run: |
           uv sync --frozen
-          if [ -f scripts/export_openapi.py ]; then
-            uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+          if [ -f scripts/kaapi_export_openapi.py ]; then
+            uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
           else
             # Base ref predates this workflow; copy the HEAD script in to bootstrap.
-            cp "$GITHUB_WORKSPACE/head/backend/scripts/export_openapi.py" scripts/
-            uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+            cp "$GITHUB_WORKSPACE/head/backend/scripts/kaapi_export_openapi.py" scripts/
+            uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
           fi
 
       - name: Export HEAD OpenAPI schema
@@ -69,12 +69,12 @@ jobs:
           ENVIRONMENT: testing
         run: |
           uv sync --frozen
-          uv run python scripts/export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
+          uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
 
       - name: Generate diff (JSON)
         run: |
           set -euo pipefail
-          
+
           run_diff() {
             local cmd="$1" out="$2"
             docker run --rm -v "$PWD:/specs" "$OASDIFF_IMAGE" \
@@ -86,7 +86,7 @@ jobs:
           }
           run_diff changelog changelog.json
           run_diff breaking  breaking.json
- 
+
           echo "breaking=$(jq 'length' breaking.json) changelog=$(jq 'length' changelog.json)"
 
       - name: Debug raw oasdiff output
@@ -179,7 +179,7 @@ jobs:
       - name: Enforce breaking-change gate
         # Skip the hard fail when a reviewer has explicitly acknowledged the breaking change
         # by applying the `breaking-change-approved` label to the PR.
-if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
         run: |
           set -euo pipefail
           count=$(jq 'length' breaking.json)
