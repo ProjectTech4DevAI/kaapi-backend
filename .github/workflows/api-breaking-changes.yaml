@@ -101,7 +101,7 @@ jobs:
       - name: Build PR comment body
         if: always()
         run: |
-          plural() { [ "$1" -ne 1 ] && echo s; }
+          plural() { if [ "$1" -ne 1 ]; then echo s; fi; }
 
           # Render an oasdiff JSON array as a markdown table.
           # Severity dot: red only for breaking (ERR), green for everything else
