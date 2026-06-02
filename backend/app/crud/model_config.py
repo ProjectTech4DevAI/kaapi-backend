@@ -1,7 +1,10 @@
+import logging
 from typing import Any, Literal, get_args
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
+
+logger = logging.getLogger(__name__)
 
 from app.models import ModelConfig
 from app.models.llm.request import ConfigBlob
@@ -133,31 +136,12 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
         model_name=model_name,
     )
     if model_row is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_name}' not found for provider='{provider}'.",
+        logger.warning(
+            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
         )
 
-    if not is_model_supported(
-        session=session,
-        provider=provider,  # type: ignore[arg-type]
-        completion_type=completion_type,
-        model_name=model_name,
-    ):
-        allowed = list_supported_models(
-            session=session,
-            provider=provider,  # type: ignore[arg-type]
-            completion_type=completion_type,
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Model '{model_name}' is not supported for provider='{provider}' "
-                f"type='{completion_type}'. Allowed: {allowed}"
-            ),
-        )
-
-    if completion_type == "tts":
+    if completion_type == "tts" and model_row is not None:
         voice = (completion.params or {}).get("voice")
         voice_spec = (
             model_row.config.get("voice")
@@ -168,12 +152,9 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
             voice_spec.get("options") if isinstance(voice_spec, dict) else None
         )
         if voice and allowed_voices and voice not in allowed_voices:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Voice '{voice}' is not supported for provider='{provider}' "
-                    f"model='{model_name}'. Allowed: {allowed_voices}"
-                ),
+            logger.warning(
+                f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"model='{model_name}'. Allowed: {allowed_voices}."
             )
 
 
