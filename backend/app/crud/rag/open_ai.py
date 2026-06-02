@@ -140,13 +140,72 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 f"[OpenAIVectorStoreCrud.update] File upload completed | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
             )
             if req.file_counts.completed != req.file_counts.total:
-                error_msg = f"OpenAI document processing error: {req.file_counts.completed}/{req.file_counts.total} files completed"
+                failure_detail = self._summarize_failed_files(
+                    vector_store_id=vector_store_id, batch_id=req.id
+                )
+                error_msg = (
+                    f"OpenAI document processing error: "
+                    f"{req.file_counts.completed}/{req.file_counts.total} "
+                    f"files completed"
+                )
+                if failure_detail:
+                    error_msg = f"{error_msg}. Failed files: {failure_detail}"
                 logger.error(
-                    f"[OpenAIVectorStoreCrud.update] Document processing error | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
+                    f"[OpenAIVectorStoreCrud.update] Document processing error | "
+                    f"{{'vector_store_id': '{vector_store_id}', "
+                    f"'completed_files': {req.file_counts.completed}, "
+                    f"'total_files': {req.file_counts.total}, "
+                    f"'failure_detail': '{failure_detail}'}}"
                 )
                 raise InterruptedError(error_msg)
 
             yield from docs
+
+    def _summarize_failed_files(
+        self,
+        *,
+        vector_store_id: str,
+        batch_id: str,
+        max_files: int = 10,
+        max_message_chars: int = 600,
+    ) -> str:
+        """List failed files in a vector-store batch and join their errors.
+
+        The OpenAI batch response only tells us how many files failed, not why.
+        This makes a follow-up call to pull per-file `last_error` so the upstream
+        cause (unsupported type, oversized, etc.) reaches the caller instead of
+        a bare ratio. Returns "" on lookup failure so the original count-based
+        message still surfaces.
+        """
+        try:
+            page = self.client.vector_stores.file_batches.list_files(
+                batch_id=batch_id,
+                vector_store_id=vector_store_id,
+                filter="failed",
+                limit=max_files,
+            )
+        except OpenAIError as err:
+            logger.warning(
+                f"[OpenAIVectorStoreCrud._summarize_failed_files] Could not list "
+                f"failed files | {{'vector_store_id': '{vector_store_id}', "
+                f"'batch_id': '{batch_id}', 'error': '{err}'}}"
+            )
+            return ""
+
+        parts: list[str] = []
+        for f in page:
+            err = getattr(f, "last_error", None)
+            message = (
+                getattr(err, "message", None) if err else None
+            ) or "Unknown error"
+            parts.append(f"{f.id} ({message})")
+
+        summary = ", ".join(parts)
+        if getattr(page, "has_more", False):
+            summary = f"{summary}, ..."
+        if len(summary) > max_message_chars:
+            summary = summary[: max_message_chars - 3] + "..."
+        return summary
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:

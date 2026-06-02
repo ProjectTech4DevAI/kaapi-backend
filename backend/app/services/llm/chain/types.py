@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.models.llm.response import LLMCallResponse, Usage
+from app.models.llm.response import LLMCallErrorDetail, LLMCallResponse, Usage
 
 
 @dataclass
@@ -12,6 +12,7 @@ class BlockResult:
     llm_call_id: UUID | None = None
     usage: Usage | None = None
     error: str | None = None
+    error_detail: LLMCallErrorDetail | None = None
     metadata: dict | None = None
 
     @property

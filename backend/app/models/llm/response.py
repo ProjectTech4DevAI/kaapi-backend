@@ -67,6 +67,50 @@ class LLMCallResponse(SQLModel):
     )
 
 
+class LLMCallErrorDetail(SQLModel):
+    """Structured failure context for an LLM call.
+
+    Lives in the `data` field of an `APIResponse.failure_response` so callers
+    receive machine-readable error information alongside the human-readable
+    `error` string. The key field is `conversation_id`: without it, a client
+    that uses our returned `thread_id` to chain turns has its conversation
+    flow break on every failure. Populating it from the *request* (not the
+    upstream response, which doesn't exist on failure) keeps the chain
+    intact.
+    """
+
+    conversation_id: str | None = Field(
+        default=None,
+        description=(
+            "Conversation/thread ID this call belongs to, echoed back from "
+            "the request so the client can continue the conversation after "
+            "an error."
+        ),
+    )
+    provider: str | None = Field(
+        default=None, description="LLM provider the call was routed to (if known)."
+    )
+    provider_status_code: int | None = Field(
+        default=None,
+        description=(
+            "Upstream HTTP status from the provider (e.g. 429 for rate limit, "
+            "401 for auth). Null when the failure happens before the upstream "
+            "call or when the provider didn't surface a status."
+        ),
+    )
+    error_type: str | None = Field(
+        default=None,
+        description=(
+            "Coarse category: 'invalid_request' | 'provider_error' | 'timeout' "
+            "| 'internal_error'. Use for branching client behaviour (retry vs. "
+            "surface to user vs. fail hard)."
+        ),
+    )
+    message: str = Field(
+        ..., description="Human-readable error message (same as top-level `error`)."
+    )
+
+
 class LLMChainResponse(SQLModel):
     """Response schema for an LLM chain execution."""
 

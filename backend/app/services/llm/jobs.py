@@ -54,6 +54,7 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import upload_audio_bytes_to_s3
 from app.models.llm.response import (
     AudioOutput,
+    LLMCallErrorDetail,
     LLMCallResponse,
     LLMResponse,
     TextOutput,
@@ -1001,7 +1002,24 @@ def execute_llm_call(
             project_id=project_id,
         )
         error_message = error or "Unknown error occurred"
-        return BlockResult(error=error_message, llm_call_id=llm_call_id)
+        # Pull provider-side meta (status code, classified error_type) set by
+        # the provider's catch block via set_provider_error_meta. Empty dict
+        # if the provider didn't populate it (Anthropic/Google/Sarvam/EL still
+        # to be wired up).
+        from app.services.llm.errors import consume_provider_error_meta
+
+        provider_meta = consume_provider_error_meta() or {}
+        return BlockResult(
+            error=error_message,
+            llm_call_id=llm_call_id,
+            error_detail=LLMCallErrorDetail(
+                conversation_id=conversation_id,
+                provider=provider_name,
+                provider_status_code=provider_meta.get("provider_status_code"),
+                error_type=provider_meta.get("error_type", "provider_error"),
+                message=error_message,
+            ),
+        )
 
     except (Timeout, SoftTimeLimitExceeded):
         raise
@@ -1010,10 +1028,52 @@ def execute_llm_call(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",
             exc_info=True,
         )
+        # Unexpected errors may fire before conversation_id / provider_name
+        # are bound, so guard with locals() lookups; the detail still flows
+        # `message` and `error_type=internal_error` so the client can branch.
         return BlockResult(
             error="Unexpected error occurred",
             llm_call_id=llm_call_id,
+            error_detail=LLMCallErrorDetail(
+                conversation_id=locals().get("conversation_id"),
+                provider=locals().get("provider_name"),
+                error_type="internal_error",
+                message="Unexpected error occurred",
+            ),
         )
+
+
+def _finalize_error_detail(
+    detail: LLMCallErrorDetail | None,
+    *,
+    request: LLMCallRequest,
+    fallback_message: str | None,
+    fallback_error_type: str,
+) -> dict:
+    """Ensure the failure callback's `data` always carries useful context.
+
+    `BlockResult.error_detail` may be None (e.g. timeout, very early
+    validation failures). When it is, build a minimal detail from request
+    fields so the client still gets back the `conversation_id` it needs to
+    continue its thread. Always returns a serialized dict suitable for
+    `APIResponse.failure_response(data=...)`.
+    """
+    request_conversation_id = None
+    if request.query and request.query.conversation:
+        request_conversation_id = request.query.conversation.id
+
+    if detail is None:
+        detail = LLMCallErrorDetail(
+            conversation_id=request_conversation_id,
+            error_type=fallback_error_type,
+            message=fallback_message or "Unknown error occurred",
+        )
+    elif detail.conversation_id is None and request_conversation_id is not None:
+        # `execute_llm_call` couldn't bind conversation_id locally (e.g.
+        # config-resolution failures fire before that point). Recover it
+        # from the request — it's the same value the client sent in.
+        detail = detail.model_copy(update={"conversation_id": request_conversation_id})
+    return detail.model_dump()
 
 
 def execute_job(
@@ -1136,6 +1196,12 @@ def execute_job(
 
             callback_response = APIResponse.failure_response(
                 error=result.error or "Unknown error occurred",
+                data=_finalize_error_detail(
+                    result.error_detail,
+                    request=request,
+                    fallback_message=result.error,
+                    fallback_error_type="provider_error",
+                ),
                 metadata=request.request_metadata,
             )
             return handle_job_error(
@@ -1152,6 +1218,12 @@ def execute_job(
             )
             callback_response = APIResponse.failure_response(
                 error="Task exceeded soft time limit",
+                data=_finalize_error_detail(
+                    None,
+                    request=request,
+                    fallback_message="Task exceeded soft time limit",
+                    fallback_error_type="timeout",
+                ),
                 metadata=request.request_metadata,
             )
             handle_job_error(
@@ -1166,6 +1238,12 @@ def execute_job(
         except Exception as e:
             callback_response = APIResponse.failure_response(
                 error="Unexpected error occurred",
+                data=_finalize_error_detail(
+                    None,
+                    request=request,
+                    fallback_message="Unexpected error occurred",
+                    fallback_error_type="internal_error",
+                ),
                 metadata=request.request_metadata,
             )
             logger.error(
