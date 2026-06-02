@@ -1,3 +1,5 @@
+import base64
+import io
 import logging
 from typing import Any
 
@@ -21,6 +23,7 @@ from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModa
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TOKENS = 4096
+FILES_API_BETA = "files-api-2025-04-14"
 
 
 class ClaudeProvider(BaseProvider):
@@ -90,6 +93,26 @@ class ClaudeProvider(BaseProvider):
 
         return items
 
+    @staticmethod
+    def _is_base64_file_block(block: Any) -> bool:
+        if not isinstance(block, dict):
+            return False
+        if block.get("type") not in ("document", "image"):
+            return False
+        source = block.get("source") or {}
+        return source.get("type") == "base64"
+
+    def _upload_to_files_api(self, source: dict, block_type: str) -> str:
+        file_bytes = base64.b64decode(source["data"])
+        filename = "document.pdf" if block_type == "document" else "image"
+        upload = self.client.beta.files.upload(
+            file=(filename, io.BytesIO(file_bytes), source["media_type"]),
+        )
+        logger.info(
+            f"[ClaudeProvider._upload_to_files_api] Uploaded {block_type} | file_id={upload.id}"
+        )
+        return upload.id
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
@@ -120,6 +143,18 @@ class ClaudeProvider(BaseProvider):
             else:
                 content = resolved_input
 
+            # Upload any base64 PDFs/images to the Files API and reference by file_id.
+            # Keeps request payloads small and lets large files bypass inline size limits.
+            uploaded_file = False
+            if isinstance(content, list):
+                for block in content:
+                    if not self._is_base64_file_block(block):
+                        continue
+
+                    file_id = self._upload_to_files_api(block["source"], block["type"])
+                    block["source"] = {"type": "file", "file_id": file_id}
+                    uploaded_file = True
+
             params["messages"] = [{"role": "user", "content": content}]
 
             # Anthropic Messages API has no first-class conversation primitive,
@@ -127,7 +162,12 @@ class ClaudeProvider(BaseProvider):
             # config so it never leaks into the API call.
             params.pop("conversation", None)
 
-            response = self.client.messages.create(**params)
+            if uploaded_file:
+                existing_betas = params.pop("betas", []) or []
+                params["betas"] = [*existing_betas, FILES_API_BETA]
+                response = self.client.beta.messages.create(**params)
+            else:
+                response = self.client.messages.create(**params)
 
             output_text = "".join(
                 block.text for block in response.content if block.type == "text"
