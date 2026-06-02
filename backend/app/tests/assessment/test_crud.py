@@ -27,7 +27,7 @@ from app.crud.assessment import (
     update_assessment_run_status,
     update_run_post_processing_config,
 )
-from app.crud.assessment.core import update_assessment_run_l1_stats
+from app.crud.assessment.core import update_assessment_run_prefilter_stats
 from app.models.stt_evaluation import EvaluationType
 
 
@@ -234,9 +234,9 @@ class TestDerivedAggregates:
                 total_items=2,
                 error_message=None,
                 updated_at=datetime(2024, 1, 1),
-                l1_total_rows=None,
-                l1_total_passed=None,
-                l1_total_rejected=None,
+                prefilter_total_rows=None,
+                prefilter_total_passed=None,
+                prefilter_total_rejected=None,
             ),
         ]
         stats = build_run_stats(runs)
@@ -343,23 +343,23 @@ class TestUpdateAssessmentRunL1Stats:
         run = SimpleNamespace(
             id=8,
             updated_at=None,
-            l1_object_store_url=None,
-            l1_total_rows=None,
-            l1_total_passed=None,
-            l1_total_rejected=None,
+            prefilter_object_store_url=None,
+            prefilter_total_rows=None,
+            prefilter_total_passed=None,
+            prefilter_total_rejected=None,
         )
-        out = update_assessment_run_l1_stats(
+        out = update_assessment_run_prefilter_stats(
             session=session,
             run=run,
-            l1_object_store_url="s3://x",
-            l1_total_rows=10,
-            l1_total_passed=7,
-            l1_total_rejected=3,
+            prefilter_object_store_url="s3://x",
+            prefilter_total_rows=10,
+            prefilter_total_passed=7,
+            prefilter_total_rejected=3,
         )
-        assert out.l1_object_store_url == "s3://x"
-        assert out.l1_total_rows == 10
-        assert out.l1_total_passed == 7
-        assert out.l1_total_rejected == 3
+        assert out.prefilter_object_store_url == "s3://x"
+        assert out.prefilter_total_rows == 10
+        assert out.prefilter_total_passed == 7
+        assert out.prefilter_total_rejected == 3
         session.commit.assert_called_once()
 
     def test_commit_failure_rolls_back(self) -> None:
@@ -368,11 +368,13 @@ class TestUpdateAssessmentRunL1Stats:
         run = SimpleNamespace(
             id=9,
             updated_at=None,
-            l1_object_store_url=None,
-            l1_total_rows=None,
-            l1_total_passed=None,
-            l1_total_rejected=None,
+            prefilter_object_store_url=None,
+            prefilter_total_rows=None,
+            prefilter_total_passed=None,
+            prefilter_total_rejected=None,
         )
         with pytest.raises(RuntimeError):
-            update_assessment_run_l1_stats(session=session, run=run, l1_total_rows=1)
+            update_assessment_run_prefilter_stats(
+                session=session, run=run, prefilter_total_rows=1
+            )
         session.rollback.assert_called_once()

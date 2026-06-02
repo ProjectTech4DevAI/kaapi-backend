@@ -13,7 +13,7 @@ from app.crud.assessment.core import (
     list_assessment_runs,
     list_assessments,
     recompute_assessment_status,
-    update_assessment_run_l1_stats,
+    update_assessment_run_prefilter_stats,
     update_assessment_run_status,
     update_run_post_processing_config,
 )
@@ -44,7 +44,7 @@ __all__ = [
     "list_assessment_datasets",
     "list_assessments",
     "recompute_assessment_status",
-    "update_assessment_run_l1_stats",
+    "update_assessment_run_prefilter_stats",
     "update_assessment_run_status",
     "update_run_post_processing_config",
 ]

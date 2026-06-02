@@ -1,9 +1,9 @@
-"""Tests for L1 duplicate detection."""
+"""Tests for prefilter duplicate detection."""
 
 import json
 from unittest.mock import MagicMock
 
-from app.services.assessment.l1.duplicate_detection import (
+from app.services.assessment.prefilter.duplicate_detection import (
     _build_combined,
     _parse_verdict,
     run_duplicate_detection,

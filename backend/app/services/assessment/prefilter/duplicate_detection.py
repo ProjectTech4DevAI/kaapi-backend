@@ -1,4 +1,4 @@
-"""Duplicate detection filter for L1 pipeline."""
+"""Duplicate detection filter for prefilter pipeline."""
 
 import json
 import logging
@@ -7,6 +7,8 @@ from typing import Any
 
 from google import genai
 from google.genai import types
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,9 @@ def _check_vague(
                 system_instruction=_VAGUE_SYS,
                 response_mime_type="application/json",
                 temperature=0.0,
+                http_options=types.HttpOptions(
+                    timeout=settings.ASSESSMENT_PREFILTER_REQUEST_TIMEOUT_MS
+                ),
             ),
         )
         parsed = json.loads((response.text or "").strip())
@@ -104,6 +109,9 @@ def _call_file_search(
                 )
             ],
             temperature=0.0,
+            http_options=types.HttpOptions(
+                timeout=settings.ASSESSMENT_PREFILTER_REQUEST_TIMEOUT_MS
+            ),
         ),
     )
     return response.text or ""

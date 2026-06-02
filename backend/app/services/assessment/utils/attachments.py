@@ -9,11 +9,12 @@ import binascii
 import logging
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
 from app.models.assessment import AssessmentAttachment
+from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
 
@@ -177,33 +178,43 @@ def _type_from_content_type(content_type: str | None) -> str | None:
     return None
 
 
+_PROBE_MAX_REDIRECTS = 3
+
+
 def _probe_url_type(url: str, num_bytes: int = 16) -> str | None:
     """Probe a remote URL's type: ranged byte sniff first, Content-Type fallback.
-
-    Reads only the first few bytes (does not download the whole file). Drive
-    share URLs are routed through the download endpoint so the real file bytes
-    are read instead of an HTML share page.
-    """
+    Handles Google Drive URLs with the same logic as to_direct_attachment_url, since"""
     file_id = _drive_file_id(url)
-    probe_url = (
+    current = (
         f"https://drive.google.com/uc?export=download&id={file_id}" if file_id else url
     )
 
     try:
-        with requests.get(
-            probe_url,
-            headers={"Range": f"bytes=0-{num_bytes - 1}"},
-            timeout=10,
-            stream=True,
-            allow_redirects=True,
-        ) as resp:
-            resp.raise_for_status()
-            for chunk in resp.iter_content(chunk_size=num_bytes):
-                magic_type = _type_from_magic(chunk)
-                if magic_type:
-                    return magic_type
-                break
-            return _type_from_content_type(resp.headers.get("Content-Type"))
+        for _ in range(_PROBE_MAX_REDIRECTS + 1):
+            validate_callback_url(current)
+            with requests.get(
+                current,
+                headers={"Range": f"bytes=0-{num_bytes - 1}"},
+                timeout=10,
+                stream=True,
+                allow_redirects=False,
+            ) as resp:
+                location = resp.headers.get("Location")
+                if resp.is_redirect and location:
+                    current = urljoin(current, location)
+                    continue
+                resp.raise_for_status()
+                for chunk in resp.iter_content(chunk_size=num_bytes):
+                    magic_type = _type_from_magic(chunk)
+                    if magic_type:
+                        return magic_type
+                    break
+                return _type_from_content_type(resp.headers.get("Content-Type"))
+        logger.warning(f"[_probe_url_type] Too many redirects probing {url}")
+        return None
+    except ValueError as e:
+        logger.warning(f"[_probe_url_type] Blocked unsafe probe URL {url}: {e}")
+        return None
     except requests.RequestException as e:
         logger.warning(f"[_probe_url_type] Probe failed for {url}: {e}")
         return None
@@ -312,7 +323,7 @@ def build_gemini_attachment_parts(
     """Convert one dataset cell into one or more Gemini content parts.
 
     Mirrors the per-item type detection used for the L2 batch so the same
-    image/pdf routing applies to L1 (topic relevance) calls.
+    image/pdf routing applies to prefilter (topic relevance) calls.
     """
     value = value.strip()
     if not value:

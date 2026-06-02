@@ -79,7 +79,7 @@ def _build_retry_request(
         attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
         output_schema=assessment_input.get("output_schema"),
         configs=configs,
-        l1_config=assessment_input.get("l1_config"),
+        prefilter_config=assessment_input.get("prefilter_config"),
         post_processing_config=assessment_input.get("post_processing_config"),
     )
 
@@ -93,7 +93,7 @@ def start_assessment(
     """Validate, create Assessment + AssessmentRun records, dispatch Celery tasks.
 
     Each run is created with status='pending' and handed off to a Celery worker
-    that runs L1 filtering then submits the L2 batch.
+    that runs prefilter filtering then submits the L2 batch.
     """
     from app.celery.tasks.job_execution import run_assessment_run
 
@@ -120,8 +120,8 @@ def start_assessment(
     }
     if request.output_schema:
         assessment_input["output_schema"] = request.output_schema
-    if request.l1_config:
-        assessment_input["l1_config"] = request.l1_config
+    if request.prefilter_config:
+        assessment_input["prefilter_config"] = request.prefilter_config
     if request.post_processing_config:
         assessment_input["post_processing_config"] = request.post_processing_config
 

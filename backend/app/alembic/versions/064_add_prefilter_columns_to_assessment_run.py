@@ -1,4 +1,4 @@
-"""Add L1 pipeline columns to assessment_run
+"""Add prefilter pipeline columns to assessment_run
 
 Revision ID: 064
 Revises: 063
@@ -19,25 +19,25 @@ def upgrade() -> None:
     op.add_column(
         "assessment_run",
         sa.Column(
-            "l1_object_store_url",
+            "prefilter_object_store_url",
             sa.String(),
             nullable=True,
-            comment="S3 URL of stored L1 filter results JSON",
+            comment="S3 URL of stored prefilter filter results JSON",
         ),
     )
     op.add_column(
         "assessment_run",
         sa.Column(
-            "l1_total_rows",
+            "prefilter_total_rows",
             sa.Integer(),
             nullable=True,
-            comment="Total rows fed into L1 pipeline",
+            comment="Total rows fed into prefilter pipeline",
         ),
     )
     op.add_column(
         "assessment_run",
         sa.Column(
-            "l1_total_passed",
+            "prefilter_total_passed",
             sa.Integer(),
             nullable=True,
             comment="Rows that passed topic relevance and went to L2",
@@ -46,16 +46,16 @@ def upgrade() -> None:
     op.add_column(
         "assessment_run",
         sa.Column(
-            "l1_total_rejected",
+            "prefilter_total_rejected",
             sa.Integer(),
             nullable=True,
-            comment="Rows rejected by topic relevance, stopped at L1",
+            comment="Rows rejected by topic relevance, stopped at prefilter",
         ),
     )
 
 
 def downgrade() -> None:
-    op.drop_column("assessment_run", "l1_total_rejected")
-    op.drop_column("assessment_run", "l1_total_passed")
-    op.drop_column("assessment_run", "l1_total_rows")
-    op.drop_column("assessment_run", "l1_object_store_url")
+    op.drop_column("assessment_run", "prefilter_total_rejected")
+    op.drop_column("assessment_run", "prefilter_total_passed")
+    op.drop_column("assessment_run", "prefilter_total_rows")
+    op.drop_column("assessment_run", "prefilter_object_store_url")

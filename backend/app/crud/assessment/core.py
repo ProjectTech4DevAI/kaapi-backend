@@ -248,25 +248,25 @@ def update_assessment_run_status(
     return run
 
 
-def update_assessment_run_l1_stats(
+def update_assessment_run_prefilter_stats(
     session: Session,
     run: AssessmentRun,
-    l1_object_store_url: str | None = None,
-    l1_total_rows: int | None = None,
-    l1_total_passed: int | None = None,
-    l1_total_rejected: int | None = None,
+    prefilter_object_store_url: str | None = None,
+    prefilter_total_rows: int | None = None,
+    prefilter_total_passed: int | None = None,
+    prefilter_total_rejected: int | None = None,
 ) -> AssessmentRun:
-    """Persist L1 result stats (rows/passed/rejected + S3 URL) on a run."""
+    """Persist prefilter result stats (rows/passed/rejected + S3 URL) on a run."""
     run.updated_at = now()
 
-    if l1_object_store_url is not None:
-        run.l1_object_store_url = l1_object_store_url
-    if l1_total_rows is not None:
-        run.l1_total_rows = l1_total_rows
-    if l1_total_passed is not None:
-        run.l1_total_passed = l1_total_passed
-    if l1_total_rejected is not None:
-        run.l1_total_rejected = l1_total_rejected
+    if prefilter_object_store_url is not None:
+        run.prefilter_object_store_url = prefilter_object_store_url
+    if prefilter_total_rows is not None:
+        run.prefilter_total_rows = prefilter_total_rows
+    if prefilter_total_passed is not None:
+        run.prefilter_total_passed = prefilter_total_passed
+    if prefilter_total_rejected is not None:
+        run.prefilter_total_rejected = prefilter_total_rejected
 
     session.add(run)
     try:
@@ -274,16 +274,18 @@ def update_assessment_run_l1_stats(
         session.refresh(run)
     except Exception as e:
         session.rollback()
-        logger.error(f"[update_assessment_run_l1_stats] Failed: {e}", exc_info=True)
+        logger.error(
+            f"[update_assessment_run_prefilter_stats] Failed: {e}", exc_info=True
+        )
         raise
 
     return run
 
 
 _ACTIVE_RUN_STATUSES = frozenset(
-    {"l1_processing", "l2_processing", "processing", "in_progress"}
+    {"prefilter_processing", "l2_processing", "processing", "in_progress"}
 )
-_FAILED_RUN_STATUSES = frozenset({"failed", "l1_failed"})
+_FAILED_RUN_STATUSES = frozenset({"failed", "prefilter_failed"})
 _COMPLETED_RUN_STATUSES = frozenset({"completed", "completed_with_errors"})
 
 
@@ -329,9 +331,9 @@ def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
             total_items=run.total_items,
             error_message=run.error_message,
             updated_at=run.updated_at,
-            l1_total_rows=run.l1_total_rows,
-            l1_total_passed=run.l1_total_passed,
-            l1_total_rejected=run.l1_total_rejected,
+            prefilter_total_rows=run.prefilter_total_rows,
+            prefilter_total_passed=run.prefilter_total_passed,
+            prefilter_total_rejected=run.prefilter_total_rejected,
         )
         for run in runs
     ]

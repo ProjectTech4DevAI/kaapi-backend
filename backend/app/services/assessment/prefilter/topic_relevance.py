@@ -1,4 +1,4 @@
-"""Topic relevance filter for L1 pipeline.
+"""Topic relevance filter for prefilter pipeline.
 """
 
 import json
@@ -8,6 +8,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
 from app.services.assessment.utils.attachments import build_gemini_attachment_parts
 
@@ -89,6 +90,9 @@ def run_topic_relevance(
                 response_mime_type="application/json",
                 response_schema=output_schema,
                 temperature=0.0,
+                http_options=types.HttpOptions(
+                    timeout=settings.ASSESSMENT_PREFILTER_REQUEST_TIMEOUT_MS
+                ),
             ),
         )
         raw = (response.text or "").strip()

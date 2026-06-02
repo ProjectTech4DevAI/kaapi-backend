@@ -470,9 +470,12 @@ class TestDetectItemType:
         resp = MagicMock()
         resp.__enter__ = MagicMock(return_value=resp)
         resp.__exit__ = MagicMock(return_value=False)
+        resp.is_redirect = False
         resp.raise_for_status = MagicMock()
         resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
         with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url"
+        ), patch(
             "app.services.assessment.utils.attachments.requests.get",
             return_value=resp,
         ) as mock_get:
@@ -485,10 +488,13 @@ class TestDetectItemType:
         resp = MagicMock()
         resp.__enter__ = MagicMock(return_value=resp)
         resp.__exit__ = MagicMock(return_value=False)
+        resp.is_redirect = False
         resp.raise_for_status = MagicMock()
         resp.iter_content = MagicMock(return_value=iter([b"\x00\x01\x02\x03"]))
         resp.headers = {"Content-Type": "application/pdf; charset=binary"}
         with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url"
+        ), patch(
             "app.services.assessment.utils.attachments.requests.get",
             return_value=resp,
         ):
@@ -499,10 +505,47 @@ class TestDetectItemType:
 
         url = "https://example.com/file"
         with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url"
+        ), patch(
             "app.services.assessment.utils.attachments.requests.get",
             side_effect=_requests.RequestException("boom"),
         ):
             assert detect_item_type(url, "url", "image", {}) == "image"
+
+    def test_url_probe_follows_validated_redirect(self) -> None:
+        """A redirect hop is followed and re-validated before the next request."""
+        url = "https://drive.google.com/file/d/RID/view"
+        redirect = MagicMock()
+        redirect.__enter__ = MagicMock(return_value=redirect)
+        redirect.__exit__ = MagicMock(return_value=False)
+        redirect.is_redirect = True
+        redirect.headers = {"Location": "https://files.example.com/real.pdf"}
+        final = MagicMock()
+        final.__enter__ = MagicMock(return_value=final)
+        final.__exit__ = MagicMock(return_value=False)
+        final.is_redirect = False
+        final.raise_for_status = MagicMock()
+        final.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
+        with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url"
+        ) as validate, patch(
+            "app.services.assessment.utils.attachments.requests.get",
+            side_effect=[redirect, final],
+        ) as mock_get:
+            assert detect_item_type(url, "url", "image", {}) == "pdf"
+        # Both the initial and redirected URLs were validated and fetched.
+        assert validate.call_count == 2
+        assert mock_get.call_count == 2
+
+    def test_url_probe_blocked_by_ssrf_falls_back(self) -> None:
+        url = "https://internal.host/file"
+        with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url",
+            side_effect=ValueError("private IP"),
+        ), patch("app.services.assessment.utils.attachments.requests.get") as mock_get:
+            # SSRF guard blocks the probe -> falls back to declared type.
+            assert detect_item_type(url, "url", "pdf", {}) == "pdf"
+        mock_get.assert_not_called()
 
     def test_cache_skips_second_probe(self) -> None:
         url = "https://drive.google.com/file/d/XYZ/view"
@@ -510,9 +553,12 @@ class TestDetectItemType:
         resp = MagicMock()
         resp.__enter__ = MagicMock(return_value=resp)
         resp.__exit__ = MagicMock(return_value=False)
+        resp.is_redirect = False
         resp.raise_for_status = MagicMock()
         resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
         with patch(
+            "app.services.assessment.utils.attachments.validate_callback_url"
+        ), patch(
             "app.services.assessment.utils.attachments.requests.get",
             return_value=resp,
         ) as mock_get:

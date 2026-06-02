@@ -22,7 +22,7 @@ from app.models.evaluation import EvaluationDataset
 from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
 from app.utils import APIResponse
 
-_L1_JSON_COLUMNS = ["topic_relevance", "duplicate_detection"]
+_PREFILTER_JSON_COLUMNS = ["topic_relevance", "duplicate_detection"]
 
 logger = logging.getLogger(__name__)
 
@@ -36,23 +36,23 @@ def _load_dataset_rows(
     return load_dataset_rows(session, dataset)
 
 
-def _load_l1_results(
+def _load_prefilter_results(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment,
 ) -> dict[str, dict[str, Any]]:
-    """Load L1 results from object store, keyed by row_id. Returns {} if unavailable."""
-    if not run.l1_object_store_url:
+    """Load prefilter results from object store, keyed by row_id. Returns {} if unavailable."""
+    if not run.prefilter_object_store_url:
         return {}
     try:
         storage = get_cloud_storage(session, project_id=assessment.project_id)
-        body = storage.stream(run.l1_object_store_url)
+        body = storage.stream(run.prefilter_object_store_url)
         raw = body.read().decode("utf-8")
         results: list[dict[str, Any]] = json.loads(raw)
         return {str(item["row_id"]): item for item in results if "row_id" in item}
     except Exception as exc:
         logger.warning(
-            "[_load_l1_results] Failed to load L1 results for run id=%s: %s",
+            "[_load_prefilter_results] Failed to load prefilter results for run id=%s: %s",
             run.id,
             exc,
         )
@@ -163,32 +163,34 @@ def _expand_output_columns(
     """
     row_payload, input_col_names = _expand_input_columns(row_payload)
 
-    json_expand_cols = {"output", "input_data"} | set(_L1_JSON_COLUMNS)
+    json_expand_cols = {"output", "input_data"} | set(_PREFILTER_JSON_COLUMNS)
     base_fields = [
         field
         for field in AssessmentExportRow.model_fields.keys()
         if field not in json_expand_cols
     ]
 
-    # L1 columns are prefixed with their parent name to avoid key collisions
+    # prefilter columns are prefixed with their parent name to avoid key collisions
     parsed_cols: dict[str, list[dict[str, Any] | None]] = {
-        col: [] for col in ["output"] + _L1_JSON_COLUMNS
+        col: [] for col in ["output"] + _PREFILTER_JSON_COLUMNS
     }
-    col_keys: dict[str, list[str]] = {col: [] for col in ["output"] + _L1_JSON_COLUMNS}
+    col_keys: dict[str, list[str]] = {
+        col: [] for col in ["output"] + _PREFILTER_JSON_COLUMNS
+    }
     col_seen: dict[str, dict[str, None]] = {
-        col: {} for col in ["output"] + _L1_JSON_COLUMNS
+        col: {} for col in ["output"] + _PREFILTER_JSON_COLUMNS
     }
     has_unparsed_output = False
 
     for row in row_payload:
-        for col in ["output"] + _L1_JSON_COLUMNS:
+        for col in ["output"] + _PREFILTER_JSON_COLUMNS:
             parsed = _parse_json_col(row.get(col))
             if parsed is None and col == "output" and row.get(col) is not None:
                 has_unparsed_output = True
             parsed_cols[col].append(parsed)
             if parsed:
                 for k in parsed:
-                    prefixed = f"{col}_{k}" if col in _L1_JSON_COLUMNS else k
+                    prefixed = f"{col}_{k}" if col in _PREFILTER_JSON_COLUMNS else k
                     if prefixed not in col_seen[col]:
                         col_seen[col][prefixed] = None
                         col_keys[col].append(prefixed)
@@ -196,7 +198,7 @@ def _expand_output_columns(
     def _get_prefixed(parsed: dict[str, Any] | None, col: str) -> dict[str, Any]:
         if not parsed:
             return {}
-        if col in _L1_JSON_COLUMNS:
+        if col in _PREFILTER_JSON_COLUMNS:
             return {f"{col}_{k}": v for k, v in parsed.items()}
         return parsed
 
@@ -204,7 +206,7 @@ def _expand_output_columns(
     expanded: list[dict[str, Any]] = []
     for i, row in enumerate(row_payload):
         new_row = {k: v for k, v in row.items() if k not in json_expand_cols}
-        for col in ["output"] + _L1_JSON_COLUMNS:
+        for col in ["output"] + _PREFILTER_JSON_COLUMNS:
             parsed = parsed_cols[col][i]
             keys = col_keys[col]
             prefixed_vals = _get_prefixed(parsed, col)
@@ -218,22 +220,22 @@ def _expand_output_columns(
                     new_row["output_raw"] = row.get("output")
         expanded.append(new_row)
 
-    l1_keys = col_keys["topic_relevance"] + col_keys["duplicate_detection"]
+    prefilter_keys = col_keys["topic_relevance"] + col_keys["duplicate_detection"]
     output_keys = col_keys["output"]
 
-    all_output_keys = l1_keys + output_keys
+    all_output_keys = prefilter_keys + output_keys
     if not all_output_keys:
         fieldnames = input_col_names + list(AssessmentExportRow.model_fields.keys())
         fieldnames = [f for f in fieldnames if f != "input_data"]
         return row_payload, fieldnames, input_col_names, [], []
 
-    fieldnames = input_col_names + l1_keys + output_keys + base_fields
+    fieldnames = input_col_names + prefilter_keys + output_keys + base_fields
     if has_unparsed_output:
         fieldnames.insert(
-            len(input_col_names) + len(l1_keys) + len(output_keys), "output_raw"
+            len(input_col_names) + len(prefilter_keys) + len(output_keys), "output_raw"
         )
 
-    return expanded, fieldnames, input_col_names, l1_keys, output_keys
+    return expanded, fieldnames, input_col_names, prefilter_keys, output_keys
 
 
 def serialize_export_rows(
@@ -258,7 +260,7 @@ def serialize_export_rows(
         expanded,
         fieldnames,
         input_col_names,
-        l1_keys,
+        prefilter_keys,
         output_keys,
     ) = _expand_output_columns(row_payload)
     expanded = apply_post_processing(expanded, post_processing_config)
@@ -288,8 +290,8 @@ def serialize_export_rows(
             detail="XLSX export requires pandas/openpyxl support in the backend runtime",
         ) from exc
 
-    # Explicit ordering: inputs → L1 → L2 → computed columns
-    excel_fields = input_col_names + l1_keys + output_keys + computed_names
+    # Explicit ordering: inputs → prefilter → L2 → computed columns
+    excel_fields = input_col_names + prefilter_keys + output_keys + computed_names
     if not excel_fields:
         excel_fields = output_keys or ["output"]
 
@@ -431,15 +433,15 @@ def _load_dataset_rows_for_run(
         return []
 
 
-def _extract_l1_json_columns(
-    l1_item: dict[str, Any] | None,
+def _extract_prefilter_json_columns(
+    prefilter_item: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Return topic_relevance and duplicate_detection as JSON strings for export expansion."""
-    if not l1_item:
+    if not prefilter_item:
         return {"topic_relevance": None, "duplicate_detection": None}
 
-    tr = l1_item.get("topic_relevance")
-    dup = l1_item.get("duplicate_detection")
+    tr = prefilter_item.get("topic_relevance")
+    dup = prefilter_item.get("duplicate_detection")
 
     tr_flat: dict[str, Any] | None = None
     if tr:
@@ -468,10 +470,10 @@ def load_export_rows_for_run(
 ) -> list[AssessmentExportRow]:
     """Load flattened export rows for a single child assessment run.
 
-    When L1 results exist, ALL dataset rows are included in output.
-    L1-rejected rows have L1 columns filled and L2 columns empty.
-    L1-passed rows have all columns filled.
-    Without L1, behaviour is unchanged (only L2 result rows returned).
+    When prefilter results exist, ALL dataset rows are included in output.
+    prefilter-rejected rows have prefilter columns filled and L2 columns empty.
+    prefilter-passed rows have all columns filled.
+    Without prefilter, behaviour is unchanged (only L2 result rows returned).
     """
     if assessment is None:
         assessment = session.get(Assessment, run.assessment_id)
@@ -486,8 +488,8 @@ def load_export_rows_for_run(
     dataset_name = dataset.name if dataset else None
     dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
 
-    # Load L1 results (empty dict if no L1 was run)
-    l1_by_row_id = _load_l1_results(session, run, assessment)
+    # Load prefilter results (empty dict if no prefilter was run)
+    prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
 
     # Load L2 results (may be None if batch not complete)
     l2_by_row_id: dict[str, dict[str, Any]] = {}
@@ -504,24 +506,24 @@ def load_export_rows_for_run(
                     if "row_id" in item
                 }
 
-    has_l1 = bool(l1_by_row_id)
+    has_prefilter = bool(prefilter_by_row_id)
 
-    if has_l1 and dataset_rows:
+    if has_prefilter and dataset_rows:
         # All rows in output — build from full dataset
         export_rows: list[AssessmentExportRow] = []
         for row_idx, input_data in enumerate(dataset_rows):
             row_id_str = f"row_{row_idx}"
-            l1_item = l1_by_row_id.get(row_id_str)
-            l1_cols = _extract_l1_json_columns(l1_item)
+            prefilter_item = prefilter_by_row_id.get(row_id_str)
+            prefilter_cols = _extract_prefilter_json_columns(prefilter_item)
             l2_item = l2_by_row_id.get(row_id_str)
 
             input_tokens, output_tokens, total_tokens = usage_totals(
                 l2_item.get("usage") if l2_item else None
             )
-            l1_passed = (l1_item or {}).get("l1_passed", True)
+            prefilter_passed = (prefilter_item or {}).get("prefilter_passed", True)
             result_status = (
-                "l1_rejected"
-                if not l1_passed
+                "prefilter_rejected"
+                if not prefilter_passed
                 else ("failed" if l2_item and l2_item.get("error") else "passed")
             )
 
@@ -539,8 +541,8 @@ def load_export_rows_for_run(
                     row_id=row_id_str,
                     result_status=result_status,
                     input_data=input_data,
-                    topic_relevance=l1_cols.get("topic_relevance"),
-                    duplicate_detection=l1_cols.get("duplicate_detection"),
+                    topic_relevance=prefilter_cols.get("topic_relevance"),
+                    duplicate_detection=prefilter_cols.get("duplicate_detection"),
                     output=l2_item.get("output") if l2_item else None,
                     error=l2_item.get("error") if l2_item else None,
                     response_id=l2_item.get("response_id") if l2_item else None,
@@ -552,7 +554,7 @@ def load_export_rows_for_run(
             )
         return export_rows
 
-    # No L1 — original behaviour: only L2 result rows
+    # No prefilter — original behaviour: only L2 result rows
     if not run.batch_job_id:
         logger.warning(
             "[load_export_rows_for_run] No batch_job_id for run id=%s", run.id

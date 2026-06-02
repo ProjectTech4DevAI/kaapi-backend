@@ -232,9 +232,8 @@ def run_tts_batch_submission(
     )
 
 
-@celery_app.task(
-    bind=True, queue="low_priority", priority=1, soft_time_limit=1800, time_limit=2100
-)
+@celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.ASSESSMENT_RUN_SOFT_TIME_LIMIT, "run_assessment_run")
 def run_assessment_run(
     self,
     run_id: int,

@@ -1,10 +1,10 @@
-"""Tests for L1 topic relevance attachment handling."""
+"""Tests for prefilter topic relevance attachment handling."""
 
 import json
 from unittest.mock import MagicMock
 
 from app.models.assessment import AssessmentAttachment
-from app.services.assessment.l1.topic_relevance import run_topic_relevance
+from app.services.assessment.prefilter.topic_relevance import run_topic_relevance
 
 
 def _client_returning(decision: str) -> MagicMock:

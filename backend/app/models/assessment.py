@@ -109,7 +109,7 @@ class AssessmentRun(SQLModel, table=True):
         default="pending",
         sa_column_kwargs={
             "comment": (
-                "Unified pipeline status: pending, l1_processing, l1_failed, "
+                "Unified pipeline status: pending, prefilter_processing, prefilter_failed, "
                 "l2_processing, completed, completed_with_errors, failed"
             )
         },
@@ -141,25 +141,27 @@ class AssessmentRun(SQLModel, table=True):
         nullable=True,
         sa_column_kwargs={"comment": "S3 URL of processed L2 batch results"},
     )
-    l1_object_store_url: str | None = SQLField(
+    prefilter_object_store_url: str | None = SQLField(
         default=None,
         nullable=True,
-        sa_column_kwargs={"comment": "S3 URL of stored L1 filter results JSON"},
+        sa_column_kwargs={"comment": "S3 URL of stored prefilter filter results JSON"},
     )
-    l1_total_rows: int | None = SQLField(
+    prefilter_total_rows: int | None = SQLField(
         default=None,
         nullable=True,
-        sa_column_kwargs={"comment": "Total rows fed into L1 pipeline"},
+        sa_column_kwargs={"comment": "Total rows fed into prefilter pipeline"},
     )
-    l1_total_passed: int | None = SQLField(
+    prefilter_total_passed: int | None = SQLField(
         default=None,
         nullable=True,
         sa_column_kwargs={"comment": "Rows that passed topic relevance and went to L2"},
     )
-    l1_total_rejected: int | None = SQLField(
+    prefilter_total_rejected: int | None = SQLField(
         default=None,
         nullable=True,
-        sa_column_kwargs={"comment": "Rows rejected by topic relevance, stopped at L1"},
+        sa_column_kwargs={
+            "comment": "Rows rejected by topic relevance, stopped at prefilter"
+        },
     )
     error_message: str | None = SQLField(
         default=None,
@@ -208,9 +210,9 @@ class AssessmentRunStat(BaseModel):
     total_items: int
     error_message: str | None = None
     updated_at: datetime | None = None
-    l1_total_rows: int | None = None
-    l1_total_passed: int | None = None
-    l1_total_rejected: int | None = None
+    prefilter_total_rows: int | None = None
+    prefilter_total_passed: int | None = None
+    prefilter_total_rejected: int | None = None
 
 
 class AssessmentPublic(BaseModel):
@@ -250,9 +252,9 @@ class AssessmentRunPublic(BaseModel):
             "text_columns, attachments, output_schema"
         ),
     )
-    l1_total_rows: int | None = None
-    l1_total_passed: int | None = None
-    l1_total_rejected: int | None = None
+    prefilter_total_rows: int | None = None
+    prefilter_total_passed: int | None = None
+    prefilter_total_rejected: int | None = None
     post_processing_config: dict[str, Any] | None = None
     inserted_at: datetime
     updated_at: datetime
@@ -323,11 +325,11 @@ class AssessmentCreate(BaseModel):
     configs: list[AssessmentConfigRef] = Field(
         ..., min_length=1, max_length=4, description="Config versions to run"
     )
-    l1_config: dict[str, Any] | None = Field(
+    prefilter_config: dict[str, Any] | None = Field(
         None,
         description=(
-            "L1 pipeline config. Keys: topic_relevance (columns, prompt), "
-            "duplicate_detection (columns). Omit to skip L1."
+            "prefilter pipeline config. Keys: topic_relevance (columns, prompt), "
+            "duplicate_detection (columns). Omit to skip prefilter."
         ),
     )
     post_processing_config: dict[str, Any] | None = Field(

@@ -1,9 +1,9 @@
-"""Tests for the L1 pipeline orchestrator."""
+"""Tests for the prefilter pipeline orchestrator."""
 
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
-from app.services.assessment.l1.pipeline import run_l1_pipeline
+from app.services.assessment.prefilter.pipeline import run_prefilter_pipeline
 
 
 def _run() -> MagicMock:
@@ -27,32 +27,32 @@ def _patches(stack: ExitStack, *, tr_side=None, dup_return=None):
     client = MagicMock()
     stack.enter_context(
         patch(
-            "app.services.assessment.l1.pipeline.GeminiClient.from_credentials",
+            "app.services.assessment.prefilter.pipeline.GeminiClient.from_credentials",
             return_value=MagicMock(client=client),
         )
     )
     stack.enter_context(
         patch(
-            "app.services.assessment.l1.pipeline.get_cloud_storage",
+            "app.services.assessment.prefilter.pipeline.get_cloud_storage",
             return_value=MagicMock(),
         )
     )
     stack.enter_context(
         patch(
-            "app.services.assessment.l1.pipeline.upload_jsonl_to_object_store",
-            return_value="s3://l1.json",
+            "app.services.assessment.prefilter.pipeline.upload_jsonl_to_object_store",
+            return_value="s3://prefilter.json",
         )
     )
     stack.enter_context(
-        patch("app.crud.assessment.core.update_assessment_run_l1_stats")
+        patch("app.crud.assessment.core.update_assessment_run_prefilter_stats")
     )
     tr_mock = stack.enter_context(
-        patch("app.services.assessment.l1.pipeline.run_topic_relevance")
+        patch("app.services.assessment.prefilter.pipeline.run_topic_relevance")
     )
     if tr_side is not None:
         tr_mock.side_effect = tr_side
     dup_mock = stack.enter_context(
-        patch("app.services.assessment.l1.pipeline.run_duplicate_detection")
+        patch("app.services.assessment.prefilter.pipeline.run_duplicate_detection")
     )
     if dup_return is not None:
         dup_mock.return_value = dup_return
@@ -62,10 +62,10 @@ def _patches(stack: ExitStack, *, tr_side=None, dup_return=None):
 class TestRunL1Pipeline:
     def test_no_filters_configured_passthrough(self) -> None:
         rows = [{"Problem": "a"}, {"Problem": "b"}]
-        passed, indices, results = run_l1_pipeline(
+        passed, indices, results = run_prefilter_pipeline(
             run=_run(),
             rows=rows,
-            l1_config={},
+            prefilter_config={},
             session=MagicMock(),
             organization_id=1,
             project_id=1,
@@ -80,10 +80,10 @@ class TestRunL1Pipeline:
         side = [_tr(True), _tr(False, "REJECT"), _tr(True)]
         with ExitStack() as stack:
             _patches(stack, tr_side=side)
-            passed, indices, results = run_l1_pipeline(
+            passed, indices, results = run_prefilter_pipeline(
                 run=_run(),
                 rows=rows,
-                l1_config={
+                prefilter_config={
                     "topic_relevance": {"columns": ["Problem"], "prompt": "rubric"}
                 },
                 session=MagicMock(),
@@ -93,7 +93,7 @@ class TestRunL1Pipeline:
         assert indices == [0, 2]
         assert [r["Problem"] for r in passed] == ["keep", "keep2"]
         assert len(results) == 3
-        assert results[1]["l1_passed"] is False
+        assert results[1]["prefilter_passed"] is False
 
     def test_duplicate_detection_runs_on_passed_rows(self) -> None:
         rows = [{"Problem": "a", "Solution": "b"}]
@@ -107,10 +107,10 @@ class TestRunL1Pipeline:
         }
         with ExitStack() as stack:
             tr_mock, dup_mock = _patches(stack, tr_side=[_tr(True)], dup_return=dup)
-            _, _, results = run_l1_pipeline(
+            _, _, results = run_prefilter_pipeline(
                 run=_run(),
                 rows=rows,
-                l1_config={
+                prefilter_config={
                     "topic_relevance": {"columns": ["Problem"], "prompt": "rubric"},
                     "duplicate_detection": {"columns": ["Problem", "Solution"]},
                 },
@@ -131,10 +131,10 @@ class TestRunL1Pipeline:
         ]
         with ExitStack() as stack:
             tr_mock, _ = _patches(stack, tr_side=[_tr(True)])
-            run_l1_pipeline(
+            run_prefilter_pipeline(
                 run=_run(),
                 rows=rows,
-                l1_config={
+                prefilter_config={
                     "topic_relevance": {
                         "columns": ["Problem"],
                         "prompt": "rubric",

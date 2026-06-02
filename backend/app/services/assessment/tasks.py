@@ -1,4 +1,4 @@
-"""Celery task logic for running a single assessment run (L1 → L2 batch submit)."""
+"""Celery task logic for running a single assessment run (prefilter → L2 batch submit)."""
 
 import logging
 
@@ -19,7 +19,7 @@ from app.models.assessment import (
     AssessmentRun,
 )
 from app.models.config.config import ConfigTag
-from app.services.assessment.l1 import run_l1_pipeline
+from app.services.assessment.prefilter import run_prefilter_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,12 @@ def execute_assessment_run(
     organization_id: int,
     project_id: int,
 ) -> None:
-    """Run L1 filtering then submit L2 batch for one AssessmentRun.
+    """Run prefilter filtering then submit L2 batch for one AssessmentRun.
 
     Status transitions:
-      pending → l1_processing → l1_failed (stop)
+      pending → prefilter_processing → prefilter_failed (stop)
                               → l2_processing → (cron handles rest)
-      pending → l2_processing  (when no l1_config)
+      pending → l2_processing  (when no prefilter_config)
     """
     with Session(engine) as session:
         run = session.get(AssessmentRun, run_id)
@@ -116,19 +116,19 @@ def execute_assessment_run(
             recompute_assessment_status(session=session, assessment_id=assessment.id)
             return
 
-        # L1 pipeline
+        # prefilter pipeline
         rows_for_l2 = all_rows
         row_indices_for_l2: list[int] | None = None
-        l1_config = assessment_input.get("l1_config")
-        if l1_config:
+        prefilter_config = assessment_input.get("prefilter_config")
+        if prefilter_config:
             update_assessment_run_status(
-                session=session, run=run, status="l1_processing"
+                session=session, run=run, status="prefilter_processing"
             )
             try:
-                rows_for_l2, row_indices_for_l2, _ = run_l1_pipeline(
+                rows_for_l2, row_indices_for_l2, _ = run_prefilter_pipeline(
                     run=run,
                     rows=all_rows,
-                    l1_config=l1_config,
+                    prefilter_config=prefilter_config,
                     session=session,
                     organization_id=organization_id,
                     project_id=project_id,
@@ -138,28 +138,28 @@ def execute_assessment_run(
                     ],
                 )
                 logger.info(
-                    "[execute_assessment_run] L1 done | run_id=%s | rows_to_l2=%s / %s",
+                    "[execute_assessment_run] prefilter done | run_id=%s | rows_to_l2=%s / %s",
                     run_id,
                     len(rows_for_l2),
                     len(all_rows),
                 )
-            except Exception as l1_exc:
+            except Exception as prefilter_exc:
                 logger.error(
-                    "[execute_assessment_run] L1 failed run_id=%s | %s",
+                    "[execute_assessment_run] prefilter failed run_id=%s | %s",
                     run_id,
-                    l1_exc,
+                    prefilter_exc,
                     exc_info=True,
                 )
                 update_assessment_run_status(
                     session=session,
                     run=run,
-                    status="l1_failed",
-                    error_message=f"L1 pipeline failed: {l1_exc}",
+                    status="prefilter_failed",
+                    error_message=f"prefilter pipeline failed: {prefilter_exc}",
                 )
                 recompute_assessment_status(
                     session=session, assessment_id=assessment.id
                 )
-                return  # L2 does not run when L1 fails
+                return  # L2 does not run when prefilter fails
 
         # L2 batch submit
         try:

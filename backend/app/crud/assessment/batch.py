@@ -322,7 +322,7 @@ def submit_assessment_batch(
     output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
-    # Use preloaded rows (post-L1 filtered) if provided, else load from dataset.
+    # Use preloaded rows (post-prefilter filtered) if provided, else load from dataset.
     if preloaded_rows is not None:
         rows = preloaded_rows
     else:
