@@ -113,7 +113,6 @@ class LLMJobImmediatePublic(SQLModel):
     job_id: UUID
     status: str
     message: str
-    test: str | None = None
     job_inserted_at: datetime
     job_updated_at: datetime
 
@@ -122,6 +121,6 @@ class LLMJobPublic(SQLModel):
     """Full job response with nested LLM response when complete."""
 
     job_id: UUID
-    # status: str
+    status: str
     llm_response: LLMCallResponse | None = None
     error_message: str | None = None
