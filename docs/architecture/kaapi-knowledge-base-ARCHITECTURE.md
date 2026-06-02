@@ -1,9 +1,5 @@
 # Kaapi Knowledge Base — Architecture Overview
 
-> Code references in this document point at the `enhancement/collection_batching`
-> branch, which carries the current batching implementation. The document itself
-> lives on `docs/architecture`.
-
 ## Purpose
 
 A **knowledge base** in Kaapi is a *managed vector store* built from a set of
@@ -198,6 +194,9 @@ Notes:
 - Max **per-document** size is `MAX_DOC_SIZE_MB = 25 MB`
   ([services/collections/helpers.py](../../backend/app/services/collections/helpers.py));
   larger uploads are rejected with `413`.
+- Allowed file types are extension-gated at upload (`.pdf`, `.doc`, `.docx`,
+  `.html`/`.htm`, `.txt`, `.md`/`.markdown`, `.csv`); any other extension is
+  rejected with `400`.
 
 ---
 
