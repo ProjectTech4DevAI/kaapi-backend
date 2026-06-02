@@ -1,5 +1,6 @@
 """Tests for assessment/batch.py provider routing in submit_assessment_batch."""
 
+import base64
 import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -21,6 +22,7 @@ from app.services.assessment.utils.attachments import (
     _decode_base64_prefix,
     _guess_image_mime_from_base64,
     _guess_image_mime_from_url,
+    detect_item_type,
     resolve_attachment_values,
     resolve_image_mime_and_payload,
     split_attachment_urls,
@@ -423,3 +425,105 @@ class TestBatchHelpers:
         assert google_jsonl[0]["request"]["systemInstruction"] == {
             "parts": [{"text": "system"}]
         }
+
+
+class TestDetectItemType:
+    """Per-item image/pdf detection for mixed-content attachment columns."""
+
+    def test_data_url_pdf(self) -> None:
+        assert (
+            detect_item_type("data:application/pdf;base64,JVBERi0=", "base64", "image")
+            == "pdf"
+        )
+
+    def test_data_url_image(self) -> None:
+        assert (
+            detect_item_type("data:image/png;base64,AAAA", "base64", "pdf") == "image"
+        )
+
+    def test_base64_magic_pdf(self) -> None:
+        payload = base64.b64encode(b"%PDF-1.7 body").decode()
+        assert detect_item_type(payload, "base64", "image") == "pdf"
+
+    def test_base64_magic_png(self) -> None:
+        payload = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 8).decode()
+        assert detect_item_type(payload, "base64", "pdf") == "image"
+
+    def test_base64_unknown_falls_back(self) -> None:
+        payload = base64.b64encode(b"not a known magic").decode()
+        assert detect_item_type(payload, "base64", "pdf") == "pdf"
+
+    def test_mixed_fallback_resolves_to_image(self) -> None:
+        """'mixed' is never a returned type; inconclusive detection -> image."""
+        payload = base64.b64encode(b"not a known magic").decode()
+        assert detect_item_type(payload, "base64", "mixed") == "image"
+
+    def test_url_extension_pdf_case_insensitive(self) -> None:
+        assert detect_item_type("https://x.com/a/scan.PDF", "url", "image", {}) == "pdf"
+
+    def test_url_extension_image(self) -> None:
+        assert detect_item_type("https://x.com/a/p.jpg", "url", "pdf", {}) == "image"
+
+    def test_url_no_extension_probes_bytes(self) -> None:
+        """Extensionless URL (Drive-style) is probed; magic bytes win over fallback."""
+        url = "https://drive.google.com/file/d/ABC123/view"
+        resp = MagicMock()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        resp.raise_for_status = MagicMock()
+        resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
+        with patch(
+            "app.services.assessment.utils.attachments.requests.get",
+            return_value=resp,
+        ) as mock_get:
+            assert detect_item_type(url, "url", "image", {}) == "pdf"
+        # Drive share URL is probed through the download endpoint.
+        assert "uc?export=download&id=ABC123" in mock_get.call_args.args[0]
+
+    def test_url_probe_uses_content_type_when_no_magic(self) -> None:
+        url = "https://example.com/file"
+        resp = MagicMock()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        resp.raise_for_status = MagicMock()
+        resp.iter_content = MagicMock(return_value=iter([b"\x00\x01\x02\x03"]))
+        resp.headers = {"Content-Type": "application/pdf; charset=binary"}
+        with patch(
+            "app.services.assessment.utils.attachments.requests.get",
+            return_value=resp,
+        ):
+            assert detect_item_type(url, "url", "image", {}) == "pdf"
+
+    def test_url_probe_failure_falls_back(self) -> None:
+        import requests as _requests
+
+        url = "https://example.com/file"
+        with patch(
+            "app.services.assessment.utils.attachments.requests.get",
+            side_effect=_requests.RequestException("boom"),
+        ):
+            assert detect_item_type(url, "url", "image", {}) == "image"
+
+    def test_cache_skips_second_probe(self) -> None:
+        url = "https://drive.google.com/file/d/XYZ/view"
+        cache: dict[str, str] = {}
+        resp = MagicMock()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        resp.raise_for_status = MagicMock()
+        resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
+        with patch(
+            "app.services.assessment.utils.attachments.requests.get",
+            return_value=resp,
+        ) as mock_get:
+            assert detect_item_type(url, "url", "image", cache) == "pdf"
+            assert detect_item_type(url, "url", "image", cache) == "pdf"
+        assert mock_get.call_count == 1
+
+    def test_mixed_column_resolves_both_types(self) -> None:
+        """One column, two URLs with extensions -> one image, one pdf object."""
+        att = AssessmentAttachment(column="docs", type="image", format="url")
+        value = "https://x.com/a/photo.jpg, https://x.com/b/report.pdf"
+        resolved = resolve_attachment_values(value, att, {})
+        types = [obj["type"] for obj in resolved]
+        assert types == ["input_image", "input_file"]

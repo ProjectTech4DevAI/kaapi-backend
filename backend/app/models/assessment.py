@@ -275,7 +275,14 @@ class AssessmentAttachment(BaseModel):
     """Attachment column configuration."""
 
     column: str = Field(..., description="Column name containing the attachment data")
-    type: Literal["image", "pdf"] = Field(..., description="Attachment type")
+    type: Literal["image", "pdf", "mixed"] = Field(
+        ...,
+        description=(
+            "Attachment type. 'mixed' detects image vs pdf per item (for columns "
+            "that contain both); 'image'/'pdf' force a type and act as fallback "
+            "when per-item detection is inconclusive."
+        ),
+    )
     format: Literal["url", "base64"] = Field(..., description="Data format")
 
 

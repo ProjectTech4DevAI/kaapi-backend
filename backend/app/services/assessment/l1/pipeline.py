@@ -17,7 +17,7 @@ from app.core.batch.client import GeminiClient
 from app.core.config import settings
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import upload_jsonl_to_object_store
-from app.models.assessment import AssessmentRun
+from app.models.assessment import AssessmentAttachment, AssessmentRun
 from app.services.assessment.l1.duplicate_detection import run_duplicate_detection
 from app.services.assessment.l1.topic_relevance import run_topic_relevance
 
@@ -50,6 +50,7 @@ def run_l1_pipeline(
     session: Session,
     organization_id: int,
     project_id: int,
+    attachments: list[AssessmentAttachment] | None = None,
 ) -> tuple[list[dict[str, str]], list[int], list[dict[str, Any]]]:
     """Run L1 filters on all rows.
 
@@ -78,6 +79,13 @@ def run_l1_pipeline(
     tr_prompt: str = tr_config.get("prompt") or ""
     dup_columns: list[str] = dup_config.get("columns") or []
 
+    tr_attachment_columns = tr_config.get("attachment_columns")
+    if tr_attachment_columns is None:
+        tr_attachments = list(attachments or [])
+    else:
+        selected = set(tr_attachment_columns)
+        tr_attachments = [a for a in (attachments or []) if a.column in selected]
+
     tr_enabled = bool(tr_columns and tr_prompt)
     dup_enabled = bool(dup_columns)
 
@@ -105,6 +113,9 @@ def run_l1_pipeline(
     )
 
     # tr_results[idx] = None when TR disabled → no topic_relevance columns in export
+    # Shared across rows so each unique attachment file is type-probed once.
+    attachment_type_cache: dict[str, str] = {}
+
     tr_results: dict[int, dict[str, Any] | None] = {}
     if tr_enabled:
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -117,6 +128,8 @@ def run_l1_pipeline(
                     tr_prompt,
                     gemini_client,
                     model,
+                    tr_attachments,
+                    attachment_type_cache,
                 ): idx
                 for idx, row in enumerate(rows)
             }

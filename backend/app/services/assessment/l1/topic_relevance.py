@@ -8,6 +8,9 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from app.models.assessment import AssessmentAttachment
+from app.services.assessment.utils.attachments import build_gemini_attachment_parts
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,21 +48,42 @@ def run_topic_relevance(
     user_prompt: str,
     gemini_client: genai.Client,
     model: str,
+    attachments: list[AssessmentAttachment] | None = None,
+    type_cache: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run topic relevance check on a single row.
 
     System instruction = user_prompt (the evaluation rubric/criteria).
-    User content = dict of {column_name: value} for the selected columns.
+    User content = the selected columns as JSON plus every mapped attachment
+    (image/pdf) for the row, so relevance is judged on text and documents.
+    Each attachment column also gets its own relevance boolean in the schema,
+    so the export carries a ``topic_relevance_<doc_column>`` column.
     Output schema enforced: decision (ACCEPT/REJECT) + reasoning.
     On error defaults to verdict=True (fail-open).
     """
+    # Document columns that actually have a value for this row.
+    doc_columns: list[str] = []
+    for att in attachments or []:
+        if att.column not in doc_columns and (row.get(att.column) or "").strip():
+            doc_columns.append(att.column)
+
+    schema_columns = columns + doc_columns
     user_content = json.dumps({col: row.get(col, "") or "" for col in columns})
-    output_schema = _build_output_schema(columns)
+    output_schema = _build_output_schema(schema_columns)
+
+    parts: list[dict[str, Any]] = [{"text": user_content}]
+    for att in attachments or []:
+        attachment_parts = build_gemini_attachment_parts(
+            row.get(att.column, ""), att, type_cache
+        )
+        if attachment_parts:
+            parts.append({"text": f"Attached document(s) for column '{att.column}':"})
+            parts.extend(attachment_parts)
 
     try:
         response = gemini_client.models.generate_content(
             model=model,
-            contents=user_content,
+            contents=[{"role": "user", "parts": parts}],
             config=types.GenerateContentConfig(
                 system_instruction=user_prompt.strip(),
                 response_mime_type="application/json",
@@ -70,7 +94,7 @@ def run_topic_relevance(
         raw = (response.text or "").strip()
         parsed = json.loads(raw)
         decision = str(parsed.get("decision", "ACCEPT")).upper()
-        column_relevance = {col: bool(parsed.get(col, True)) for col in columns}
+        column_relevance = {col: bool(parsed.get(col, True)) for col in schema_columns}
         return {
             "row_id": f"row_{row_idx}",
             "verdict": decision == "ACCEPT",
@@ -88,6 +112,6 @@ def run_topic_relevance(
             "row_id": f"row_{row_idx}",
             "verdict": True,
             "decision": "ACCEPT",
-            "column_relevance": {col: True for col in columns},
+            "column_relevance": {col: True for col in schema_columns},
             "reasoning": f"(evaluation error — defaulting to pass) {exc}",
         }

@@ -144,14 +144,14 @@ class TestDropEmptyColumns:
 class TestExpandOutputColumns:
     def test_plain_string_output_not_expanded(self) -> None:
         rows = [{"output": "plain text", "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "output" in fieldnames
 
     def test_json_dict_output_expanded(self) -> None:
         rows = [
             {"output": json.dumps({"score": 5, "reason": "good"}), "input_data": None}
         ]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "score" in fieldnames
         assert "reason" in fieldnames
         assert expanded[0]["score"] == 5
@@ -161,14 +161,14 @@ class TestExpandOutputColumns:
             {"output": json.dumps({"score": 3}), "input_data": None},
             {"output": "not json", "input_data": None},
         ]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "output_raw" in fieldnames
         # Second row that didn't parse should get output_raw
         assert expanded[1].get("output_raw") == "not json"
 
     def test_none_output_handled(self) -> None:
         rows = [{"output": None, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert expanded[0].get("output") is None
 
 
@@ -253,13 +253,13 @@ class TestExpandOutputColumnsDictOutput:
     def test_dict_output_expanded_directly(self) -> None:
         # raw output is already a dict (not a JSON string)
         rows = [{"output": {"score": 9, "label": "good"}, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "score" in fieldnames
         assert expanded[0]["score"] == 9
 
     def test_non_dict_non_string_output_treated_as_unparsed(self) -> None:
         rows = [{"output": 42, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         # 42 is not a dict/string, treated as unparsed → output stays as-is
         assert "output" in fieldnames
 

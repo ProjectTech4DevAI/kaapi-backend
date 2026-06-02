@@ -13,7 +13,11 @@ from app.crud.assessment import (
 from app.crud.assessment.batch import _load_dataset_rows, submit_assessment_batch
 from app.crud.config import ConfigCrud
 from app.crud.evaluations.core import resolve_evaluation_config
-from app.models.assessment import Assessment, AssessmentRun
+from app.models.assessment import (
+    Assessment,
+    AssessmentAttachment,
+    AssessmentRun,
+)
 from app.models.config.config import ConfigTag
 from app.services.assessment.l1 import run_l1_pipeline
 
@@ -128,6 +132,10 @@ def execute_assessment_run(
                     session=session,
                     organization_id=organization_id,
                     project_id=project_id,
+                    attachments=[
+                        AssessmentAttachment(**a)
+                        for a in assessment_input.get("attachments") or []
+                    ],
                 )
                 logger.info(
                     "[execute_assessment_run] L1 done | run_id=%s | rows_to_l2=%s / %s",

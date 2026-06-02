@@ -30,11 +30,8 @@ from app.services.assessment.mappers import (
     normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
+    build_gemini_attachment_parts,
     resolve_attachment_values,
-    resolve_image_mime_and_payload,
-    split_attachment_urls,
-    split_data_url,
-    to_direct_attachment_url,
 )
 from app.services.llm.providers.registry import LLMProvider
 
@@ -174,6 +171,8 @@ def build_openai_jsonl(
     }
     """
     jsonl_data = []
+    # Memoize per-item type probes across all rows in this build.
+    type_cache: dict[str, str] = {}
 
     for i, row in enumerate(rows):
         idx = row_indices[i] if row_indices is not None else i
@@ -188,7 +187,7 @@ def build_openai_jsonl(
         # Attachments
         for att in attachments:
             cell_value = row.get(att.column, "")
-            input_parts.extend(resolve_attachment_values(cell_value, att))
+            input_parts.extend(resolve_attachment_values(cell_value, att, type_cache))
 
         if not input_parts:
             logger.warning("[build_openai_jsonl] Skipping empty row | idx=%s", idx)
@@ -232,6 +231,8 @@ def build_google_jsonl(
     }
     """
     jsonl_data = []
+    # Memoize per-item type probes across all rows in this build.
+    type_cache: dict[str, str] = {}
 
     for i, row in enumerate(rows):
         idx = row_indices[i] if row_indices is not None else i
@@ -244,64 +245,8 @@ def build_google_jsonl(
 
         # Attachments (Gemini uses file_data for inline content)
         for att in attachments:
-            cell_value = row.get(att.column, "").strip()
-            if not cell_value:
-                continue
-
-            cell_values = (
-                split_attachment_urls(cell_value)
-                if att.format == "url"
-                else [cell_value]
-            )
-
-            for item_value in cell_values:
-                normalized_value = (
-                    to_direct_attachment_url(item_value, att.type)
-                    if att.format == "url"
-                    else item_value
-                )
-                if att.type == "image":
-                    mime_type, payload = resolve_image_mime_and_payload(
-                        normalized_value,
-                        att.format,
-                    )
-                    if att.format == "url":
-                        parts.append(
-                            {
-                                "fileData": {
-                                    "mimeType": mime_type,
-                                    "fileUri": normalized_value,
-                                }
-                            }
-                        )
-                    else:
-                        parts.append(
-                            {
-                                "inlineData": {
-                                    "mimeType": mime_type,
-                                    "data": payload,
-                                }
-                            }
-                        )
-                elif att.type == "pdf":
-                    if att.format == "url":
-                        parts.append(
-                            {
-                                "fileData": {
-                                    "mimeType": "application/pdf",
-                                    "fileUri": normalized_value,
-                                }
-                            }
-                        )
-                    else:
-                        parts.append(
-                            {
-                                "inlineData": {
-                                    "mimeType": "application/pdf",
-                                    "data": split_data_url(normalized_value)[1],
-                                }
-                            }
-                        )
+            cell_value = row.get(att.column, "")
+            parts.extend(build_gemini_attachment_parts(cell_value, att, type_cache))
 
         if not parts:
             logger.warning("[build_google_jsonl] Skipping empty row | idx=%s", idx)
