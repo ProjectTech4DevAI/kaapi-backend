@@ -3,8 +3,7 @@ name: API Breaking Changes Check
 
 on:
   pull_request:
-    branches:
-      --'**'
+    branches: ["main"]
     # Re-run when the approval label is added/removed so merge gating updates immediately.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
