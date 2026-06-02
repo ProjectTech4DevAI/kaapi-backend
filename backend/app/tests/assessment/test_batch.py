@@ -527,3 +527,49 @@ class TestDetectItemType:
         resolved = resolve_attachment_values(value, att, {})
         types = [obj["type"] for obj in resolved]
         assert types == ["input_image", "input_file"]
+
+
+class TestAttachmentMagicAndMime:
+    def test_image_magic_all_formats(self) -> None:
+        from app.services.assessment.utils.attachments import _image_mime_from_magic
+
+        assert _image_mime_from_magic(b"\x89PNG\r\n\x1a\n") == "image/png"
+        assert _image_mime_from_magic(b"\xff\xd8\xff") == "image/jpeg"
+        assert _image_mime_from_magic(b"GIF89a") == "image/gif"
+        assert _image_mime_from_magic(b"GIF87a") == "image/gif"
+        assert _image_mime_from_magic(b"BM....") == "image/bmp"
+        assert _image_mime_from_magic(b"RIFF\x00\x00\x00\x00WEBP") == "image/webp"
+        assert _image_mime_from_magic(b"II*\x00") == "image/tiff"
+        assert _image_mime_from_magic(b"MM\x00*") == "image/tiff"
+        assert _image_mime_from_magic(b"nope") is None
+
+    def test_type_from_magic_pdf_and_none(self) -> None:
+        from app.services.assessment.utils.attachments import _type_from_magic
+
+        assert _type_from_magic(b"%PDF-1.7") == "pdf"
+        assert _type_from_magic(b"\x89PNG\r\n\x1a\n") == "image"
+        assert _type_from_magic(b"random") is None
+
+    def test_guess_image_mime_from_url_variants(self) -> None:
+        from app.services.assessment.utils.attachments import _guess_image_mime_from_url
+
+        assert _guess_image_mime_from_url("http://x/a.PNG") == "image/png"
+        assert _guess_image_mime_from_url("http://x/a.jpeg") == "image/jpeg"
+        assert _guess_image_mime_from_url("http://x/a.webp") == "image/webp"
+        assert _guess_image_mime_from_url("http://x/a.txt") is None
+
+    def test_resolve_image_mime_data_url(self) -> None:
+        from app.services.assessment.utils.attachments import (
+            resolve_image_mime_and_payload,
+        )
+
+        mime, payload = resolve_image_mime_and_payload(
+            "data:image/webp;base64,AAAA", "base64"
+        )
+        assert mime == "image/webp"
+        assert payload == "AAAA"
+
+    def test_decode_base64_prefix_empty(self) -> None:
+        from app.services.assessment.utils.attachments import _decode_base64_prefix
+
+        assert _decode_base64_prefix("   ") is None
