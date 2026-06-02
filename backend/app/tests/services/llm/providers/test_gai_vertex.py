@@ -69,11 +69,7 @@ def _mock_http_err(status: int = 400, body: str = "bad request") -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _mock_gcs(monkeypatch):
-    """Stub out SM + GCS so STT tests don't touch external services."""
-    monkeypatch.setattr(
-        "app.services.llm.providers.gai_vertex.get_gcp_service_account",
-        lambda **kw: {"type": "service_account", "project_id": "p"},
-    )
+    """Stub out GCS upload so STT tests don't touch external services."""
     monkeypatch.setattr(
         "app.services.llm.providers.gai_vertex.upload_audio_to_gcs",
         lambda *, audio_bytes, bucket_name, sa_info, **kw: f"gs://{bucket_name}/audio/test.wav",
@@ -87,6 +83,7 @@ class TestGoogleVertexAIProvider:
             api_key="k",
             project_id="p",
             location="us-central1",
+            sa_info={"type": "service_account", "project_id": "p"},
             gcs_bucket="test-bucket",
         )
 

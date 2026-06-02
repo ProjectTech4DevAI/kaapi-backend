@@ -105,25 +105,37 @@ class TestGetLLMProvider:
 
             assert "not configured for this project" in str(exc_info.value)
 
-    def test_google_vertex_falls_back_to_platform_settings(self, db: Session):
-        """No credential row for google-vertex → registry synthesizes platform
-        defaults from settings (the BYOK-or-platform contract)."""
+    def test_google_vertex_falls_back_to_platform_settings(self, db: Session, tmp_path):
+        """No credential row for google-vertex → create_client synthesizes the
+        platform defaults from settings (api_key/project/location/bucket) and
+        loads the SA JSON from GCP_SA_KEY_PATH."""
+        import json as _json
+
         from app.services.llm.providers.gai_vertex import (
             GoogleVertexAIProvider,
             VertexClient,
         )
 
         project = get_project(db)
+        sa_info = {
+            "type": "service_account",
+            "project_id": "platform-project",
+            "client_email": "sa@platform-project.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
+        }
+        sa_path = tmp_path / "sa.json"
+        sa_path.write_text(_json.dumps(sa_info))
 
         with patch(
             "app.crud.credentials.get_provider_credential"
-        ) as mock_get_creds, patch("app.core.config.settings") as mock_settings:
+        ) as mock_get_creds, patch(
+            "app.services.llm.providers.gai_vertex.settings"
+        ) as mock_settings:
             mock_get_creds.return_value = None
             mock_settings.GCP_VERTEX_API_KEY = "platform-key"
             mock_settings.GCP_PROJECT_ID = "platform-project"
             mock_settings.GCP_VERTEX_LOCATION = "us-central1"
-            mock_settings.GCP_SA_SECRET_NAME = "platform/secret"
-            mock_settings.GCP_SA_SECRET_REGION = "ap-south-1"
+            mock_settings.GCP_SA_KEY_PATH = str(sa_path)
             mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
 
             provider = get_llm_provider(
@@ -138,5 +150,5 @@ class TestGetLLMProvider:
         assert provider.client.api_key == "platform-key"
         assert provider.client.project_id == "platform-project"
         assert provider.client.location == "us-central1"
-        assert provider.client.gcp_sa_secret_name == "platform/secret"
+        assert provider.client.sa_info == sa_info
         assert provider.client.gcs_bucket == "platform-bucket"

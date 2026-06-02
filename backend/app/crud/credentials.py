@@ -5,7 +5,6 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.core.cloud.storage import SecretsManagerError, upsert_byok_secret_for_provider
 from app.core.exception_handlers import HTTPException
 from app.core.providers import validate_provider, validate_provider_credentials
 from app.core.security import decrypt_credentials, encrypt_credentials
@@ -36,27 +35,6 @@ def set_creds_for_org(
                 f"[set_creds_for_org] Validation error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
             )
             raise HTTPException(status_code=400, detail=str(e))
-
-        # BYOK side-effect: e.g. google-vertex sa_key → AWS Secrets Manager,
-        # dict rewritten to carry only the SM reference before persistence.
-        try:
-            credentials = upsert_byok_secret_for_provider(
-                provider, credentials, org_id=organization_id, project_id=project_id
-            )
-        except ValueError as e:
-            logger.warning(
-                f"[set_creds_for_org] BYOK shape error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
-            )
-            raise HTTPException(status_code=400, detail=str(e))
-        except SecretsManagerError as e:
-            logger.error(
-                f"[set_creds_for_org] BYOK secret store failed | project_id: {project_id}, provider: {provider}, error: {str(e)}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to store provider secret: {str(e)}",
-            )
 
         # Encrypt entire credentials object
         encrypted_credentials = encrypt_credentials(credentials)
@@ -223,27 +201,6 @@ def update_creds_for_org(
             f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
         )
         raise HTTPException(status_code=400, detail=str(e))
-
-    # BYOK side-effect: e.g. google-vertex sa_key → AWS Secrets Manager,
-    # dict rewritten to carry only the SM reference before persistence.
-    try:
-        credential_data = upsert_byok_secret_for_provider(
-            creds_in.provider, credential_data, org_id=org_id, project_id=project_id
-        )
-    except ValueError as e:
-        logger.warning(
-            f"[update_creds_for_org] BYOK shape error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
-        )
-        raise HTTPException(status_code=400, detail=str(e))
-    except SecretsManagerError as e:
-        logger.error(
-            f"[update_creds_for_org] BYOK secret store failed | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to store provider secret: {str(e)}",
-        )
 
     # Encrypt the entire credentials object
     encrypted_credentials = encrypt_credentials(credential_data)

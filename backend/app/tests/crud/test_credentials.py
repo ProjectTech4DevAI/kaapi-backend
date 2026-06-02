@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 import pytest
 from sqlmodel import Session
 
@@ -89,8 +87,8 @@ def test_get_creds_by_org(db: Session) -> None:
 
 
 def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
-    """sa_key on google-vertex must be uploaded to SM and stripped before storage;
-    the persisted credential dict carries only the secret reference."""
+    """google-vertex sa_key is stored directly in the credentials table
+    (encrypted by the same Fernet key as every other credential field)."""
     project = create_test_project(db)
 
     sa_key = {
@@ -112,33 +110,12 @@ def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
         },
     )
 
-    with patch("app.crud.credentials.upsert_byok_secret_for_provider") as mock_hook:
-        # Simulate the real hook's rewrite without touching AWS.
-        secret_name = (
-            f"kaapi/test/orgs/{project.organization_id}"
-            f"/projects/{project.id}/google-vertex/sa"
-        )
-        mock_hook.return_value = {
-            "api_key": "vkey",
-            "project_id": "starlit-lotus-492004-k0",
-            "location": "us-central1",
-            "gcs_bucket": "my-bucket",
-            "gcp_sa_secret_name": secret_name,
-            "gcp_sa_secret_region": "ap-south-1",
-        }
-
-        created = set_creds_for_org(
-            session=db,
-            creds_add=payload,
-            organization_id=project.organization_id,
-            project_id=project.id,
-        )
-
-    mock_hook.assert_called_once()
-    args, kwargs = mock_hook.call_args
-    assert args[0] == "google-vertex"
-    assert args[1]["sa_key"] == sa_key
-    assert kwargs == {"org_id": project.organization_id, "project_id": project.id}
+    created = set_creds_for_org(
+        session=db,
+        creds_add=payload,
+        organization_id=project.organization_id,
+        project_id=project.id,
+    )
 
     assert len(created) == 1
     stored = get_provider_credential(
@@ -148,10 +125,11 @@ def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
         project_id=project.id,
     )
     assert stored is not None
-    assert "sa_key" not in stored
-    assert stored["gcp_sa_secret_name"] == secret_name
-    assert stored["gcp_sa_secret_region"] == "ap-south-1"
+    assert stored["sa_key"] == sa_key
     assert stored["api_key"] == "vkey"
+    assert stored["project_id"] == "starlit-lotus-492004-k0"
+    assert stored["location"] == "us-central1"
+    assert stored["gcs_bucket"] == "my-bucket"
 
 
 def test_get_provider_credential(db: Session) -> None:

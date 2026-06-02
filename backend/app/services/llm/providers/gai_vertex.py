@@ -1,7 +1,9 @@
 import base64
+import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -12,7 +14,7 @@ from app.core.audio_utils import (
     convert_pcm_to_ogg,
     pcm_to_wav,
 )
-from app.core.cloud.storage import get_gcp_service_account, upload_audio_to_gcs
+from app.core.cloud.storage import upload_audio_to_gcs
 from app.core.config import settings
 from app.models.llm import (
     LLMCallResponse,
@@ -45,11 +47,27 @@ SUPPORTED_AUDIO_MIMES = {
 }
 
 
+def _load_platform_sa_info() -> dict | None:
+    """Load the platform-default GCP SA JSON from disk, if configured."""
+    sa_path = settings.GCP_SA_KEY_PATH
+    if not sa_path or not Path(sa_path).is_file():
+        return None
+    try:
+        return json.loads(Path(sa_path).read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(
+            f"[_load_platform_sa_info] Failed to load platform SA key | "
+            f"path={sa_path}, error={e}"
+        )
+        return None
+
+
 class VertexClient:
     """Holds Vertex AI connection details. Pure config — no SDK session.
 
-    BYOK: per-project SA secret + GCS bucket can be passed via credentials;
-    falls back to platform-shared values in settings.
+    BYOK: per-project SA JSON + GCS bucket are passed via credentials and
+    stored directly on the client; falls back to platform-shared values
+    in settings when not provided by the project credential row.
     """
 
     def __init__(
@@ -57,15 +75,13 @@ class VertexClient:
         api_key: str,
         project_id: str,
         location: str,
-        gcp_sa_secret_name: str | None = None,
-        gcp_sa_secret_region: str | None = None,
+        sa_info: dict | None = None,
         gcs_bucket: str | None = None,
     ):
         self.api_key = api_key
         self.project_id = project_id
         self.location = location
-        self.gcp_sa_secret_name = gcp_sa_secret_name
-        self.gcp_sa_secret_region = gcp_sa_secret_region
+        self.sa_info = sa_info
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
@@ -90,20 +106,35 @@ class GoogleVertexAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
+        # Fall back to platform-shared defaults from settings for any field
+        # the caller didn't provide. The SA JSON falls back to the file at
+        # settings.GCP_SA_KEY_PATH; BYOK rows pass `sa_key` inline.
+        credentials = credentials or {}
+        api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
+        project_id = credentials.get("project_id") or settings.GCP_PROJECT_ID
+        location = credentials.get("location") or settings.GCP_VERTEX_LOCATION
+        gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
+        sa_info = credentials.get("sa_key") or _load_platform_sa_info()
+
         missing = [
-            f for f in ("api_key", "project_id", "location") if not credentials.get(f)
+            name
+            for name, value in (
+                ("api_key", api_key),
+                ("project_id", project_id),
+                ("location", location),
+            )
+            if not value
         ]
         if missing:
             raise ValueError(
                 f"Google Vertex AI credentials missing required fields: {', '.join(missing)}"
             )
         return VertexClient(
-            api_key=credentials.get("api_key"),
-            project_id=credentials.get("project_id"),
-            location=credentials.get("location"),
-            gcp_sa_secret_name=credentials.get("gcp_sa_secret_name"),
-            gcp_sa_secret_region=credentials.get("gcp_sa_secret_region"),
-            gcs_bucket=credentials.get("gcs_bucket"),
+            api_key=api_key,
+            project_id=project_id,
+            location=location,
+            sa_info=sa_info,
+            gcs_bucket=gcs_bucket,
         )
 
     def _post(self, model: str, payload: dict) -> tuple[dict | None, str | None]:
@@ -161,15 +192,16 @@ class GoogleVertexAIProvider(BaseProvider):
 
         # Push bytes straight to GCS — no disk I/O. fileData.fileUri bypasses
         # the 20 MB inline cap.
-        try:
-            sa_info = get_gcp_service_account(
-                secret_name=self.client.gcp_sa_secret_name,
-                region_name=self.client.gcp_sa_secret_region,
+        if not self.client.sa_info:
+            return (
+                None,
+                "google-vertex sa_key not configured; cannot stage audio for STT",
             )
+        try:
             gs_uri = upload_audio_to_gcs(
                 audio_bytes=resolved_input.bytes_,
                 bucket_name=self.client.gcs_bucket,
-                sa_info=sa_info,
+                sa_info=self.client.sa_info,
                 project_id=self.client.project_id,
                 content_type=mime_type,
             )

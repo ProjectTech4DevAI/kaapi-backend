@@ -110,8 +110,9 @@ class Settings(BaseSettings):
     GCP_VERTEX_API_KEY: str = ""
     GCP_VERTEX_LOCATION: str = ""
     GCP_PROJECT_ID: str = ""
-    GCP_SA_SECRET_NAME: str = ""
-    GCP_SA_SECRET_REGION: str = ""
+    # Filesystem path to the platform-default GCP service-account JSON.
+    # Used by the registry fallback when a project has no google-vertex row.
+    GCP_SA_KEY_PATH: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
     # RabbitMQ configuration for Celery broker
