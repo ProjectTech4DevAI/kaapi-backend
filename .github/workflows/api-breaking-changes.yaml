@@ -4,7 +4,7 @@ name: API Breaking Changes Check
 on:
   pull_request:
     branches:
-      -- '**'
+      --'**'
     # Re-run when the approval label is added/removed so merge gating updates immediately.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
@@ -72,6 +72,8 @@ jobs:
           uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
 
       - name: Generate diff (JSON)
+        env:
+          OASDIFF_IMAGE: tufin/oasdiff:latest
         run: |
           set -euo pipefail
 
