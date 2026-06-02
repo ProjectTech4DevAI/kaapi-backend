@@ -160,9 +160,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
-            patch(
-                "app.celery.tasks.job_execution.run_assessment_run"
-            ) as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -206,9 +204,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ) as create_run,
-            patch(
-                "app.celery.tasks.job_execution.run_assessment_run"
-            ) as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -292,9 +288,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
-            patch(
-                "app.celery.tasks.job_execution.run_assessment_run"
-            ) as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
