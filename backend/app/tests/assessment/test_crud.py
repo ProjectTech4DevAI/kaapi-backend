@@ -232,6 +232,9 @@ class TestDerivedAggregates:
                 total_items=2,
                 error_message=None,
                 updated_at=datetime(2024, 1, 1),
+                l1_total_rows=None,
+                l1_total_passed=None,
+                l1_total_rejected=None,
             ),
         ]
         stats = build_run_stats(runs)

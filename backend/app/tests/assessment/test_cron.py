@@ -115,7 +115,7 @@ class TestPollAllPendingAssessmentEvaluations:
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
         run = _make_run(id=11)
-        run.status = "processing"
+        run.status = "l2_processing"
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
@@ -140,7 +140,7 @@ class TestPollAllPendingAssessmentEvaluations:
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
         run = _make_run(id=11)
-        run.status = "processing"
+        run.status = "l2_processing"
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
@@ -164,7 +164,7 @@ class TestPollAllPendingAssessmentEvaluations:
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
         run = _make_run(id=11)
-        run.status = "processing"
+        run.status = "l2_processing"
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(

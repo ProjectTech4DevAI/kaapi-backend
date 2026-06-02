@@ -142,9 +142,6 @@ class TestStartAssessment:
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(provider="google", params={"model": "gemini"})
         )
-        batch_job = MagicMock()
-        batch_job.id = 101
-        batch_job.total_items = 3
 
         with (
             patch(
@@ -164,13 +161,8 @@ class TestStartAssessment:
                 return_value=run,
             ),
             patch(
-                "app.services.assessment.service.submit_assessment_batch",
-                return_value=batch_job,
-            ) as submit_batch,
-            patch(
-                "app.services.assessment.service.update_assessment_run_status",
-                return_value=run,
-            ),
+                "app.celery.tasks.job_execution.run_assessment_run"
+            ) as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -181,8 +173,10 @@ class TestStartAssessment:
                 project_id=1,
             )
 
+        # Google is an accepted provider — no rejection, one Celery task dispatched.
         assert response.num_configs == 1
-        assert submit_batch.call_args.kwargs["config_blob"] is config_blob
+        dispatch.delay.assert_called_once()
+        assert dispatch.delay.call_args.kwargs["run_id"] == 11
 
     def test_defaults_missing_provider_to_openai(self) -> None:
         session = MagicMock()
@@ -194,9 +188,6 @@ class TestStartAssessment:
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(provider=None, params={"model": "gpt-4.1-mini"})
         )
-        batch_job = MagicMock()
-        batch_job.id = 101
-        batch_job.total_items = 3
 
         with (
             patch(
@@ -216,13 +207,8 @@ class TestStartAssessment:
                 return_value=run,
             ) as create_run,
             patch(
-                "app.services.assessment.service.submit_assessment_batch",
-                return_value=batch_job,
-            ) as submit_batch,
-            patch(
-                "app.services.assessment.service.update_assessment_run_status",
-                return_value=run,
-            ),
+                "app.celery.tasks.job_execution.run_assessment_run"
+            ) as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -238,11 +224,7 @@ class TestStartAssessment:
         assert response.runs[0].run_id == 11
         assessment_input = create_run.call_args.kwargs["assessment_input"]
         assert assessment_input["system_instruction"] == "Assess strictly"
-        assert (
-            submit_batch.call_args.kwargs["assessment_input"]["system_instruction"]
-            == "Assess strictly"
-        )
-        submit_batch.assert_called_once()
+        dispatch.delay.assert_called_once()
 
     def test_rejects_default_tagged_config(self) -> None:
         """Configs explicitly tagged 'default' must be rejected for assessment."""
@@ -278,14 +260,15 @@ class TestStartAssessment:
         # Tag check must fire BEFORE config resolution.
         resolve.assert_not_called()
 
-    def test_batch_submission_failure_marks_run_failed(self) -> None:
+    def test_dispatches_one_celery_task_per_config(self) -> None:
+        """Batch submission moved to the Celery task; start_assessment only
+        creates runs and dispatches one task per resolved config."""
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
         assessment.id = 21
         run = _make_run()
-        run.status = "failed"
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
                 provider="openai", params={"model": "gpt-4.1-mini"}
@@ -310,13 +293,8 @@ class TestStartAssessment:
                 return_value=run,
             ),
             patch(
-                "app.services.assessment.service.submit_assessment_batch",
-                side_effect=RuntimeError("submit failed"),
-            ),
-            patch(
-                "app.services.assessment.service.update_assessment_run_status",
-                return_value=run,
-            ) as update_run,
+                "app.celery.tasks.job_execution.run_assessment_run"
+            ) as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -327,7 +305,10 @@ class TestStartAssessment:
                 project_id=1,
             )
         assert response.num_configs == 1
-        assert update_run.called
+        dispatch.delay.assert_called_once()
+        assert dispatch.delay.call_args.kwargs["run_id"] == 11
+        assert dispatch.delay.call_args.kwargs["organization_id"] == 1
+        assert dispatch.delay.call_args.kwargs["project_id"] == 1
 
 
 class TestRetryHelpers:
