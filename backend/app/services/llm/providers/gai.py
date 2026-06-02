@@ -25,6 +25,7 @@ from app.models.llm import (
 )
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
 )
@@ -394,9 +395,7 @@ class GoogleAIProvider(BaseProvider):
         resolved_input: str | list[ContentPart] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        model = completion_config.params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
+        model = completion_config.params.get("model") or DEFAULT_TEXT_MODELS["google"]
 
         if isinstance(resolved_input, MultiModalInput):
             gemini_parts = self.format_parts(resolved_input.parts)

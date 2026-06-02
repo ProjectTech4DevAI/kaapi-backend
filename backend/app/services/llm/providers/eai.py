@@ -18,6 +18,10 @@ from app.models.llm import (
     Usage,
     TextContent,
 )
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+)
 from app.models.llm.response import AudioOutput
 from app.models.llm.request import AudioContent
 from app.services.llm.providers.base import BaseProvider
@@ -83,7 +87,7 @@ class ElevenlabsAIProvider(BaseProvider):
             return None, f"{provider_name} STT requires AudioRef input"
 
         # Extract already-mapped parameters from the mapper
-        model_id = params.get("model_id") or "scribe_v2"
+        model_id = params.get("model_id") or DEFAULT_ELEVENLABS_STT_MODEL
         if not model_id:
             return None, "Missing 'model_id' in native params for Elevenlabs STT"
 
@@ -167,7 +171,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
         # Extract already-mapped parameters from the mapper
         # Use 'or' to handle both missing keys and falsy values
-        model_id = params.get("model_id") or "eleven_v3"
+        model_id = params.get("model_id") or DEFAULT_ELEVENLABS_TTS_MODEL
         voice_id = params.get("voice_id") or "EXAVITQu4vr4xnSDxMaL"
 
         if not model_id:

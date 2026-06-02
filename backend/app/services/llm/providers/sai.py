@@ -13,6 +13,10 @@ from app.models.llm import (
     Usage,
     TextContent,
 )
+from app.models.llm.constants import (
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
+)
 from app.models.llm.response import AudioOutput
 from app.models.llm.request import AudioContent
 from app.services.llm.providers.base import BaseProvider
@@ -78,7 +82,7 @@ class SarvamAIProvider(BaseProvider):
             return None, f"{provider_name} STT requires AudioRef input"
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model") or "saaras:v3"
+        model = params.get("model") or DEFAULT_SARVAM_STT_MODEL
         language_code = params.get("language_code")
         mode = params.get("mode") or "transcribe"
 
@@ -157,7 +161,7 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model") or "bulbul:v3"
+        model = params.get("model") or DEFAULT_SARVAM_TTS_MODEL
         target_language_code = params.get("target_language_code")
         if not target_language_code:
             return (

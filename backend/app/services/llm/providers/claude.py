@@ -18,11 +18,14 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
+from app.models.llm.constants import (
+    DEFAULT_ANTHROPIC_MAX_TOKENS,
+    DEFAULT_TEXT_MODELS,
+)
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOKENS = 4096
 FILES_API_BETA = "files-api-2025-04-14"
 
 
@@ -126,15 +129,11 @@ class ClaudeProvider(BaseProvider):
         try:
             params = {**completion_config.params}
 
-            # Anthropic requires max_tokens; default if caller did not supply
-            params.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
-
-            # Kaapi exposes "instructions"; Anthropic uses "system". Always
-            # strip "instructions" — Anthropic rejects unknown kwargs.
-            if "instructions" in params:
-                if "system" not in params:
-                    params["system"] = params["instructions"]
-                params.pop("instructions")
+            # Anthropic requires model and max_tokens; default if caller did not supply
+            params["model"] = params.get("model") or DEFAULT_TEXT_MODELS["anthropic"]
+            params["max_tokens"] = (
+                params.get("max_tokens") or DEFAULT_ANTHROPIC_MAX_TOKENS
+            )
 
             if isinstance(resolved_input, MultiModalInput):
                 content = self.format_parts(resolved_input.parts)

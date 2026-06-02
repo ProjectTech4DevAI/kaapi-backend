@@ -17,7 +17,13 @@ from app.models.llm.constants import (
 
 
 class TextLLMParams(SQLModel):
-    model: str
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Provider model to use. If omitted, the Kaapi mapper falls back to "
+            "DEFAULT_TEXT_MODELS for the selected provider."
+        ),
+    )
     instructions: str | None = Field(
         default=None,
     )

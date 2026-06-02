@@ -7,9 +7,23 @@ from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.models.llm.constants import (
     BCP47_LOCALE_TO_GEMINI_LANG,
     BCP47_TO_ELEVENLABS_LANG,
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_VOICE,
     ELEVENLABS_VOICE_TO_ID,
 )
+
+SARVAM_DEFAULTS_BY_TYPE = {
+    "stt": DEFAULT_SARVAM_STT_MODEL,
+    "tts": DEFAULT_SARVAM_TTS_MODEL,
+}
+ELEVENLABS_DEFAULTS_BY_TYPE = {
+    "stt": DEFAULT_ELEVENLABS_STT_MODEL,
+    "tts": DEFAULT_ELEVENLABS_TTS_MODEL,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +110,7 @@ def map_kaapi_to_openai_params(
         if temperature is not None:
             openai_params["temperature"] = temperature
 
-    if model:
-        openai_params["model"] = model
+    openai_params["model"] = model or DEFAULT_TEXT_MODELS["openai"]
 
     if instructions:
         openai_params["instructions"] = instructions
@@ -139,8 +152,11 @@ def map_kaapi_to_google_params(
     google_params = {}
     warnings = []
 
-    # Model is present in all param types
+    # Model is present in all param types; text falls back to the centralized
+    # default. STT/TTS require an explicit model (Gemini variant differs by mode).
     model = kaapi_params.get("model")
+    if not model and completion_type == "text":
+        model = DEFAULT_TEXT_MODELS["google"]
     if not model:
         return {}, ["Missing required 'model' parameter"]
 
@@ -238,10 +254,10 @@ def map_kaapi_to_sarvam_params(
     sarvam_params = {}
     warnings = []
 
-    # Model is required for all completion types
-    model = kaapi_params.get("model")
+    # Model falls back to the per-type Sarvam default.
+    model = kaapi_params.get("model") or SARVAM_DEFAULTS_BY_TYPE.get(completion_type)
     if not model:
-        return {}, ["Missing required 'model' parameter"]
+        return {}, [f"Unsupported completion type '{completion_type}' for SarvamAI"]
     sarvam_params["model"] = model
 
     if completion_type == "tts":
@@ -346,9 +362,11 @@ def map_kaapi_to_elevenlabs_params(
     elevenlabs_params = {}
     warnings = []
 
-    model_id = kaapi_params.get("model")
+    model_id = kaapi_params.get("model") or ELEVENLABS_DEFAULTS_BY_TYPE.get(
+        completion_type
+    )
     if not model_id:
-        return {}, ["Missing required 'model' parameter"]
+        return {}, [f"Unsupported completion type '{completion_type}' for ElevenLabs"]
     elevenlabs_params["model_id"] = model_id
 
     if completion_type == "tts":
@@ -460,8 +478,7 @@ def map_kaapi_to_anthropic_params(
     effort = kaapi_params.get("effort")
     summary = kaapi_params.get("summary")
 
-    if model:
-        anthropic_params["model"] = model
+    anthropic_params["model"] = model or DEFAULT_TEXT_MODELS["anthropic"]
 
     if instructions:
         anthropic_params["system"] = instructions
