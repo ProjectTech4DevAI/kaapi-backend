@@ -1,6 +1,7 @@
 import os
+import mimetypes
 from sqlmodel import Session
-from uuid import UUID
+from uuid import UUID, uuid4
 import logging
 import functools as ft
 from pathlib import Path
@@ -12,10 +13,19 @@ import boto3
 from fastapi import UploadFile
 from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
+from google.cloud import storage as gcs
+from google.oauth2 import service_account
 
-from app.crud import get_project_by_id
 from app.core.config import settings
-from app.utils import mask_string
+
+
+def _mask(value: str | None) -> str:
+    # Lazy to break a top-level cycle: app.utils transitively imports
+    # app.services.llm.providers, which imports this module.
+    from app.utils import mask_string
+
+    return mask_string(value)
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +56,7 @@ class AmazonCloudStorageClient:
         except ValueError as err:
             logger.error(
                 f"[AmazonCloudStorageClient.create] Invalid bucket configuration | "
-                f"{{'bucket': '{mask_string(settings.AWS_S3_BUCKET)}', 'error': '{str(err)}'}}",
+                f"{{'bucket': '{_mask(settings.AWS_S3_BUCKET)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(err) from err
@@ -55,13 +65,13 @@ class AmazonCloudStorageClient:
             if response != 404:
                 logger.error(
                     f"[AmazonCloudStorageClient.create] Unexpected AWS error | "
-                    f"{{'bucket': '{mask_string(settings.AWS_S3_BUCKET)}', 'error': '{str(err)}', 'code': {response}}}",
+                    f"{{'bucket': '{_mask(settings.AWS_S3_BUCKET)}', 'error': '{str(err)}', 'code': {response}}}",
                     exc_info=True,
                 )
                 raise CloudStorageError(err) from err
             logger.warning(
                 f"[AmazonCloudStorageClient.create] Bucket not found, creating | "
-                f"{{'bucket': '{mask_string(settings.AWS_S3_BUCKET)}'}}"
+                f"{{'bucket': '{_mask(settings.AWS_S3_BUCKET)}'}}"
             )
             try:
                 self.client.create_bucket(
@@ -72,12 +82,12 @@ class AmazonCloudStorageClient:
                 )
                 logger.info(
                     f"[AmazonCloudStorageClient.create] Bucket created successfully | "
-                    f"{{'bucket': '{mask_string(settings.AWS_S3_BUCKET)}'}}"
+                    f"{{'bucket': '{_mask(settings.AWS_S3_BUCKET)}'}}"
                 )
             except ClientError as create_err:
                 logger.error(
                     f"[AmazonCloudStorageClient.create] Failed to create bucket | "
-                    f"{{'bucket': '{mask_string(settings.AWS_S3_BUCKET)}', 'error': '{str(create_err)}'}}",
+                    f"{{'bucket': '{_mask(settings.AWS_S3_BUCKET)}', 'error': '{str(create_err)}'}}",
                     exc_info=True,
                 )
                 raise CloudStorageError(create_err) from create_err
@@ -168,12 +178,12 @@ class AmazonCloudStorage(CloudStorage):
             )
             logger.info(
                 f"[AmazonCloudStorage.put] File uploaded successfully | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(destination.Bucket)}', 'key': '{mask_string(destination.Key)}'}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(destination.Bucket)}', 'key': '{_mask(destination.Key)}'}}"
             )
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.put] AWS upload error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(destination.Bucket)}', 'key': '{mask_string(destination.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(destination.Bucket)}', 'key': '{_mask(destination.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}"') from err
@@ -187,13 +197,13 @@ class AmazonCloudStorage(CloudStorage):
             body = self.aws.client.get_object(**kwargs).get("Body")
             logger.info(
                 f"[AmazonCloudStorage.stream] File streamed successfully | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}'}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}'}}"
             )
             return body
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.stream] AWS stream error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
@@ -206,13 +216,13 @@ class AmazonCloudStorage(CloudStorage):
             content = body.read()
             logger.info(
                 f"[AmazonCloudStorage.get] File retrieved successfully | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'size_bytes': {len(content)}}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'size_bytes': {len(content)}}}"
             )
             return content
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.get] AWS get error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
@@ -226,13 +236,13 @@ class AmazonCloudStorage(CloudStorage):
             size_kb = round(size_bytes / 1024, 2)
             logger.info(
                 f"[AmazonCloudStorage.get_file_size_kb] File size retrieved successfully | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'size_kb': {size_kb}}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'size_kb': {size_kb}}}"
             )
             return size_kb
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.get_file_size_kb] AWS head object error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
@@ -259,13 +269,13 @@ class AmazonCloudStorage(CloudStorage):
             )
             logger.info(
                 f"[AmazonCloudStorage.get_signed_url] Signed URL generated | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}'}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}'}}"
             )
             return signed_url
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.get_signed_url] AWS presign error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
@@ -277,12 +287,12 @@ class AmazonCloudStorage(CloudStorage):
             self.aws.client.delete_object(**kwargs)
             logger.info(
                 f"[AmazonCloudStorage.delete] File deleted successfully | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}'}}"
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}'}}"
             )
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.delete] AWS delete error | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{mask_string(name.Bucket)}', 'key': '{mask_string(name.Key)}', 'error': '{str(err)}'}}",
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
@@ -292,6 +302,11 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
     """
     Method to create and configure a cloud storage instance.
     """
+    # Lazy import to avoid a top-level cycle: storage.py is imported from
+    # app.services.llm.providers.gai_vertex, which itself is wired into the
+    # provider registry that app.crud transitively pulls in.
+    from app.crud import get_project_by_id
+
     project = get_project_by_id(session=session, project_id=project_id)
     if not project:
         raise ValueError(f"Invalid project_id: {project_id}")
@@ -306,3 +321,79 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
             exc_info=True,
         )
         raise
+
+
+GCS_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+
+
+_MIME_TO_EXT = {
+    "audio/wav": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/flac": ".flac",
+    "audio/webm": ".webm",
+    "audio/aac": ".aac",
+    "audio/aiff": ".aiff",
+}
+
+
+def upload_audio_to_gcs(
+    *,
+    bucket_name: str,
+    sa_info: dict,
+    audio_bytes: bytes | None = None,
+    local_path: str | None = None,
+    content_type: str | None = None,
+    project_id: str | None = None,
+    key_prefix: str = "audio",
+) -> str:
+    """Upload audio to GCS and return its ``gs://bucket/key`` URI.
+
+    Pass exactly one of ``audio_bytes`` or ``local_path``.
+
+    BYOK: caller supplies ``sa_info`` and ``bucket_name``. The returned URI
+    plugs directly into Vertex ``fileData.fileUri``.
+    """
+    if (audio_bytes is None) == (local_path is None):
+        raise ValueError("Pass exactly one of audio_bytes or local_path")
+
+    if local_path is not None:
+        if not os.path.isfile(local_path):
+            raise FileNotFoundError(f"Audio file not found: {local_path}")
+        size = os.path.getsize(local_path)
+        ext = Path(local_path).suffix or ""
+        mime = content_type or mimetypes.guess_type(local_path)[0] or "audio/wav"
+    else:
+        size = len(audio_bytes)
+        mime = content_type or "audio/wav"
+        ext = _MIME_TO_EXT.get(mime, "")
+
+    key = f"{key_prefix}/{uuid4().hex}{ext}"
+
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            sa_info, scopes=list(GCS_SCOPES)
+        )
+        client = gcs.Client(
+            project=project_id or sa_info.get("project_id"), credentials=creds
+        )
+        blob = client.bucket(bucket_name).blob(key)
+        if local_path is not None:
+            blob.upload_from_filename(local_path, content_type=mime)
+        else:
+            blob.upload_from_string(audio_bytes, content_type=mime)
+    except Exception as e:
+        logger.error(
+            f"[upload_audio_to_gcs] Upload failed | "
+            f"bucket={bucket_name}, key={key}, error={e}",
+            exc_info=True,
+        )
+        raise CloudStorageError(f"GCS upload failed: {e}") from e
+
+    uri = f"gs://{bucket_name}/{key}"
+    logger.info(
+        f"[upload_audio_to_gcs] Uploaded | "
+        f"uri={uri}, mime={mime}, size_kb={size / 1024:.1f}"
+    )
+    return uri

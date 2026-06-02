@@ -1,17 +1,55 @@
-"""
-Audio processing utilities for format conversion.
+"""Audio processing utilities: format conversion + STT input carrier."""
 
-This module provides utilities for converting audio between different formats,
-particularly for TTS output post-processing.
-"""
 import io
 import logging
+import os
+import tempfile
 import wave
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Iterator
 
 from pydub import AudioSegment
 
-
 logger = logging.getLogger(__name__)
+
+_MIME_TO_EXT = {
+    "audio/wav": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/flac": ".flac",
+    "audio/webm": ".webm",
+    "audio/mp4": ".mp4",
+    "audio/m4a": ".m4a",
+    "audio/aac": ".aac",
+    "audio/aiff": ".aiff",
+}
+
+
+@dataclass(frozen=True)
+class AudioRef:
+    """In-memory STT input. Providers consume ``bytes_`` directly or call
+    ``to_path()`` when an SDK needs a filesystem path. Temp files are owned
+    by the provider's ``with`` scope — no framework-level cleanup needed.
+    """
+
+    bytes_: bytes
+    mime_type: str = "audio/wav"
+
+    @contextmanager
+    def to_path(self) -> Iterator[str]:
+        ext = _MIME_TO_EXT.get(self.mime_type, ".audio")
+        tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False, prefix="audio_")
+        try:
+            tmp.write(self.bytes_)
+            tmp.close()
+            yield tmp.name
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
 
 def convert_pcm_to_mp3(

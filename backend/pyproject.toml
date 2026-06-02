@@ -55,6 +55,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "litellm>=1.83.10",
     "anthropic>=0.104.1",
+    "google-cloud-storage>=3.10.1",
 ]
 
 [tool.uv]
