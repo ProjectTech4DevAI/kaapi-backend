@@ -1,7 +1,7 @@
 """add run_mode column and unique run-name constraint to evaluation_run
 
-Revision ID: 063
-Revises: 062
+Revision ID: 064
+Revises: 063
 Create Date: 2026-05-20 00:00:00.000000
 
 Two schema changes are required to support the fast-evaluation feature:
@@ -35,8 +35,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "063"
-down_revision = "062"
+revision = "064"
+down_revision = "063"
 branch_labels = None
 depends_on = None
 
