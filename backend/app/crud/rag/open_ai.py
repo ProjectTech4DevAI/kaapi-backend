@@ -178,8 +178,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 # Enrich the error string by listing each failed file's
                 # `last_error.message` from OpenAI. Fall back to the
                 # count-only message if the follow-up list_files call
-                # itself fails — we still want the primary failure signal
-                # to surface even if the secondary lookup is broken.
+                # itself fails.
                 failed_summary = ""
                 try:
                     page = self.client.vector_stores.file_batches.list_files(
