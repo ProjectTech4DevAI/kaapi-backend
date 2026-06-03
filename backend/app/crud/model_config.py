@@ -22,15 +22,6 @@ KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
 NATIVE_PROVIDER_SUFFIX = "-native"
 
 
-def _normalize_provider(raw: str) -> str:
-    """Map NativeCompletionConfig providers (e.g. 'openai-native') to model_config provider names."""
-    return (
-        raw[: -len(NATIVE_PROVIDER_SUFFIX)]
-        if raw.endswith(NATIVE_PROVIDER_SUFFIX)
-        else raw
-    )
-
-
 def list_active_model_configs(
     session: Session,
     provider: Provider | None = None,
@@ -118,10 +109,12 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     if raw_provider is None:
         return
 
-    if raw_provider.endswith("-native"):
+    if raw_provider.endswith(NATIVE_PROVIDER_SUFFIX):
         return
 
-    provider = _normalize_provider(raw_provider)
+    # raw_provider is guaranteed not to carry the "-native" suffix here
+    # because of the early return above.
+    provider = raw_provider
 
     model_name = (completion.params or {}).get("model")
     if not model_name:

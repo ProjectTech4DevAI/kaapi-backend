@@ -21,26 +21,6 @@ from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModa
 logger = logging.getLogger(__name__)
 
 
-def _classify_openai_error(status_code: int | None, error_code: str | None) -> str:
-    """Map OpenAI status + code to a coarse error_type for `LLMCallErrorDetail`.
-
-    Categories are the ones documented on the model so clients can branch
-    behaviour (retry on rate_limit/timeout, surface auth errors to the user,
-    etc.) without parsing the message string.
-    """
-    if status_code == 429:
-        return "rate_limit"
-    if status_code in (401, 403):
-        return "authentication"
-    if status_code == 408 or (error_code and "timeout" in str(error_code).lower()):
-        return "timeout"
-    if status_code is not None and 400 <= status_code < 500:
-        return "invalid_request"
-    if status_code is not None and status_code >= 500:
-        return "provider_error"
-    return "provider_error"
-
-
 class OpenAIProvider(BaseProvider):
     def __init__(self, client: OpenAI):
         """Initialize OpenAI provider with client.
@@ -156,35 +136,119 @@ class OpenAIProvider(BaseProvider):
             error_message = f"Invalid or unexpected parameter in Config: {str(e)}"
             return None, error_message
 
-        except openai.OpenAIError as e:
-            # imported here to avoid circular imports
-            from app.services.llm.errors import set_provider_error_meta
-            from app.utils import handle_openai_error
-
-            error_message = handle_openai_error(e)
-            status_code = getattr(e, "status_code", None)
-            error_code = getattr(e, "code", None)
-            set_provider_error_meta(
-                {
-                    "provider_status_code": status_code,
-                    "error_type": _classify_openai_error(status_code, error_code),
-                }
-            )
+        except openai.RateLimitError as e:
+            error_message = f"OpenAI rate limit exceeded: {e.message}"
             logger.warning(
-                f"[OpenAIProvider.execute] OpenAI API error: {error_message} | "
-                f"status_code={status_code}, code={error_code}, "
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.AuthenticationError as e:
+            error_message = f"OpenAI authentication failed: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.PermissionDeniedError as e:
+            error_message = f"OpenAI permission denied: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.NotFoundError as e:
+            error_message = f"OpenAI resource not found: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.BadRequestError as e:
+            error_message = f"OpenAI bad request: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.UnprocessableEntityError as e:
+            error_message = f"OpenAI unprocessable entity: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.ConflictError as e:
+            error_message = f"OpenAI conflict: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.InternalServerError as e:
+            error_message = f"OpenAI server error: {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.APITimeoutError as e:
+            error_message = f"OpenAI request timed out: {e}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.APIConnectionError as e:
+            error_message = f"OpenAI connection error: {e}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.APIStatusError as e:
+            error_message = f"OpenAI API status error ({e.status_code}): {e.message}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.OpenAIError as e:
+            error_message = f"OpenAI error: {e}"
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message
 
         except Exception as e:
-            from app.services.llm.errors import set_provider_error_meta
-
-            error_message = "Unexpected error occurred"
-            set_provider_error_meta({"error_type": "internal_error"})
+            error_message = f"Unexpected error: {e}"
             logger.error(
-                f"[OpenAIProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message

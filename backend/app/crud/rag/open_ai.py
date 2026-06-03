@@ -4,6 +4,7 @@ import functools as ft
 from io import BytesIO
 from typing import Iterable
 
+import openai
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
@@ -130,82 +131,98 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 files.append(f_obj)
 
             logger.info(
-                f"[OpenAIVectorStoreCrud.update] Uploading files to vector store | {{'vector_store_id': '{vector_store_id}', 'file_count': {len(files)}}}"
+                f"[OpenAIVectorStoreCrud.update] Uploading files to vector store | "
+                f"{{'vector_store_id': '{vector_store_id}', 'file_count': {len(files)}}}"
             )
-            req = self.client.vector_stores.file_batches.upload_and_poll(
-                vector_store_id=vector_store_id,
-                files=files,
-            )
-            logger.info(
-                f"[OpenAIVectorStoreCrud.update] File upload completed | {{'vector_store_id': '{vector_store_id}', 'completed_files': {req.file_counts.completed}, 'total_files': {req.file_counts.total}}}"
-            )
-            if req.file_counts.completed != req.file_counts.total:
-                failure_detail = self._summarize_failed_files(
-                    vector_store_id=vector_store_id, batch_id=req.id
+
+            try:
+                req = self.client.vector_stores.file_batches.upload_and_poll(
+                    vector_store_id=vector_store_id,
+                    files=files,
                 )
+            except openai.RateLimitError as e:
+                raise InterruptedError(f"OpenAI rate limit exceeded: {e.message}")
+            except openai.AuthenticationError as e:
+                raise InterruptedError(f"OpenAI authentication failed: {e.message}")
+            except openai.PermissionDeniedError as e:
+                raise InterruptedError(f"OpenAI permission denied: {e.message}")
+            except openai.NotFoundError as e:
+                raise InterruptedError(f"OpenAI resource not found: {e.message}")
+            except openai.BadRequestError as e:
+                raise InterruptedError(f"OpenAI bad request: {e.message}")
+            except openai.UnprocessableEntityError as e:
+                raise InterruptedError(f"OpenAI unprocessable entity: {e.message}")
+            except openai.ConflictError as e:
+                raise InterruptedError(f"OpenAI conflict: {e.message}")
+            except openai.InternalServerError as e:
+                raise InterruptedError(f"OpenAI server error: {e.message}")
+            except openai.APITimeoutError as e:
+                raise InterruptedError(f"OpenAI request timed out: {e}")
+            except openai.APIConnectionError as e:
+                raise InterruptedError(f"OpenAI connection error: {e}")
+            except openai.APIStatusError as e:
+                raise InterruptedError(
+                    f"OpenAI API status error ({e.status_code}): {e.message}"
+                )
+            except openai.OpenAIError as e:
+                raise InterruptedError(f"OpenAI error: {e}")
+
+            logger.info(
+                f"[OpenAIVectorStoreCrud.update] File upload completed | "
+                f"{{'vector_store_id': '{vector_store_id}', "
+                f"'completed_files': {req.file_counts.completed}, "
+                f"'total_files': {req.file_counts.total}}}"
+            )
+
+            if req.file_counts.completed != req.file_counts.total:
+                # Enrich the error string by listing each failed file's
+                # `last_error.message` from OpenAI. Fall back to the
+                # count-only message if the follow-up list_files call
+                # itself fails — we still want the primary failure signal
+                # to surface even if the secondary lookup is broken.
+                failed_summary = ""
+                try:
+                    page = self.client.vector_stores.file_batches.list_files(
+                        batch_id=req.id,
+                        vector_store_id=vector_store_id,
+                        filter="failed",
+                        limit=10,
+                    )
+                    parts = []
+                    for f in page:
+                        f_err = getattr(f, "last_error", None)
+                        f_msg = (
+                            getattr(f_err, "message", None) if f_err else None
+                        ) or "Unknown error"
+                        parts.append(f"{f.id} ({f_msg})")
+                    failed_summary = ", ".join(parts)
+                    if getattr(page, "has_more", False):
+                        failed_summary = f"{failed_summary}, ..."
+                    if len(failed_summary) > 600:
+                        failed_summary = failed_summary[:597] + "..."
+                except OpenAIError as list_err:
+                    logger.warning(
+                        f"[OpenAIVectorStoreCrud.update] Could not list failed "
+                        f"files | {{'vector_store_id': '{vector_store_id}', "
+                        f"'batch_id': '{req.id}', 'error': '{list_err}'}}"
+                    )
+
                 error_msg = (
                     f"OpenAI document processing error: "
                     f"{req.file_counts.completed}/{req.file_counts.total} "
                     f"files completed"
                 )
-                if failure_detail:
-                    error_msg = f"{error_msg}. Failed files: {failure_detail}"
+                if failed_summary:
+                    error_msg = f"{error_msg}. Failed files: {failed_summary}"
                 logger.error(
                     f"[OpenAIVectorStoreCrud.update] Document processing error | "
                     f"{{'vector_store_id': '{vector_store_id}', "
                     f"'completed_files': {req.file_counts.completed}, "
-                    f"'total_files': {req.file_counts.total}, "
-                    f"'failure_detail': '{failure_detail}'}}"
+                    f"'total_files': {req.file_counts.total}}}"
                 )
                 raise InterruptedError(error_msg)
 
             yield from docs
-
-    def _summarize_failed_files(
-        self,
-        *,
-        vector_store_id: str,
-        batch_id: str,
-        max_files: int = 10,
-        max_message_chars: int = 600,
-    ) -> str:
-        """List failed files in a vector-store batch and join their errors.
-
-        The OpenAI batch response only tells us how many files failed, not why.
-        This makes a follow-up call to pull per-file `last_error` so the upstream
-        cause (unsupported type, oversized, etc.) reaches the caller instead of
-        a bare ratio. Returns "" on lookup failure so the original count-based
-        message still surfaces.
-        """
-        try:
-            page = self.client.vector_stores.file_batches.list_files(
-                batch_id=batch_id,
-                vector_store_id=vector_store_id,
-                filter="failed",
-                limit=max_files,
-            )
-        except OpenAIError as err:
-            logger.warning(
-                f"[OpenAIVectorStoreCrud._summarize_failed_files] Could not list "
-                f"failed files | {{'vector_store_id': '{vector_store_id}', "
-                f"'batch_id': '{batch_id}', 'error': '{err}'}}"
-            )
-            return ""
-
-        parts: list[str] = []
-        for f in page:
-            err = getattr(f, "last_error", None)
-            message = (
-                getattr(err, "message", None) if err else None
-            ) or "Unknown error"
-            parts.append(f"{f.id} ({message})")
-
-        summary = ", ".join(parts)
-        if getattr(page, "has_more", False):
-            summary = f"{summary}, ..."
-        if len(summary) > max_message_chars:
-            summary = summary[: max_message_chars - 3] + "..."
-        return summary
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:
