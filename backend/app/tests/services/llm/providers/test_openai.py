@@ -3,7 +3,7 @@ Tests for the OpenAI provider.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import openai
 
@@ -170,36 +170,35 @@ class TestOpenAIProvider:
     def test_execute_with_openai_api_error(
         self, provider, mock_client, completion_config, query_params
     ):
-        """Test handling of OpenAI API errors."""
+        """Generic `openai.APIError` (no specific subclass) falls through to the
+        `except openai.OpenAIError` block, which prefixes with "OpenAI error:"
+        and uses the raw exception string. No wrapper helper is invoked."""
         mock_client.responses.create.side_effect = openai.APIError(
             message="API request failed",
             request=MagicMock(),
             body=None,
         )
 
-        with patch("app.utils.handle_openai_error") as mock_handler:
-            mock_handler.return_value = "API request failed: rate limit exceeded"
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
-            result, error = provider.execute(
-                completion_config, query_params, "Test query"
-            )
-
-            assert result is None
-            assert error is not None
-            assert "API request failed" in error
-            mock_handler.assert_called_once()
+        assert result is None
+        assert error is not None
+        assert error.startswith("OpenAI error:")
+        assert "API request failed" in error
 
     def test_execute_with_generic_exception(
         self, provider, mock_client, completion_config, query_params
     ):
-        """Test handling of unexpected exceptions."""
+        """Non-OpenAI exceptions land in the `except Exception` catch-all,
+        prefixed with "Unexpected error:" and carrying the exception text."""
         mock_client.responses.create.side_effect = Exception("Timeout occurred")
 
         result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
-        assert "Unexpected error occurred" in error
+        assert error.startswith("Unexpected error:")
+        assert "Timeout occurred" in error
 
     def test_execute_with_conversation_config_without_id_or_auto_create(
         self, provider, mock_client, completion_config, query_params
