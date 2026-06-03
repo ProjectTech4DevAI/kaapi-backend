@@ -1,13 +1,39 @@
-from typing import Any, Literal
+import logging
+from typing import Any, Literal, get_args
 
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
+logger = logging.getLogger(__name__)
+
 from app.models import ModelConfig
+from app.models.llm.request import ConfigBlob
+from app.models.model_config import CompletionType
+
+Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
+
+# Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`
+# values are needed (filter validation, cost-lookup guards) so the set stays in sync
+# with the Literal definition.
+KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
+
+# Suffix that distinguishes a NativeCompletionConfig provider (e.g. "openai-native")
+# from the canonical provider name stored in model_config ("openai").
+NATIVE_PROVIDER_SUFFIX = "-native"
+
+
+def _normalize_provider(raw: str) -> str:
+    """Map NativeCompletionConfig providers (e.g. 'openai-native') to model_config provider names."""
+    return (
+        raw[: -len(NATIVE_PROVIDER_SUFFIX)]
+        if raw.endswith(NATIVE_PROVIDER_SUFFIX)
+        else raw
+    )
 
 
 def list_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
     skip: int = 0,
     limit: int = 100,
 ) -> tuple[list[ModelConfig], bool]:
@@ -30,7 +56,7 @@ def list_active_model_configs(
 
 def list_all_active_model_configs(
     session: Session,
-    provider: Literal["openai", "google"] | None = None,
+    provider: Provider | None = None,
 ) -> list[ModelConfig]:
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
@@ -42,7 +68,7 @@ def list_all_active_model_configs(
 
 
 def get_model_config(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+    session: Session, provider: Provider, model_name: str
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
@@ -52,9 +78,87 @@ def get_model_config(
     return session.exec(statement).first()
 
 
-def is_reasoning_model(
-    session: Session, provider: Literal["openai", "google"], model_name: str
+def list_supported_models(
+    session: Session, provider: Provider, completion_type: CompletionType
+) -> list[str]:
+    """Return active model names for a provider + completion type."""
+    stmt = select(ModelConfig.model_name).where(
+        ModelConfig.provider == provider,
+        ModelConfig.completion_type == completion_type,
+        ModelConfig.is_active,
+    )
+    return list(session.exec(stmt).all())
+
+
+def is_model_supported(
+    session: Session,
+    provider: Provider,
+    completion_type: CompletionType,
+    model_name: str,
 ) -> bool:
+    """Check whether (provider, model_name) is active and matches the completion type."""
+    stmt = select(ModelConfig.id).where(
+        ModelConfig.provider == provider,
+        ModelConfig.model_name == model_name,
+        ModelConfig.completion_type == completion_type,
+        ModelConfig.is_active,
+    )
+    return session.exec(stmt).first() is not None
+
+
+def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
+    """Reject ConfigBlob whose completion.params.model is not in model_config.
+
+    model_config is the source of truth — all providers/types validated.
+    Native configs are exempt (they forward raw params to the provider).
+    """
+    completion = blob.completion
+    raw_provider = completion.provider
+    completion_type = completion.type
+    if raw_provider is None:
+        return
+
+    if raw_provider.endswith("-native"):
+        return
+
+    provider = _normalize_provider(raw_provider)
+
+    model_name = (completion.params or {}).get("model")
+    if not model_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"completion.params.model is required for provider='{raw_provider}'",
+        )
+
+    model_row = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+    )
+    if model_row is None:
+        logger.warning(
+            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
+        )
+
+    if completion_type == "tts" and model_row is not None:
+        voice = (completion.params or {}).get("voice")
+        voice_spec = (
+            model_row.config.get("voice")
+            if isinstance(model_row.config, dict)
+            else None
+        )
+        allowed_voices = (
+            voice_spec.get("options") if isinstance(voice_spec, dict) else None
+        )
+        if voice and allowed_voices and voice not in allowed_voices:
+            logger.warning(
+                f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"model='{model_name}'. Allowed: {allowed_voices}."
+            )
+
+
+def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:
     """Return True if the model is configured with a reasoning `effort` control.
 
     A model is considered reasoning-capable if its `config` JSON contains an
@@ -69,7 +173,7 @@ def is_reasoning_model(
 
 def estimate_model_cost(
     session: Session,
-    provider: Literal["openai", "google"],
+    provider: Provider,
     model_name: str,
     input_tokens: int,
     output_tokens: int,
