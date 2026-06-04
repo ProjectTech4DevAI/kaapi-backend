@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -14,10 +14,23 @@ Provider = Literal[
     "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
 ]
 
+# Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`
+# values are needed (filter validation, cost-lookup guards) so the set stays in sync
+# with the Literal definition.
+KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
+
+# Suffix that distinguishes a NativeCompletionConfig provider (e.g. "openai-native")
+# from the canonical provider name stored in model_config ("openai").
+NATIVE_PROVIDER_SUFFIX = "-native"
+
 
 def _normalize_provider(raw: str) -> str:
     """Map NativeCompletionConfig providers (e.g. 'openai-native') to model_config provider names."""
-    return raw[: -len("-native")] if raw.endswith("-native") else raw
+    return (
+        raw[: -len(NATIVE_PROVIDER_SUFFIX)]
+        if raw.endswith(NATIVE_PROVIDER_SUFFIX)
+        else raw
+    )
 
 
 def list_active_model_configs(
