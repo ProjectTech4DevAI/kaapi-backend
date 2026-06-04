@@ -10,7 +10,9 @@ from app.models import ModelConfig
 from app.models.llm.request import ConfigBlob
 from app.models.model_config import CompletionType
 
-Provider = Literal["openai", "google", "sarvamai", "elevenlabs"]
+Provider = Literal[
+    "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+]
 
 # Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`
 # values are needed (filter validation, cost-lookup guards) so the set stays in sync
