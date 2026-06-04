@@ -741,12 +741,25 @@ class TestLoadPrefilterResults:
     def test_merges_tr_and_dup_annotations(self) -> None:
         run = SimpleNamespace(id=5)
         assessment = SimpleNamespace(project_id=1)
-        with patch.object(export_mod, "_stage_batch_job", return_value=SimpleNamespace(provider="openai")), patch.object(
+        with patch.object(
+            export_mod,
+            "_stage_batch_job",
+            return_value=SimpleNamespace(provider="openai"),
+        ), patch.object(
             export_mod, "load_raw_batch_results", return_value=[]
-        ), patch.object(export_mod, "parse_assessment_output", return_value=[]), patch.object(
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[]
+        ), patch.object(
             export_mod,
             "parse_topic_relevance_results",
-            return_value={0: {"verdict": True, "decision": "ACCEPT", "reasoning": "ok", "column_relevance": {"a": True}}},
+            return_value={
+                0: {
+                    "verdict": True,
+                    "decision": "ACCEPT",
+                    "reasoning": "ok",
+                    "column_relevance": {"a": True},
+                }
+            },
         ), patch.object(
             export_mod,
             "parse_duplicate_detection_results",
@@ -760,7 +773,11 @@ class TestLoadPrefilterResults:
     def test_tr_load_failure_is_swallowed(self) -> None:
         run = SimpleNamespace(id=5)
         assessment = SimpleNamespace(project_id=1)
-        with patch.object(export_mod, "_stage_batch_job", return_value=SimpleNamespace(provider="openai")), patch.object(
+        with patch.object(
+            export_mod,
+            "_stage_batch_job",
+            return_value=SimpleNamespace(provider="openai"),
+        ), patch.object(
             export_mod, "load_raw_batch_results", side_effect=RuntimeError("s3 down")
         ):
             out = _load_prefilter_results(MagicMock(), run, assessment)
@@ -769,28 +786,49 @@ class TestLoadPrefilterResults:
 
 class TestLoadParsedResultsForBatchJob:
     def test_object_store_path(self) -> None:
-        job = SimpleNamespace(id=1, provider="openai", raw_output_url="s3://x", provider_output_file_id=None)
+        job = SimpleNamespace(
+            id=1,
+            provider="openai",
+            raw_output_url="s3://x",
+            provider_output_file_id=None,
+        )
         assessment = SimpleNamespace(project_id=1, organization_id=1)
         storage = MagicMock()
         storage.stream.return_value.read.return_value.decode.return_value = "raw"
-        with patch.object(export_mod, "get_cloud_storage", return_value=storage), patch.object(
+        with patch.object(
+            export_mod, "get_cloud_storage", return_value=storage
+        ), patch.object(
             export_mod, "parse_stored_results", return_value=[{"k": 1}]
-        ), patch.object(export_mod, "parse_assessment_output", return_value=[{"row_id": "row_0"}]) as parse:
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[{"row_id": "row_0"}]
+        ) as parse:
             result = _load_parsed_results_for_batch_job(MagicMock(), job, assessment)
         assert result == [{"row_id": "row_0"}]
         parse.assert_called_once()
 
     def test_provider_fallback_path(self) -> None:
-        job = SimpleNamespace(id=1, provider="openai", raw_output_url=None, provider_output_file_id="f1", organization_id=1)
+        job = SimpleNamespace(
+            id=1,
+            provider="openai",
+            raw_output_url=None,
+            provider_output_file_id="f1",
+            organization_id=1,
+        )
         assessment = SimpleNamespace(project_id=1, organization_id=1)
-        with patch.object(export_mod, "_get_batch_provider", return_value=MagicMock()), patch.object(
+        with patch.object(
+            export_mod, "_get_batch_provider", return_value=MagicMock()
+        ), patch.object(
             export_mod, "download_batch_results", return_value=[{"k": 1}]
-        ), patch.object(export_mod, "parse_assessment_output", return_value=[{"row_id": "row_1"}]):
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[{"row_id": "row_1"}]
+        ):
             result = _load_parsed_results_for_batch_job(MagicMock(), job, assessment)
         assert result == [{"row_id": "row_1"}]
 
     def test_returns_none_without_outputs(self) -> None:
-        job = SimpleNamespace(id=1, provider="openai", raw_output_url=None, provider_output_file_id=None)
+        job = SimpleNamespace(
+            id=1, provider="openai", raw_output_url=None, provider_output_file_id=None
+        )
         assessment = SimpleNamespace(project_id=1, organization_id=1)
         assert _load_parsed_results_for_batch_job(MagicMock(), job, assessment) is None
 
@@ -799,7 +837,9 @@ class TestLoadL2ResultsForRun:
     def test_keys_by_row_id(self) -> None:
         run = SimpleNamespace()
         assessment = SimpleNamespace()
-        with patch.object(export_mod, "_stage_batch_job", return_value=SimpleNamespace()), patch.object(
+        with patch.object(
+            export_mod, "_stage_batch_job", return_value=SimpleNamespace()
+        ), patch.object(
             export_mod,
             "_load_parsed_results_for_batch_job",
             return_value=[{"row_id": "row_0", "output": "x"}, {"no_row": 1}],
@@ -809,5 +849,7 @@ class TestLoadL2ResultsForRun:
 
     def test_empty_when_no_batch(self) -> None:
         with patch.object(export_mod, "_stage_batch_job", return_value=None):
-            merged = _load_l2_results_for_run(MagicMock(), SimpleNamespace(), SimpleNamespace())
+            merged = _load_l2_results_for_run(
+                MagicMock(), SimpleNamespace(), SimpleNamespace()
+            )
         assert merged == {}

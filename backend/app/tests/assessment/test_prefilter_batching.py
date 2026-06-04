@@ -252,13 +252,22 @@ class TestAcceptedIndicesFallback:
             stage=Stage.L2_ASSESSMENT,
             stage_batches={Stage.PRE_FILTER_TOPIC_RELEVANCE: 1},
         )
-        with patch.object(tasks, "get_batch_job", return_value=SimpleNamespace(provider="openai")), patch.object(
-            tasks, "load_raw_batch_results", return_value=[]
-        ), patch.object(tasks, "parse_assessment_output", return_value=[]), patch.dict(
+        with patch.object(
+            tasks, "get_batch_job", return_value=SimpleNamespace(provider="openai")
+        ), patch.object(tasks, "load_raw_batch_results", return_value=[]), patch.object(
+            tasks, "parse_assessment_output", return_value=[]
+        ), patch.dict(
             tasks.STAGE_PARSERS,
-            {Stage.PRE_FILTER_TOPIC_RELEVANCE: lambda outs: {0: {"verdict": True}, 1: {"verdict": False}}},
+            {
+                Stage.PRE_FILTER_TOPIC_RELEVANCE: lambda outs: {
+                    0: {"verdict": True},
+                    1: {"verdict": False},
+                }
+            },
         ):
-            result = tasks._accepted_indices(MagicMock(), run, total_rows=3, project_id=1)
+            result = tasks._accepted_indices(
+                MagicMock(), run, total_rows=3, project_id=1
+            )
         # Only row 0 passed the gate.
         assert result == [0]
 
@@ -283,7 +292,9 @@ class TestSubmitStageBranches:
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
         ), patch.object(tasks, "_load_dataset_rows", return_value=[]), patch.object(
             tasks, "update_assessment_run_status"
-        ) as upd, patch.object(tasks, "recompute_assessment_status"):
+        ) as upd, patch.object(
+            tasks, "recompute_assessment_status"
+        ):
             tasks._submit_stage(MagicMock(), run, 1, 1)
         assert run.stage_status == StageStatus.FAILED
         upd.assert_called_once()
@@ -299,11 +310,17 @@ class TestSubmitStageBranches:
             tasks,
             "_resolve_run_context",
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
-        ), patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3), patch.object(
+        ), patch.object(
+            tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3
+        ), patch.object(
             tasks, "_accepted_indices", return_value=[0, 1]
-        ), patch.object(tasks, "flag_modified"), patch.object(
+        ), patch.object(
+            tasks, "flag_modified"
+        ), patch.object(
             tasks, "submit_assessment_batch", return_value=batch_job
-        ), patch.object(tasks, "recompute_assessment_status"):
+        ), patch.object(
+            tasks, "recompute_assessment_status"
+        ):
             tasks._submit_stage(MagicMock(), run, 1, 1)
         assert run.total_items == 2
         assert run.stage_batches[Stage.L2_ASSESSMENT] == 8
@@ -314,7 +331,9 @@ class TestSubmitStageBranches:
             tasks,
             "_resolve_run_context",
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
-        ), patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}]), patch.object(
+        ), patch.object(
+            tasks, "_load_dataset_rows", return_value=[{"a": "1"}]
+        ), patch.object(
             tasks, "_accepted_indices", return_value=[0]
         ):
             with pytest.raises(ValueError):
@@ -324,25 +343,31 @@ class TestSubmitStageBranches:
 class TestPersistAdvance:
     def test_dispatches_next_stage(self) -> None:
         run = _run()
-        with patch.object(tasks, "advance_or_finalize", return_value=Stage.L2_ASSESSMENT), patch.object(
-            tasks, "recompute_assessment_status"
-        ), patch.object(tasks, "_dispatch") as dispatch:
+        with patch.object(
+            tasks, "advance_or_finalize", return_value=Stage.L2_ASSESSMENT
+        ), patch.object(tasks, "recompute_assessment_status"), patch.object(
+            tasks, "_dispatch"
+        ) as dispatch:
             tasks._persist_advance(MagicMock(), run, 1, 1)
         dispatch.assert_called_once()
 
     def test_finalize_does_not_dispatch(self) -> None:
         run = _run()
-        with patch.object(tasks, "advance_or_finalize", return_value=None), patch.object(
-            tasks, "recompute_assessment_status"
-        ), patch.object(tasks, "_dispatch") as dispatch:
+        with patch.object(
+            tasks, "advance_or_finalize", return_value=None
+        ), patch.object(tasks, "recompute_assessment_status"), patch.object(
+            tasks, "_dispatch"
+        ) as dispatch:
             tasks._persist_advance(MagicMock(), run, 1, 1)
         dispatch.assert_not_called()
 
     def test_enqueue_failure_marks_failed(self) -> None:
         run = _run(stage=Stage.L2_ASSESSMENT)
-        with patch.object(tasks, "advance_or_finalize", return_value=Stage.L2_ASSESSMENT), patch.object(
-            tasks, "recompute_assessment_status"
-        ), patch.object(tasks, "_dispatch", side_effect=RuntimeError("broker down")), patch.object(
+        with patch.object(
+            tasks, "advance_or_finalize", return_value=Stage.L2_ASSESSMENT
+        ), patch.object(tasks, "recompute_assessment_status"), patch.object(
+            tasks, "_dispatch", side_effect=RuntimeError("broker down")
+        ), patch.object(
             tasks, "update_assessment_run_status"
         ) as upd:
             tasks._persist_advance(MagicMock(), run, 1, 1)
