@@ -17,9 +17,9 @@ RateCategory = Literal["llm_call", "collections", "evaluations"]
 
 # THRESHOLD NUMBERS
 THRESHOLDS: dict[RateCategory, int] = {
-    "llm_call": 15,
-    "collections": 3,
-    "evaluations": 5,
+    "llm_call": settings.THRESHOLD_LLM_CALL_RATE,
+    "collections": settings.THRESHOLD_COLLECTIONS_RATE,
+    "evaluations": settings.THRESHOLD_EVALUATIONS_RATE,
 }
 
 # Delete record after 2 minutes from redis
