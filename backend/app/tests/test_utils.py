@@ -372,18 +372,17 @@ class TestResolveInputExtended:
             AudioInput(content=AudioContent(value="b64audio", mime_type="audio/wav")),
         ]
         result, error = resolve_input(parts)
-        assert result == ""
+        assert result is None
         assert "not supported in multimodal" in error
 
     def test_multimodal_rejects_unknown_type(self) -> None:
         result, error = resolve_input(["not a valid input"])
-        # list with unsupported item type
-        assert result == ""
+        assert result is None
         assert "Unsupported input type" in error
 
     def test_unknown_input_type(self) -> None:
         result, error = resolve_input("just a string")
-        assert result == ""
+        assert result is None
         assert "Unknown input type" in error
 
 

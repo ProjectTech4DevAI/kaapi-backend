@@ -1,6 +1,7 @@
 """Tests for the Google Vertex AI provider."""
 
 import base64
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from app.models.llm import NativeCompletionConfig, QueryParams
 from app.services.llm.providers.gai_vertex import (
     GoogleVertexAIProvider,
     VertexClient,
+    _load_platform_sa_info,
 )
 
 
@@ -307,3 +309,139 @@ class TestGoogleVertexAIProvider:
                 stt_config, query, audio_ref, include_provider_raw_response=True
             )
         assert resp.provider_raw_response == raw
+
+
+# ---------------------------------------------------------------------------
+# VertexClient.endpoint — host changes by location
+# ---------------------------------------------------------------------------
+class TestVertexEndpoint:
+    def _client(self, location: str) -> VertexClient:
+        return VertexClient(
+            api_key="k",
+            project_id="my-proj",
+            location=location,
+            sa_info=None,
+            gcs_bucket="b",
+        )
+
+    def test_regional_location_uses_prefixed_host(self):
+        url = self._client("us-central1").endpoint("gemini-2.5-pro")
+        assert url.startswith("https://us-central1-aiplatform.googleapis.com/")
+        assert "/projects/my-proj/locations/us-central1/" in url
+        assert url.endswith("/models/gemini-2.5-pro:generateContent")
+
+    def test_global_location_uses_bare_host(self):
+        """The 'global' location does NOT use a hostname prefix — it must
+        resolve to ``aiplatform.googleapis.com``. Caught a real 404 outage
+        where a global config produced ``global-aiplatform.googleapis.com``."""
+        url = self._client("global").endpoint("gemini-2.5-pro")
+        assert url.startswith("https://aiplatform.googleapis.com/")
+        assert "global-aiplatform" not in url
+        assert "/locations/global/" in url
+
+    def test_other_regions_get_prefix(self):
+        url = self._client("europe-west4").endpoint("gemini-2.5-flash")
+        assert "europe-west4-aiplatform.googleapis.com" in url
+
+
+# ---------------------------------------------------------------------------
+# _load_platform_sa_info — env-var shape handling
+# ---------------------------------------------------------------------------
+class TestLoadPlatformSaInfo:
+    """The platform SA can be injected as a raw JSON string via env var or
+    secret manager. Cover the parse paths and the unhappy ones."""
+
+    def _sample_sa(self) -> dict:
+        return {
+            "type": "service_account",
+            "project_id": "platform-project",
+            "client_email": "sa@platform-project.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
+        }
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_returns_none_when_unset(self, mock_settings):
+        mock_settings.GCP_SA_KEY = ""
+        assert _load_platform_sa_info() is None
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_parses_raw_json_string(self, mock_settings):
+        sa = self._sample_sa()
+        mock_settings.GCP_SA_KEY = json.dumps(sa)
+        assert _load_platform_sa_info() == sa
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_strips_surrounding_whitespace(self, mock_settings):
+        """env-var injection often leaves trailing newlines — must still parse."""
+        sa = self._sample_sa()
+        mock_settings.GCP_SA_KEY = "\n  " + json.dumps(sa) + "  \n"
+        assert _load_platform_sa_info() == sa
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_returns_none_on_malformed_json(self, mock_settings):
+        """A JSON-looking but invalid value must not raise — it returns None
+        and lets create_client raise the missing-fields ValueError later."""
+        mock_settings.GCP_SA_KEY = "{not valid json"
+        assert _load_platform_sa_info() is None
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_non_json_string_returns_none(self, mock_settings):
+        """Anything not starting with '{' is treated as non-JSON and ignored —
+        this guards against accidentally interpreting a path or sentinel as a key."""
+        mock_settings.GCP_SA_KEY = "/etc/secrets/sa.json"
+        assert _load_platform_sa_info() is None
+
+
+# ---------------------------------------------------------------------------
+# create_client — credential precedence (BYOK overrides platform settings)
+# ---------------------------------------------------------------------------
+class TestCreateClientFallback:
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_byok_overrides_platform_settings(self, mock_settings):
+        mock_settings.GCP_VERTEX_API_KEY = "platform-key"
+        mock_settings.GCP_PROJECT_ID = "platform-proj"
+        mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+
+        c = GoogleVertexAIProvider.create_client(
+            {
+                "api_key": "byok-key",
+                "project_id": "byok-proj",
+                "location": "europe-west4",
+                "gcs_bucket": "byok-bucket",
+            }
+        )
+        assert c.api_key == "byok-key"
+        assert c.project_id == "byok-proj"
+        assert c.location == "europe-west4"
+        assert c.gcs_bucket == "byok-bucket"
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_partial_byok_fills_from_platform(self, mock_settings):
+        """When BYOK only supplies api_key, project/location come from settings."""
+        mock_settings.GCP_VERTEX_API_KEY = "platform-key"
+        mock_settings.GCP_PROJECT_ID = "platform-proj"
+        mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+
+        c = GoogleVertexAIProvider.create_client({"api_key": "byok-key"})
+        assert c.api_key == "byok-key"
+        assert c.project_id == "platform-proj"
+        assert c.location == "us-central1"
+
+    @patch("app.services.llm.providers.gai_vertex.settings")
+    def test_missing_everything_raises_value_error(self, mock_settings):
+        mock_settings.GCP_VERTEX_API_KEY = ""
+        mock_settings.GCP_PROJECT_ID = ""
+        mock_settings.GCP_VERTEX_LOCATION = ""
+        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GCS_AUDIO_BUCKET = ""
+
+        with pytest.raises(ValueError) as exc_info:
+            GoogleVertexAIProvider.create_client({})
+        msg = str(exc_info.value)
+        assert "api_key" in msg
+        assert "project_id" in msg
+        assert "location" in msg

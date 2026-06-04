@@ -484,18 +484,19 @@ class TestMapKaapiToSarvamParams:
         assert result["output_audio_codec"] == "wav"
         assert warnings == []
 
-    # Error Cases
-    def test_missing_model_returns_error(self):
-        """Test that missing model parameter returns error."""
+    # Error / fallback cases
+    def test_missing_model_falls_back_to_default(self):
+        """Missing model falls back to DEFAULT_SARVAM_TTS_MODEL without warnings."""
         kaapi_params = {"voice": "Shubh", "language": "hi-IN"}
 
         result, warnings = map_kaapi_to_sarvam_params(
             kaapi_params, completion_type="tts"
         )
 
-        assert result == {}
-        assert len(warnings) == 1
-        assert "model" in warnings[0].lower()
+        assert result["model"] == "bulbul:v3"
+        assert result["speaker"] == "Shubh"
+        assert result["target_language_code"] == "hi-IN"
+        assert warnings == []
 
     def test_unsupported_completion_type(self):
         """Test that unsupported completion types return error."""
@@ -741,18 +742,19 @@ class TestMapKaapiToElevenlabsParams:
             assert result["voice_id"] == expected_id
             assert warnings == []
 
-    # Error Cases
-    def test_missing_model_returns_error(self):
-        """Test that missing model returns error."""
+    # Error / fallback cases
+    def test_missing_model_falls_back_to_default(self):
+        """Missing model falls back to DEFAULT_ELEVENLABS_TTS_MODEL without warnings."""
         kaapi_params = {"voice": "Sarah", "language": "en-IN"}
 
         result, warnings = map_kaapi_to_elevenlabs_params(
             kaapi_params, completion_type="tts"
         )
 
-        assert result == {}
-        assert len(warnings) == 1
-        assert "model" in warnings[0].lower()
+        assert result["model_id"] == "eleven_v3"
+        assert result["voice_id"] == "EXAVITQu4vr4xnSDxMaL"
+        assert result["language_code"] == "en"
+        assert warnings == []
 
     def test_unsupported_completion_type(self):
         """Test that unsupported completion types return error."""

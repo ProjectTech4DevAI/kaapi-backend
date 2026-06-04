@@ -105,10 +105,10 @@ class TestGetLLMProvider:
 
             assert "not configured for this project" in str(exc_info.value)
 
-    def test_google_vertex_falls_back_to_platform_settings(self, db: Session, tmp_path):
+    def test_google_vertex_falls_back_to_platform_settings(self, db: Session):
         """No credential row for google-vertex → create_client synthesizes the
         platform defaults from settings (api_key/project/location/bucket) and
-        loads the SA JSON from GCP_SA_KEY."""
+        parses the inline SA JSON from GCP_SA_KEY."""
         import json as _json
 
         from app.services.llm.providers.gai_vertex import (
@@ -123,8 +123,6 @@ class TestGetLLMProvider:
             "client_email": "sa@platform-project.iam.gserviceaccount.com",
             "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
         }
-        sa_path = tmp_path / "sa.json"
-        sa_path.write_text(_json.dumps(sa_info))
 
         with patch(
             "app.crud.credentials.get_provider_credential"
@@ -135,7 +133,7 @@ class TestGetLLMProvider:
             mock_settings.GCP_VERTEX_API_KEY = "platform-key"
             mock_settings.GCP_PROJECT_ID = "platform-project"
             mock_settings.GCP_VERTEX_LOCATION = "us-central1"
-            mock_settings.GCP_SA_KEY = str(sa_path)
+            mock_settings.GCP_SA_KEY = _json.dumps(sa_info)
             mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
 
             provider = get_llm_provider(
