@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import model_validator
 from sqlmodel import SQLModel
 
+from app.core.audio_utils import AudioRef
 from app.models.llm import NativeCompletionConfig, LLMCallResponse, QueryParams
 from app.models.llm.request import TextContent, ImageContent, PDFContent
 
@@ -62,7 +63,7 @@ class BaseProvider(ABC):
         self,
         completion_config: NativeCompletionConfig,
         query: QueryParams,
-        resolved_input: str | list[ContentPart],
+        resolved_input: str | AudioRef | list[ContentPart] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute LLM API call.
@@ -72,7 +73,8 @@ class BaseProvider(ABC):
         Args:
             completion_config: LLM completion configuration, pass params as-is to provider API
             query: Query parameters including input and conversation_id
-            resolved_input: The resolved input content (text string or file path for audio)
+            resolved_input: Resolved input — string for text/TTS, ``AudioRef`` for STT,
+                content list for image/pdf, ``MultiModalInput`` for multi-part requests.
             include_provider_raw_response: Whether to include the raw LLM provider response in the output
 
         Returns:

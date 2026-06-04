@@ -11,7 +11,9 @@ CompletionType = Literal["text", "stt", "tts"]
 
 
 class ModelConfigBase(SQLModel):
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] = Field(
+    provider: Literal[
+        "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+    ] = Field(
         default="openai",
         sa_column=sa.Column(
             sa.Enum(
@@ -19,11 +21,13 @@ class ModelConfigBase(SQLModel):
                 "google",
                 "sarvamai",
                 "elevenlabs",
+                "anthropic",
+                "google-vertex",
                 name="provider_enum",
                 schema="global",
             ),
             nullable=False,
-            comment="provider name (e.g. openai, google, sarvamai, elevenlabs)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs, anthropic, google-vertex)",
         ),
     )
 
