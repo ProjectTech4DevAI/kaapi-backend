@@ -71,14 +71,15 @@ def _guess_image_mime_from_url(url: str) -> str | None:
     return None
 
 
-def resolve_item_type(declared: str, type_override: str | None = None) -> str:
+def resolve_item_type(declared: str, type_override: str | None = None) -> str | None:
     """Resolve an attachment item as 'image' or 'pdf' from the user-declared type.
 
-    Trusts the user: a per-row ``type_override`` (for 'mixed' columns) wins, else the
-    column's declared ``type``. Anything non-concrete falls back to 'image'.
+    A per-row ``type_override`` (for 'mixed' columns) wins, else the column's declared
+    ``type``. Returns None when the type stays unresolved (e.g. a 'mixed' row whose
+    value didn't map to a concrete type) so callers can skip rather than guess.
     """
     item_type = type_override or declared
-    return item_type if item_type in ("image", "pdf") else "image"
+    return item_type if item_type in ("image", "pdf") else None
 
 
 def _normalize_type_value(value: str) -> str:
@@ -133,6 +134,12 @@ def resolve_attachment_values(
         return []
 
     item_type = resolve_item_type(att.type, type_override)
+    if item_type is None:
+        logger.warning(
+            "[resolve_attachment_values] Unresolved type for column=%s — skipping",
+            att.column,
+        )
+        return []
     resolved: list[dict[str, Any]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
@@ -158,6 +165,12 @@ def build_gemini_attachment_parts(
         return []
 
     item_type = resolve_item_type(att.type, type_override)
+    if item_type is None:
+        logger.warning(
+            "[build_gemini_attachment_parts] Unresolved type for column=%s — skipping",
+            att.column,
+        )
+        return []
     parts: list[dict[str, Any]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)

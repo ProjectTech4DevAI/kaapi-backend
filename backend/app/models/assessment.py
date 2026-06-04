@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Column, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -349,13 +349,25 @@ class AssessmentAttachment(BaseModel):
             "For 'mixed': the dataset column whose value decides each row's type."
         ),
     )
-    type_value_map: dict[str, str] | None = Field(
+    type_value_map: dict[str, Literal["image", "pdf"]] | None = Field(
         None,
         description=(
             "For 'mixed': maps a type_column value to 'image' or 'pdf' "
             "(e.g. {'Photo': 'image', 'Report': 'pdf'})."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_mixed_config(self) -> "AssessmentAttachment":
+        """A 'mixed' column must carry the per-row routing fields; others must not."""
+        if self.type == "mixed":
+            if self.type_column is None or self.type_value_map is None:
+                raise ValueError(
+                    "type='mixed' requires both 'type_column' and 'type_value_map'."
+                )
+            if not self.type_value_map:
+                raise ValueError("type_value_map must not be empty for type='mixed'.")
+        return self
 
 
 class AssessmentConfigRef(BaseModel):

@@ -376,12 +376,26 @@ async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str,
     recompute_assessment_status(session=session, assessment_id=run.assessment_id)
 
     if nxt:
-        run_assessment_pipeline.delay(
-            run_id=run.id,
-            organization_id=parent.organization_id,
-            project_id=parent.project_id,
-            trace_id="",
-        )
+        try:
+            run_assessment_pipeline.delay(
+                run_id=run.id,
+                organization_id=parent.organization_id,
+                project_id=parent.project_id,
+                trace_id="",
+            )
+        except Exception as exc:
+            logger.error(
+                "[process_run_batches] run_id=%s stage=%s enqueue failed — marking failed for resume: %s",
+                run.id,
+                run.stage,
+                exc,
+                exc_info=True,
+            )
+            return _fail_run_stage(
+                session,
+                run,
+                "Failed to enqueue the next pipeline stage. Resume the run to retry.",
+            )
 
     return {
         "run_id": run.id,

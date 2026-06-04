@@ -403,11 +403,11 @@ class TestResolveItemType:
         assert resolve_item_type("image", "pdf") == "pdf"
         assert resolve_item_type("pdf", "image") == "image"
 
-    def test_mixed_without_override_defaults_to_image(self) -> None:
-        assert resolve_item_type("mixed") == "image"
+    def test_mixed_without_override_is_unresolved(self) -> None:
+        assert resolve_item_type("mixed") is None
 
-    def test_unknown_declared_defaults_to_image(self) -> None:
-        assert resolve_item_type("whatever") == "image"
+    def test_unknown_declared_is_unresolved(self) -> None:
+        assert resolve_item_type("whatever") is None
 
     def test_column_uses_single_declared_type(self) -> None:
         """One column, many URLs -> all routed by the declared type."""
@@ -489,10 +489,36 @@ class TestAttachmentTypeForRow:
         att = AssessmentAttachment(column="Docs", type="image", format="url")
         assert attachment_type_for_row(att, {"Docs": "x"}) is None
 
+    def test_mixed_config_missing_routing_fields_is_rejected(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AssessmentAttachment(column="Docs", type="mixed", format="url")
+
+    def test_mixed_config_invalid_map_value_is_rejected(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AssessmentAttachment(
+                column="Docs",
+                type="mixed",
+                format="url",
+                type_column="DOC type",
+                type_value_map={"Report": "spreadsheet"},
+            )
+
     def test_override_forces_part_type(self) -> None:
         from app.services.assessment.utils.attachments import resolve_attachment_values
 
-        att = AssessmentAttachment(column="Docs", type="mixed", format="url")
+        att = AssessmentAttachment(
+            column="Docs",
+            type="mixed",
+            format="url",
+            type_column="DOC type",
+            type_value_map={"Report": "pdf"},
+        )
         url = "https://drive.google.com/file/d/ID/view"
         parts = resolve_attachment_values(url, att, type_override="pdf")
         assert parts[0]["type"] == "input_file"

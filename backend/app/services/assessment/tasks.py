@@ -280,5 +280,25 @@ def _persist_advance(
     session.add(run)
     session.commit()
     recompute_assessment_status(session=session, assessment_id=run.assessment_id)
-    if nxt:
+    if not nxt:
+        return
+    # Commit precedes dispatch (the worker only acts on a committed PENDING run).
+    # If the broker call fails the run would otherwise sit at PENDING forever — the
+    # cron only re-polls PROCESSING runs — so mark it failed (resumable) instead.
+    try:
         _dispatch(run.id, organization_id, project_id)
+    except Exception:
+        logger.error(
+            "[_persist_advance] run_id=%s stage=%s enqueue failed — marking failed for resume",
+            run.id,
+            run.stage,
+            exc_info=True,
+        )
+        run.stage_status = StageStatus.FAILED
+        update_assessment_run_status(
+            session=session,
+            run=run,
+            status="failed",
+            error_message="Failed to enqueue the next pipeline stage. Resume the run to retry.",
+        )
+        recompute_assessment_status(session=session, assessment_id=run.assessment_id)

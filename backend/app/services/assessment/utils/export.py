@@ -617,18 +617,21 @@ def load_export_rows_for_run(
         return rows
 
     # Dataset unavailable — emit whatever results we have, indexed by row_id.
+    all_row_ids = sorted(
+        {str(rid) for rid in l2_by_row_id} | {str(rid) for rid in prefilter_by_row_id}
+    )
     return [
         _build_export_row(
             run=run,
             assessment=assessment,
             dataset_name=dataset_name,
-            row_id=str(row_id),
+            row_id=row_id,
             input_data=None,
-            prefilter_item=prefilter_by_row_id.get(str(row_id)),
-            l2_item=l2_item,
+            prefilter_item=prefilter_by_row_id.get(row_id),
+            l2_item=l2_by_row_id.get(row_id),
             has_prefilter=has_prefilter,
         )
-        for row_id, l2_item in l2_by_row_id.items()
+        for row_id in all_row_ids
     ]
 
 
