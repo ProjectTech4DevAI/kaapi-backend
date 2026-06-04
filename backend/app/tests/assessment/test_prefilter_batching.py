@@ -113,3 +113,40 @@ class TestSubmitCurrentStage:
         with p[0], p[1], p[2], p[3], patch.object(tasks, "_persist_advance") as advance:
             tasks._submit_stage(session, run, 1, 1)
         advance.assert_called_once()
+
+
+class TestAcceptedIndices:
+    def test_uses_persisted_indices_without_downloading(self) -> None:
+        """Stored accepted set is read directly — no gate batch re-download."""
+        run = _run(
+            pipeline={
+                "stages": [
+                    {"stage": Stage.PRE_FILTER_TOPIC_RELEVANCE, "order": 1},
+                    {"stage": Stage.L2_ASSESSMENT, "order": 2},
+                ],
+                "accepted_indices": [0, 2, 5],
+            },
+            stage=Stage.L2_ASSESSMENT,
+        )
+        with patch.object(tasks, "load_raw_batch_results") as load:
+            result = tasks._accepted_indices(
+                MagicMock(), run, total_rows=10, project_id=1
+            )
+        assert result == [0, 2, 5]
+        load.assert_not_called()
+
+    def test_persisted_indices_clamped_to_total_rows(self) -> None:
+        run = _run(
+            pipeline={"stages": [], "accepted_indices": [0, 3, 99]},
+            stage=Stage.L2_ASSESSMENT,
+        )
+        result = tasks._accepted_indices(MagicMock(), run, total_rows=4, project_id=1)
+        assert result == [0, 3]
+
+    def test_falls_back_to_full_range_when_nothing_persisted(self) -> None:
+        run = _run(
+            pipeline={"stages": [{"stage": Stage.L2_ASSESSMENT, "order": 1}]},
+            stage=Stage.L2_ASSESSMENT,
+        )
+        result = tasks._accepted_indices(MagicMock(), run, total_rows=3, project_id=1)
+        assert result == [0, 1, 2]

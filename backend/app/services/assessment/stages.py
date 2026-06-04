@@ -15,10 +15,9 @@ from app.core.batch import (
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.cloud import get_cloud_storage
-from app.core.config import settings
 from app.models.assessment import AssessmentRun, Stage, StageStatus
 from app.models.batch_job import BatchJob, BatchJobType
-from app.services.assessment.prefilter import resolve_prefilter_settings
+from app.services.assessment.prefilter import constants, resolve_prefilter_settings
 from app.services.assessment.prefilter.duplicate_detection import (
     build_duplicate_detection_requests,
     parse_duplicate_detection_results,
@@ -84,7 +83,7 @@ def submit_prefilter_batch(
     display_name: str,
 ) -> BatchJob:
     """Submit a prefilter batch on the configured provider and return the BatchJob."""
-    base = settings.ASSESSMENT_PREFILTER_PROVIDER
+    base = constants.ASSESSMENT_PREFILTER_PROVIDER
     provider = _get_batch_provider(
         session=session,
         provider_name=base,
@@ -100,7 +99,7 @@ def submit_prefilter_batch(
     else:
         config = {
             "display_name": display_name,
-            "model": f"models/{settings.ASSESSMENT_PREFILTER_MODEL}",
+            "model": f"models/{constants.ASSESSMENT_PREFILTER_MODEL}",
         }
     return start_batch_job(
         session=session,

@@ -8,8 +8,8 @@ import json
 import logging
 from typing import Any
 
-from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
+from app.services.assessment.prefilter import constants
 from app.services.assessment.prefilter.request_builder import build_request_line
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
@@ -54,7 +54,7 @@ def build_topic_relevance_requests(
 ) -> list[dict[str, Any]]:
     """Build one batch JSONL line per row, with text columns + attachment parts."""
     attachments = attachments or []
-    is_openai = settings.ASSESSMENT_PREFILTER_PROVIDER == "openai"
+    is_openai = constants.ASSESSMENT_PREFILTER_PROVIDER == "openai"
     schema = _build_schema(columns + [a.column for a in attachments])
     system = user_prompt.strip() + _INSTRUCTIONS
 
@@ -112,4 +112,15 @@ def parse_topic_relevance_results(
             }
         except Exception as exc:
             logger.warning("[parse_topic_relevance_results] %s — %s", key, exc)
+            parsed[idx] = _accept_on_error()
     return parsed
+
+
+def _accept_on_error() -> dict[str, Any]:
+    """Fail-open gate record for a row whose topic-relevance output was unparseable."""
+    return {
+        "verdict": True,
+        "decision": "",
+        "reasoning": "",
+        "column_relevance": {},
+    }

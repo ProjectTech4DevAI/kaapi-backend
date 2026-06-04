@@ -171,11 +171,6 @@ class Settings(BaseSettings):
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # Assessment prefilter — provider + model for the batch prefilter stages.
-    ASSESSMENT_PREFILTER_PROVIDER: Literal["openai", "google"] = "openai"
-    ASSESSMENT_PREFILTER_MODEL: str = "gpt-5-mini"
-    ASSESSMENT_PREFILTER_DUPLICATE_STORE: str = "vs_6a20339fbc148191867fd06d29133278"
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

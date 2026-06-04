@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from app.core.config import settings
 from app.services.assessment.mappers import _ensure_openai_strict_schema
+from app.services.assessment.prefilter import constants
 
 
 def build_request_line(
@@ -20,9 +20,9 @@ def build_request_line(
     ``attachment_parts`` are provider-shaped content parts (from the OpenAI/Gemini
     attachment resolvers) appended after the text part.
     """
-    model = settings.ASSESSMENT_PREFILTER_MODEL
+    model = constants.ASSESSMENT_PREFILTER_MODEL
 
-    if settings.ASSESSMENT_PREFILTER_PROVIDER == "openai":
+    if constants.ASSESSMENT_PREFILTER_PROVIDER == "openai":
         content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
         content.extend(attachment_parts or [])
         body: dict[str, Any] = {

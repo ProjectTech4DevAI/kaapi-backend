@@ -18,14 +18,10 @@ from app.crud.assessment.batch import (
 )
 from app.models.assessment import AssessmentAttachment
 from app.services.assessment.utils.attachments import (
-    _decode_base64_prefix,
-    _guess_image_mime_from_base64,
     _guess_image_mime_from_url,
     resolve_attachment_values,
-    resolve_image_mime_and_payload,
     resolve_item_type,
     split_attachment_urls,
-    split_data_url,
     to_direct_attachment_url,
 )
 
@@ -347,56 +343,24 @@ class TestBatchHelpers:
         )
         assert "drive.google.com/uc" in pdf_url
 
-    def test_data_url_and_mime_guessers(self) -> None:
-        mime, payload = split_data_url("data:image/png;base64,AAAA")
-        assert mime == "image/png"
-        assert payload == "AAAA"
-        none_mime, raw = split_data_url("rawbase64")
-        assert none_mime is None
-        assert raw == "rawbase64"
+    def test_url_mime_guessers(self) -> None:
         assert _guess_image_mime_from_url("https://x/y/file.jpeg") == "image/jpeg"
         assert _guess_image_mime_from_url("https://x/y/file.unknown") is None
 
-    def test_base64_guess_and_decode(self) -> None:
-        png_head = "iVBORw0KGgoAAAANSUhEUg=="
-        assert _guess_image_mime_from_base64(png_head) == "image/png"
-        assert _decode_base64_prefix("###") == b""
-
-    def testresolve_image_mime_and_payload(self) -> None:
-        mime, payload = resolve_image_mime_and_payload("https://x/y/file.webp", "url")
-        assert mime == "image/webp"
-        assert payload.endswith("file.webp")
-        mime2, payload2 = resolve_image_mime_and_payload(
-            "data:image/jpeg;base64,AAAA", "base64"
-        )
-        assert mime2 == "image/jpeg"
-        assert payload2 == "AAAA"
-
     def testresolve_attachment_values(self) -> None:
         image_url_att = AssessmentAttachment(column="img", type="image", format="url")
-        image_b64_att = AssessmentAttachment(
-            column="img", type="image", format="base64"
-        )
         pdf_url_att = AssessmentAttachment(column="pdf", type="pdf", format="url")
-        pdf_b64_att = AssessmentAttachment(column="pdf", type="pdf", format="base64")
 
         values = resolve_attachment_values(
             "https://example.com/a.png,https://example.com/b.png", image_url_att
         )
         assert len(values) == 2
         assert values[0]["type"] == "input_image"
-
-        values = resolve_attachment_values("data:image/png;base64,AAAA", image_b64_att)
-        assert values[0]["image_url"].startswith("data:image/png;base64,")
+        assert values[0]["image_url"] == "https://example.com/a.png"
 
         values = resolve_attachment_values("https://example.com/a.pdf", pdf_url_att)
         assert values[0]["type"] == "input_file"
-        assert "file_url" in values[0]
-
-        values = resolve_attachment_values(
-            "data:application/pdf;base64,AAAA", pdf_b64_att
-        )
-        assert values[0]["file_data"].startswith("data:application/pdf;base64,")
+        assert values[0]["file_url"] == "https://example.com/a.pdf"
 
     def test_build_openai_and_google_jsonl(self) -> None:
         rows = [{"q": "What is 2+2?", "img": "https://example.com/a.png"}]
@@ -454,43 +418,12 @@ class TestResolveItemType:
         assert types == ["input_file", "input_file"]
 
 
-class TestAttachmentMagicAndMime:
-    def test_image_magic_all_formats(self) -> None:
-        from app.services.assessment.utils.attachments import _image_mime_from_magic
-
-        assert _image_mime_from_magic(b"\x89PNG\r\n\x1a\n") == "image/png"
-        assert _image_mime_from_magic(b"\xff\xd8\xff") == "image/jpeg"
-        assert _image_mime_from_magic(b"GIF89a") == "image/gif"
-        assert _image_mime_from_magic(b"GIF87a") == "image/gif"
-        assert _image_mime_from_magic(b"BM....") == "image/bmp"
-        assert _image_mime_from_magic(b"RIFF\x00\x00\x00\x00WEBP") == "image/webp"
-        assert _image_mime_from_magic(b"II*\x00") == "image/tiff"
-        assert _image_mime_from_magic(b"MM\x00*") == "image/tiff"
-        assert _image_mime_from_magic(b"nope") is None
-
+class TestAttachmentMime:
     def test_guess_image_mime_from_url_variants(self) -> None:
-        from app.services.assessment.utils.attachments import _guess_image_mime_from_url
-
         assert _guess_image_mime_from_url("http://x/a.PNG") == "image/png"
         assert _guess_image_mime_from_url("http://x/a.jpeg") == "image/jpeg"
         assert _guess_image_mime_from_url("http://x/a.webp") == "image/webp"
         assert _guess_image_mime_from_url("http://x/a.txt") is None
-
-    def test_resolve_image_mime_data_url(self) -> None:
-        from app.services.assessment.utils.attachments import (
-            resolve_image_mime_and_payload,
-        )
-
-        mime, payload = resolve_image_mime_and_payload(
-            "data:image/webp;base64,AAAA", "base64"
-        )
-        assert mime == "image/webp"
-        assert payload == "AAAA"
-
-    def test_decode_base64_prefix_empty(self) -> None:
-        from app.services.assessment.utils.attachments import _decode_base64_prefix
-
-        assert _decode_base64_prefix("   ") is None
 
 
 class TestAttachmentTypeForRow:

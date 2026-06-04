@@ -129,7 +129,17 @@ def _resolve_run_context(
 def _accepted_indices(
     session: Session, run: AssessmentRun, total_rows: int, project_id: int
 ) -> list[int]:
-    """Row indices that passed every gate stage before the current one."""
+    """Row indices that passed every gate stage before the current one.
+
+    Prefers the accepted set persisted by the gate stage on ``run.pipeline``
+    (set in ``_record_gate_stats``), avoiding a re-download + re-parse of the
+    gate batch at the memory-heavy prefilter -> assessment transition. Falls back
+    to recomputing from the gate batches only if nothing was persisted.
+    """
+    stored = (run.pipeline or {}).get("accepted_indices")
+    if stored is not None:
+        return [i for i in sorted(stored) if 0 <= i < total_rows]
+
     accepted = set(range(total_rows))
     for stage in ordered_stages(run.pipeline):
         if stage == run.stage:

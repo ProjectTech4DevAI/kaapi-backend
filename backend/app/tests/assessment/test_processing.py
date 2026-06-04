@@ -6,8 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.crud.assessment import processing as processing_mod
 from app.crud.assessment.processing import (
     _get_batch_provider,
+    _record_gate_stats,
     _sanitize_json_output,
     parse_assessment_output,
     process_run_batches,
@@ -209,6 +211,47 @@ class TestParseAssessmentOutputGoogle:
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
             results = parse_assessment_output(raw, "google-native")
         assert results[0]["output"] == "out"
+
+
+class TestRecordGateStats:
+    def _patches(self, parsed):
+        return [
+            patch.object(processing_mod, "load_raw_batch_results", return_value=[]),
+            patch.object(processing_mod, "parse_assessment_output", return_value=[]),
+            patch.dict(
+                processing_mod.STAGE_PARSERS,
+                {Stage.PRE_FILTER_TOPIC_RELEVANCE: lambda _outputs: parsed},
+            ),
+            patch.object(processing_mod, "update_assessment_run_prefilter_stats"),
+            patch.object(processing_mod, "flag_modified"),
+        ]
+
+    def test_persists_accepted_indices_to_pipeline(self) -> None:
+        run = SimpleNamespace(id=1, assessment_id=2, pipeline={"stages": []})
+        parsed = {
+            0: {"verdict": True},
+            1: {"verdict": False},
+            2: {"verdict": True},
+        }
+        p = self._patches(parsed)
+        with p[0], p[1], p[2], p[3], p[4]:
+            _record_gate_stats(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
+            )
+        assert run.pipeline["accepted_indices"] == [0, 2]
+
+    def test_intersects_with_prior_gate(self) -> None:
+        run = SimpleNamespace(
+            id=1, assessment_id=2, pipeline={"accepted_indices": [2, 3]}
+        )
+        parsed = {2: {"verdict": True}, 3: {"verdict": False}, 4: {"verdict": True}}
+        p = self._patches(parsed)
+        with p[0], p[1], p[2], p[3], p[4]:
+            _record_gate_stats(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
+            )
+        # 2 passes this gate and was in the prior accepted set; 4 wasn't; 3 rejected.
+        assert run.pipeline["accepted_indices"] == [2]
 
 
 class TestGetBatchProvider:

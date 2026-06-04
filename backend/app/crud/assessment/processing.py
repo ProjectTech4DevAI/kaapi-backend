@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
@@ -275,7 +276,11 @@ def _poll_stage_outcome(session: Session, provider: BatchProvider, batch_job) ->
 def _record_gate_stats(
     session: Session, run: AssessmentRun, stage: str, batch_job, project_id: int
 ) -> None:
-    """For a go/no-go stage, persist passed/rejected counts from its results."""
+    """For a go/no-go stage, persist passed/rejected counts and accepted row indices.
+
+    The accepted indices are stored on ``run.pipeline`` so the next stage's batch
+    build reads them directly instead of re-downloading and re-parsing this batch.
+    """
     try:
         raw = load_raw_batch_results(session, batch_job, project_id)
         outputs = parse_assessment_output(raw, batch_job.provider)
@@ -289,6 +294,16 @@ def _record_gate_stats(
             prefilter_total_passed=passed,
             prefilter_total_rejected=total - passed,
         )
+
+        # Persist the cumulative accepted set (intersect with prior gates).
+        accepted = {idx for idx, r in parsed.items() if r.get("verdict")}
+        prev = (run.pipeline or {}).get("accepted_indices")
+        if prev is not None:
+            accepted &= set(prev)
+        pipeline = dict(run.pipeline or {})
+        pipeline["accepted_indices"] = sorted(accepted)
+        run.pipeline = pipeline
+        flag_modified(run, "pipeline")
     except Exception as exc:
         logger.warning(
             "[_record_gate_stats] run_id=%s stage=%s — %s", run.id, stage, exc

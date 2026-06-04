@@ -1,11 +1,11 @@
 """Attachment resolution utilities for assessment batch builds.
 
-Handles MIME type detection, base64 decoding, Google Drive URL normalization,
-data-URL parsing, and conversion of dataset cell values into provider input objects.
+URL-only: dataset cells hold attachment URLs. Handles Google Drive URL
+normalization and conversion of cell values into provider input objects.
+Attachments are passed to providers by reference (URL), never inlined as base64,
+to keep the batch build memory-light.
 """
 
-import base64
-import binascii
 import logging
 import re
 from typing import Any
@@ -63,75 +63,12 @@ def to_direct_attachment_url(url: str, attachment_type: str) -> str:
     return f"https://drive.google.com/uc?export=download&id={file_id}"
 
 
-def split_data_url(value: str) -> tuple[str | None, str]:
-    """Return (mime_type, base64_payload) for a data URL; otherwise (None, value)."""
-    match = re.match(
-        r"^data:([^;]+);base64,(.+)$",
-        value.strip(),
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if not match:
-        return None, value.strip()
-    return match.group(1).strip().lower(), match.group(2).strip()
-
-
 def _guess_image_mime_from_url(url: str) -> str | None:
     path = urlparse(url).path or ""
     for ext, mime in _IMAGE_MIME_BY_EXT.items():
         if path.lower().endswith(ext):
             return mime
     return None
-
-
-def _decode_base64_prefix(payload: str, max_chars: int = 256) -> bytes | None:
-    compact = re.sub(r"\s+", "", payload)
-    if not compact:
-        return None
-    sample = compact[:max_chars]
-    padding = "=" * (-len(sample) % 4)
-    try:
-        return base64.b64decode(sample + padding, validate=False)
-    except (binascii.Error, ValueError):
-        return None
-
-
-def _image_mime_from_magic(blob: bytes) -> str | None:
-    """Detect image mime type from leading magic bytes."""
-    if blob.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if blob.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if blob.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if blob.startswith(b"BM"):
-        return "image/bmp"
-    if len(blob) >= 12 and blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
-        return "image/webp"
-    if blob.startswith((b"II*\x00", b"MM\x00*")):
-        return "image/tiff"
-    return None
-
-
-def _guess_image_mime_from_base64(payload: str) -> str | None:
-    blob = _decode_base64_prefix(payload)
-    if not blob:
-        return None
-    return _image_mime_from_magic(blob)
-
-
-def resolve_image_mime_and_payload(
-    value: str,
-    format_type: str,
-) -> tuple[str, str]:
-    """Resolve image mime type and raw base64 payload (for base64 format)."""
-    if format_type == "url":
-        return _guess_image_mime_from_url(value) or "image/png", value
-
-    data_url_mime, payload = split_data_url(value)
-    if data_url_mime and data_url_mime.startswith("image/"):
-        return data_url_mime, payload
-
-    return _guess_image_mime_from_base64(payload) or "image/png", payload
 
 
 def resolve_item_type(declared: str, type_override: str | None = None) -> str:
@@ -190,57 +127,19 @@ def resolve_attachment_values(
     att: AssessmentAttachment,
     type_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert one dataset cell into one or more OpenAI-style input objects."""
+    """Convert one dataset cell into one or more OpenAI-style input objects (by URL)."""
     value = value.strip()
     if not value:
         return []
 
-    if att.format == "url":
-        values = split_attachment_urls(value)
-    else:
-        values = [value]
-
     item_type = resolve_item_type(att.type, type_override)
     resolved: list[dict[str, Any]] = []
-    for item_value in values:
-        normalized_value = (
-            to_direct_attachment_url(item_value, item_type)
-            if att.format == "url"
-            else item_value
-        )
-
+    for item_value in split_attachment_urls(value):
+        url = to_direct_attachment_url(item_value, item_type)
         if item_type == "image":
-            if att.format == "url":
-                resolved.append({"type": "input_image", "image_url": normalized_value})
-            else:
-                mime_type, payload = resolve_image_mime_and_payload(
-                    normalized_value,
-                    "base64",
-                )
-                resolved.append(
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:{mime_type};base64,{payload}",
-                    }
-                )
-        elif item_type == "pdf":
-            if att.format == "url":
-                resolved.append(
-                    {
-                        "type": "input_file",
-                        "file_url": normalized_value,
-                    }
-                )
-            else:
-                _, payload = split_data_url(normalized_value)
-                resolved.append(
-                    {
-                        "type": "input_file",
-                        "file_data": f"data:application/pdf;base64,{payload}",
-                        "filename": "document.pdf",
-                    }
-                )
-
+            resolved.append({"type": "input_image", "image_url": url})
+        else:
+            resolved.append({"type": "input_file", "file_url": url})
     return resolved
 
 
@@ -249,7 +148,7 @@ def build_gemini_attachment_parts(
     att: AssessmentAttachment,
     type_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert one dataset cell into one or more Gemini content parts.
+    """Convert one dataset cell into one or more Gemini content parts (by URL).
 
     Mirrors the per-item type routing used for the L2 batch so the same
     image/pdf handling applies to prefilter (topic relevance) calls.
@@ -258,45 +157,13 @@ def build_gemini_attachment_parts(
     if not value:
         return []
 
-    values = split_attachment_urls(value) if att.format == "url" else [value]
-
     item_type = resolve_item_type(att.type, type_override)
     parts: list[dict[str, Any]] = []
-    for item_value in values:
-        normalized_value = (
-            to_direct_attachment_url(item_value, item_type)
-            if att.format == "url"
-            else item_value
-        )
-
+    for item_value in split_attachment_urls(value):
+        url = to_direct_attachment_url(item_value, item_type)
         if item_type == "image":
-            mime_type, payload = resolve_image_mime_and_payload(
-                normalized_value, att.format
-            )
-            if att.format == "url":
-                parts.append(
-                    {"fileData": {"mimeType": mime_type, "fileUri": normalized_value}}
-                )
-            else:
-                parts.append({"inlineData": {"mimeType": mime_type, "data": payload}})
-        elif item_type == "pdf":
-            if att.format == "url":
-                parts.append(
-                    {
-                        "fileData": {
-                            "mimeType": "application/pdf",
-                            "fileUri": normalized_value,
-                        }
-                    }
-                )
-            else:
-                parts.append(
-                    {
-                        "inlineData": {
-                            "mimeType": "application/pdf",
-                            "data": split_data_url(normalized_value)[1],
-                        }
-                    }
-                )
-
+            mime_type = _guess_image_mime_from_url(url) or "image/png"
+            parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
+        else:
+            parts.append({"fileData": {"mimeType": "application/pdf", "fileUri": url}})
     return parts

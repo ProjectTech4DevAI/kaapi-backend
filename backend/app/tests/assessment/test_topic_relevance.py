@@ -3,8 +3,8 @@
 import json
 from unittest.mock import patch
 
-from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
+from app.services.assessment.prefilter import constants
 from app.services.assessment.prefilter.topic_relevance import (
     build_topic_relevance_requests,
     parse_topic_relevance_results,
@@ -12,7 +12,7 @@ from app.services.assessment.prefilter.topic_relevance import (
 
 
 def _gemini():
-    return patch.object(settings, "ASSESSMENT_PREFILTER_PROVIDER", "google")
+    return patch.object(constants, "ASSESSMENT_PREFILTER_PROVIDER", "google")
 
 
 class TestBuildRequests:
@@ -76,8 +76,20 @@ class TestParseResults:
         assert parsed[1]["verdict"] is False
         assert parsed[1]["column_relevance"] == {"Problem": False}
 
-    def test_bad_output_skipped(self) -> None:
+    def test_unparseable_output_fails_open_accepted(self) -> None:
+        # A gate response we cannot parse must NOT silently drop the submission:
+        # it is accepted (verdict=True) so it still reaches L2 and is counted.
         parsed = parse_topic_relevance_results(
             [{"row_id": "tr_0", "output": "not json", "error": None}]
         )
-        assert parsed == {}
+        assert parsed[0]["verdict"] is True
+        assert parsed[0]["decision"] == ""
+        assert parsed[0]["reasoning"] == ""
+        assert parsed[0]["column_relevance"] == {}
+
+    def test_empty_output_fails_open_accepted(self) -> None:
+        parsed = parse_topic_relevance_results(
+            [{"row_id": "tr_0", "output": None, "error": "provider error"}]
+        )
+        assert parsed[0]["verdict"] is True
+        assert parsed[0]["decision"] == ""

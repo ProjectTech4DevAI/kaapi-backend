@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from app.core.config import settings
+from app.services.assessment.prefilter import constants
 from app.services.assessment.prefilter.request_builder import build_request_line
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def build_duplicate_detection_requests(
     columns: list[str],
 ) -> list[dict[str, Any]]:
     """Build one batch JSONL line per record, grounded on the provider's corpus store."""
-    store = settings.ASSESSMENT_PREFILTER_DUPLICATE_STORE or None
+    store = constants.ASSESSMENT_PREFILTER_DUPLICATE_STORE or None
     return [
         build_request_line(
             key=f"dup_{idx}",
