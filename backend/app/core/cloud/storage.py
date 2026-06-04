@@ -1,5 +1,6 @@
 import os
 import mimetypes
+import filetype
 from sqlmodel import Session
 from uuid import UUID, uuid4
 import logging
@@ -325,6 +326,7 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
 
 GCS_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 
+MAX_AUDIO_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 _MIME_TO_EXT = {
     "audio/wav": ".wav",
@@ -365,9 +367,32 @@ def upload_audio_to_gcs(
         ext = Path(local_path).suffix or ""
         mime = content_type or mimetypes.guess_type(local_path)[0] or "audio/wav"
     else:
+        if not audio_bytes:
+            raise ValueError("audio_bytes is empty")
         size = len(audio_bytes)
         mime = content_type or "audio/wav"
         ext = _MIME_TO_EXT.get(mime, "")
+
+    if mime not in _MIME_TO_EXT:
+        raise ValueError(
+            f"Unsupported content_type '{mime}'. Allowed: "
+            f"{', '.join(sorted(_MIME_TO_EXT))}"
+        )
+
+    # Sniff the actual bytes — content_type is caller-supplied and spoofable.
+    sniff_source = audio_bytes if audio_bytes is not None else local_path
+    detected = filetype.guess(sniff_source)
+    if detected is None or not detected.mime.startswith("audio/"):
+        raise ValueError(
+            f"Uploaded content is not a recognised audio file "
+            f"(detected={detected.mime if detected else 'unknown'})"
+        )
+
+    if size > MAX_AUDIO_UPLOAD_BYTES:
+        raise ValueError(
+            f"Audio exceeds {MAX_AUDIO_UPLOAD_BYTES // (1024 * 1024)} MB limit "
+            f"(got {size / (1024 * 1024):.1f} MB)"
+        )
 
     key = f"{key_prefix}/{uuid4().hex}{ext}"
 
