@@ -48,18 +48,26 @@ SUPPORTED_AUDIO_MIMES = {
 
 
 def _load_platform_sa_info() -> dict | None:
-    """Load the platform-default GCP SA JSON from disk, if configured."""
-    sa_path = settings.GCP_SA_KEY_PATH
-    if not sa_path or not Path(sa_path).is_file():
+    """Load the platform-default GCP SA JSON.
+
+    Supports two configuration shapes for settings.GCP_SA_KEY:
+      1. Raw JSON string (e.g. injected via env var / secret manager)
+      2. Filesystem path to a JSON key file
+    """
+    sa_value = settings.GCP_SA_KEY
+    if not sa_value:
         return None
-    try:
-        return json.loads(Path(sa_path).read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning(
-            f"[_load_platform_sa_info] Failed to load platform SA key | "
-            f"path={sa_path}, error={e}"
-        )
-        return None
+
+    stripped = sa_value.strip()
+    if stripped.startswith("{"):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"[_load_platform_sa_info] GCP_SA_KEY looks like JSON but "
+                f"failed to parse | error={e}"
+            )
+            return None
 
 
 class VertexClient:
@@ -85,8 +93,15 @@ class VertexClient:
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
+        # The "global" location uses the unprefixed host; regional locations
+        # use the "{location}-" prefix.
+        host = (
+            "aiplatform.googleapis.com"
+            if self.location == "global"
+            else f"{self.location}-aiplatform.googleapis.com"
+        )
         return (
-            f"https://{self.location}-aiplatform.googleapis.com/v1"
+            f"https://{host}/v1"
             f"/projects/{self.project_id}/locations/{self.location}"
             f"/publishers/google/models/{model}:generateContent"
         )
@@ -108,13 +123,20 @@ class GoogleVertexAIProvider(BaseProvider):
     def create_client(credentials: dict[str, Any]) -> Any:
         # Fall back to platform-shared defaults from settings for any field
         # the caller didn't provide. The SA JSON falls back to the file at
-        # settings.GCP_SA_KEY_PATH; BYOK rows pass `sa_key` inline.
+        # settings.GCP_SA_KEY; BYOK rows pass `sa_key` inline.
         credentials = credentials or {}
         api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
+        logger.info(f"Vertex API Key {api_key}")
         project_id = credentials.get("project_id") or settings.GCP_PROJECT_ID
         location = credentials.get("location") or settings.GCP_VERTEX_LOCATION
         gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
         sa_info = credentials.get("sa_key") or _load_platform_sa_info()
+
+        source = "byok" if credentials.get("api_key") else "platform"
+        logger.info(
+            f"[create_client] vertex creds | source={source}, "
+            f"project_id={project_id}, location={location}"
+        )
 
         missing = [
             name
@@ -138,9 +160,11 @@ class GoogleVertexAIProvider(BaseProvider):
         )
 
     def _post(self, model: str, payload: dict) -> tuple[dict | None, str | None]:
+        url = self.client.endpoint(model)
+        logger.debug(f"[_post] vertex url={url}")
         try:
             resp = requests.post(
-                self.client.endpoint(model),
+                url,
                 params={"key": self.client.api_key},
                 headers={"Content-Type": "application/json"},
                 json=payload,
@@ -258,6 +282,7 @@ class GoogleVertexAIProvider(BaseProvider):
         }
 
         data, err = self._post(model, payload)
+        logger.error(f"[_execute_stt] Error post making the call to Vertes is {err}")
         if err:
             return None, err
 

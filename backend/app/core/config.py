@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str = ""
     # Filesystem path to the platform-default GCP service-account JSON.
     # Used by the registry fallback when a project has no google-vertex row.
-    GCP_SA_KEY_PATH: str = ""
+    GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
     # RabbitMQ configuration for Celery broker
