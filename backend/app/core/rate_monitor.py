@@ -52,7 +52,7 @@ def monitor_rate(category: RateCategory):
     Usage:
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
-        Depends(monitor_rate("llm")),
+        Depends(monitor_rate("{category}")),
     ]
     """
 
