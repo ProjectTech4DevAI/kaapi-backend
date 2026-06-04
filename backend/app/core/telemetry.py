@@ -453,6 +453,36 @@ def record_stale_pending_jobs(
         )
 
 
+def record_rate_threshold(
+    *,
+    org_id: int,
+    org_name: str | None,
+    category: str,
+    request_count: int,
+    threshold: int,
+) -> None:
+    """Emit rate threshold exceeded event to Sentry."""
+
+    try:
+        if not sentry_sdk.get_client().is_active():
+            return
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("alert.type", "threshold_rate_monitor")
+            scope.set_tag("tenant.org_id", org_id)
+            scope.set_tag("route_category", category)
+            scope.set_extra("request_count", request_count)
+            scope.set_extra("threshold", threshold)
+            sentry_sdk.capture_message(
+                f"[Threshold-Monitor] {category} rate limit exceeded for org {org_id} | {org_name}: {request_count} req/min "
+                f"(limit {threshold}/min)",
+                level="warning",
+            )
+    except Exception as e:
+        logger.exception(
+            "[record_rate_threshold_exceeded] Failed to emit alert", exc_info=e
+        )
+
+
 def flush_telemetry(timeout_millis: int = 10000) -> None:
     """Force-flush OTel spans into Sentry, then flush Sentry's transport.
 
