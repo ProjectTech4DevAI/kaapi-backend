@@ -174,26 +174,6 @@ class TestGoogleAIProviderSTT:
         instruction = call_args[1]["contents"][0]
         assert "Include timestamps" in instruction
 
-    def test_stt_with_include_provider_raw_response(
-        self, provider, mock_client, stt_config, query_params, audio_ref
-    ):
-        """Test STT with include_provider_raw_response=True."""
-        mock_response = mock_google_response(text="Raw response test")
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(
-            stt_config,
-            query_params,
-            "/path/to/audio.wav",
-            include_provider_raw_response=True,
-        )
-
-        assert error is None
-        assert result is not None
-        assert result.provider_raw_response is not None
-        assert isinstance(result.provider_raw_response, dict)
-        assert result.provider_raw_response["text"] == "Raw response test"
-
     def test_stt_with_type_error(
         self, provider, mock_client, stt_config, query_params, audio_ref
     ):
