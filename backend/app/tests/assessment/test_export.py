@@ -19,6 +19,12 @@ from app.services.assessment.utils.export import (
 )
 
 
+def _named_dataset() -> MagicMock:
+    ds = MagicMock()
+    ds.name = "ds"
+    return ds
+
+
 def _make_row(
     *,
     run_id: int = 1,
@@ -415,10 +421,11 @@ class TestLoadParsedResultsForRun:
             "app.services.assessment.utils.export.get_cloud_storage",
             side_effect=Exception("S3 down"),
         ), patch(
-            "app.crud.assessment.processing._get_batch_provider",
+            "app.services.assessment.utils.export._get_batch_provider",
             return_value=MagicMock(),
         ), patch(
-            "app.core.batch.download_batch_results", return_value=raw
+            "app.services.assessment.utils.export.download_batch_results",
+            return_value=raw,
         ):
             result = _load_parsed_results_for_run(
                 session=session, run=run, batch_job=batch_job
@@ -523,64 +530,48 @@ class TestLoadExportRowsForRun:
         assessment.dataset_id = 2
         return assessment
 
-    def test_no_batch_job_id_returns_empty(self) -> None:
-        session = MagicMock()
-        run = self._make_run()
-        run.batch_job_id = None
-        result = load_export_rows_for_run(session=session, run=run)
-        assert result == []
+    def _patches(self, *, l2, prefilter=None, dataset_rows=None):
+        return [
+            patch(
+                "app.services.assessment.utils.export._load_l2_results_for_run",
+                return_value=l2,
+            ),
+            patch(
+                "app.services.assessment.utils.export._load_prefilter_results",
+                return_value=prefilter or {},
+            ),
+            patch(
+                "app.services.assessment.utils.export._load_dataset_rows_for_run",
+                return_value=dataset_rows if dataset_rows is not None else [],
+            ),
+        ]
 
-    def test_batch_job_not_found_returns_empty(self) -> None:
+    def test_no_results_no_dataset_returns_empty(self) -> None:
         session = MagicMock()
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job", return_value=None
-        ):
+        p1, p2, p3 = self._patches(l2={})
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
         assert result == []
 
-    def test_no_parsed_results_returns_empty(self) -> None:
+    def test_merged_results_build_export_rows(self) -> None:
         session = MagicMock()
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=None,
-        ):
-            result = load_export_rows_for_run(
-                session=session, run=run, assessment=self._make_assessment()
-            )
-        assert result == []
-
-    def test_parsed_results_build_export_rows(self) -> None:
-        session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
-        run = self._make_run()
-        parsed = [
-            {
+        l2 = {
+            "row_0": {
                 "row_id": "row_0",
                 "output": '{"score": 5}',
                 "error": None,
                 "usage": None,
                 "response_id": "r1",
             }
-        ]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=[],
-        ):
+        }
+        p1, p2, p3 = self._patches(l2=l2)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
@@ -590,61 +581,45 @@ class TestLoadExportRowsForRun:
 
     def test_error_result_sets_failed_status(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        parsed = [
-            {
+        l2 = {
+            "row_0": {
                 "row_id": "row_0",
                 "output": None,
                 "error": "timeout",
                 "usage": None,
                 "response_id": None,
             }
-        ]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=[],
-        ):
+        }
+        p1, p2, p3 = self._patches(l2=l2)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
         assert result[0].result_status == "failed"
 
-    def test_input_data_correlated_via_row_id(self) -> None:
+    def test_dataset_rows_include_pending_and_correlate_input(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        parsed = [
-            {
+        run.status = "l2_processing"
+        l2 = {
+            "row_1": {
                 "row_id": "row_1",
                 "output": "x",
                 "error": None,
                 "usage": None,
                 "response_id": None,
             }
-        ]
+        }
         dataset_rows = [{"q": "first"}, {"q": "second"}]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=dataset_rows,
-        ):
+        p1, p2, p3 = self._patches(l2=l2, dataset_rows=dataset_rows)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
-        assert result[0].input_data == {"q": "second"}
+        assert len(result) == 2
+        assert result[0].result_status == "processing"  # row_0 not done yet
+        assert result[1].input_data == {"q": "second"}
+        assert result[1].result_status == "passed"

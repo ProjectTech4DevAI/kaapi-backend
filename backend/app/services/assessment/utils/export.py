@@ -12,17 +12,32 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
+from app.core.batch import download_batch_results
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.job import get_batch_job
-from app.models.assessment import Assessment, AssessmentExportRow, AssessmentRun
+from app.models.assessment import (
+    Assessment,
+    AssessmentExportRow,
+    AssessmentRun,
+    Stage,
+)
 from app.models.batch_job import BatchJob
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.prefilter.duplicate_detection import (
+    parse_duplicate_detection_results,
+)
+from app.services.assessment.prefilter.topic_relevance import (
+    parse_topic_relevance_results,
+)
+from app.services.assessment.stages import _get_batch_provider, load_raw_batch_results
 from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
+from app.services.assessment.utils.post_processing import apply_post_processing
 from app.utils import APIResponse
 
 _PREFILTER_JSON_COLUMNS = ["topic_relevance", "duplicate_detection"]
+_XLSX_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff﷐-﷯￾￿]")
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +46,19 @@ def _load_dataset_rows(
     session: Session,
     dataset: EvaluationDataset,
 ) -> list[dict[str, str]]:
+    # Imported lazily: app.crud.assessment.batch pulls this module via
+    # app.services.assessment.utils, so a top-level import would be circular.
     from app.crud.assessment.batch import _load_dataset_rows as load_dataset_rows
 
     return load_dataset_rows(session, dataset)
+
+
+def _stage_batch_job(
+    session: Session, run: AssessmentRun, stage: str
+) -> BatchJob | None:
+    """The batch job a run produced for a given stage, via stage_batches."""
+    batch_id = (run.stage_batches or {}).get(stage)
+    return get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
 
 
 def _load_prefilter_results(
@@ -41,22 +66,39 @@ def _load_prefilter_results(
     run: AssessmentRun,
     assessment: Assessment,
 ) -> dict[str, dict[str, Any]]:
-    """Load prefilter results from object store, keyed by row_id. Returns {} if unavailable."""
-    if not run.prefilter_object_store_url:
-        return {}
-    try:
-        storage = get_cloud_storage(session, project_id=assessment.project_id)
-        body = storage.stream(run.prefilter_object_store_url)
-        raw = body.read().decode("utf-8")
-        results: list[dict[str, Any]] = json.loads(raw)
-        return {str(item["row_id"]): item for item in results if "row_id" in item}
-    except Exception as exc:
-        logger.warning(
-            "[_load_prefilter_results] Failed to load prefilter results for run id=%s: %s",
-            run.id,
-            exc,
-        )
-        return {}
+    """Build per-row prefilter annotations from the TR + dup stage batches."""
+    out: dict[str, dict[str, Any]] = {}
+
+    tr_job = _stage_batch_job(session, run, Stage.PRE_FILTER_TOPIC_RELEVANCE)
+    if tr_job:
+        try:
+            raw = load_raw_batch_results(session, tr_job, assessment.project_id)
+            outputs = parse_assessment_output(raw, tr_job.provider)
+            for idx, r in parse_topic_relevance_results(outputs).items():
+                out.setdefault(f"row_{idx}", {})["prefilter_passed"] = r["verdict"]
+                out[f"row_{idx}"]["topic_relevance"] = {
+                    "decision": r["decision"],
+                    "reasoning": r["reasoning"],
+                    "column_relevance": r.get("column_relevance") or {},
+                }
+        except Exception as exc:
+            logger.warning(
+                "[_load_prefilter_results] TR load failed run=%s: %s", run.id, exc
+            )
+
+    dup_job = _stage_batch_job(session, run, Stage.PRE_FILTER_DUPLICATE_DETECTION)
+    if dup_job:
+        try:
+            raw = load_raw_batch_results(session, dup_job, assessment.project_id)
+            outputs = parse_assessment_output(raw, dup_job.provider)
+            for idx, r in parse_duplicate_detection_results(outputs).items():
+                out.setdefault(f"row_{idx}", {})["duplicate_detection"] = r
+        except Exception as exc:
+            logger.warning(
+                "[_load_prefilter_results] dup load failed run=%s: %s", run.id, exc
+            )
+
+    return out
 
 
 def _safe_filename_part(value: str) -> str:
@@ -244,8 +286,6 @@ def serialize_export_rows(
     post_processing_config: dict[str, Any] | None = None,
 ) -> tuple[bytes, str]:
     """Serialize export rows into the requested file format."""
-    from app.services.assessment.utils.post_processing import apply_post_processing
-
     row_payload = [row.model_dump(mode="json") for row in export_rows]
 
     if export_format == "json":
@@ -296,6 +336,11 @@ def serialize_export_rows(
         excel_fields = output_keys or ["output"]
 
     expanded, excel_fields = _drop_empty_columns(expanded, excel_fields)
+
+    def _clean(value: Any) -> Any:
+        return _XLSX_ILLEGAL_RE.sub("", value) if isinstance(value, str) else value
+
+    expanded = [{k: _clean(v) for k, v in row.items()} for row in expanded]
 
     buf = io.BytesIO()
     data_frame = pd.DataFrame(expanded, columns=excel_fields)
@@ -377,9 +422,6 @@ def _load_parsed_results_for_run(
     # 2. Fallback: download directly from batch provider
     if batch_job.provider_output_file_id:
         try:
-            from app.core.batch import download_batch_results
-            from app.crud.assessment.processing import _get_batch_provider
-
             provider = _get_batch_provider(
                 session=session,
                 provider_name=batch_job.provider,
@@ -463,18 +505,84 @@ def _extract_prefilter_json_columns(
     }
 
 
+def _load_parsed_results_for_batch_job(
+    session: Session,
+    batch_job: BatchJob,
+    assessment: Assessment,
+) -> list[dict[str, Any]] | None:
+    """Parse one chunk batch's stored results (object store first, provider fallback)."""
+    if batch_job.raw_output_url:
+        try:
+            storage = get_cloud_storage(session, project_id=assessment.project_id)
+            raw = parse_stored_results(
+                storage.stream(batch_job.raw_output_url).read().decode("utf-8")
+            )
+            if raw:
+                return parse_assessment_output(raw, batch_job.provider)
+        except Exception as exc:
+            logger.warning(
+                "[_load_parsed_results_for_batch_job] S3 read failed for batch %s: %s",
+                batch_job.id,
+                exc,
+            )
+
+    if batch_job.provider_output_file_id:
+        try:
+            provider = _get_batch_provider(
+                session=session,
+                provider_name=batch_job.provider,
+                organization_id=assessment.organization_id,
+                project_id=assessment.project_id,
+            )
+            raw = download_batch_results(provider=provider, batch_job=batch_job)
+            return parse_assessment_output(raw, batch_job.provider)
+        except Exception as exc:
+            logger.error(
+                "[_load_parsed_results_for_batch_job] Provider download failed for "
+                "batch %s: %s",
+                batch_job.id,
+                exc,
+                exc_info=True,
+            )
+    return None
+
+
+def _load_l2_results_for_run(
+    session: Session,
+    run: AssessmentRun,
+    assessment: Assessment,
+) -> dict[str, dict[str, Any]]:
+    """L2 results keyed by row_id, from the run's L2 stage batch ({} if not done)."""
+    merged: dict[str, dict[str, Any]] = {}
+    batch_job = _stage_batch_job(session, run, Stage.L2_ASSESSMENT)
+    if batch_job:
+        for item in (
+            _load_parsed_results_for_batch_job(session, batch_job, assessment) or []
+        ):
+            if "row_id" in item:
+                merged[str(item["row_id"])] = item
+    return merged
+
+
+def _row_result_status(
+    prefilter_passed: bool,
+    l2_item: dict[str, Any] | None,
+    run_status: str,
+) -> str:
+    """Per-row status: rejected, failed, passed, or processing (batch not done)."""
+    if not prefilter_passed:
+        return "prefilter_rejected"
+    if l2_item is None:
+        return "failed" if run_status == "failed" else "processing"
+    return "failed" if l2_item.get("error") else "passed"
+
+
 def load_export_rows_for_run(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment | None = None,
 ) -> list[AssessmentExportRow]:
-    """Load flattened export rows for a single child assessment run.
-
-    When prefilter results exist, ALL dataset rows are included in output.
-    prefilter-rejected rows have prefilter columns filled and L2 columns empty.
-    prefilter-passed rows have all columns filled.
-    Without prefilter, behaviour is unchanged (only L2 result rows returned).
-    """
+    """Flatten one run's rows, merging prefilter annotations + L2 results by row_id."""
     if assessment is None:
         assessment = session.get(Assessment, run.assessment_id)
     if assessment is None:
@@ -488,133 +596,84 @@ def load_export_rows_for_run(
     dataset_name = dataset.name if dataset else None
     dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
 
-    # Load prefilter results (empty dict if no prefilter was run)
     prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
-
-    # Load L2 results (may be None if batch not complete)
-    l2_by_row_id: dict[str, dict[str, Any]] = {}
-    if run.batch_job_id:
-        batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
-        if batch_job:
-            parsed_results = _load_parsed_results_for_run(
-                session=session, run=run, batch_job=batch_job
-            )
-            if parsed_results:
-                l2_by_row_id = {
-                    str(item["row_id"]): item
-                    for item in parsed_results
-                    if "row_id" in item
-                }
-
+    l2_by_row_id = _load_l2_results_for_run(session, run, assessment)
     has_prefilter = bool(prefilter_by_row_id)
 
-    if has_prefilter and dataset_rows:
-        # All rows in output — build from full dataset
-        export_rows: list[AssessmentExportRow] = []
-        for row_idx, input_data in enumerate(dataset_rows):
-            row_id_str = f"row_{row_idx}"
-            prefilter_item = prefilter_by_row_id.get(row_id_str)
-            prefilter_cols = _extract_prefilter_json_columns(prefilter_item)
-            l2_item = l2_by_row_id.get(row_id_str)
-
-            input_tokens, output_tokens, total_tokens = usage_totals(
-                l2_item.get("usage") if l2_item else None
-            )
-            prefilter_passed = (prefilter_item or {}).get("prefilter_passed", True)
-            result_status = (
-                "prefilter_rejected"
-                if not prefilter_passed
-                else ("failed" if l2_item and l2_item.get("error") else "passed")
-            )
-
-            export_rows.append(
-                AssessmentExportRow(
-                    assessment_id=run.assessment_id,
-                    experiment_name=assessment.experiment_name,
-                    dataset_id=assessment.dataset_id,
-                    dataset_name=dataset_name,
-                    run_id=run.id,
-                    run_name=assessment.experiment_name,
-                    run_status=run.status,
-                    config_id=run.config_id,
-                    config_version=run.config_version,
-                    row_id=row_id_str,
-                    result_status=result_status,
-                    input_data=input_data,
-                    topic_relevance=prefilter_cols.get("topic_relevance"),
-                    duplicate_detection=prefilter_cols.get("duplicate_detection"),
-                    output=l2_item.get("output") if l2_item else None,
-                    error=l2_item.get("error") if l2_item else None,
-                    response_id=l2_item.get("response_id") if l2_item else None,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=total_tokens,
-                    updated_at=run.updated_at,
-                )
-            )
-        return export_rows
-
-    # No prefilter — original behaviour: only L2 result rows
-    if not run.batch_job_id:
-        logger.warning(
-            "[load_export_rows_for_run] No batch_job_id for run id=%s", run.id
-        )
-        return []
-
-    batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
-    if not batch_job:
-        logger.warning(
-            "[load_export_rows_for_run] Missing batch job for run id=%s", run.id
-        )
-        return []
-
-    parsed_results = _load_parsed_results_for_run(
-        session=session, run=run, batch_job=batch_job
-    )
-    if not parsed_results:
-        logger.warning(
-            "[load_export_rows_for_run] Parsed results empty for run id=%s", run.id
-        )
-        return []
-
-    export_rows = []
-    for item in parsed_results:
-        input_tokens, output_tokens, total_tokens = usage_totals(item.get("usage"))
-        input_data = None
-        row_id_str = str(item.get("row_id", ""))
-        if dataset_rows and row_id_str.startswith("row_"):
-            try:
-                row_idx = int(row_id_str.split("_", 1)[1])
-                if 0 <= row_idx < len(dataset_rows):
-                    input_data = dataset_rows[row_idx]
-            except (ValueError, IndexError):
-                pass
-
-        export_rows.append(
-            AssessmentExportRow(
-                assessment_id=run.assessment_id,
-                experiment_name=assessment.experiment_name,
-                dataset_id=assessment.dataset_id,
+    if dataset_rows:
+        rows = [
+            _build_export_row(
+                run=run,
+                assessment=assessment,
                 dataset_name=dataset_name,
-                run_id=run.id,
-                run_name=assessment.experiment_name,
-                run_status=run.status,
-                config_id=run.config_id,
-                config_version=run.config_version,
-                row_id=row_id_str,
-                result_status="failed" if item.get("error") else "passed",
+                row_id=f"row_{row_idx}",
                 input_data=input_data,
-                output=item.get("output"),
-                error=item.get("error"),
-                response_id=item.get("response_id"),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                updated_at=run.updated_at,
+                prefilter_item=prefilter_by_row_id.get(f"row_{row_idx}"),
+                l2_item=l2_by_row_id.get(f"row_{row_idx}"),
+                has_prefilter=has_prefilter,
             )
-        )
+            for row_idx, input_data in enumerate(dataset_rows)
+        ]
+        return rows
 
-    return export_rows
+    # Dataset unavailable — emit whatever results we have, indexed by row_id.
+    return [
+        _build_export_row(
+            run=run,
+            assessment=assessment,
+            dataset_name=dataset_name,
+            row_id=str(row_id),
+            input_data=None,
+            prefilter_item=prefilter_by_row_id.get(str(row_id)),
+            l2_item=l2_item,
+            has_prefilter=has_prefilter,
+        )
+        for row_id, l2_item in l2_by_row_id.items()
+    ]
+
+
+def _build_export_row(
+    run: AssessmentRun,
+    assessment: Assessment,
+    dataset_name: str | None,
+    row_id: str,
+    input_data: dict[str, str] | None,
+    prefilter_item: dict[str, Any] | None,
+    l2_item: dict[str, Any] | None,
+    has_prefilter: bool,
+) -> AssessmentExportRow:
+    prefilter_cols = (
+        _extract_prefilter_json_columns(prefilter_item)
+        if has_prefilter
+        else {"topic_relevance": None, "duplicate_detection": None}
+    )
+    prefilter_passed = (prefilter_item or {}).get("prefilter_passed", True)
+    input_tokens, output_tokens, total_tokens = usage_totals(
+        l2_item.get("usage") if l2_item else None
+    )
+    return AssessmentExportRow(
+        assessment_id=run.assessment_id,
+        experiment_name=assessment.experiment_name,
+        dataset_id=assessment.dataset_id,
+        dataset_name=dataset_name,
+        run_id=run.id,
+        run_name=assessment.experiment_name,
+        run_status=run.status,
+        config_id=run.config_id,
+        config_version=run.config_version,
+        row_id=row_id,
+        result_status=_row_result_status(prefilter_passed, l2_item, run.status),
+        input_data=input_data,
+        topic_relevance=prefilter_cols.get("topic_relevance"),
+        duplicate_detection=prefilter_cols.get("duplicate_detection"),
+        output=l2_item.get("output") if l2_item else None,
+        error=l2_item.get("error") if l2_item else None,
+        response_id=l2_item.get("response_id") if l2_item else None,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        updated_at=run.updated_at,
+    )
 
 
 def sort_export_rows(

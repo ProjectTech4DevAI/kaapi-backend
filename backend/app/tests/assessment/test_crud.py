@@ -237,12 +237,15 @@ class TestDerivedAggregates:
                 prefilter_total_rows=None,
                 prefilter_total_passed=None,
                 prefilter_total_rejected=None,
+                stage="COMPLETED",
+                stage_status="COMPLETED",
             ),
         ]
         stats = build_run_stats(runs)
         assert len(stats) == 1
         assert stats[0].run_id == 1
         assert stats[0].status == "completed"
+        assert stats[0].stage == "COMPLETED"
 
     def test_derive_aggregate_error(self) -> None:
         assert derive_aggregate_error(_counts(total=2, completed=2)) is None

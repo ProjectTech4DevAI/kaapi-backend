@@ -1,6 +1,5 @@
 """Tests for assessment/batch.py provider routing in submit_assessment_batch."""
 
-import base64
 import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -22,9 +21,9 @@ from app.services.assessment.utils.attachments import (
     _decode_base64_prefix,
     _guess_image_mime_from_base64,
     _guess_image_mime_from_url,
-    detect_item_type,
     resolve_attachment_values,
     resolve_image_mime_and_payload,
+    resolve_item_type,
     split_attachment_urls,
     split_data_url,
     to_direct_attachment_url,
@@ -79,7 +78,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 return_value=[{"custom_id": "row_0"}],
             ),
             patch(
-                "app.utils.get_openai_client",
+                "app.crud.assessment.batch.get_openai_client",
                 return_value=MagicMock(),
             ),
             patch(
@@ -141,7 +140,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 return_value=[{"custom_id": "row_0"}],
             ),
             patch(
-                "app.utils.get_openai_client",
+                "app.crud.assessment.batch.get_openai_client",
                 return_value=MagicMock(),
             ),
             patch(
@@ -196,9 +195,9 @@ class TestSubmitAssessmentBatchProviderRouting:
                 "app.crud.assessment.batch.build_google_jsonl",
                 return_value=[{"key": "row_0"}],
             ),
-            patch("app.core.batch.client.GeminiClient") as gemini_cls,
+            patch("app.crud.assessment.batch.GeminiClient") as gemini_cls,
             patch(
-                "app.core.batch.GeminiBatchProvider",
+                "app.crud.assessment.batch.GeminiBatchProvider",
                 return_value=MagicMock(),
             ),
             patch(
@@ -427,152 +426,32 @@ class TestBatchHelpers:
         }
 
 
-class TestDetectItemType:
-    """Per-item image/pdf detection for mixed-content attachment columns."""
+class TestResolveItemType:
+    """Image/pdf routing now trusts the user-declared type (no detection)."""
 
-    def test_data_url_pdf(self) -> None:
-        assert (
-            detect_item_type("data:application/pdf;base64,JVBERi0=", "base64", "image")
-            == "pdf"
-        )
+    def test_declared_image(self) -> None:
+        assert resolve_item_type("image") == "image"
 
-    def test_data_url_image(self) -> None:
-        assert (
-            detect_item_type("data:image/png;base64,AAAA", "base64", "pdf") == "image"
-        )
+    def test_declared_pdf(self) -> None:
+        assert resolve_item_type("pdf") == "pdf"
 
-    def test_base64_magic_pdf(self) -> None:
-        payload = base64.b64encode(b"%PDF-1.7 body").decode()
-        assert detect_item_type(payload, "base64", "image") == "pdf"
+    def test_override_wins(self) -> None:
+        assert resolve_item_type("image", "pdf") == "pdf"
+        assert resolve_item_type("pdf", "image") == "image"
 
-    def test_base64_magic_png(self) -> None:
-        payload = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 8).decode()
-        assert detect_item_type(payload, "base64", "pdf") == "image"
+    def test_mixed_without_override_defaults_to_image(self) -> None:
+        assert resolve_item_type("mixed") == "image"
 
-    def test_base64_unknown_falls_back(self) -> None:
-        payload = base64.b64encode(b"not a known magic").decode()
-        assert detect_item_type(payload, "base64", "pdf") == "pdf"
+    def test_unknown_declared_defaults_to_image(self) -> None:
+        assert resolve_item_type("whatever") == "image"
 
-    def test_mixed_fallback_resolves_to_image(self) -> None:
-        """'mixed' is never a returned type; inconclusive detection -> image."""
-        payload = base64.b64encode(b"not a known magic").decode()
-        assert detect_item_type(payload, "base64", "mixed") == "image"
-
-    def test_url_extension_pdf_case_insensitive(self) -> None:
-        assert detect_item_type("https://x.com/a/scan.PDF", "url", "image", {}) == "pdf"
-
-    def test_url_extension_image(self) -> None:
-        assert detect_item_type("https://x.com/a/p.jpg", "url", "pdf", {}) == "image"
-
-    def test_url_no_extension_probes_bytes(self) -> None:
-        """Extensionless URL (Drive-style) is probed; magic bytes win over fallback."""
-        url = "https://drive.google.com/file/d/ABC123/view"
-        resp = MagicMock()
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-        resp.is_redirect = False
-        resp.raise_for_status = MagicMock()
-        resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url"
-        ), patch(
-            "app.services.assessment.utils.attachments.requests.get",
-            return_value=resp,
-        ) as mock_get:
-            assert detect_item_type(url, "url", "image", {}) == "pdf"
-        # Drive share URL is probed through the download endpoint.
-        assert "uc?export=download&id=ABC123" in mock_get.call_args.args[0]
-
-    def test_url_probe_uses_content_type_when_no_magic(self) -> None:
-        url = "https://example.com/file"
-        resp = MagicMock()
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-        resp.is_redirect = False
-        resp.raise_for_status = MagicMock()
-        resp.iter_content = MagicMock(return_value=iter([b"\x00\x01\x02\x03"]))
-        resp.headers = {"Content-Type": "application/pdf; charset=binary"}
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url"
-        ), patch(
-            "app.services.assessment.utils.attachments.requests.get",
-            return_value=resp,
-        ):
-            assert detect_item_type(url, "url", "image", {}) == "pdf"
-
-    def test_url_probe_failure_falls_back(self) -> None:
-        import requests as _requests
-
-        url = "https://example.com/file"
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url"
-        ), patch(
-            "app.services.assessment.utils.attachments.requests.get",
-            side_effect=_requests.RequestException("boom"),
-        ):
-            assert detect_item_type(url, "url", "image", {}) == "image"
-
-    def test_url_probe_follows_validated_redirect(self) -> None:
-        """A redirect hop is followed and re-validated before the next request."""
-        url = "https://drive.google.com/file/d/RID/view"
-        redirect = MagicMock()
-        redirect.__enter__ = MagicMock(return_value=redirect)
-        redirect.__exit__ = MagicMock(return_value=False)
-        redirect.is_redirect = True
-        redirect.headers = {"Location": "https://files.example.com/real.pdf"}
-        final = MagicMock()
-        final.__enter__ = MagicMock(return_value=final)
-        final.__exit__ = MagicMock(return_value=False)
-        final.is_redirect = False
-        final.raise_for_status = MagicMock()
-        final.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url"
-        ) as validate, patch(
-            "app.services.assessment.utils.attachments.requests.get",
-            side_effect=[redirect, final],
-        ) as mock_get:
-            assert detect_item_type(url, "url", "image", {}) == "pdf"
-        # Both the initial and redirected URLs were validated and fetched.
-        assert validate.call_count == 2
-        assert mock_get.call_count == 2
-
-    def test_url_probe_blocked_by_ssrf_falls_back(self) -> None:
-        url = "https://internal.host/file"
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url",
-            side_effect=ValueError("private IP"),
-        ), patch("app.services.assessment.utils.attachments.requests.get") as mock_get:
-            # SSRF guard blocks the probe -> falls back to declared type.
-            assert detect_item_type(url, "url", "pdf", {}) == "pdf"
-        mock_get.assert_not_called()
-
-    def test_cache_skips_second_probe(self) -> None:
-        url = "https://drive.google.com/file/d/XYZ/view"
-        cache: dict[str, str] = {}
-        resp = MagicMock()
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-        resp.is_redirect = False
-        resp.raise_for_status = MagicMock()
-        resp.iter_content = MagicMock(return_value=iter([b"%PDF-1.7"]))
-        with patch(
-            "app.services.assessment.utils.attachments.validate_callback_url"
-        ), patch(
-            "app.services.assessment.utils.attachments.requests.get",
-            return_value=resp,
-        ) as mock_get:
-            assert detect_item_type(url, "url", "image", cache) == "pdf"
-            assert detect_item_type(url, "url", "image", cache) == "pdf"
-        assert mock_get.call_count == 1
-
-    def test_mixed_column_resolves_both_types(self) -> None:
-        """One column, two URLs with extensions -> one image, one pdf object."""
-        att = AssessmentAttachment(column="docs", type="image", format="url")
-        value = "https://x.com/a/photo.jpg, https://x.com/b/report.pdf"
-        resolved = resolve_attachment_values(value, att, {})
+    def test_column_uses_single_declared_type(self) -> None:
+        """One column, many URLs -> all routed by the declared type."""
+        att = AssessmentAttachment(column="docs", type="pdf", format="url")
+        value = "https://x.com/a/photo.jpg, https://x.com/b/report"
+        resolved = resolve_attachment_values(value, att)
         types = [obj["type"] for obj in resolved]
-        assert types == ["input_image", "input_file"]
+        assert types == ["input_file", "input_file"]
 
 
 class TestAttachmentMagicAndMime:
@@ -588,13 +467,6 @@ class TestAttachmentMagicAndMime:
         assert _image_mime_from_magic(b"II*\x00") == "image/tiff"
         assert _image_mime_from_magic(b"MM\x00*") == "image/tiff"
         assert _image_mime_from_magic(b"nope") is None
-
-    def test_type_from_magic_pdf_and_none(self) -> None:
-        from app.services.assessment.utils.attachments import _type_from_magic
-
-        assert _type_from_magic(b"%PDF-1.7") == "pdf"
-        assert _type_from_magic(b"\x89PNG\r\n\x1a\n") == "image"
-        assert _type_from_magic(b"random") is None
 
     def test_guess_image_mime_from_url_variants(self) -> None:
         from app.services.assessment.utils.attachments import _guess_image_mime_from_url
@@ -619,3 +491,75 @@ class TestAttachmentMagicAndMime:
         from app.services.assessment.utils.attachments import _decode_base64_prefix
 
         assert _decode_base64_prefix("   ") is None
+
+
+class TestAttachmentTypeForRow:
+    def test_mixed_resolves_from_type_column(self) -> None:
+        from app.services.assessment.utils.attachments import attachment_type_for_row
+
+        att = AssessmentAttachment(
+            column="Docs",
+            type="mixed",
+            format="url",
+            type_column="DOC type",
+            type_value_map={"Photo": "image", "Report": "pdf"},
+        )
+        assert attachment_type_for_row(att, {"DOC type": "Photo"}) == "image"
+        assert attachment_type_for_row(att, {"DOC type": "Report"}) == "pdf"
+        assert attachment_type_for_row(att, {"DOC type": "Unknown"}) is None
+
+    def test_mixed_resolves_comma_separated_value_lists(self) -> None:
+        from app.services.assessment.utils.attachments import attachment_type_for_row
+
+        att = AssessmentAttachment(
+            column="Docs",
+            type="mixed",
+            format="url",
+            type_column="DOC type",
+            type_value_map={"Img-Prototype, Img-Handtext": "image", "Pdf": "pdf"},
+        )
+
+        assert attachment_type_for_row(att, {"DOC type": "Img-Prototype"}) == "image"
+        assert attachment_type_for_row(att, {"DOC type": "Img-Handtext"}) == "image"
+        assert attachment_type_for_row(att, {"DOC type": "pdf"}) == "pdf"
+
+    def test_mixed_resolves_row_value_lists_when_same_type(self) -> None:
+        from app.services.assessment.utils.attachments import attachment_type_for_row
+
+        att = AssessmentAttachment(
+            column="Docs",
+            type="mixed",
+            format="url",
+            type_column="DOC type",
+            type_value_map={"Img-Prototype, Img-Handtext": "image", "Pdf": "pdf"},
+        )
+
+        assert (
+            attachment_type_for_row(
+                att,
+                {"DOC type": "Img-Prototype, Img-Handtext"},
+            )
+            == "image"
+        )
+        assert attachment_type_for_row(att, {"DOC type": "Img-Prototype, Pdf"}) is None
+
+    def test_mixed_missing_type_mapping_fields_returns_none(self) -> None:
+        from app.services.assessment.utils.attachments import attachment_type_for_row
+
+        att = SimpleNamespace(column="Docs", type="mixed", format="url")
+
+        assert attachment_type_for_row(att, {"Docs": "x"}) is None
+
+    def test_non_mixed_returns_none(self) -> None:
+        from app.services.assessment.utils.attachments import attachment_type_for_row
+
+        att = AssessmentAttachment(column="Docs", type="image", format="url")
+        assert attachment_type_for_row(att, {"Docs": "x"}) is None
+
+    def test_override_forces_part_type(self) -> None:
+        from app.services.assessment.utils.attachments import resolve_attachment_values
+
+        att = AssessmentAttachment(column="Docs", type="mixed", format="url")
+        url = "https://drive.google.com/file/d/ID/view"
+        parts = resolve_attachment_values(url, att, type_override="pdf")
+        assert parts[0]["type"] == "input_file"

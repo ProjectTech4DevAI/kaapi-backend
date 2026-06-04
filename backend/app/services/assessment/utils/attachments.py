@@ -9,12 +9,9 @@ import binascii
 import logging
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
-
-import requests
+from urllib.parse import urlparse
 
 from app.models.assessment import AssessmentAttachment
-from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
 
@@ -122,15 +119,6 @@ def _guess_image_mime_from_base64(payload: str) -> str | None:
     return _image_mime_from_magic(blob)
 
 
-def _type_from_magic(blob: bytes) -> str | None:
-    """Detect 'image' or 'pdf' from leading magic bytes; None if neither."""
-    if blob.startswith(b"%PDF"):
-        return "pdf"
-    if _image_mime_from_magic(blob):
-        return "image"
-    return None
-
-
 def resolve_image_mime_and_payload(
     value: str,
     format_type: str,
@@ -146,120 +134,61 @@ def resolve_image_mime_and_payload(
     return _guess_image_mime_from_base64(payload) or "image/png", payload
 
 
-def _drive_file_id(url: str) -> str | None:
-    """Extract a Google Drive file id from common share URL shapes."""
-    match = re.match(r"https://drive\.google\.com/file/d/([^/]+)", url)
-    if match:
-        return match.group(1)
-    match = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url)
-    if match and ("drive.google.com" in url or "drive.usercontent.google.com" in url):
-        return match.group(1)
-    return None
+def resolve_item_type(declared: str, type_override: str | None = None) -> str:
+    """Resolve an attachment item as 'image' or 'pdf' from the user-declared type.
 
-
-def _type_from_url_extension(url: str) -> str | None:
-    """Detect 'image' or 'pdf' from a URL path extension; None if unknown."""
-    path = (urlparse(url).path or "").lower()
-    if path.endswith(".pdf"):
-        return "pdf"
-    if _guess_image_mime_from_url(url):
-        return "image"
-    return None
-
-
-def _type_from_content_type(content_type: str | None) -> str | None:
-    if not content_type:
-        return None
-    content_type = content_type.split(";")[0].strip().lower()
-    if content_type == "application/pdf":
-        return "pdf"
-    if content_type.startswith("image/"):
-        return "image"
-    return None
-
-
-_PROBE_MAX_REDIRECTS = 3
-
-
-def _probe_url_type(url: str, num_bytes: int = 16) -> str | None:
-    """Probe a remote URL's type: ranged byte sniff first, Content-Type fallback.
-    Handles Google Drive URLs with the same logic as to_direct_attachment_url, since"""
-    file_id = _drive_file_id(url)
-    current = (
-        f"https://drive.google.com/uc?export=download&id={file_id}" if file_id else url
-    )
-
-    try:
-        for _ in range(_PROBE_MAX_REDIRECTS + 1):
-            validate_callback_url(current)
-            with requests.get(
-                current,
-                headers={"Range": f"bytes=0-{num_bytes - 1}"},
-                timeout=10,
-                stream=True,
-                allow_redirects=False,
-            ) as resp:
-                location = resp.headers.get("Location")
-                if resp.is_redirect and location:
-                    current = urljoin(current, location)
-                    continue
-                resp.raise_for_status()
-                for chunk in resp.iter_content(chunk_size=num_bytes):
-                    magic_type = _type_from_magic(chunk)
-                    if magic_type:
-                        return magic_type
-                    break
-                return _type_from_content_type(resp.headers.get("Content-Type"))
-        logger.warning(f"[_probe_url_type] Too many redirects probing {url}")
-        return None
-    except ValueError as e:
-        logger.warning(f"[_probe_url_type] Blocked unsafe probe URL {url}: {e}")
-        return None
-    except requests.RequestException as e:
-        logger.warning(f"[_probe_url_type] Probe failed for {url}: {e}")
-        return None
-
-
-def detect_item_type(
-    value: str,
-    format_type: str,
-    fallback: str,
-    cache: dict[str, str] | None = None,
-) -> str:
-    """Resolve a single attachment item as 'image' or 'pdf'.
-
-    Order: data-URL/base64 magic (no network) -> URL extension -> remote probe
-    (ranged byte sniff, then Content-Type) -> declared ``fallback`` type.
-    ``fallback`` may be 'mixed'; when detection is inconclusive it resolves to
-    'image'. Remote probe results are memoized in ``cache`` keyed by item value.
+    Trusts the user: a per-row ``type_override`` (for 'mixed' columns) wins, else the
+    column's declared ``type``. Anything non-concrete falls back to 'image'.
     """
-    # 'mixed' is not a concrete output type; terminal default is image.
-    safe_fallback = fallback if fallback in ("image", "pdf") else "image"
+    item_type = type_override or declared
+    return item_type if item_type in ("image", "pdf") else "image"
 
-    if format_type != "url":
-        data_url_mime, payload = split_data_url(value)
-        if data_url_mime == "application/pdf":
-            return "pdf"
-        if data_url_mime and data_url_mime.startswith("image/"):
-            return "image"
-        blob = _decode_base64_prefix(payload)
-        return (_type_from_magic(blob) if blob else None) or safe_fallback
 
-    if cache is not None and value in cache:
-        return cache[value]
+def _normalize_type_value(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
-    item_type = (
-        _type_from_url_extension(value) or _probe_url_type(value) or safe_fallback
-    )
-    if cache is not None:
-        cache[value] = item_type
-    return item_type
+
+def _split_type_values(value: str) -> list[str]:
+    return [
+        normalized
+        for part in re.split(r"[\n,]+", value)
+        if (normalized := _normalize_type_value(part))
+    ]
+
+
+def attachment_type_for_row(
+    att: AssessmentAttachment, row: dict[str, str]
+) -> str | None:
+    """For a 'mixed' column, resolve this row's type from type_column + type_value_map.
+
+    Returns 'image'/'pdf', or None to let normal detection (extension/declared) decide.
+    """
+    type_column = getattr(att, "type_column", None)
+    type_value_map = getattr(att, "type_value_map", None)
+    if att.type != "mixed" or not type_column or not type_value_map:
+        return None
+
+    normalized_map: dict[str, str] = {}
+    for raw_values, mapped_type in type_value_map.items():
+        if mapped_type not in ("image", "pdf"):
+            continue
+        for value in _split_type_values(raw_values):
+            normalized_map[value] = mapped_type
+
+    row_values = _split_type_values(row.get(type_column) or "")
+    if not row_values:
+        return None
+
+    mapped_values = {
+        normalized_map[value] for value in row_values if value in normalized_map
+    }
+    return mapped_values.pop() if len(mapped_values) == 1 else None
 
 
 def resolve_attachment_values(
     value: str,
     att: AssessmentAttachment,
-    type_cache: dict[str, str] | None = None,
+    type_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convert one dataset cell into one or more OpenAI-style input objects."""
     value = value.strip()
@@ -271,9 +200,9 @@ def resolve_attachment_values(
     else:
         values = [value]
 
+    item_type = resolve_item_type(att.type, type_override)
     resolved: list[dict[str, Any]] = []
     for item_value in values:
-        item_type = detect_item_type(item_value, att.format, att.type, type_cache)
         normalized_value = (
             to_direct_attachment_url(item_value, item_type)
             if att.format == "url"
@@ -318,12 +247,12 @@ def resolve_attachment_values(
 def build_gemini_attachment_parts(
     value: str,
     att: AssessmentAttachment,
-    type_cache: dict[str, str] | None = None,
+    type_override: str | None = None,
 ) -> list[dict[str, Any]]:
     """Convert one dataset cell into one or more Gemini content parts.
 
-    Mirrors the per-item type detection used for the L2 batch so the same
-    image/pdf routing applies to prefilter (topic relevance) calls.
+    Mirrors the per-item type routing used for the L2 batch so the same
+    image/pdf handling applies to prefilter (topic relevance) calls.
     """
     value = value.strip()
     if not value:
@@ -331,9 +260,9 @@ def build_gemini_attachment_parts(
 
     values = split_attachment_urls(value) if att.format == "url" else [value]
 
+    item_type = resolve_item_type(att.type, type_override)
     parts: list[dict[str, Any]] = []
     for item_value in values:
-        item_type = detect_item_type(item_value, att.format, att.type, type_cache)
         normalized_value = (
             to_direct_attachment_url(item_value, item_type)
             if att.format == "url"

@@ -7,10 +7,16 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
-from app.models.assessment import AssessmentConfigRef, AssessmentCreate
+from app.models.assessment import (
+    AssessmentConfigRef,
+    AssessmentCreate,
+    Stage,
+    StageStatus,
+)
 from app.models.config.config import ConfigTag
 from app.services.assessment.service import (
     _build_retry_request,
+    resume_assessment_run,
     retry_assessment,
     retry_assessment_run,
     start_assessment,
@@ -160,7 +166,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
-            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -204,7 +210,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ) as create_run,
-            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -288,7 +294,7 @@ class TestStartAssessment:
                 "app.services.assessment.service.create_assessment_run",
                 return_value=run,
             ),
-            patch("app.celery.tasks.job_execution.run_assessment_run") as dispatch,
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
             patch("app.services.assessment.service.recompute_assessment_status"),
             _assessment_config_crud_patch(),
         ):
@@ -378,3 +384,61 @@ class TestRetryHelpers:
         ):
             resp2 = retry_assessment_run(session, run, 1, 1)
         assert resp2.assessment_id == 1
+
+
+class TestResumeAssessmentRun:
+    def _failed_run(self, stage: str) -> MagicMock:
+        run = MagicMock()
+        run.id = 11
+        run.assessment_id = 21
+        run.config_id = UUID("00000000-0000-0000-0000-000000000001")
+        run.config_version = 1
+        run.status = "failed"
+        run.stage = stage
+        run.stage_status = StageStatus.FAILED
+        run.pipeline = {
+            "stages": [
+                {"stage": Stage.PRE_FILTER_TOPIC_RELEVANCE, "order": 1},
+                {"stage": Stage.PRE_FILTER_DUPLICATE_DETECTION, "order": 2},
+                {"stage": Stage.L2_ASSESSMENT, "order": 3},
+            ]
+        }
+        run.assessment = SimpleNamespace(id=21, experiment_name="exp", dataset_id=7)
+        return run
+
+    def test_rejects_non_failed_run(self) -> None:
+        run = self._failed_run(Stage.L2_ASSESSMENT)
+        run.stage_status = StageStatus.PROCESSING
+        with pytest.raises(HTTPException) as exc:
+            resume_assessment_run(MagicMock(), run, 1, 1)
+        assert exc.value.status_code == 400
+
+    def test_rejects_stage_not_in_pipeline(self) -> None:
+        run = self._failed_run(Stage.FAILED)
+        with pytest.raises(HTTPException) as exc:
+            resume_assessment_run(MagicMock(), run, 1, 1)
+        assert exc.value.status_code == 400
+
+    def test_resumes_in_place_from_failed_stage(self) -> None:
+        run = self._failed_run(Stage.L2_ASSESSMENT)
+        session = MagicMock()
+
+        with (
+            patch(
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=_make_dataset(),
+            ),
+            patch("app.services.assessment.service.recompute_assessment_status"),
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
+        ):
+            resp = resume_assessment_run(session, run, 1, 1)
+
+        # Same run, reset to PENDING at the same (failed) stage, re-dispatched.
+        assert run.stage == Stage.L2_ASSESSMENT
+        assert run.stage_status == StageStatus.PENDING
+        assert run.status == "processing"
+        assert run.error_message is None
+        dispatch.delay.assert_called_once()
+        assert dispatch.delay.call_args.kwargs["run_id"] == 11
+        assert resp.assessment_id == 21
+        assert resp.num_configs == 1

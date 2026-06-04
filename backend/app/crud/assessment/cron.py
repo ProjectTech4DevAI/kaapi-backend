@@ -9,13 +9,12 @@ from app.crud.assessment import (
     compute_run_counts,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
-    update_assessment_run_status,
 )
 from app.crud.assessment.processing import (
-    check_and_process_assessment,
     format_assessment_failure_message,
+    process_run_batches,
 )
-from app.models.assessment import Assessment, AssessmentRun
+from app.models.assessment import Assessment, AssessmentRun, StageStatus
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,9 @@ async def poll_all_pending_assessment_evaluations(
         runs = get_assessment_runs_for_assessment(
             session=session, assessment_id=assessment.id
         )
-        active_runs = [run for run in runs if run.status == "l2_processing"]
+        active_runs = [
+            run for run in runs if run.stage_status == StageStatus.PROCESSING
+        ]
 
         if not active_runs:
             refreshed = recompute_assessment_status(
@@ -100,7 +101,7 @@ async def poll_all_pending_assessment_evaluations(
 
         for run in active_runs:
             try:
-                result = await check_and_process_assessment(
+                result = await process_run_batches(
                     run=run,
                     session=session,
                 )
@@ -115,51 +116,15 @@ async def poll_all_pending_assessment_evaluations(
                     still_processing += 1
 
             except Exception as e:
-                error_msg = format_assessment_failure_message(e)
-                logger.error(
-                    "[poll_all_pending_assessment_evaluations] Failed run %s | "
-                    "experiment=%s | assessment_id=%s | config_id=%s | config_version=%s | error=%s",
+                session.rollback()
+                logger.warning(
+                    "[poll_all_pending_assessment_evaluations] transient error polling "
+                    "run %s (assessment %s), will retry: %s",
                     run.id,
-                    assessment.experiment_name,
                     run.assessment_id,
-                    run.config_id,
-                    run.config_version,
-                    error_msg,
-                    exc_info=True,
+                    format_assessment_failure_message(e),
                 )
-                try:
-                    update_assessment_run_status(
-                        session=session,
-                        run=run,
-                        status="failed",
-                        error_message=error_msg,
-                    )
-                    recompute_assessment_status(
-                        session=session, assessment_id=assessment.id
-                    )
-                    failure_result = {
-                        "assessment_id": run.assessment_id,
-                        "run_id": run.id,
-                        "experiment_name": assessment.experiment_name,
-                        "config_id": str(run.config_id) if run.config_id else None,
-                        "config_version": run.config_version,
-                        "action": "failed",
-                        "error": error_msg,
-                        "current_status": "failed",
-                    }
-                    all_results.append(failure_result)
-                    failed += 1
-                except Exception as cleanup_exc:
-                    logger.error(
-                        "[poll_all_pending_assessment_evaluations] Cleanup failed for run %s | "
-                        "assessment_id=%s | experiment=%s | error=%s",
-                        run.id,
-                        run.assessment_id,
-                        assessment.experiment_name,
-                        cleanup_exc,
-                        exc_info=True,
-                    )
-                    failed += 1
+                still_processing += 1
 
     logger.info(
         "[poll_all_pending_assessment_evaluations] Summary | processed=%s | failed=%s | still_processing=%s",

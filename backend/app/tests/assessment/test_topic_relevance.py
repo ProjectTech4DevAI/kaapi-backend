@@ -1,123 +1,83 @@
-"""Tests for prefilter topic relevance attachment handling."""
+"""Tests for the topic-relevance per-record request builder and result parser."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
+from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
-from app.services.assessment.prefilter.topic_relevance import run_topic_relevance
+from app.services.assessment.prefilter.topic_relevance import (
+    build_topic_relevance_requests,
+    parse_topic_relevance_results,
+)
 
 
-def _client_returning(decision: str) -> MagicMock:
-    client = MagicMock()
-    response = MagicMock()
-    response.text = json.dumps(
-        {"decision": decision, "Problem": True, "reasoning": "ok"}
-    )
-    client.models.generate_content.return_value = response
-    return client
+def _gemini():
+    return patch.object(settings, "ASSESSMENT_PREFILTER_PROVIDER", "google")
 
 
-class TestTopicRelevanceAttachments:
-    def test_attachments_added_to_contents(self) -> None:
-        client = _client_returning("ACCEPT")
-        att = AssessmentAttachment(column="Documents", type="image", format="url")
-        row = {"Problem": "p", "Documents": "https://x.com/a/photo.jpg"}
+class TestBuildRequests:
+    def test_one_request_per_row_with_per_column_schema(self) -> None:
+        rows = [(0, {"Problem": "p0"}), (1, {"Problem": "p1"})]
+        with _gemini():
+            lines = build_topic_relevance_requests(rows, ["Problem"], "rubric")
+        assert [ln["key"] for ln in lines] == ["tr_0", "tr_1"]
+        schema = lines[0]["request"]["generationConfig"]["responseSchema"]
+        # per-column boolean + decision/reasoning
+        assert schema["properties"]["Problem"]["type"] == "boolean"
+        assert set(schema["required"]) == {"decision", "reasoning", "Problem"}
+        assert "p0" in lines[0]["request"]["contents"][0]["parts"][0]["text"]
 
-        result = run_topic_relevance(
-            row_idx=0,
-            row=row,
-            columns=["Problem"],
-            user_prompt="rubric",
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            attachments=[att],
-            type_cache={},
-        )
-
-        assert result["verdict"] is True
-        contents = client.models.generate_content.call_args.kwargs["contents"]
-        parts = contents[0]["parts"]
-        # First part is the text JSON, then a label, then the attachment file part.
-        assert parts[0]["text"]
-        file_parts = [p for p in parts if "fileData" in p]
-        assert len(file_parts) == 1
-        assert file_parts[0]["fileData"]["fileUri"] == "https://x.com/a/photo.jpg"
-
-    def test_document_relevance_in_schema_and_result(self) -> None:
-        """Selected doc column gets its own relevance boolean in column_relevance."""
-        client = MagicMock()
-        response = MagicMock()
-        response.text = json.dumps(
-            {
-                "decision": "ACCEPT",
-                "Problem": True,
-                "Documents": True,
-                "reasoning": "ok",
-            }
-        )
-        client.models.generate_content.return_value = response
-        att = AssessmentAttachment(column="Documents", type="image", format="url")
-        row = {"Problem": "p", "Documents": "https://x.com/a/photo.jpg"}
-
-        result = run_topic_relevance(
-            row_idx=3,
-            row=row,
-            columns=["Problem"],
-            user_prompt="rubric",
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            attachments=[att],
-            type_cache={},
-        )
-
-        # Document column carried into the per-column relevance map -> exports
-        # as topic_relevance_Documents.
-        assert "Documents" in result["column_relevance"]
-        assert result["column_relevance"]["Documents"] is True
-        schema = client.models.generate_content.call_args.kwargs[
-            "config"
-        ].response_schema
-        assert "Documents" in schema["properties"]
-
-    def test_no_attachments_text_only(self) -> None:
-        client = _client_returning("REJECT")
-        row = {"Problem": "p"}
-
-        result = run_topic_relevance(
-            row_idx=1,
-            row=row,
-            columns=["Problem"],
-            user_prompt="rubric",
-            gemini_client=client,
-            model="gemini-2.5-flash",
-        )
-
-        assert result["verdict"] is False
-        contents = client.models.generate_content.call_args.kwargs["contents"]
-        parts = contents[0]["parts"]
-        assert len(parts) == 1
-        assert parts[0]["text"]
-
-    def test_mixed_column_pdf_item_detected(self) -> None:
-        client = _client_returning("ACCEPT")
-        att = AssessmentAttachment(column="Documents", type="mixed", format="url")
-        row = {"Problem": "p", "Documents": "https://x.com/a/report.pdf"}
-
-        run_topic_relevance(
-            row_idx=2,
-            row=row,
-            columns=["Problem"],
-            user_prompt="rubric",
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            attachments=[att],
-            type_cache={},
-        )
-
-        parts = client.models.generate_content.call_args.kwargs["contents"][0]["parts"]
-        pdf_parts = [
-            p
-            for p in parts
-            if p.get("fileData", {}).get("mimeType") == "application/pdf"
+    def test_attachment_column_adds_part_and_schema_field(self) -> None:
+        rows = [
+            (0, {"Problem": "p0", "Docs": "https://drive.google.com/file/d/A/view"})
         ]
-        assert len(pdf_parts) == 1
+        atts = [AssessmentAttachment(column="Docs", type="image", format="url")]
+        with _gemini():
+            lines = build_topic_relevance_requests(rows, ["Problem"], "rubric", atts)
+        schema = lines[0]["request"]["generationConfig"]["responseSchema"]
+        assert "Docs" in schema["properties"]  # attachment column gets a verdict
+        parts = lines[0]["request"]["contents"][0]["parts"]
+        assert len(parts) >= 2  # text + at least one attachment part
+
+    def test_empty_attachments_is_text_only(self) -> None:
+        with _gemini():
+            lines = build_topic_relevance_requests(
+                [(0, {"Problem": "p"})], ["Problem"], "r"
+            )
+        assert len(lines[0]["request"]["contents"][0]["parts"]) == 1
+
+
+class TestParseResults:
+    def test_maps_decision_and_per_column_relevance(self) -> None:
+        outputs = [
+            {
+                "row_id": "tr_0",
+                "output": json.dumps(
+                    {
+                        "decision": "ACCEPT",
+                        "reasoning": "ok",
+                        "Problem": True,
+                        "Docs": False,
+                    }
+                ),
+                "error": None,
+            },
+            {
+                "row_id": "tr_1",
+                "output": json.dumps(
+                    {"decision": "REJECT", "reasoning": "no", "Problem": False}
+                ),
+                "error": None,
+            },
+        ]
+        parsed = parse_topic_relevance_results(outputs)
+        assert parsed[0]["verdict"] is True
+        assert parsed[0]["column_relevance"] == {"Problem": True, "Docs": False}
+        assert parsed[1]["verdict"] is False
+        assert parsed[1]["column_relevance"] == {"Problem": False}
+
+    def test_bad_output_skipped(self) -> None:
+        parsed = parse_topic_relevance_results(
+            [{"row_id": "tr_0", "output": "not json", "error": None}]
+        )
+        assert parsed == {}

@@ -13,7 +13,8 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlmodel import Session
 
-from app.core.batch import BATCH_KEY, start_batch_job
+from app.core.batch import BATCH_KEY, GeminiBatchProvider, start_batch_job
+from app.core.batch.client import GeminiClient
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
 from app.models.assessment import (
@@ -30,10 +31,12 @@ from app.services.assessment.mappers import (
     normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
+    attachment_type_for_row,
     build_gemini_attachment_parts,
     resolve_attachment_values,
 )
 from app.services.llm.providers.registry import LLMProvider
+from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +174,6 @@ def build_openai_jsonl(
     }
     """
     jsonl_data = []
-    # Memoize per-item type probes across all rows in this build.
-    type_cache: dict[str, str] = {}
 
     for i, row in enumerate(rows):
         idx = row_indices[i] if row_indices is not None else i
@@ -187,7 +188,13 @@ def build_openai_jsonl(
         # Attachments
         for att in attachments:
             cell_value = row.get(att.column, "")
-            input_parts.extend(resolve_attachment_values(cell_value, att, type_cache))
+            input_parts.extend(
+                resolve_attachment_values(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
+                )
+            )
 
         if not input_parts:
             logger.warning("[build_openai_jsonl] Skipping empty row | idx=%s", idx)
@@ -231,8 +238,6 @@ def build_google_jsonl(
     }
     """
     jsonl_data = []
-    # Memoize per-item type probes across all rows in this build.
-    type_cache: dict[str, str] = {}
 
     for i, row in enumerate(rows):
         idx = row_indices[i] if row_indices is not None else i
@@ -246,7 +251,13 @@ def build_google_jsonl(
         # Attachments (Gemini uses file_data for inline content)
         for att in attachments:
             cell_value = row.get(att.column, "")
-            parts.extend(build_gemini_attachment_parts(cell_value, att, type_cache))
+            parts.extend(
+                build_gemini_attachment_parts(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
+                )
+            )
 
         if not parts:
             logger.warning("[build_google_jsonl] Skipping empty row | idx=%s", idx)
@@ -369,9 +380,6 @@ def submit_assessment_batch(
             row_indices=row_indices,
         )
 
-        # Get OpenAI client and submit
-        from app.utils import get_openai_client
-
         openai_client = get_openai_client(
             session=session,
             org_id=organization_id,
@@ -409,10 +417,6 @@ def submit_assessment_batch(
             google_params=mapped_params,
             row_indices=row_indices,
         )
-
-        # Get Gemini client and submit
-        from app.core.batch import GeminiBatchProvider
-        from app.core.batch.client import GeminiClient
 
         gemini_client = GeminiClient.from_credentials(
             session=session,

@@ -1,11 +1,12 @@
 """Assessment models — DB tables, Pydantic schemas, and LLM param wrappers."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Column, Index, Text
+from sqlalchemy import Column, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
@@ -15,6 +16,25 @@ from app.models.llm.request import TextLLMParams
 
 if TYPE_CHECKING:
     from app.models.batch_job import BatchJob
+
+
+class Stage(StrEnum):
+    """Pipeline stages, in execution order. Business step only (status is separate)."""
+
+    PRE_FILTER_TOPIC_RELEVANCE = "PRE_FILTER_TOPIC_RELEVANCE"
+    PRE_FILTER_DUPLICATE_DETECTION = "PRE_FILTER_DUPLICATE_DETECTION"
+    L2_ASSESSMENT = "L2_ASSESSMENT"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class StageStatus(StrEnum):
+    """Execution status of the current stage."""
+
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class Assessment(SQLModel, table=True):
@@ -109,10 +129,43 @@ class AssessmentRun(SQLModel, table=True):
         default="pending",
         sa_column_kwargs={
             "comment": (
-                "Unified pipeline status: pending, prefilter_processing, prefilter_failed, "
-                "l2_processing, completed, completed_with_errors, failed"
+                "Overall run status: pending, processing, completed, "
+                "completed_with_errors, failed"
             )
         },
+    )
+    stage: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": (
+                "Current pipeline stage (Stage enum): PRE_FILTER_TOPIC_RELEVANCE, "
+                "PRE_FILTER_DUPLICATE_DETECTION, L2_ASSESSMENT, COMPLETED, FAILED"
+            )
+        },
+    )
+    stage_status: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "StageStatus of stage: PENDING, PROCESSING, COMPLETED, FAILED"
+        },
+    )
+    pipeline: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Ordered stage config driving execution: {'stages': [...]}",
+        ),
+    )
+    stage_batches: dict[str, int] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Map of stage name -> batch_job id, for per-stage result lookup",
+        ),
     )
     batch_job_id: int | None = SQLField(
         default=None,
@@ -213,6 +266,8 @@ class AssessmentRunStat(BaseModel):
     prefilter_total_rows: int | None = None
     prefilter_total_passed: int | None = None
     prefilter_total_rejected: int | None = None
+    stage: str | None = None
+    stage_status: str | None = None
 
 
 class AssessmentPublic(BaseModel):
@@ -255,6 +310,9 @@ class AssessmentRunPublic(BaseModel):
     prefilter_total_rows: int | None = None
     prefilter_total_passed: int | None = None
     prefilter_total_rejected: int | None = None
+    stage: str | None = None
+    stage_status: str | None = None
+    pipeline: dict[str, Any] | None = None
     post_processing_config: dict[str, Any] | None = None
     inserted_at: datetime
     updated_at: datetime
@@ -280,12 +338,24 @@ class AssessmentAttachment(BaseModel):
     type: Literal["image", "pdf", "mixed"] = Field(
         ...,
         description=(
-            "Attachment type. 'mixed' detects image vs pdf per item (for columns "
-            "that contain both); 'image'/'pdf' force a type and act as fallback "
-            "when per-item detection is inconclusive."
+            "Attachment type. 'image'/'pdf' force the type for every row. 'mixed' "
+            "resolves the per-row type from type_column via type_value_map."
         ),
     )
     format: Literal["url", "base64"] = Field(..., description="Data format")
+    type_column: str | None = Field(
+        None,
+        description=(
+            "For 'mixed': the dataset column whose value decides each row's type."
+        ),
+    )
+    type_value_map: dict[str, str] | None = Field(
+        None,
+        description=(
+            "For 'mixed': maps a type_column value to 'image' or 'pdf' "
+            "(e.g. {'Photo': 'image', 'Report': 'pdf'})."
+        ),
+    )
 
 
 class AssessmentConfigRef(BaseModel):

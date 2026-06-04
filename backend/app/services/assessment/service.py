@@ -24,6 +24,7 @@ from app.models.assessment import (
     AssessmentResponse,
     AssessmentRun,
     AssessmentRunSummary,
+    StageStatus,
 )
 from app.models.config.config import ConfigTag
 from app.services.llm.providers.registry import LLMProvider
@@ -95,7 +96,7 @@ def start_assessment(
     Each run is created with status='pending' and handed off to a Celery worker
     that runs prefilter filtering then submits the L2 batch.
     """
-    from app.celery.tasks.job_execution import run_assessment_run
+    from app.celery.tasks.job_execution import run_assessment_pipeline
 
     logger.info(
         "[start_assessment] Starting | experiment=%s | dataset_id=%s | configs=%s | org_id=%s",
@@ -193,7 +194,7 @@ def start_assessment(
         )
         runs.append(run)
 
-        run_assessment_run.delay(
+        run_assessment_pipeline.delay(
             run_id=run.id,
             organization_id=organization_id,
             project_id=project_id,
@@ -282,4 +283,78 @@ def retry_assessment_run(
         request=request,
         organization_id=organization_id,
         project_id=project_id,
+    )
+
+
+def resume_assessment_run(
+    session: Session,
+    run: AssessmentRun,
+    organization_id: int,
+    project_id: int,
+) -> AssessmentResponse:
+    """Re-run a failed run from its failed stage, reusing completed upstream batches."""
+    from app.celery.tasks.job_execution import run_assessment_pipeline
+    from app.services.assessment.stages import ordered_stages
+
+    if run.stage_status != StageStatus.FAILED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run {run.id} is not in a failed state and cannot be resumed",
+        )
+    if run.stage not in ordered_stages(run.pipeline):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run {run.id} has no resumable failed stage",
+        )
+
+    parent = getattr(run, "assessment", None) or session.get(
+        Assessment, run.assessment_id
+    )
+    if not parent:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Parent assessment {run.assessment_id} not found",
+        )
+    dataset = get_assessment_dataset_by_id(
+        session=session,
+        dataset_id=parent.dataset_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+
+    run.stage_status = StageStatus.PENDING
+    run.status = "processing"
+    run.error_message = None
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    recompute_assessment_status(session=session, assessment_id=run.assessment_id)
+
+    logger.info(
+        "[resume_assessment_run] Resuming run_id=%s from stage=%s",
+        run.id,
+        run.stage,
+    )
+    run_assessment_pipeline.delay(
+        run_id=run.id,
+        organization_id=organization_id,
+        project_id=project_id,
+        trace_id=correlation_id.get() or "",
+    )
+
+    return AssessmentResponse(
+        assessment_id=parent.id,
+        experiment_name=parent.experiment_name,
+        dataset_id=parent.dataset_id,
+        dataset_name=dataset.name if dataset else None,
+        num_configs=1,
+        runs=[
+            AssessmentRunSummary(
+                run_id=run.id,
+                assessment_id=run.assessment_id,
+                config_id=str(run.config_id),
+                config_version=run.config_version,
+                status=run.status,
+            )
+        ],
     )

@@ -1,132 +1,60 @@
-"""Tests for prefilter duplicate detection."""
-
-import json
-from unittest.mock import MagicMock
+"""Tests for the duplicate-detection batch request builder and result parser."""
 
 from app.services.assessment.prefilter.duplicate_detection import (
-    _build_combined,
-    _parse_verdict,
-    run_duplicate_detection,
+    build_duplicate_detection_requests,
+    parse_duplicate_detection_results,
 )
 
 
-def _vague_client(vague: bool, reason: str = "r") -> MagicMock:
-    client = MagicMock()
-    resp = MagicMock()
-    resp.text = json.dumps({"vague": vague, "reason": reason})
-    client.models.generate_content.return_value = resp
-    return client
+class TestBuildRequests:
+    def test_one_request_per_record(self) -> None:
+        rows = [(0, {"Problem": "p0", "Solution": "s0"}), (1, {"Problem": "p1"})]
+        lines = build_duplicate_detection_requests(rows, ["Problem", "Solution"])
+        # key (gemini) or custom_id (openai) depending on configured provider.
+        keys = [ln.get("key") or ln.get("custom_id") for ln in lines]
+        assert keys == ["dup_0", "dup_1"]
 
 
-class TestBuildCombined:
-    def test_joins_non_empty(self) -> None:
-        out = _build_combined({"Problem": "p", "Solution": "s", "Empty": "  "})
-        assert "Problem:\np" in out
-        assert "Solution:\ns" in out
-        assert "Empty" not in out
+class TestParseResults:
+    def test_parses_structured_verdict_per_row(self) -> None:
+        import json
 
-
-class TestParseVerdict:
-    def test_full_fields(self) -> None:
-        raw = (
-            "Verdict: DUPLICATE\n"
-            "Title: Some Idea\n"
-            "Source: https://x.com/a\n"
-            "URL: https://x.com/a\n"
-            "Matching sentence: a beam alarm\n"
-            "Reason: same mechanism"
-        )
-        out = _parse_verdict(raw)
-        assert out["verdict"] == "DUPLICATE"
-        assert out["match_title"] == "Some Idea"
-        assert out["source_url"] == "https://x.com/a"
-        assert out["matching_sentence"] == "a beam alarm"
-        assert out["reason"] == "same mechanism"
-
-    def test_unique_verdict_only(self) -> None:
-        out = _parse_verdict("Verdict: UNIQUE\nReason: nothing matches")
-        assert out["verdict"] == "UNIQUE"
-        assert out["match_title"] is None
-
-    def test_regex_fallback_when_key_missing(self) -> None:
-        out = _parse_verdict("The result is clearly OVERLAP here.")
-        assert out["verdict"] == "OVERLAP"
-
-    def test_no_verdict_stays_empty(self) -> None:
-        out = _parse_verdict("no decision present")
-        assert out["verdict"] == ""
-
-
-class TestRunDuplicateDetection:
-    def test_vague_short_circuits(self) -> None:
-        client = _vague_client(True, "too vague")
-        result = run_duplicate_detection(
-            row_idx=0,
-            row={"Problem": "x"},
-            columns=["Problem"],
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            store_name="store",
-        )
-        assert result["verdict"] == "VAGUE"
-        assert result["reason"] == "too vague"
-        # Only the vague check is called; no file-search second call.
-        assert client.models.generate_content.call_count == 1
-
-    def test_not_vague_runs_file_search(self) -> None:
-        client = MagicMock()
-        vague_resp = MagicMock()
-        vague_resp.text = json.dumps({"vague": False, "reason": ""})
-        search_resp = MagicMock()
-        search_resp.text = "Verdict: UNIQUE\nReason: novel"
-        client.models.generate_content.side_effect = [vague_resp, search_resp]
-
-        result = run_duplicate_detection(
-            row_idx=1,
-            row={"Problem": "p", "Solution": "s"},
-            columns=["Problem", "Solution"],
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            store_name="store",
-        )
-        assert result["verdict"] == "UNIQUE"
-        assert result["reason"] == "novel"
-        assert result["row_id"] == "row_1"
-
-    def test_file_search_error_returns_error_verdict(self) -> None:
-        client = MagicMock()
-        vague_resp = MagicMock()
-        vague_resp.text = json.dumps({"vague": False, "reason": ""})
-        client.models.generate_content.side_effect = [
-            vague_resp,
-            RuntimeError("search boom"),
+        outputs = [
+            {
+                "row_id": "dup_0",
+                "output": json.dumps(
+                    {
+                        "verdict": "UNIQUE",
+                        "match_title": "",
+                        "source_url": "",
+                        "matching_sentence": "",
+                        "reason": "novel",
+                    }
+                ),
+                "error": None,
+            },
+            {
+                "row_id": "dup_1",
+                "output": json.dumps(
+                    {
+                        "verdict": "DUPLICATE",
+                        "match_title": "T",
+                        "source_url": "http://x",
+                        "matching_sentence": "s",
+                        "reason": "same mechanism",
+                    }
+                ),
+                "error": None,
+            },
         ]
+        parsed = parse_duplicate_detection_results(outputs)
+        assert parsed[0]["verdict"] == "UNIQUE"
+        assert parsed[0]["source_url"] is None  # "" -> None
+        assert parsed[1]["verdict"] == "DUPLICATE"
+        assert parsed[1]["source_url"] == "http://x"
 
-        result = run_duplicate_detection(
-            row_idx=2,
-            row={"Problem": "p"},
-            columns=["Problem"],
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            store_name="store",
+    def test_empty_response_records_error(self) -> None:
+        parsed = parse_duplicate_detection_results(
+            [{"row_id": "dup_3", "output": None, "error": None}]
         )
-        assert result["verdict"] == "ERROR"
-        assert "search boom" in result["reason"]
-
-    def test_vague_check_parse_error_defaults_not_vague(self) -> None:
-        client = MagicMock()
-        bad_vague = MagicMock()
-        bad_vague.text = "not json"
-        search_resp = MagicMock()
-        search_resp.text = "Verdict: PARTIAL_MATCH\nTitle: T\nReason: theme"
-        client.models.generate_content.side_effect = [bad_vague, search_resp]
-
-        result = run_duplicate_detection(
-            row_idx=3,
-            row={"Problem": "p"},
-            columns=["Problem"],
-            gemini_client=client,
-            model="gemini-2.5-flash",
-            store_name="store",
-        )
-        assert result["verdict"] == "PARTIAL_MATCH"
+        assert parsed[3]["verdict"] == "ERROR"

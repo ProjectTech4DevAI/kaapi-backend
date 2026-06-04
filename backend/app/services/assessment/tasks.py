@@ -1,9 +1,13 @@
-"""Celery task logic for running a single assessment run (prefilter → L2 batch submit)."""
+"""Orchestrator: submit the run's current PENDING stage as a batch, then exit."""
 
 import logging
 
+from asgi_correlation_id import correlation_id
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session
 
+from app.celery.tasks.job_execution import run_assessment_pipeline
 from app.core.db import engine
 from app.crud.assessment import (
     get_assessment_dataset_by_id,
@@ -11,194 +15,260 @@ from app.crud.assessment import (
     update_assessment_run_status,
 )
 from app.crud.assessment.batch import _load_dataset_rows, submit_assessment_batch
-from app.crud.config import ConfigCrud
+from app.crud.assessment.processing import parse_assessment_output
 from app.crud.evaluations.core import resolve_evaluation_config
+from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentRun,
+    Stage,
+    StageStatus,
 )
 from app.models.config.config import ConfigTag
-from app.services.assessment.prefilter import run_prefilter_pipeline
+from app.services.assessment.prefilter import resolve_prefilter_settings
+from app.services.assessment.stages import (
+    GATE_STAGES,
+    STAGE_PARSERS,
+    advance_or_finalize,
+    build_pipeline,
+    build_prefilter_requests,
+    load_raw_batch_results,
+    next_stage,
+    ordered_stages,
+    submit_prefilter_batch,
+)
 
 logger = logging.getLogger(__name__)
 
+_PREFILTER_STAGES = {
+    Stage.PRE_FILTER_TOPIC_RELEVANCE,
+    Stage.PRE_FILTER_DUPLICATE_DETECTION,
+}
 
-def execute_assessment_run(
-    run_id: int,
-    organization_id: int,
-    project_id: int,
+
+def _mark_run_failed(run_id: int, error_message: str) -> None:
+    """Fail a run from a fresh session so a killed task leaves no dangling run."""
+    try:
+        with Session(engine) as session:
+            run = session.get(AssessmentRun, run_id)
+            if (
+                run is None
+                or run.stage == Stage.COMPLETED
+                or run.stage_status == StageStatus.FAILED
+            ):
+                return
+            run.stage_status = StageStatus.FAILED
+            update_assessment_run_status(
+                session=session, run=run, status="failed", error_message=error_message
+            )
+            recompute_assessment_status(
+                session=session, assessment_id=run.assessment_id
+            )
+            logger.info("[_mark_run_failed] run_id=%s marked failed", run_id)
+    except Exception:
+        logger.error(
+            "[_mark_run_failed] could not mark run_id=%s failed", run_id, exc_info=True
+        )
+
+
+def execute_assessment_pipeline(
+    run_id: int, organization_id: int, project_id: int
 ) -> None:
-    """Run prefilter filtering then submit L2 batch for one AssessmentRun.
+    """Guarded entrypoint: submit the run's current stage, never leave it dangling."""
+    try:
+        _orchestrate(run_id, organization_id, project_id)
+    except SoftTimeLimitExceeded:
+        logger.error("[execute_assessment_pipeline] soft time limit run_id=%s", run_id)
+        _mark_run_failed(run_id, "Assessment run exceeded the time limit.")
+        raise
+    except Exception:
+        logger.error(
+            "[execute_assessment_pipeline] unexpected failure run_id=%s",
+            run_id,
+            exc_info=True,
+        )
+        _mark_run_failed(run_id, "Assessment run failed unexpectedly.")
+        raise
 
-    Status transitions:
-      pending → prefilter_processing → prefilter_failed (stop)
-                              → l2_processing → (cron handles rest)
-      pending → l2_processing  (when no prefilter_config)
-    """
+
+def _dispatch(run_id: int, organization_id: int, project_id: int) -> None:
+    run_assessment_pipeline.delay(
+        run_id=run_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        trace_id=correlation_id.get() or "",
+    )
+
+
+def _resolve_run_context(
+    session: Session, run: AssessmentRun, organization_id: int, project_id: int
+):
+    """Load the assessment, dataset, and resolved config; ``error`` set on failure."""
+    assessment = session.get(Assessment, run.assessment_id)
+    if assessment is None:
+        return None, None, None, "Parent assessment not found."
+    dataset = get_assessment_dataset_by_id(
+        session=session,
+        dataset_id=assessment.dataset_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    config_blob, error = resolve_evaluation_config(
+        session=session,
+        config_id=run.config_id,
+        config_version=run.config_version,
+        project_id=project_id,
+        tag=ConfigTag.ASSESSMENT,
+    )
+    if error or config_blob is None:
+        return assessment, dataset, None, f"Config resolution failed: {error}"
+    return assessment, dataset, config_blob, None
+
+
+def _accepted_indices(
+    session: Session, run: AssessmentRun, total_rows: int, project_id: int
+) -> list[int]:
+    """Row indices that passed every gate stage before the current one."""
+    accepted = set(range(total_rows))
+    for stage in ordered_stages(run.pipeline):
+        if stage == run.stage:
+            break
+        if stage not in GATE_STAGES:
+            continue
+        batch_id = (run.stage_batches or {}).get(stage)
+        if batch_id is None:
+            continue
+        batch_job = get_batch_job(session=session, batch_job_id=batch_id)
+        if not batch_job:
+            continue
+        raw = load_raw_batch_results(session, batch_job, project_id)
+        outputs = parse_assessment_output(raw, batch_job.provider)
+        parsed = STAGE_PARSERS[stage](outputs)
+        accepted &= {idx for idx, r in parsed.items() if r.get("verdict")}
+    return sorted(accepted)
+
+
+def _orchestrate(run_id: int, organization_id: int, project_id: int) -> None:
     with Session(engine) as session:
         run = session.get(AssessmentRun, run_id)
         if run is None:
-            logger.error("[execute_assessment_run] run_id=%s not found", run_id)
+            logger.error("[execute_assessment_pipeline] run_id=%s not found", run_id)
+            return
+        if run.stage == Stage.COMPLETED or run.stage_status == StageStatus.FAILED:
             return
 
-        assessment = session.get(Assessment, run.assessment_id)
-        if assessment is None:
-            logger.error(
-                "[execute_assessment_run] parent assessment %s not found for run %s",
-                run.assessment_id,
-                run_id,
-            )
+        if not run.pipeline:
+            run.pipeline = build_pipeline(run.input or {})
+            flag_modified(run, "pipeline")
+        if run.stage is None:
+            run.stage = next_stage(run.pipeline)
+            run.stage_status = StageStatus.PENDING
+            run.status = "processing"
+        if run.stage_status != StageStatus.PENDING:
+            session.add(run)
+            session.commit()
             return
+        session.add(run)
+        session.commit()
+        session.refresh(run)
 
-        assessment_input = run.input or {}
-        dataset_id = assessment.dataset_id
+        _submit_stage(session, run, organization_id, project_id)
 
-        dataset = get_assessment_dataset_by_id(
+
+def _submit_stage(
+    session: Session, run: AssessmentRun, organization_id: int, project_id: int
+) -> None:
+    assessment, dataset, config_blob, error = _resolve_run_context(
+        session, run, organization_id, project_id
+    )
+    if error:
+        run.stage_status = StageStatus.FAILED
+        update_assessment_run_status(
+            session=session, run=run, status="failed", error_message=error
+        )
+        recompute_assessment_status(session=session, assessment_id=run.assessment_id)
+        return
+
+    all_rows = _load_dataset_rows(session, dataset)
+    if not all_rows:
+        run.stage_status = StageStatus.FAILED
+        update_assessment_run_status(
             session=session,
-            dataset_id=dataset_id,
+            run=run,
+            status="failed",
+            error_message="Dataset has no rows.",
+        )
+        recompute_assessment_status(session=session, assessment_id=run.assessment_id)
+        return
+
+    accepted = _accepted_indices(session, run, len(all_rows), project_id)
+    rows_with_idx = [(i, all_rows[i]) for i in accepted]
+    stage = run.stage
+
+    if not rows_with_idx:
+        # Nothing left for this stage (all rows rejected upstream) — advance.
+        _persist_advance(session, run, organization_id, project_id)
+        return
+
+    if stage in _PREFILTER_STAGES:
+        cfg = resolve_prefilter_settings(run.input.get("prefilter_config") or {})
+        attachments = [
+            AssessmentAttachment(**a) for a in (run.input.get("attachments") or [])
+        ]
+        selected = cfg.get("tr_attachment_columns")
+        if selected is not None:
+            attachments = [a for a in attachments if a.column in set(selected)]
+        jsonl = build_prefilter_requests(stage, rows_with_idx, cfg, attachments)
+        batch_job = submit_prefilter_batch(
+            session=session,
             organization_id=organization_id,
             project_id=project_id,
+            jsonl_data=jsonl,
+            display_name=f"assessment-{run.id}-{stage}",
         )
-
-        config_crud = ConfigCrud(session=session, project_id=project_id)
-        parent_config = config_crud.read_one(run.config_id)
-        if parent_config is not None and parent_config.tag != ConfigTag.ASSESSMENT:
-            logger.error(
-                "[execute_assessment_run] config %s has wrong tag for run %s",
-                run.config_id,
-                run_id,
-            )
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message="Config tag is not ASSESSMENT.",
-            )
-            recompute_assessment_status(session=session, assessment_id=assessment.id)
-            return
-
-        config_blob, error = resolve_evaluation_config(
+    elif stage == Stage.L2_ASSESSMENT:
+        batch_job = submit_assessment_batch(
             session=session,
-            config_id=run.config_id,
-            config_version=run.config_version,
+            run=run,
+            assessment=assessment,
+            dataset=dataset,
+            config_blob=config_blob,
+            assessment_input=run.input or {},
+            organization_id=organization_id,
             project_id=project_id,
-            tag=ConfigTag.ASSESSMENT,
+            preloaded_rows=[r for _, r in rows_with_idx],
+            row_indices=[i for i, _ in rows_with_idx],
         )
-        if error or config_blob is None:
-            logger.error(
-                "[execute_assessment_run] config resolution failed run_id=%s: %s",
-                run_id,
-                error,
-            )
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message=f"Config resolution failed: {error}",
-            )
-            recompute_assessment_status(session=session, assessment_id=assessment.id)
-            return
+        run.total_items = batch_job.total_items
+    else:
+        raise ValueError(f"Unknown stage: {stage}")
 
-        all_rows = _load_dataset_rows(session=session, dataset=dataset)
-        if not all_rows:
-            logger.error(
-                "[execute_assessment_run] dataset %s has no rows for run %s",
-                dataset_id,
-                run_id,
-            )
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message="Dataset has no rows.",
-            )
-            recompute_assessment_status(session=session, assessment_id=assessment.id)
-            return
+    stage_batches = dict(run.stage_batches or {})
+    stage_batches[stage] = batch_job.id
+    run.stage_batches = stage_batches
+    flag_modified(run, "stage_batches")
+    run.stage_status = StageStatus.PROCESSING
+    run.status = "processing"
+    session.add(run)
+    session.commit()
+    recompute_assessment_status(session=session, assessment_id=run.assessment_id)
 
-        # prefilter pipeline
-        rows_for_l2 = all_rows
-        row_indices_for_l2: list[int] | None = None
-        prefilter_config = assessment_input.get("prefilter_config")
-        if prefilter_config:
-            update_assessment_run_status(
-                session=session, run=run, status="prefilter_processing"
-            )
-            try:
-                rows_for_l2, row_indices_for_l2, _ = run_prefilter_pipeline(
-                    run=run,
-                    rows=all_rows,
-                    prefilter_config=prefilter_config,
-                    session=session,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                    attachments=[
-                        AssessmentAttachment(**a)
-                        for a in assessment_input.get("attachments") or []
-                    ],
-                )
-                logger.info(
-                    "[execute_assessment_run] prefilter done | run_id=%s | rows_to_l2=%s / %s",
-                    run_id,
-                    len(rows_for_l2),
-                    len(all_rows),
-                )
-            except Exception as prefilter_exc:
-                logger.error(
-                    "[execute_assessment_run] prefilter failed run_id=%s | %s",
-                    run_id,
-                    prefilter_exc,
-                    exc_info=True,
-                )
-                update_assessment_run_status(
-                    session=session,
-                    run=run,
-                    status="prefilter_failed",
-                    error_message=f"prefilter pipeline failed: {prefilter_exc}",
-                )
-                recompute_assessment_status(
-                    session=session, assessment_id=assessment.id
-                )
-                return  # L2 does not run when prefilter fails
+    logger.info(
+        "[execute_assessment_pipeline] run_id=%s | stage=%s submitted | batch=%s | rows=%s",
+        run.id,
+        stage,
+        batch_job.id,
+        len(rows_with_idx),
+    )
 
-        # L2 batch submit
-        try:
-            batch_job = submit_assessment_batch(
-                session=session,
-                run=run,
-                assessment=assessment,
-                dataset=dataset,
-                config_blob=config_blob,
-                assessment_input=assessment_input,
-                organization_id=organization_id,
-                project_id=project_id,
-                preloaded_rows=rows_for_l2,
-                row_indices=row_indices_for_l2,
-            )
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="l2_processing",
-                batch_job_id=batch_job.id,
-                total_items=batch_job.total_items,
-            )
-            logger.info(
-                "[execute_assessment_run] L2 batch submitted | run_id=%s | batch_job_id=%s",
-                run_id,
-                batch_job.id,
-            )
-        except Exception as e:
-            logger.error(
-                "[execute_assessment_run] L2 batch submit failed run_id=%s: %s",
-                run_id,
-                e,
-                exc_info=True,
-            )
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message="Batch submission failed. Please try again or contact support.",
-            )
 
-        recompute_assessment_status(session=session, assessment_id=assessment.id)
+def _persist_advance(
+    session: Session, run: AssessmentRun, organization_id: int, project_id: int
+) -> None:
+    nxt = advance_or_finalize(run)
+    session.add(run)
+    session.commit()
+    recompute_assessment_status(session=session, assessment_id=run.assessment_id)
+    if nxt:
+        _dispatch(run.id, organization_id, project_id)

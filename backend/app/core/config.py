@@ -171,19 +171,10 @@ class Settings(BaseSettings):
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # Assessment
-    ASSESSMENT_PREFILTER_GEMINI_MODEL: str = "gemini-3.1-flash-lite"
-    ASSESSMENT_PREFILTER_CONCURRENT_WORKERS: int = 8
-    ASSESSMENT_PREFILTER_DUPLICATE_STORE_NAME: str = (
-        "fileSearchStores/inquilabcorpus-782mxjcwisaz"
-    )
-    # Soft timeout for the full assessment run task (prefilter pipeline + batch
-    # submission). Larger than the default task limit because prefilter runs many
-    # concurrent LLM calls over the whole dataset. Seconds. Default 2 hours.
-    ASSESSMENT_RUN_SOFT_TIME_LIMIT: int = 7200
-    # Timeout for prefilter Gemini calls to prevent pipeline stalls from slow/hung requests
-    #  (default: 2 minutes, in ms)
-    ASSESSMENT_PREFILTER_REQUEST_TIMEOUT_MS: int = 120000
+    # Assessment prefilter — provider + model for the batch prefilter stages.
+    ASSESSMENT_PREFILTER_PROVIDER: Literal["openai", "google"] = "openai"
+    ASSESSMENT_PREFILTER_MODEL: str = "gpt-5-mini"
+    ASSESSMENT_PREFILTER_DUPLICATE_STORE: str = "vs_6a20339fbc148191867fd06d29133278"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

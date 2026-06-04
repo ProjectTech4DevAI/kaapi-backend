@@ -1,3 +1,3 @@
-from app.services.assessment.prefilter.pipeline import run_prefilter_pipeline
+from app.services.assessment.prefilter.pipeline import resolve_prefilter_settings
 
-__all__ = ["run_prefilter_pipeline"]
+__all__ = ["resolve_prefilter_settings"]

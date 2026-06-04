@@ -10,9 +10,13 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.assessment import (
     get_assessment_by_id,
-    get_assessment_run_by_id as get_run_by_id,
-    list_assessment_runs as list_runs,
     update_run_post_processing_config,
+)
+from app.crud.assessment import (
+    get_assessment_run_by_id as get_run_by_id,
+)
+from app.crud.assessment import (
+    list_assessment_runs as list_runs,
 )
 from app.models.assessment import (
     Assessment,
@@ -22,6 +26,9 @@ from app.models.assessment import (
     AssessmentRunPublic,
 )
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.service import (
+    resume_assessment_run as resume_run,
+)
 from app.services.assessment.service import (
     retry_assessment_run as retry_run,
 )
@@ -70,6 +77,9 @@ def _build_run_public(
         prefilter_total_rows=run.prefilter_total_rows,
         prefilter_total_passed=run.prefilter_total_passed,
         prefilter_total_rejected=run.prefilter_total_rejected,
+        stage=run.stage,
+        stage_status=run.stage_status,
+        pipeline=run.pipeline,
         post_processing_config=(run.input or {}).get("post_processing_config"),
         inserted_at=run.inserted_at,
         updated_at=run.updated_at,
@@ -125,6 +135,34 @@ def retry_assessment_run(
     )
 
     result = retry_run(
+        session=session,
+        run=run,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+    return APIResponse.success_response(data=result)
+
+
+@router.post(
+    "/runs/{run_id}/resume",
+    description=load_description("assessment/resume_run.md"),
+    response_model=APIResponse[AssessmentResponse],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def resume_assessment_run(
+    run_id: int,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[AssessmentResponse]:
+    """Resume a failed child run from its failed stage, reusing completed stages."""
+    run = get_run_by_id(
+        session=session,
+        run_id=run_id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+
+    result = resume_run(
         session=session,
         run=run,
         organization_id=auth_context.organization_.id,

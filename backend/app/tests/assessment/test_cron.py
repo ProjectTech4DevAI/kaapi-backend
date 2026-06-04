@@ -103,7 +103,7 @@ class TestPollAllPendingAssessmentEvaluations:
             "app.crud.assessment.cron.recompute_assessment_status",
             return_value=refreshed,
         ), patch(
-            "app.crud.assessment.cron.check_and_process_assessment", new=AsyncMock()
+            "app.crud.assessment.cron.process_run_batches", new=AsyncMock()
         ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
@@ -115,14 +115,14 @@ class TestPollAllPendingAssessmentEvaluations:
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
         run = _make_run(id=11)
-        run.status = "l2_processing"
+        run.stage_status = "PROCESSING"
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
             "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.crud.assessment.cron.check_and_process_assessment",
+            "app.crud.assessment.cron.process_run_batches",
             new=AsyncMock(
                 return_value={
                     "action": "processed",
@@ -136,55 +136,22 @@ class TestPollAllPendingAssessmentEvaluations:
         assert result["processed"] == 1
 
     @pytest.mark.asyncio
-    async def test_active_run_failure_and_cleanup_failure(self) -> None:
+    async def test_transient_poll_exception_does_not_fail_run(self) -> None:
+        """A transient error while polling leaves the run active for retry."""
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
         run = _make_run(id=11)
-        run.status = "l2_processing"
+        run.stage_status = "PROCESSING"
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
             "app.crud.assessment.cron.get_assessment_runs_for_assessment",
             return_value=[run],
         ), patch(
-            "app.crud.assessment.cron.check_and_process_assessment",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
-        ), patch(
-            "app.crud.assessment.cron.update_assessment_run_status",
-            side_effect=RuntimeError("cleanup-failed"),
-        ), patch(
-            "app.crud.assessment.cron.recompute_assessment_status",
+            "app.crud.assessment.cron.process_run_batches",
+            new=AsyncMock(side_effect=RuntimeError("nodename nor servname provided")),
         ):
             result = await poll_all_pending_assessment_evaluations(session=session)
 
-        assert result["failed"] == 1
-
-    @pytest.mark.asyncio
-    async def test_active_run_failure_updates_db_with_same_error_message(self) -> None:
-        session = MagicMock()
-        assessment = _make_assessment(id=1, status="processing")
-        run = _make_run(id=11)
-        run.status = "l2_processing"
-        session.exec.return_value.all.return_value = [assessment]
-
-        with patch(
-            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
-            return_value=[run],
-        ), patch(
-            "app.crud.assessment.cron.check_and_process_assessment",
-            new=AsyncMock(side_effect=RuntimeError("gemini quota exceeded")),
-        ), patch(
-            "app.crud.assessment.cron.update_assessment_run_status",
-        ) as update_run, patch(
-            "app.crud.assessment.cron.recompute_assessment_status",
-        ):
-            result = await poll_all_pending_assessment_evaluations(session=session)
-
-        assert result["failed"] == 1
-        assert result["details"][0]["error"] == "gemini quota exceeded"
-        update_run.assert_called_once_with(
-            session=session,
-            run=run,
-            status="failed",
-            error_message="gemini quota exceeded",
-        )
+        assert result["failed"] == 0
+        assert result["still_processing"] == 1

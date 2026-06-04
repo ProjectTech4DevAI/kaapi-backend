@@ -282,11 +282,14 @@ def update_assessment_run_prefilter_stats(
     return run
 
 
-_ACTIVE_RUN_STATUSES = frozenset(
-    {"prefilter_processing", "l2_processing", "processing", "in_progress"}
-)
-_FAILED_RUN_STATUSES = frozenset({"failed", "prefilter_failed"})
-_COMPLETED_RUN_STATUSES = frozenset({"completed", "completed_with_errors"})
+_ACTIVE_RUN_STATUSES = {
+    "prefilter_processing",
+    "l2_processing",
+    "processing",
+    "in_progress",
+}
+_FAILED_RUN_STATUSES = {"failed", "prefilter_failed"}
+_COMPLETED_RUN_STATUSES = {"completed", "completed_with_errors"}
 
 
 def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
@@ -334,6 +337,8 @@ def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
             prefilter_total_rows=run.prefilter_total_rows,
             prefilter_total_passed=run.prefilter_total_passed,
             prefilter_total_rejected=run.prefilter_total_rejected,
+            stage=run.stage,
+            stage_status=run.stage_status,
         )
         for run in runs
     ]
