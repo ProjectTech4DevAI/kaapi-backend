@@ -159,12 +159,12 @@ class ConfigVersionCrud:
     def _strip_unsupported_params(self, merged_config: dict[str, Any]) -> None:
         """Remove completion params the newly selected model doesn't accept.
 
-        only such param is `temperature` for reasoning models
+        Only such param today is `temperature` for reasoning models
         (gpt-5 family — flagged by an `effort` key in `model_config.config`).
         """
-        completion = merged_config.get("completion") or {}
+        completion = dict(merged_config.get("completion") or {})
         provider = completion.get("provider")
-        params = completion.get("params") or {}
+        params = dict(completion.get("params") or {})
         model_name = params.get("model")
         if not provider or not model_name:
             return
@@ -176,6 +176,8 @@ class ConfigVersionCrud:
             model_name=model_name,
         ):
             params.pop("temperature", None)
+            completion["params"] = params
+            merged_config["completion"] = completion
 
     def _validate_immutable_fields(
         self, existing: dict[str, Any], merged: dict[str, Any]
