@@ -155,3 +155,27 @@ class TestPollAllPendingAssessmentEvaluations:
 
         assert result["failed"] == 0
         assert result["still_processing"] == 1
+
+    @pytest.mark.asyncio
+    async def test_deterministic_error_marks_run_failed(self) -> None:
+        """A deterministic ValueError fails the run instead of retrying forever."""
+        session = MagicMock()
+        assessment = _make_assessment(id=1, status="processing")
+        run = _make_run(id=11)
+        run.stage_status = "PROCESSING"
+        session.exec.return_value.all.return_value = [assessment]
+
+        with patch(
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
+            return_value=[run],
+        ), patch(
+            "app.crud.assessment.cron.process_run_batches",
+            new=AsyncMock(side_effect=ValueError("Parent assessment 1 not found")),
+        ), patch(
+            "app.crud.assessment.cron.update_assessment_run_status"
+        ) as mark_failed:
+            result = await poll_all_pending_assessment_evaluations(session=session)
+
+        assert result["failed"] == 1
+        assert result["still_processing"] == 0
+        assert mark_failed.call_args.kwargs["status"] == "failed"

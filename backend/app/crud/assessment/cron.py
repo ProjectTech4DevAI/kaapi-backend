@@ -9,6 +9,7 @@ from app.crud.assessment import (
     compute_run_counts,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
+    update_assessment_run_status,
 )
 from app.crud.assessment.processing import (
     format_assessment_failure_message,
@@ -115,6 +116,34 @@ async def poll_all_pending_assessment_evaluations(
                 else:
                     still_processing += 1
 
+            except ValueError as e:
+                session.rollback()
+                message = format_assessment_failure_message(e)
+                logger.error(
+                    "[poll_all_pending_assessment_evaluations] deterministic error on "
+                    "run %s (assessment %s), marking failed: %s",
+                    run.id,
+                    run.assessment_id,
+                    message,
+                )
+                try:
+                    run.stage_status = StageStatus.FAILED
+                    update_assessment_run_status(
+                        session=session,
+                        run=run,
+                        status="failed",
+                        error_message=message,
+                    )
+                    failed += 1
+                except Exception:
+                    session.rollback()
+                    logger.error(
+                        "[poll_all_pending_assessment_evaluations] could not mark run "
+                        "%s failed",
+                        run.id,
+                        exc_info=True,
+                    )
+                    still_processing += 1
             except Exception as e:
                 session.rollback()
                 logger.warning(

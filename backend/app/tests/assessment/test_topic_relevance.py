@@ -15,6 +15,28 @@ def _gemini():
     return patch.object(constants, "ASSESSMENT_PREFILTER_PROVIDER", "google")
 
 
+def _openai():
+    return patch.object(constants, "ASSESSMENT_PREFILTER_PROVIDER", "openai")
+
+
+class TestBuildRequestsOpenAI:
+    def test_openai_request_shape(self) -> None:
+        rows = [(0, {"Problem": "p0", "Docs": "https://x.com/a.png"})]
+        atts = [AssessmentAttachment(column="Docs", type="image", format="url")]
+        with _openai():
+            lines = build_topic_relevance_requests(rows, ["Problem"], "rubric", atts)
+        line = lines[0]
+        assert line["custom_id"] == "tr_0"
+        assert line["url"] == "/v1/responses"
+        body = line["body"]
+        assert body["instructions"].startswith("rubric")
+        content = body["input"][0]["content"]
+        assert content[0] == {"type": "input_text", "text": "Problem:\np0"}
+        assert content[1]["type"] == "input_image"
+        assert body["text"]["format"]["type"] == "json_schema"
+        assert body["text"]["format"]["schema"]["additionalProperties"] is False
+
+
 class TestBuildRequests:
     def test_one_request_per_row_with_per_column_schema(self) -> None:
         rows = [(0, {"Problem": "p0"}), (1, {"Problem": "p1"})]
@@ -44,6 +66,15 @@ class TestBuildRequests:
             lines = build_topic_relevance_requests(
                 [(0, {"Problem": "p"})], ["Problem"], "r"
             )
+        assert len(lines[0]["request"]["contents"][0]["parts"]) == 1
+
+    def test_blank_attachment_cell_is_skipped(self) -> None:
+        att = AssessmentAttachment(column="Docs", type="image", format="url")
+        with _gemini():
+            lines = build_topic_relevance_requests(
+                [(0, {"Problem": "p", "Docs": "   "})], ["Problem"], "r", [att]
+            )
+        # Whitespace-only attachment cell -> only the text part survives.
         assert len(lines[0]["request"]["contents"][0]["parts"]) == 1
 
 
@@ -93,3 +124,12 @@ class TestParseResults:
         )
         assert parsed[0]["verdict"] is True
         assert parsed[0]["decision"] == ""
+
+    def test_foreign_and_bad_index_keys_skipped(self) -> None:
+        parsed = parse_topic_relevance_results(
+            [
+                {"row_id": "dup_0", "output": "{}", "error": None},  # not a tr key
+                {"row_id": "tr_x", "output": "{}", "error": None},  # bad index
+            ]
+        )
+        assert parsed == {}
