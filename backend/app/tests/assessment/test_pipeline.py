@@ -1,9 +1,15 @@
 """Tests for prefilter settings + pipeline stage ordering."""
 
-from app.models.assessment import Stage
+from types import SimpleNamespace
+
+import pytest
+
+from app.models.assessment import Stage, StageStatus
 from app.services.assessment.prefilter import resolve_prefilter_settings
 from app.services.assessment.stages import (
+    advance_or_finalize,
     build_pipeline,
+    build_prefilter_requests,
     next_stage,
     ordered_stages,
 )
@@ -48,3 +54,53 @@ class TestPipeline:
             Stage.PRE_FILTER_DUPLICATE_DETECTION
         )
         assert next_stage(pipeline, Stage.L2_ASSESSMENT) is None
+
+
+class TestAdvanceOrFinalize:
+    def test_advances_to_next_pending_stage(self) -> None:
+        run = SimpleNamespace(
+            pipeline=build_pipeline(_FULL_INPUT),
+            stage=Stage.PRE_FILTER_TOPIC_RELEVANCE,
+            stage_status=StageStatus.COMPLETED,
+            status="processing",
+        )
+        nxt = advance_or_finalize(run)
+        assert nxt == Stage.PRE_FILTER_DUPLICATE_DETECTION
+        assert run.stage == Stage.PRE_FILTER_DUPLICATE_DETECTION
+        assert run.stage_status == StageStatus.PENDING
+
+    def test_finalizes_after_last_stage(self) -> None:
+        run = SimpleNamespace(
+            pipeline=build_pipeline({}),
+            stage=Stage.L2_ASSESSMENT,
+            stage_status=StageStatus.COMPLETED,
+            status="processing",
+        )
+        assert advance_or_finalize(run) is None
+        assert run.stage == Stage.COMPLETED
+        assert run.stage_status == StageStatus.COMPLETED
+        assert run.status == "completed"
+
+
+class TestBuildPrefilterRequests:
+    _CFG = {
+        "tr_columns": ["Problem"],
+        "tr_prompt": "rubric",
+        "dup_columns": ["Problem"],
+    }
+
+    def test_topic_relevance_stage(self) -> None:
+        lines = build_prefilter_requests(
+            Stage.PRE_FILTER_TOPIC_RELEVANCE, [(0, {"Problem": "p"})], self._CFG
+        )
+        assert len(lines) == 1
+
+    def test_duplicate_detection_stage(self) -> None:
+        lines = build_prefilter_requests(
+            Stage.PRE_FILTER_DUPLICATE_DETECTION, [(0, {"Problem": "p"})], self._CFG
+        )
+        assert len(lines) == 1
+
+    def test_unknown_stage_raises(self) -> None:
+        with pytest.raises(ValueError):
+            build_prefilter_requests("BOGUS", [(0, {"Problem": "p"})], self._CFG)

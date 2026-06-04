@@ -19,6 +19,8 @@ from app.crud.assessment.batch import (
 from app.models.assessment import AssessmentAttachment
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
+    attachment_type_for_row,
+    build_gemini_attachment_parts,
     resolve_attachment_values,
     resolve_item_type,
     split_attachment_urls,
@@ -522,3 +524,44 @@ class TestAttachmentTypeForRow:
         url = "https://drive.google.com/file/d/ID/view"
         parts = resolve_attachment_values(url, att, type_override="pdf")
         assert parts[0]["type"] == "input_file"
+
+
+class TestAttachmentResolutionBranches:
+    _IMG = AssessmentAttachment(column="Docs", type="image", format="url")
+    _PDF = AssessmentAttachment(column="Docs", type="pdf", format="url")
+    _MIXED = AssessmentAttachment(
+        column="Docs",
+        type="mixed",
+        format="url",
+        type_column="DOC type",
+        type_value_map={"Report": "pdf"},
+    )
+
+    def test_blank_value_returns_empty(self) -> None:
+        assert resolve_attachment_values("  ", self._IMG) == []
+        assert build_gemini_attachment_parts("  ", self._IMG) == []
+
+    def test_unresolved_mixed_is_skipped(self) -> None:
+        url = "https://x.com/a.jpg"
+        # No override and declared 'mixed' -> unresolved -> skip rather than guess.
+        assert resolve_attachment_values(url, self._MIXED) == []
+        assert build_gemini_attachment_parts(url, self._MIXED) == []
+
+    def test_gemini_image_and_pdf_parts(self) -> None:
+        img = build_gemini_attachment_parts("https://x.com/a.png", self._IMG)[0]
+        pdf = build_gemini_attachment_parts("https://x.com/a.pdf", self._PDF)[0]
+        assert img["fileData"]["mimeType"] == "image/png"
+        assert pdf["fileData"]["mimeType"] == "application/pdf"
+
+    def test_type_for_row_blank_value_returns_none(self) -> None:
+        assert attachment_type_for_row(self._MIXED, {"DOC type": "  "}) is None
+
+    def test_type_for_row_ignores_invalid_map_value(self) -> None:
+        # SimpleNamespace bypasses the model validator to exercise the guard that
+        # skips map entries whose target type isn't 'image'/'pdf'.
+        att = SimpleNamespace(
+            type="mixed",
+            type_column="DOC type",
+            type_value_map={"Report": "spreadsheet"},
+        )
+        assert attachment_type_for_row(att, {"DOC type": "Report"}) is None
