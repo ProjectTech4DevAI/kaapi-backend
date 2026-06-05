@@ -4,31 +4,6 @@ Revision ID: 064
 Revises: 063
 Create Date: 2026-05-20 00:00:00.000000
 
-Two schema changes are required to support the fast-evaluation feature:
-
-1. run_mode VARCHAR(10) NOT NULL DEFAULT 'batch'
-   Every evaluation run must now carry an explicit execution mode ('batch'
-   or 'fast').  Because evaluation_run may already contain rows the column
-   is added as nullable with a server_default of 'batch' so existing rows
-   are backfilled atomically, then SET NOT NULL is applied.  The server
-   default is kept on the column to act as a safety net for any insert path
-   that does not explicitly set the field; the SQLModel default="batch" will
-   also cover application inserts.
-
-2. UNIQUE constraint uq_evaluation_run_org_project_run_name
-   on (organization_id, project_id, run_name)
-   Guards against double-click races on POST /evaluations where two
-   concurrent requests could create duplicate runs with the same name inside
-   the same project.  Lower environments may already contain duplicate
-   (organization_id, project_id, run_name) tuples, so we dedupe first
-   (keeping the lowest-id survivor), then build the unique index
-   CONCURRENTLY (no AccessExclusiveLock on the table during the build) and
-   attach it as a named constraint via ADD CONSTRAINT ... USING INDEX.
-   Because CONCURRENTLY cannot execute inside a transaction the whole
-   migration is marked disable_per_migration_transaction = True and each
-   CONCURRENTLY step is wrapped in autocommit_block().  The dedupe DELETE and
-   the non-concurrent DDL steps run inside autocommit mode too, which is
-   safe — they are each individually atomic at the statement level.
 """
 
 import sqlalchemy as sa

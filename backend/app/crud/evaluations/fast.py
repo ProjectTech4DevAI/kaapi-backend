@@ -1,18 +1,15 @@
-"""
-Fast evaluation orchestration.
+"""Fast evaluation orchestration (run_mode="fast").
 
-This module implements run_mode="fast" — the synchronous text-evaluation path
-described in `Fast Evaluation SRD.md`. Unlike the batch path it does not submit
-an OpenAI Batch job; instead it makes Responses + Embeddings calls in parallel
-from a single Celery orchestrator task and persists per-stage units to S3.
-
-Stage layout (each stage is skipped on retry if its `batch_job` row already
-exists, mirroring how the batch path tracks state):
+Synchronous text-eval path: makes Responses + Embeddings calls in parallel from
+a single Celery task and persists per-stage units to S3. Each stage is skipped
+on retry if its `batch_job` row already exists.
 
     Stage 1 — Responses unit:   evaluation_run.batch_job_id
     Stage 2 — Embeddings unit:  evaluation_run.embedding_batch_job_id
     Stage 3 — Score + trace + cost (no marker; each step is idempotent)
     Stage 4 — Mark completed
+
+See `Fast Evaluation SRD.md` for the full design.
 """
 
 import logging
@@ -56,22 +53,17 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-# job_type discriminators on batch_job for the two stages of the fast path.
-# The OpenAI Batch concepts (provider_batch_id, provider_file_id, …) are NULL
-# on these rows; the presence of the row + its raw_output_url is what tells the
-# orchestrator a stage is already done.
+# job_type discriminators on batch_job for the two fast-path stages. The row's
+# presence + raw_output_url is what marks a stage as already done on retry.
 JOB_TYPE_EVALUATION_FAST = "evaluation_fast"
 JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 
 
-# Retry policy for individual OpenAI calls inside Stage 1 / Stage 2.
-# Retries on rate-limit, timeout, and connection errors; permanent errors
-# (auth, validation, model not found) fail the item immediately.
+# Per-call retry policy for Stage 1 / Stage 2.
 _RETRY_MAX_ATTEMPTS = 5
 _RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRY_MAX_DELAY_SECONDS = 30.0
 
-# These OpenAI exception classes are retryable transient failures.
 _RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
     openai.RateLimitError,
     openai.APITimeoutError,
@@ -90,14 +82,7 @@ def _sleep_with_backoff(attempt: int) -> None:
 
 
 def _call_with_retry(label: str, fn: Callable[[], _T]) -> _T:
-    """Call `fn()` with retry on transient OpenAI errors.
-
-    Returns the function's result on success. Raises the last exception when
-    retries are exhausted or when the error is non-retryable. The loop always
-    either returns or raises on the final attempt; the explicit
-    `RuntimeError` at the tail keeps mypy happy about the function's return
-    being reachable.
-    """
+    """Call `fn()`, retrying transient OpenAI errors; permanent errors fail fast."""
     for attempt in range(1, _RETRY_MAX_ATTEMPTS + 1):
         try:
             return fn()
@@ -114,12 +99,12 @@ def _call_with_retry(label: str, fn: Callable[[], _T]) -> _T:
             )
             _sleep_with_backoff(attempt)
         except openai.OpenAIError as exc:
-            # Permanent OpenAI errors (auth, validation, model not found) — fail fast.
             logger.warning(
                 f"[_call_with_retry] Permanent error, no retry | label={label} | "
                 f"error={exc}"
             )
             raise
+    # Unreachable: the loop always returns or raises. Keeps mypy happy.
     raise RuntimeError(f"_call_with_retry exited without result for {label}")
 
 
@@ -128,11 +113,7 @@ def _build_responses_params(
     config: TextLLMParams,
     question: str,
 ) -> dict[str, Any]:
-    """Build the parameter dict for one OpenAI Responses API call.
-
-    Mirrors the body shape `build_evaluation_jsonl` uses for the batch path so
-    fast eval and batch eval generate equivalent outputs for the same config.
-    """
+    """Build params for one Responses call, mirroring the batch path's body shape."""
     params: dict[str, Any] = {
         "model": config.model,
         "instructions": config.instructions,
@@ -158,12 +139,7 @@ def _build_responses_params(
 
 
 def _field(obj: Any, name: str, default: Any = None) -> Any:
-    """Read a field from an object or dict, returning default when missing.
-
-    OpenAI SDK objects expose fields as attributes; older response shapes and
-    tests sometimes pass dicts. This unifies access so call sites don't have
-    to branch on the runtime type.
-    """
+    """Read a field from an object or dict (SDK object vs test dict), with a default."""
     if obj is None:
         return default
     if isinstance(obj, dict):
@@ -172,11 +148,7 @@ def _field(obj: Any, name: str, default: Any = None) -> Any:
 
 
 def _extract_response_text(response: Any) -> str:
-    """Extract the model-generated text from an OpenAI Responses object.
-
-    Prefers `response.output_text` (the SDK's flat helper) and falls back to a
-    structured walk of `response.output` if the helper is empty.
-    """
+    """Extract generated text, preferring `output_text` then walking `output`."""
     output_text = _field(response, "output_text")
     if output_text:
         return output_text
@@ -197,7 +169,7 @@ def _extract_response_text(response: Any) -> str:
 
 
 def _usage_to_dict(usage: Any) -> dict[str, int]:
-    """Normalize an OpenAI usage object into the dict shape kaapi's cost layer expects."""
+    """Normalize an OpenAI usage object into the cost layer's dict shape."""
     return {
         "input_tokens": int(_field(usage, "input_tokens", 0) or 0),
         "output_tokens": int(_field(usage, "output_tokens", 0) or 0),
@@ -211,12 +183,7 @@ def _responses_call_for_item(
     config: TextLLMParams,
     item: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run one Responses API call for a single dataset item.
-
-    Returns the same per-item shape as `parse_evaluation_output` from the batch
-    path so downstream code (Langfuse trace creation, embeddings, cost) does
-    not need to branch on run_mode.
-    """
+    """Run one Responses call for a dataset item, in the batch path's per-item shape."""
     item_id = item["id"]
     question = item["input"].get("question", "") if item.get("input") else ""
     ground_truth = (
@@ -278,12 +245,7 @@ def _embedding_call_for_pair(
     output_text: str,
     ground_truth: str,
 ) -> dict[str, Any]:
-    """Run one Embeddings API call for an (output, ground_truth) pair.
-
-    Returns a dict with both embeddings and the prompt_tokens usage so the
-    cost layer can price the call. `failed=True` indicates a permanent or
-    retry-exhausted failure for the pair.
-    """
+    """Embed an (output, ground_truth) pair; `failed=True` on a terminal failure."""
     if not output_text or not ground_truth:
         return {
             "item_id": item_id,
@@ -402,10 +364,9 @@ def _stage1_responses(
     dataset_items: list[dict[str, Any]],
     log_prefix: str,
 ) -> tuple[EvaluationRun, list[dict[str, Any]]]:
-    """Stage 1 — generate one Responses API call per dataset item.
+    """Stage 1 — one Responses call per dataset item.
 
-    Skipped on retry if `eval_run.batch_job_id` is already set; in that case we
-    reload the persisted unit from S3 so downstream stages still have results.
+    Skipped on retry if `eval_run.batch_job_id` is set; the unit is reloaded from S3.
     """
     if eval_run.batch_job_id:
         existing = get_batch_job(session=session, batch_job_id=eval_run.batch_job_id)
@@ -465,8 +426,7 @@ def _stage1_responses(
         results=results,
     )
 
-    # Aggregate usage for the batch_job summary so the cost layer can price the
-    # stage from raw_output_url alone if it needs to re-derive later.
+    # Aggregate usage for the batch_job summary.
     summed_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     for r in results:
         usage = r.get("usage") or {}
@@ -491,9 +451,7 @@ def _stage1_responses(
         ),
     )
 
-    # `batch_job_id` and `total_items` aren't on EvaluationRunUpdate (the
-    # update model only covers fields that change during the lifecycle), so
-    # set them directly and let `update_evaluation_run` bump `updated_at`.
+    # batch_job_id / total_items aren't on EvaluationRunUpdate; set them directly.
     eval_run.batch_job_id = batch_job.id
     eval_run.total_items = len(results)
     eval_run = update_evaluation_run(
@@ -513,10 +471,7 @@ def _stage2_embeddings(
     response_results: list[dict[str, Any]],
     log_prefix: str,
 ) -> tuple[EvaluationRun, list[dict[str, Any]]]:
-    """Stage 2 — embed each (output, ground_truth) pair for cosine similarity.
-
-    Skipped on retry if `eval_run.embedding_batch_job_id` is already set.
-    """
+    """Stage 2 — embed each (output, ground_truth) pair; skipped on retry if done."""
     if eval_run.embedding_batch_job_id:
         existing = get_batch_job(
             session=session, batch_job_id=eval_run.embedding_batch_job_id
@@ -561,9 +516,7 @@ def _stage2_embeddings(
             embedding_results.append(future.result())
 
     failed_count = sum(1 for r in embedding_results if r.get("failed"))
-    # Failure threshold for embeddings is computed over the whole dataset, not
-    # over the candidate subset — items that failed Stage 1 already count as
-    # failures from the user's perspective.
+    # Threshold is over the whole dataset: Stage 1 failures count as failures too.
     total_failures = failed_count + sum(1 for r in response_results if r.get("failed"))
     logger.info(
         f"[_stage2_embeddings] {log_prefix} Stage 2 finished | "
@@ -631,24 +584,17 @@ def _stage3_score_and_trace(
 ) -> EvaluationRun:
     """Stage 3 — compute cosine, create Langfuse traces, attach costs.
 
-    No stage marker; each step is idempotent or near-idempotent:
-    - Cosine recomputation is deterministic (same vectors → same numbers).
-    - Langfuse dedupes traces on the dataset_item.observe key.
-    - attach_cost is idempotent on (eval_run_id, batch_job_id, usage_type).
+    No stage marker; each step is idempotent (deterministic cosine, Langfuse
+    dedupes on the observe key, attach_cost overwrites per stage).
     """
     logger.info(
         f"[_stage3_score_and_trace] {log_prefix} Computing cosine + creating traces"
     )
 
-    # 1. Compute cosine similarity per pair, in the same shape as the batch
-    #    path's `parse_embedding_results` + `calculate_average_similarity`.
     item_id_to_pair = {
         r["item_id"]: r for r in embedding_results if not r.get("failed")
     }
 
-    # 2. Create Langfuse traces and get item_id -> trace_id mapping. The model
-    #    name comes from the stored config (same source as batch path) so
-    #    Langfuse's per-generation cost calc stays consistent.
     model = resolve_model_from_config(session=session, eval_run=eval_run)
     trace_id_mapping = create_langfuse_dataset_run(
         langfuse=langfuse,
@@ -658,8 +604,7 @@ def _stage3_score_and_trace(
         model=model,
     )
 
-    # 3. Build the per-item score list keyed on Langfuse trace_id, then update
-    #    traces with the cosine score.
+    # Per-item cosine scores keyed on Langfuse trace_id.
     per_item_scores: list[dict[str, Any]] = []
     similarities: list[float] = []
     for r in response_results:
@@ -685,16 +630,14 @@ def _stage3_score_and_trace(
                 langfuse=langfuse, per_item_scores=per_item_scores
             )
         except Exception as exc:
-            # Mirror the batch path: Langfuse score-update failures don't fail
-            # the run; they get logged and the score still lives in eval_run.score.
+            # Score-update failures don't fail the run (score lives in eval_run.score).
             logger.warning(
                 f"[_stage3_score_and_trace] {log_prefix} "
                 f"Failed to update Langfuse traces with scores | error={exc}",
                 exc_info=True,
             )
 
-    # 4. Aggregate similarity stats — same shape as the batch path so
-    #    summary_scores rendering on GET /evaluations/{id} stays identical.
+    # Aggregate similarity stats, in the batch path's summary_scores shape.
     if similarities:
         sim_array = np.array(similarities)
         avg = float(np.mean(sim_array))
@@ -715,8 +658,7 @@ def _stage3_score_and_trace(
         ]
     }
 
-    # 5. Attach costs (response stage + embedding stage). attach_cost is
-    #    idempotent on its natural key — see "Known Limitations" in the SRD.
+    # Attach response- and embedding-stage costs (attach_cost is idempotent per stage).
     if response_results:
         attach_cost(
             session=session,
@@ -726,8 +668,7 @@ def _stage3_score_and_trace(
             response_results=response_results,
         )
 
-    # Embedding cost expects the raw OpenAI batch shape; rebuild it from our
-    # in-memory embedding_results so attach_cost can price the stage uniformly.
+    # attach_cost expects the raw OpenAI batch shape; rebuild it from embedding_results.
     if embedding_results:
         embedding_raw = [
             {
@@ -772,13 +713,8 @@ def run_fast_evaluation(
 ) -> EvaluationRun:
     """Run the full fast-eval pipeline for one evaluation_run.
 
-    Called from the `run_evaluation_fast` Celery task. Each stage is skipped on
-    retry if its batch_job marker is already set, so re-invocation does not
-    re-call OpenAI for work that already succeeded.
-
-    Raises:
-        Exception: If any stage fails terminally; the orchestrator marks the
-        run failed.
+    Called from the `run_evaluation_fast` task. Stages are skipped on retry when
+    their batch_job marker is set. Raises on terminal failure (run marked failed).
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
@@ -787,7 +723,6 @@ def run_fast_evaluation(
     )
     logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast evaluation pipeline")
 
-    # Mark as processing immediately so the GET endpoint reflects state.
     if eval_run.status == "pending":
         eval_run = update_evaluation_run(
             session=session,

@@ -17,14 +17,18 @@ from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud.evaluations import (
     get_dataset_by_id,
+)
+from app.crud.evaluations import (
     list_datasets as list_evaluation_datasets,
 )
 from app.crud.evaluations.dataset import delete_dataset as delete_dataset_crud
 from app.models.evaluation import DatasetUploadResponse, EvaluationDataset
 from app.services.evaluations import (
     is_dataset_fast_eligible,
-    upload_dataset as upload_evaluation_dataset,
     validate_csv_file,
+)
+from app.services.evaluations import (
+    upload_dataset as upload_evaluation_dataset,
 )
 from app.utils import (
     APIResponse,
@@ -126,11 +130,15 @@ def list_datasets(
         offset=offset,
     )
 
-    responses = [_dataset_to_response(dataset) for dataset in datasets]
+    dataset_responses = [_dataset_to_response(dataset) for dataset in datasets]
     if eligible_for == "fast":
-        responses = [r for r in responses if r.eligible_for_fast]
+        dataset_responses = [
+            dataset_response
+            for dataset_response in dataset_responses
+            if dataset_response.eligible_for_fast
+        ]
 
-    return APIResponse.success_response(data=responses)
+    return APIResponse.success_response(data=dataset_responses)
 
 
 @router.get(

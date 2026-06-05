@@ -11,14 +11,12 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.celery.utils import start_fast_evaluation as enqueue_fast_evaluation
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.evaluations import (
-    create_evaluation_run,
     get_dataset_by_id,
     resolve_evaluation_config,
     run_fast_evaluation,
@@ -26,6 +24,7 @@ from app.crud.evaluations import (
 from app.crud.evaluations.core import update_evaluation_run
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.request import TextLLMParams
+from app.services.evaluations.evaluation import create_evaluation_run_or_409
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
 
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
-ERR_RUN_NAME_ALREADY_EXISTS = "run_name_already_exists"
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -61,7 +59,7 @@ def validate_and_start_fast_evaluation(
     2. Config resolves to a text-type OpenAI config.
     3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
     4. (organization_id, project_id, run_name) is unique — enforced by the DB
-       constraint added in migration 063. We translate IntegrityError to 409.
+       constraint; a collision is translated to 409 by the shared helper.
 
     On success the function creates the EvaluationRun row with
     `run_mode="fast"`, `status="processing"`, and enqueues the orchestrator
@@ -134,34 +132,19 @@ def validate_and_start_fast_evaluation(
             ),
         )
 
-    # 4. Create the run; rely on the DB unique constraint to catch double-clicks.
-    try:
-        eval_run = create_evaluation_run(
-            session=session,
-            run_name=run_name,
-            dataset_name=dataset.name,
-            dataset_id=dataset_id,
-            config_id=config_id,
-            config_version=config_version,
-            organization_id=organization_id,
-            project_id=project_id,
-            run_mode=RunModeEnum.FAST.value,
-        )
-    except IntegrityError:
-        session.rollback()
-        logger.warning(
-            f"[validate_and_start_fast_evaluation] Duplicate run_name | "
-            f"run_name={run_name} | org_id={organization_id} | "
-            f"project_id={project_id}"
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{ERR_RUN_NAME_ALREADY_EXISTS}: a run with name '{run_name}' "
-                "already exists for this organization and project. Pick a new "
-                "run_name or fetch the existing run via GET /evaluations."
-            ),
-        )
+    # 4. Create the run; the shared helper translates a duplicate run_name into 409.
+    eval_run = create_evaluation_run_or_409(
+        session=session,
+        run_name=run_name,
+        dataset_name=dataset.name,
+        dataset_id=dataset_id,
+        config_id=config_id,
+        config_version=config_version,
+        organization_id=organization_id,
+        project_id=project_id,
+        run_mode=RunModeEnum.FAST.value,
+        log_context="validate_and_start_fast_evaluation",
+    )
 
     # Flip to processing before dispatching the task so the GET endpoint
     # reflects the correct state immediately.

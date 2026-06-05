@@ -7,6 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
@@ -17,13 +19,63 @@ from app.crud.evaluations import (
     start_evaluation_batch,
 )
 from app.models.evaluation import EvaluationRun
-from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
+from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
-from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import load_json_from_object_store
 
 logger = logging.getLogger(__name__)
+
+# Error code surfaced in HTTPException.detail when a run_name collides with the
+# (organization_id, project_id, run_name) unique constraint. Shared by the batch
+# and fast paths so both return an identical 409 contract.
+ERR_RUN_NAME_ALREADY_EXISTS = "run_name_already_exists"
+
+
+def create_evaluation_run_or_409(
+    *,
+    session: Session,
+    run_name: str,
+    dataset_name: str,
+    dataset_id: int,
+    config_id: UUID,
+    config_version: int,
+    organization_id: int,
+    project_id: int,
+    run_mode: str = "batch",
+    log_context: str,
+) -> EvaluationRun:
+    """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
+
+    The (organization_id, project_id, run_name) unique constraint guards against
+    double-click / client-retry races; on collision we roll back and raise a 409
+    instead of leaking the IntegrityError.
+    """
+    try:
+        return create_evaluation_run(
+            session=session,
+            run_name=run_name,
+            dataset_name=dataset_name,
+            dataset_id=dataset_id,
+            config_id=config_id,
+            config_version=config_version,
+            organization_id=organization_id,
+            project_id=project_id,
+            run_mode=run_mode,
+        )
+    except IntegrityError:
+        session.rollback()
+        logger.warning(
+            f"[{log_context}] Duplicate run_name | run_name={run_name} | "
+            f"org_id={organization_id} | project_id={project_id}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{ERR_RUN_NAME_ALREADY_EXISTS}: a run with name '{run_name}' "
+                "already exists for this organization and project. Pick a new "
+                "run_name or fetch the existing run via GET /evaluations."
+            ),
+        )
 
 
 def start_evaluation(
@@ -130,31 +182,17 @@ def start_evaluation(
     )
 
     # Step 3: Create EvaluationRun record with config references
-    try:
-        eval_run = create_evaluation_run(
-            session=session,
-            run_name=experiment_name,
-            dataset_name=dataset.name,
-            dataset_id=dataset_id,
-            config_id=config_id,
-            config_version=config_version,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
-    except IntegrityError:
-        session.rollback()
-        logger.warning(
-            f"[start_evaluation] Duplicate run_name | run_name={experiment_name} | "
-            f"org_id={organization_id} | project_id={project_id}"
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"run_name_already_exists: a run with name '{experiment_name}' "
-                "already exists for this organization and project. Pick a new "
-                "run_name or fetch the existing run via GET /evaluations."
-            ),
-        )
+    eval_run = create_evaluation_run_or_409(
+        session=session,
+        run_name=experiment_name,
+        dataset_name=dataset.name,
+        dataset_id=dataset_id,
+        config_id=config_id,
+        config_version=config_version,
+        organization_id=organization_id,
+        project_id=project_id,
+        log_context="start_evaluation",
+    )
 
     # Step 4: Start the batch evaluation
     try:
