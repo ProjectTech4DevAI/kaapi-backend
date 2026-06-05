@@ -10,14 +10,18 @@ import redis
 from app.core import rate_monitor, telemetry
 
 
-def _auth_context(org_id: int | None = 1, org_name: str = "Acme"):
+def _auth_context(project_id: int | None = 1, project_name: str = "Acme"):
     """Build a minimal stand-in for AuthContext.
 
-    monitor_rate's checker only reads auth_context.organization.id and .name,
+    monitor_rate's checker only reads auth_context.project.id and .name,
     so a SimpleNamespace is enough — no DB or real models required.
     """
-    org = None if org_id is None else SimpleNamespace(id=org_id, name=org_name)
-    return SimpleNamespace(organization=org)
+    project = (
+        None
+        if project_id is None
+        else SimpleNamespace(id=project_id, name=project_name)
+    )
+    return SimpleNamespace(project=project)
 
 
 # ---------------------------------------------------------------------------
@@ -59,12 +63,12 @@ class TestIncrementAndGetCount:
 
 
 class TestMonitorRate:
-    def test_skips_when_no_organization(self):
-        """No org on the request → nothing counted, no Redis call."""
+    def test_skips_when_no_project(self):
+        """No project on the request → nothing counted, no Redis call."""
         checker = rate_monitor.monitor_rate("llm_call")
 
         with patch.object(rate_monitor, "increment_and_get_count") as inc:
-            checker(_auth_context(org_id=None))
+            checker(_auth_context(project_id=None))
 
         inc.assert_not_called()
 
@@ -96,8 +100,23 @@ class TestMonitorRate:
 
         record.assert_not_called()
 
+    def test_no_alert_when_already_breached(self):
+        """Only the first breach (threshold + 1) alerts; later counts stay silent."""
+        checker = rate_monitor.monitor_rate("collections")
+        threshold = rate_monitor.THRESHOLDS["collections"]
+
+        with (
+            patch.object(
+                rate_monitor, "increment_and_get_count", return_value=threshold + 2
+            ),
+            patch.object(rate_monitor, "record_rate_threshold") as record,
+        ):
+            checker(_auth_context())
+
+        record.assert_not_called()
+
     def test_alerts_when_over_threshold(self):
-        """Count above the threshold records a Sentry alert with org details."""
+        """First breach (threshold + 1) records a Sentry alert with project details."""
         checker = rate_monitor.monitor_rate("llm_call")
         threshold = rate_monitor.THRESHOLDS["llm_call"]
         over = threshold + 1
@@ -106,11 +125,11 @@ class TestMonitorRate:
             patch.object(rate_monitor, "increment_and_get_count", return_value=over),
             patch.object(rate_monitor, "record_rate_threshold") as record,
         ):
-            checker(_auth_context(org_id=616, org_name="Acme"))
+            checker(_auth_context(project_id=616, project_name="Acme"))
 
         record.assert_called_once_with(
-            org_id=616,
-            org_name="Acme",
+            project_id=616,
+            project_name="Acme",
             category="llm_call",
             request_count=over,
             threshold=threshold,
@@ -161,8 +180,8 @@ class TestRecordRateThreshold:
             patch.object(telemetry.sentry_sdk, "capture_message") as capture,
         ):
             telemetry.record_rate_threshold(
-                org_id=616,
-                org_name="Acme",
+                project_id=616,
+                project_name="Acme",
                 category="llm_call",
                 request_count=16,
                 threshold=15,
@@ -171,7 +190,7 @@ class TestRecordRateThreshold:
         capture.assert_called_once()
         assert capture.call_args.kwargs["level"] == "warning"
         scope.set_tag.assert_any_call("alert.type", "threshold_rate_monitor")
-        scope.set_tag.assert_any_call("tenant.org_id", 616)
+        scope.set_tag.assert_any_call("tenant.project_id", 616)
         scope.set_extra.assert_any_call("request_count", 16)
         scope.set_extra.assert_any_call("threshold", 15)
 
@@ -185,8 +204,8 @@ class TestRecordRateThreshold:
             patch.object(telemetry.sentry_sdk, "capture_message") as capture,
         ):
             telemetry.record_rate_threshold(
-                org_id=1,
-                org_name="Acme",
+                project_id=1,
+                project_name="Acme",
                 category="llm_call",
                 request_count=16,
                 threshold=15,
@@ -202,8 +221,8 @@ class TestRecordRateThreshold:
         with patch.object(telemetry.sentry_sdk, "get_client", return_value=client):
             # Should not raise.
             telemetry.record_rate_threshold(
-                org_id=1,
-                org_name="Acme",
+                project_id=1,
+                project_name="Acme",
                 category="llm_call",
                 request_count=16,
                 threshold=15,

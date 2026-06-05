@@ -1,6 +1,7 @@
 import logging
 import time
 
+from collections.abc import Callable
 from typing import Literal
 
 import redis
@@ -12,7 +13,7 @@ from app.core.telemetry import record_rate_threshold
 
 logger = logging.getLogger(__name__)
 
-# Categores of rates we want to monitor
+# Categories of rates we want to monitor
 RateCategory = Literal["llm_call", "collections", "evaluations"]
 
 # THRESHOLD NUMBERS
@@ -46,7 +47,7 @@ def increment_and_get_count(key: str) -> int | None:
         return None
 
 
-def monitor_rate(category: RateCategory):
+def monitor_rate(category: RateCategory) -> Callable[[AuthContextDep], None]:
     """Monitor the rate of events for the given category. If the rate exceeds the threshold, record it in telemetry.
 
     Usage:
@@ -73,7 +74,7 @@ def monitor_rate(category: RateCategory):
 
         try:
             count = increment_and_get_count(redis_key)
-            if count is not None and count > threshold:
+            if count is not None and count == threshold + 1:
                 logger.warning(
                     f"[monitor_rate] Rate threshold exceeded for {category} in project {project.id}: count={count}"
                 )
@@ -88,7 +89,7 @@ def monitor_rate(category: RateCategory):
         except redis.RedisError as e:
             logger.error(
                 "[monitor_rate] Redis unavailable, skipping rate check "
-                "(org_id=%s category=%s)",
+                "(project_id=%s category=%s)",
                 project.id,
                 category,
                 exc_info=e,

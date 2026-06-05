@@ -478,9 +478,7 @@ def record_rate_threshold(
                 level="warning",
             )
     except Exception as e:
-        logger.exception(
-            "[record_rate_threshold_exceeded] Failed to emit alert", exc_info=e
-        )
+        logger.exception("[record_rate_threshold] Failed to emit alert", exc_info=e)
 
 
 def flush_telemetry(timeout_millis: int = 10000) -> None:
