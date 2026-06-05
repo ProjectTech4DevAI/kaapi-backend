@@ -17,7 +17,13 @@ from app.models.llm.constants import (
 
 
 class TextLLMParams(SQLModel):
-    model: str
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Provider model to use. If omitted, the Kaapi mapper falls back to "
+            "DEFAULT_TEXT_MODELS for the selected provider."
+        ),
+    )
     instructions: str | None = Field(
         default=None,
     )
@@ -227,7 +233,12 @@ class NativeCompletionConfig(SQLModel):
     """
 
     provider: Literal[
-        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+        "openai-native",
+        "google-native",
+        "sarvamai-native",
+        "elevenlabs-native",
+        "anthropic-native",
+        "google-vertex-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -248,8 +259,21 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
-        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
+    provider: (
+        Literal[
+            "openai",
+            "google",
+            "sarvamai",
+            "elevenlabs",
+            "anthropic",
+            "google-vertex",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+        ),
     )
 
     type: Literal["text", "stt", "tts"] = Field(
