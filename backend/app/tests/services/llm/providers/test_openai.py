@@ -201,7 +201,7 @@ class TestOpenAIProvider:
         assert "Timeout occurred" in error
 
     @pytest.mark.parametrize(
-        "exception_factory, expected_error",
+        "exception_factory, expected_prefix, expected_status, original_message",
         [
             (
                 lambda: openai.RateLimitError(
@@ -211,7 +211,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI rate limit exceeded: quota exceeded",
+                "OpenAI rate limit exceeded",
+                429,
+                "quota exceeded",
             ),
             (
                 lambda: openai.AuthenticationError(
@@ -221,17 +223,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI authentication failed: bad api key",
-            ),
-            (
-                lambda: openai.PermissionDeniedError(
-                    message="no access to model",
-                    response=MagicMock(
-                        status_code=403, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "OpenAI permission denied: no access to model",
+                "OpenAI authentication failed",
+                401,
+                "bad api key",
             ),
             (
                 lambda: openai.NotFoundError(
@@ -241,7 +235,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI resource not found: model not found",
+                "OpenAI resource not found",
+                404,
+                "model not found",
             ),
             (
                 lambda: openai.BadRequestError(
@@ -251,7 +247,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI bad request: invalid model param",
+                "OpenAI bad request",
+                400,
+                "invalid model param",
             ),
             (
                 lambda: openai.UnprocessableEntityError(
@@ -261,17 +259,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI unprocessable entity: cannot process",
-            ),
-            (
-                lambda: openai.ConflictError(
-                    message="resource conflict",
-                    response=MagicMock(
-                        status_code=409, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "OpenAI conflict: resource conflict",
+                "OpenAI unprocessable entity",
+                422,
+                "cannot process",
             ),
             (
                 lambda: openai.InternalServerError(
@@ -281,7 +271,9 @@ class TestOpenAIProvider:
                     ),
                     body=None,
                 ),
-                "OpenAI server error: upstream boom",
+                "OpenAI server error",
+                500,
+                "upstream boom",
             ),
         ],
     )
@@ -292,17 +284,24 @@ class TestOpenAIProvider:
         completion_config,
         query_params,
         exception_factory,
-        expected_error,
+        expected_prefix,
+        expected_status,
+        original_message,
     ):
-        """Each specific OpenAI exception type maps to a distinct category-
-        prefixed error message instead of a single generic "OpenAI error" line.
+        """Each specific OpenAI exception with a dedicated handler emits a
+        category-prefixed message including the upstream status code and the
+        original error text. Structural assertions only — the remediation
+        suffix can evolve without breaking the suite.
         """
         mock_client.responses.create.side_effect = exception_factory()
 
         result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
-        assert error == expected_error
+        assert error is not None
+        assert error.startswith(expected_prefix), error
+        assert f"code: {expected_status}" in error, error
+        assert original_message in error, error
 
     def test_execute_with_api_timeout_error(
         self, provider, mock_client, completion_config, query_params
@@ -318,37 +317,69 @@ class TestOpenAIProvider:
         assert error is not None
         assert error.startswith("OpenAI request timed out:")
 
-    def test_execute_with_api_connection_error(
-        self, provider, mock_client, completion_config, query_params
+    @pytest.mark.parametrize(
+        "exception_factory, original_message",
+        [
+            (
+                lambda: openai.PermissionDeniedError(
+                    message="no access to model",
+                    response=MagicMock(
+                        status_code=403, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "no access to model",
+            ),
+            (
+                lambda: openai.ConflictError(
+                    message="resource conflict",
+                    response=MagicMock(
+                        status_code=409, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "resource conflict",
+            ),
+            (
+                lambda: openai.APIConnectionError(
+                    message="connection refused", request=MagicMock()
+                ),
+                "connection refused",
+            ),
+            (
+                lambda: openai.APIStatusError(
+                    "teapot",
+                    response=MagicMock(
+                        status_code=418, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "teapot",
+            ),
+        ],
+    )
+    def test_execute_unhandled_openai_subclasses_fall_through_to_catch_all(
+        self,
+        provider,
+        mock_client,
+        completion_config,
+        query_params,
+        exception_factory,
+        original_message,
     ):
-        """APIConnectionError handler also uses str(e) rather than .message."""
-        mock_client.responses.create.side_effect = openai.APIConnectionError(
-            message="connection refused", request=MagicMock()
-        )
+        """PermissionDenied, Conflict, APIConnection, and APIStatus no longer
+        have dedicated except blocks. They land in the bottom-most
+        `except openai.OpenAIError` handler — prefixed with the generic
+        "OpenAI error" tag but still surfacing the original message.
+        """
+        mock_client.responses.create.side_effect = exception_factory()
 
         result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
-        assert error.startswith("OpenAI connection error:")
-        assert "connection refused" in error
-
-    def test_execute_with_api_status_error_includes_status_code(
-        self, provider, mock_client, completion_config, query_params
-    ):
-        """A bare APIStatusError (not one of the named subclasses) hits the
-        fall-through APIStatusError handler and includes the numeric status."""
-        mock_client.responses.create.side_effect = openai.APIStatusError(
-            "teapot",
-            response=MagicMock(status_code=418, request=MagicMock(), headers={}),
-            body=None,
-        )
-
-        result, error = provider.execute(completion_config, query_params, "Test query")
-
-        assert result is None
-        assert error is not None
-        assert error == "OpenAI API status error (418): teapot"
+        assert error.startswith("OpenAI error:"), error
+        assert original_message in error, error
 
     def test_execute_with_conversation_config_without_id_or_auto_create(
         self, provider, mock_client, completion_config, query_params

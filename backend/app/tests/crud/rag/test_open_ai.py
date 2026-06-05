@@ -192,11 +192,17 @@ class TestOpenAIVectorStoreCrudUpdatePartialFailure:
 
 
 class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
-    """upload_and_poll raising each specific openai exception type maps to
-    InterruptedError with a category-prefixed message."""
+    """`upload_and_poll` raising each specific OpenAI exception type maps to
+    `InterruptedError` with a category-prefixed message that includes the
+    upstream status code and a remediation hint.
+
+    Assertions are deliberately structural (prefix + code + original message)
+    rather than exact-string equality so future tweaks to the remediation
+    wording don't break the suite.
+    """
 
     @pytest.mark.parametrize(
-        "exception_factory, expected_message",
+        "exception_factory, expected_prefix, expected_status, original_message",
         [
             (
                 lambda: openai.RateLimitError(
@@ -206,7 +212,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI rate limit exceeded: quota exceeded",
+                "OpenAI rate limit exceeded",
+                429,
+                "quota exceeded",
             ),
             (
                 lambda: openai.AuthenticationError(
@@ -216,17 +224,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI authentication failed: bad api key",
-            ),
-            (
-                lambda: openai.PermissionDeniedError(
-                    message="no access",
-                    response=MagicMock(
-                        status_code=403, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "OpenAI permission denied: no access",
+                "OpenAI authentication failed",
+                401,
+                "bad api key",
             ),
             (
                 lambda: openai.NotFoundError(
@@ -236,7 +236,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI resource not found: missing resource",
+                "OpenAI resource not found",
+                404,
+                "missing resource",
             ),
             (
                 lambda: openai.BadRequestError(
@@ -246,7 +248,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI bad request: invalid file",
+                "OpenAI bad request",
+                400,
+                "invalid file",
             ),
             (
                 lambda: openai.UnprocessableEntityError(
@@ -256,17 +260,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI unprocessable entity: cannot process",
-            ),
-            (
-                lambda: openai.ConflictError(
-                    message="conflict",
-                    response=MagicMock(
-                        status_code=409, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "OpenAI conflict: conflict",
+                "OpenAI unprocessable entity",
+                422,
+                "cannot process",
             ),
             (
                 lambda: openai.InternalServerError(
@@ -276,7 +272,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI server error: upstream boom",
+                "OpenAI server error",
+                500,
+                "upstream boom",
             ),
         ],
     )
@@ -287,7 +285,9 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         mock_storage,
         docs_batch,
         exception_factory,
-        expected_message,
+        expected_prefix,
+        expected_status,
+        original_message,
     ):
         mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
             exception_factory()
@@ -295,10 +295,13 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
 
         with pytest.raises(InterruptedError) as exc_info:
             list(crud.update("vs_1", mock_storage, docs_batch))
-        assert str(exc_info.value) == expected_message
+        msg = str(exc_info.value)
+        assert msg.startswith(expected_prefix), msg
+        assert f"code: {expected_status}" in msg, msg
+        assert original_message in msg, msg
 
     def test_api_timeout_error(self, crud, mock_client, mock_storage, docs_batch):
-        """APITimeoutError uses str(e) (not .message) for the suffix."""
+        """APITimeoutError doesn't expose .message — handler interpolates str(e)."""
         mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
             openai.APITimeoutError(request=MagicMock())
         )
@@ -307,48 +310,74 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
             list(crud.update("vs_1", mock_storage, docs_batch))
         assert str(exc_info.value).startswith("OpenAI request timed out:")
 
-    def test_api_connection_error(self, crud, mock_client, mock_storage, docs_batch):
-        mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
-            openai.APIConnectionError(message="connection refused", request=MagicMock())
-        )
-
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
-        msg = str(exc_info.value)
-        assert msg.startswith("OpenAI connection error:")
-        assert "connection refused" in msg
-
-    def test_api_status_error_includes_status_code(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
-        """A bare APIStatusError falls through to the APIStatusError handler
-        (after all the named subclasses) and includes the numeric status."""
-        mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
-            openai.APIStatusError(
+    @pytest.mark.parametrize(
+        "exception_factory, original_message",
+        [
+            (
+                lambda: openai.PermissionDeniedError(
+                    message="no access",
+                    response=MagicMock(
+                        status_code=403, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "no access",
+            ),
+            (
+                lambda: openai.ConflictError(
+                    message="conflict",
+                    response=MagicMock(
+                        status_code=409, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "conflict",
+            ),
+            (
+                lambda: openai.APIConnectionError(
+                    message="connection refused", request=MagicMock()
+                ),
+                "connection refused",
+            ),
+            (
+                lambda: openai.APIStatusError(
+                    "teapot",
+                    response=MagicMock(
+                        status_code=418, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
                 "teapot",
-                response=MagicMock(status_code=418, request=MagicMock(), headers={}),
-                body=None,
-            )
-        )
-
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
-        assert str(exc_info.value) == "OpenAI API status error (418): teapot"
-
-    def test_generic_openai_error_falls_through(
-        self, crud, mock_client, mock_storage, docs_batch
+            ),
+            (
+                lambda: openai.OpenAIError("something else"),
+                "something else",
+            ),
+        ],
+    )
+    def test_unhandled_openai_subclasses_fall_through_to_catch_all(
+        self,
+        crud,
+        mock_client,
+        mock_storage,
+        docs_batch,
+        exception_factory,
+        original_message,
     ):
-        """A non-APIError OpenAIError still raises InterruptedError via the
-        bottom-most `except openai.OpenAIError` handler with a plain prefix."""
+        """PermissionDenied, Conflict, APIConnection, APIStatus, and any other
+        OpenAIError subclass without a dedicated handler all land in the
+        bottom-most `except openai.OpenAIError` block — prefixed with the
+        generic "OpenAI error" tag but still carrying the original message.
+        """
         mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
-            openai.OpenAIError("something else")
+            exception_factory()
         )
 
         with pytest.raises(InterruptedError) as exc_info:
             list(crud.update("vs_1", mock_storage, docs_batch))
         msg = str(exc_info.value)
-        assert msg.startswith("OpenAI error:")
-        assert "something else" in msg
+        assert msg.startswith("OpenAI error:"), msg
+        assert original_message in msg, msg
 
 
 class TestOpenAIVectorStoreCrudInit:
