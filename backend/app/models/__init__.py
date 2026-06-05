@@ -1,5 +1,13 @@
 from sqlmodel import SQLModel
 
+from app.models.analytics import (  # noqa: F401
+    AnalyticsChartGroupBy,
+    AnalyticsChartResponse,
+    AnalyticsChartSeries,
+    AnalyticsMetric,
+    AnalyticsMonthlyMetricPoint,
+    Modality,
+)
 from app.models.assessment import Assessment, AssessmentRun  # noqa: F401
 
 from .api_key import (
@@ -31,6 +39,7 @@ from .collection import (
     Collection,
     CollectionIDPublic,
     CollectionPublic,
+    CollectionUpdate,
     CollectionWithDocsPublic,
     CreationRequest,
     DeletionRequest,
