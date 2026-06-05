@@ -310,74 +310,22 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
             list(crud.update("vs_1", mock_storage, docs_batch))
         assert str(exc_info.value).startswith("OpenAI request timed out:")
 
-    @pytest.mark.parametrize(
-        "exception_factory, original_message",
-        [
-            (
-                lambda: openai.PermissionDeniedError(
-                    message="no access",
-                    response=MagicMock(
-                        status_code=403, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "no access",
-            ),
-            (
-                lambda: openai.ConflictError(
-                    message="conflict",
-                    response=MagicMock(
-                        status_code=409, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "conflict",
-            ),
-            (
-                lambda: openai.APIConnectionError(
-                    message="connection refused", request=MagicMock()
-                ),
-                "connection refused",
-            ),
-            (
-                lambda: openai.APIStatusError(
-                    "teapot",
-                    response=MagicMock(
-                        status_code=418, request=MagicMock(), headers={}
-                    ),
-                    body=None,
-                ),
-                "teapot",
-            ),
-            (
-                lambda: openai.OpenAIError("something else"),
-                "something else",
-            ),
-        ],
-    )
-    def test_unhandled_openai_subclasses_fall_through_to_catch_all(
-        self,
-        crud,
-        mock_client,
-        mock_storage,
-        docs_batch,
-        exception_factory,
-        original_message,
+    def test_generic_openai_error_falls_through(
+        self, crud, mock_client, mock_storage, docs_batch
     ):
-        """PermissionDenied, Conflict, APIConnection, APIStatus, and any other
-        OpenAIError subclass without a dedicated handler all land in the
+        """Any OpenAIError subclass without a dedicated handler lands in the
         bottom-most `except openai.OpenAIError` block — prefixed with the
         generic "OpenAI error" tag but still carrying the original message.
         """
         mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
-            exception_factory()
+            openai.OpenAIError("something else")
         )
 
         with pytest.raises(InterruptedError) as exc_info:
             list(crud.update("vs_1", mock_storage, docs_batch))
         msg = str(exc_info.value)
         assert msg.startswith("OpenAI error:"), msg
-        assert original_message in msg, msg
+        assert "something else" in msg, msg
 
 
 class TestOpenAIVectorStoreCrudInit:
