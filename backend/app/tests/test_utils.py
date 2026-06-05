@@ -259,22 +259,24 @@ class TestDownloadAudioBytes:
 # ---------------------------------------------------------------------------
 class TestResolveAudioUrl:
     @patch("app.utils.download_audio_bytes")
-    def test_writes_downloaded_bytes_to_temp_file(self, mock_download) -> None:
+    def test_returns_audio_ref(self, mock_download) -> None:
+        from app.core.audio_utils import AudioRef
+
         audio_data = b"RIFF" + b"\x00" * 36
         mock_download.return_value = (audio_data, None)
 
-        path, error = resolve_audio_url("https://cdn.example.com/a.wav", "audio/wav")
+        ref, error = resolve_audio_url("https://cdn.example.com/a.wav", "audio/wav")
         assert error is None
-        assert path.endswith(".wav")
-        assert Path(path).read_bytes() == audio_data
-        cleanup_temp_file(path)
+        assert isinstance(ref, AudioRef)
+        assert ref.bytes_ == audio_data
+        assert ref.mime_type == "audio/wav"
 
     @patch("app.utils.download_audio_bytes")
     def test_propagates_download_error(self, mock_download) -> None:
         mock_download.return_value = (None, "Timed out downloading audio from URL")
 
-        path, error = resolve_audio_url("https://example.com/a.wav", "audio/wav")
-        assert path == ""
+        ref, error = resolve_audio_url("https://example.com/a.wav", "audio/wav")
+        assert ref is None
         assert "Timed out" in error
 
 
@@ -340,7 +342,10 @@ class TestResolveInputExtended:
 
     @patch("app.utils.resolve_audio_url")
     def test_audio_url_input(self, mock_resolve_url) -> None:
-        mock_resolve_url.return_value = ("/tmp/audio_test.wav", None)
+        from app.core.audio_utils import AudioRef
+
+        mocked_ref = AudioRef(bytes_=b"audio", mime_type="audio/wav")
+        mock_resolve_url.return_value = (mocked_ref, None)
         audio = AudioInput(
             content=AudioContent(
                 format="url",
@@ -350,7 +355,7 @@ class TestResolveInputExtended:
         )
         result, error = resolve_input(audio)
         assert error is None
-        assert result == "/tmp/audio_test.wav"
+        assert result is mocked_ref
 
     def test_multimodal_text_and_image(self) -> None:
         parts = [
@@ -367,18 +372,17 @@ class TestResolveInputExtended:
             AudioInput(content=AudioContent(value="b64audio", mime_type="audio/wav")),
         ]
         result, error = resolve_input(parts)
-        assert result == ""
+        assert result is None
         assert "not supported in multimodal" in error
 
     def test_multimodal_rejects_unknown_type(self) -> None:
         result, error = resolve_input(["not a valid input"])
-        # list with unsupported item type
-        assert result == ""
+        assert result is None
         assert "Unsupported input type" in error
 
     def test_unknown_input_type(self) -> None:
         result, error = resolve_input("just a string")
-        assert result == ""
+        assert result is None
         assert "Unknown input type" in error
 
 

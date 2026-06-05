@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -558,3 +559,102 @@ def test_read_all_versions_with_explicit_tag_allows_matching_config(
 
     assert len(versions) == 1
     assert versions[0].version == 1
+
+
+class TestStripUnsupportedParams:
+    """Coverage for `ConfigVersionCrud._strip_unsupported_params`.
+
+    The method gates the temperature-pop on `is_reasoning_model`, which
+    queries `model_config`. These tests mock that lookup so we can exercise
+    every branch without seeding the model_config table.
+    """
+
+    def _crud(self) -> ConfigVersionCrud:
+        instance = ConfigVersionCrud.__new__(ConfigVersionCrud)
+        instance.session = MagicMock()
+        return instance
+
+    def test_strips_temperature_for_reasoning_model(self) -> None:
+        """gpt-5 family: temperature must be removed from the merged blob."""
+        crud = self._crud()
+        merged = {
+            "completion": {
+                "provider": "openai",
+                "type": "text",
+                "params": {"model": "gpt-5", "temperature": 0.7},
+            }
+        }
+        with patch("app.crud.config.version.is_reasoning_model", return_value=True):
+            crud._strip_unsupported_params(merged)
+        assert "temperature" not in merged["completion"]["params"]
+        assert merged["completion"]["params"]["model"] == "gpt-5"
+
+    def test_preserves_temperature_for_standard_model(self) -> None:
+        """Standard chat model: temperature must remain in the merged blob."""
+        crud = self._crud()
+        merged = {
+            "completion": {
+                "provider": "openai",
+                "type": "text",
+                "params": {"model": "gpt-4o", "temperature": 0.7},
+            }
+        }
+        with patch("app.crud.config.version.is_reasoning_model", return_value=False):
+            crud._strip_unsupported_params(merged)
+        assert merged["completion"]["params"]["temperature"] == 0.7
+
+    def test_skips_native_provider_without_db_lookup(self) -> None:
+        """Native provider configs bypass the kaapi param curation entirely."""
+        crud = self._crud()
+        merged = {
+            "completion": {
+                "provider": "openai-native",
+                "type": "text",
+                "params": {"model": "gpt-5", "temperature": 0.7},
+            }
+        }
+        with patch("app.crud.config.version.is_reasoning_model") as mock_is_reasoning:
+            crud._strip_unsupported_params(merged)
+        # native should short-circuit before the is_reasoning_model call
+        mock_is_reasoning.assert_not_called()
+        assert merged["completion"]["params"]["temperature"] == 0.7
+
+    def test_noop_when_model_missing(self) -> None:
+        """No model field → no-op, no DB lookup, no mutation."""
+        crud = self._crud()
+        merged = {"completion": {"provider": "openai", "type": "text", "params": {}}}
+        with patch("app.crud.config.version.is_reasoning_model") as mock_is_reasoning:
+            crud._strip_unsupported_params(merged)
+        mock_is_reasoning.assert_not_called()
+        assert merged["completion"]["params"] == {}
+
+    def test_does_not_mutate_shared_params_dict(self) -> None:
+        """`_deep_merge` is shallow — if the merged blob and the prior
+        version's blob share the same `params` dict object (because the
+        caller's patch didn't touch params), stripping from merged must
+        leave the prior blob's params untouched.
+        """
+        crud = self._crud()
+        shared_params = {"model": "gpt-5", "temperature": 0.7}
+        prior_blob = {
+            "completion": {
+                "provider": "openai",
+                "type": "text",
+                "params": shared_params,
+            }
+        }
+        merged = {
+            "completion": {
+                "provider": "openai",
+                "type": "text",
+                "params": shared_params,  # same reference as prior_blob
+            }
+        }
+        with patch("app.crud.config.version.is_reasoning_model", return_value=True):
+            crud._strip_unsupported_params(merged)
+
+        # merged has temperature stripped
+        assert "temperature" not in merged["completion"]["params"]
+        # prior_blob must NOT have been mutated through the shared reference
+        assert prior_blob["completion"]["params"]["temperature"] == 0.7
+        assert shared_params["temperature"] == 0.7

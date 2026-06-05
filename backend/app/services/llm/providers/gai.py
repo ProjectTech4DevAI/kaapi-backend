@@ -25,13 +25,19 @@ from app.models.llm import (
 )
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
 )
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg, pcm_to_wav
+from app.core.audio_utils import (
+    AudioRef,
+    convert_pcm_to_mp3,
+    convert_pcm_to_ogg,
+    pcm_to_wav,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +112,15 @@ class GoogleAIProvider(BaseProvider):
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_input: str,
+        resolved_input: "AudioRef",
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute speech-to-text completion using Google AI.
 
         Args:
             completion_config: Configuration for the completion request
-            resolved_input: File path to the audio input
+            resolved_input: ``AudioRef``; materialized to a temp file because the
+                google-genai SDK's ``files.upload`` expects a filesystem path.
             include_provider_raw_response: Whether to include raw provider response
 
         Returns:
@@ -121,9 +128,9 @@ class GoogleAIProvider(BaseProvider):
         """
         provider = completion_config.provider
         generation_params = completion_config.params
-        # Validate input is a file path string
-        if not isinstance(resolved_input, str):
-            return None, f"{provider} STT requires file path as string"
+
+        if not isinstance(resolved_input, AudioRef):
+            return None, f"{provider} STT requires AudioRef input"
 
         model = generation_params.get("model") or DEFAULT_STT_MODEL
         instructions = generation_params.get("instructions", "")
@@ -155,8 +162,9 @@ class GoogleAIProvider(BaseProvider):
             f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
         )
 
-        # Upload file and generate content
-        gemini_file = self.client.files.upload(file=resolved_input)
+        # Materialize the AudioRef to a temp file so the genai SDK can upload it.
+        with resolved_input.to_path() as audio_path:
+            gemini_file = self.client.files.upload(file=audio_path)
 
         contents = []
         if merged_instruction:
@@ -387,9 +395,7 @@ class GoogleAIProvider(BaseProvider):
         resolved_input: str | list[ContentPart] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        model = completion_config.params.get("model")
-        if not model:
-            return None, "Missing 'model' in native params"
+        model = completion_config.params.get("model") or DEFAULT_TEXT_MODELS["google"]
 
         if isinstance(resolved_input, MultiModalInput):
             gemini_parts = self.format_parts(resolved_input.parts)
