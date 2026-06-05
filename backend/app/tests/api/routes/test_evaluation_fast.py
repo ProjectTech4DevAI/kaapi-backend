@@ -6,6 +6,7 @@ fixture).
 """
 
 import random
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,7 +24,7 @@ from app.crud.evaluations.fast import (
     _stage2_embeddings,
     run_fast_evaluation,
 )
-from app.models import EvaluationRun
+from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
@@ -44,7 +45,7 @@ def _api_error(resp_body: dict) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _seeded_random():
+def _seeded_random() -> Iterator[None]:
     """Make jitter / random.choice deterministic so tests are repeatable."""
     random.seed(0)
     yield
@@ -58,14 +59,14 @@ def _seeded_random():
 class TestFailureThreshold:
     """`_is_failure_threshold_breached` controls run-level fail-fast."""
 
-    def test_returns_false_when_total_is_zero(self):
+    def test_returns_false_when_total_is_zero(self) -> None:
         assert _is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
 
-    def test_returns_true_above_threshold(self):
+    def test_returns_true_above_threshold(self) -> None:
         # default EVAL_FAST_FAILURE_THRESHOLD = 0.5
         assert _is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
 
-    def test_returns_false_at_threshold(self):
+    def test_returns_false_at_threshold(self) -> None:
         # 0.5 / 1.0 is NOT greater-than the threshold, so do not breach
         assert _is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
 
@@ -73,11 +74,11 @@ class TestFailureThreshold:
 class TestCallWithRetry:
     """FR-8: transient OpenAI errors retry; permanent ones do not."""
 
-    def test_returns_immediately_on_success(self):
+    def test_returns_immediately_on_success(self) -> None:
         result = _call_with_retry(label="t", fn=lambda: "ok")
         assert result == "ok"
 
-    def test_retries_on_transient_then_succeeds(self, monkeypatch):
+    def test_retries_on_transient_then_succeeds(self, monkeypatch) -> None:
         # Avoid sleeping — make backoff a no-op.
         monkeypatch.setattr("app.crud.evaluations.fast.time.sleep", lambda *_: None)
 
@@ -94,7 +95,7 @@ class TestCallWithRetry:
         assert result == "ok"
         assert calls["n"] == 3
 
-    def test_does_not_retry_on_permanent_error(self):
+    def test_does_not_retry_on_permanent_error(self) -> None:
         def bad():
             # AuthenticationError is a non-retryable OpenAIError subclass.
             raise openai.AuthenticationError(
@@ -111,7 +112,7 @@ class TestCallWithRetry:
 
 
 @pytest.fixture
-def _patch_dispatch():
+def _patch_dispatch() -> Iterator[MagicMock]:
     """Stub the Celery dispatch so tests don't actually enqueue work."""
     with patch(
         "app.services.evaluations.fast.enqueue_fast_evaluation",
@@ -125,7 +126,7 @@ def _make_fast_eligible_dataset(
     db: Session,
     user_api_key: TestAuthContext,
     original_items_count: int = 3,
-):
+) -> EvaluationDataset:
     return create_test_evaluation_dataset(
         db=db,
         organization_id=user_api_key.organization_id,
@@ -135,7 +136,7 @@ def _make_fast_eligible_dataset(
     )
 
 
-def _make_text_openai_config(db: Session, project_id: int):
+def _make_text_openai_config(db: Session, project_id: int) -> Config:
     """Create a stored text-OpenAI Kaapi config (eligible for fast eval)."""
     return create_test_config(
         db=db,

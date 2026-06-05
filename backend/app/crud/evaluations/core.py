@@ -13,6 +13,7 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
@@ -62,7 +63,7 @@ def create_evaluation_run(
     config_version: int,
     organization_id: int,
     project_id: int,
-    run_mode: str = "batch",
+    run_mode: RunModeEnum | str = RunModeEnum.BATCH,
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -76,11 +77,18 @@ def create_evaluation_run(
         config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
-        run_mode: Execution mode ("batch" default, or "fast")
+        run_mode: Execution mode (RunModeEnum.BATCH default, or RunModeEnum.FAST)
 
     Returns:
         The created EvaluationRun instance
+
+    Raises:
+        ValueError: If run_mode is not a valid RunModeEnum value.
     """
+    # Validate against the allowed run modes before hitting the DB CHECK
+    # constraint, so callers get a clear error instead of an IntegrityError.
+    run_mode_value = RunModeEnum(run_mode).value
+
     eval_run = EvaluationRun(
         run_name=run_name,
         dataset_name=dataset_name,
@@ -89,7 +97,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
-        run_mode=run_mode,
+        run_mode=run_mode_value,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),

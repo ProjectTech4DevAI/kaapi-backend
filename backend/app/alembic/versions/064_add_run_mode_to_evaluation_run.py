@@ -38,24 +38,22 @@ def upgrade():
         )
         op.execute("ALTER TABLE evaluation_run ALTER COLUMN run_mode SET NOT NULL")
 
-    # 2. Dedupe existing rows before adding the unique constraint.
-    #    Keep the lowest-id row for each (organization_id, project_id,
-    #    run_name) tuple and remove the rest.
+    # 2. Resolve duplicate (organization_id, project_id, run_name) tuples
+    #    non-destructively before adding the unique constraint. Keep the
+    #    lowest-id row's run_name untouched and rename the rest by appending a
+    #    unique "__dup_<id>" suffix so no historical run (and its scores, result
+    #    URLs, or batch_job links) is lost.
     with op.get_context().autocommit_block():
         op.execute(
             """
-            DELETE FROM evaluation_run
-            WHERE id IN (
-                SELECT id
-                FROM (
-                    SELECT id,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY organization_id, project_id, run_name
-                               ORDER BY id ASC
-                           ) AS rn
-                    FROM evaluation_run
-                ) sub
-                WHERE rn > 1
+            UPDATE evaluation_run e
+            SET run_name = e.run_name || '__dup_' || e.id
+            WHERE e.id <> (
+                SELECT MIN(x.id)
+                FROM evaluation_run x
+                WHERE x.organization_id = e.organization_id
+                  AND x.project_id = e.project_id
+                  AND x.run_name = e.run_name
             )
             """
         )

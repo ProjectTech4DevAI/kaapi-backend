@@ -377,6 +377,15 @@ def _stage1_responses(
     """Stage 1 — one Responses call per dataset item.
 
     Skipped on retry if `eval_run.batch_job_id` is set; the unit is reloaded from S3.
+
+    Concurrency assumption: this check-then-create is safe only against
+    *sequential* redelivery (a retry after the previous attempt fully stopped),
+    where the `batch_job_id` marker guarantees we never re-call OpenAI for work
+    that already succeeded. We rely on a single in-flight execution per
+    EvaluationRun — i.e. the broker visibility timeout is tuned above the task's
+    runtime so Celery does not redeliver while a worker is still running. If
+    that assumption is ever broken, two workers could both pass this guard; add
+    an advisory lock / atomic claim here before introducing concurrent delivery.
     """
     if eval_run.batch_job_id:
         existing = get_batch_job(session=session, batch_job_id=eval_run.batch_job_id)

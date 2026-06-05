@@ -18,7 +18,7 @@ from app.crud.evaluations import (
     save_score,
     start_evaluation_batch,
 )
-from app.models.evaluation import EvaluationRun
+from app.models.evaluation import EvaluationRun, RunModeEnum
 from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
@@ -29,6 +29,23 @@ logger = logging.getLogger(__name__)
 # (organization_id, project_id, run_name) unique constraint. Shared by the batch
 # and fast paths so both return an identical 409 contract.
 ERR_RUN_NAME_ALREADY_EXISTS = "run_name_already_exists"
+
+# Name of the (organization_id, project_id, run_name) unique constraint on
+# evaluation_run. Used to distinguish a run_name collision (-> 409) from any
+# other IntegrityError (e.g. FK violations), which must not be masked.
+_RUN_NAME_UNIQUE_CONSTRAINT = "uq_evaluation_run_org_project_run_name"
+
+
+def _is_run_name_conflict(error: IntegrityError) -> bool:
+    """True only when the IntegrityError is the run_name uniqueness violation."""
+    constraint_name = getattr(
+        getattr(error.orig, "diag", None), "constraint_name", None
+    )
+    if constraint_name:
+        return constraint_name == _RUN_NAME_UNIQUE_CONSTRAINT
+    # Fall back to matching the constraint name in the raw error text for
+    # drivers/dialects that don't expose structured diagnostics.
+    return _RUN_NAME_UNIQUE_CONSTRAINT in str(error.orig or error)
 
 
 def create_evaluation_run_or_409(
@@ -41,7 +58,7 @@ def create_evaluation_run_or_409(
     config_version: int,
     organization_id: int,
     project_id: int,
-    run_mode: str = "batch",
+    run_mode: RunModeEnum | str = RunModeEnum.BATCH,
     log_context: str,
 ) -> EvaluationRun:
     """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
@@ -62,8 +79,18 @@ def create_evaluation_run_or_409(
             project_id=project_id,
             run_mode=run_mode,
         )
-    except IntegrityError:
+    except IntegrityError as exc:
         session.rollback()
+        # Only a run_name collision becomes a 409; any other IntegrityError
+        # (e.g. a dataset/config FK violation) is a real failure and must not be
+        # masked as a duplicate-name error.
+        if not _is_run_name_conflict(exc):
+            logger.error(
+                f"[{log_context}] IntegrityError creating run | run_name={run_name} | "
+                f"org_id={organization_id} | project_id={project_id} | error={exc}",
+                exc_info=True,
+            )
+            raise
         logger.warning(
             f"[{log_context}] Duplicate run_name | run_name={run_name} | "
             f"org_id={organization_id} | project_id={project_id}"

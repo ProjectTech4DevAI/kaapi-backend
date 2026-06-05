@@ -55,7 +55,12 @@ class DatasetUploadResponse(BaseModel):
     )
     eligible_for_fast: bool = Field(
         False,
-        description="True if dataset has ≤10 unique rows and is eligible for run_mode=fast",
+        description=(
+            "Size predicate only: True if the dataset's unique-row count is at or "
+            "below the fast-mode threshold (settings.EVAL_FAST_MAX_UNIQUE_ROWS). "
+            "Other fast-mode prerequisites (e.g. a Langfuse dataset id, a text "
+            "OpenAI config) are not reflected here."
+        ),
     )
 
 
@@ -301,7 +306,7 @@ class EvaluationRun(SQLModel, table=True):
         },
     )
     run_mode: str = SQLField(
-        default="batch",
+        default=RunModeEnum.BATCH.value,
         max_length=10,
         nullable=False,
         sa_column_kwargs={"comment": "Execution mode: batch or fast"},

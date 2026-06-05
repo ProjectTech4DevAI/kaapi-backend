@@ -41,8 +41,17 @@ Two execution modes are supported via the optional `run_mode` field:
 
 ## Fast-mode error responses
 
+These apply only when `run_mode` is `fast`.
+
 | Status | Code | When |
 | --- | --- | --- |
 | 422 | `config_type_unsupported` | Resolved config is not a text-evaluation config |
 | 422 | `dataset_too_large_for_fast` | Dataset exceeds `EVAL_FAST_MAX_UNIQUE_ROWS` unique rows |
+
+## General error responses
+
+These apply to both `batch` and `fast` modes.
+
+| Status | Code | When |
+| --- | --- | --- |
 | 409 | `run_name_already_exists` | A run with the same `experiment_name` already exists for this (organization, project) |

@@ -119,9 +119,16 @@ def validate_and_start_fast_evaluation(
         )
 
     # 3. Dataset must be small enough for fast eval.
-    original_items_count = (dataset.dataset_metadata or {}).get(
-        "original_items_count"
-    ) or 0
+    original_items_count = (dataset.dataset_metadata or {}).get("original_items_count")
+    if original_items_count is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{ERR_DATASET_TOO_LARGE_FOR_FAST}: dataset {dataset_id} is "
+                "missing 'original_items_count' metadata; cannot verify it has at "
+                f"most {settings.EVAL_FAST_MAX_UNIQUE_ROWS} unique rows for fast mode."
+            ),
+        )
     if not is_dataset_fast_eligible(original_items_count=original_items_count):
         raise HTTPException(
             status_code=422,
@@ -142,7 +149,7 @@ def validate_and_start_fast_evaluation(
         config_version=config_version,
         organization_id=organization_id,
         project_id=project_id,
-        run_mode=RunModeEnum.FAST.value,
+        run_mode=RunModeEnum.FAST,
         log_context="validate_and_start_fast_evaluation",
     )
 

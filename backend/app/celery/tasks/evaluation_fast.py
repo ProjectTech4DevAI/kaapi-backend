@@ -11,7 +11,7 @@ See `Fast Evaluation SRD.md` for the design (queue, retries, idempotency).
 
 import logging
 
-from celery import current_task
+from celery import Task, current_task
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.job_execution import _run_with_otel_parent, _set_trace
@@ -20,11 +20,16 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Sentinel correlation id used when no trace id is propagated from the
+# enqueueing request. Matches the codebase-wide "N/A" default (see
+# app/core/logger.py and app/celery/utils.py).
+DEFAULT_TRACE_ID = "N/A"
+
 
 @celery_app.task(bind=True, queue="evaluations", priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast")
 def run_evaluation_fast(
-    self, eval_run_id: int, trace_id: str = "N/A", **kwargs
+    self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
 ) -> None:
     """Run the fast evaluation pipeline for one EvaluationRun.
 

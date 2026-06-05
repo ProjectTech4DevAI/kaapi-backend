@@ -128,15 +128,10 @@ def list_datasets(
         project_id=auth_context.project_.id,
         limit=limit,
         offset=offset,
+        eligible_for_fast=(eligible_for == "fast"),
     )
 
     dataset_responses = [_dataset_to_response(dataset) for dataset in datasets]
-    if eligible_for == "fast":
-        dataset_responses = [
-            dataset_response
-            for dataset_response in dataset_responses
-            if dataset_response.eligible_for_fast
-        ]
 
     return APIResponse.success_response(data=dataset_responses)
 
