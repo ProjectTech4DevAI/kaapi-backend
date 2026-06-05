@@ -141,31 +141,50 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     files=files,
                 )
             except openai.RateLimitError as e:
-                raise InterruptedError(f"OpenAI rate limit exceeded: {e.message}")
-            except openai.AuthenticationError as e:
-                raise InterruptedError(f"OpenAI authentication failed: {e.message}")
-            except openai.PermissionDeniedError as e:
-                raise InterruptedError(f"OpenAI permission denied: {e.message}")
-            except openai.NotFoundError as e:
-                raise InterruptedError(f"OpenAI resource not found: {e.message}")
-            except openai.BadRequestError as e:
-                raise InterruptedError(f"OpenAI bad request: {e.message}")
-            except openai.UnprocessableEntityError as e:
-                raise InterruptedError(f"OpenAI unprocessable entity: {e.message}")
-            except openai.ConflictError as e:
-                raise InterruptedError(f"OpenAI conflict: {e.message}")
-            except openai.InternalServerError as e:
-                raise InterruptedError(f"OpenAI server error: {e.message}")
-            except openai.APITimeoutError as e:
-                raise InterruptedError(f"OpenAI request timed out: {e}")
-            except openai.APIConnectionError as e:
-                raise InterruptedError(f"OpenAI connection error: {e}")
-            except openai.APIStatusError as e:
                 raise InterruptedError(
-                    f"OpenAI API status error ({e.status_code}): {e.message}"
+                    f"OpenAI rate limit exceeded (code: {e.status_code}): "
+                    f"{e.message}. Try again in 1 minute. If issue persists, "
+                    f"contact Kaapi."
+                )
+            except openai.AuthenticationError as e:
+                raise InterruptedError(
+                    f"OpenAI authentication failed (code: {e.status_code}): "
+                    f"{e.message}. Check your OpenAI API key is valid and "
+                    f"has not expired."
+                )
+            except openai.NotFoundError as e:
+                raise InterruptedError(
+                    f"OpenAI resource not found (code: {e.status_code}): "
+                    f"{e.message}. Verify the vector store ID exists and "
+                    f"hasn't been deleted."
+                )
+            except openai.BadRequestError as e:
+                raise InterruptedError(
+                    f"OpenAI bad request (code: {e.status_code}): {e.message}. "
+                    f"Review the file payload and metadata; the request may "
+                    f"be malformed."
+                )
+            except openai.UnprocessableEntityError as e:
+                raise InterruptedError(
+                    f"OpenAI unprocessable entity (code: {e.status_code}): "
+                    f"{e.message}. The uploaded files may be in an "
+                    f"unsupported format or exceed size limits."
+                )
+            except openai.InternalServerError as e:
+                raise InterruptedError(
+                    f"OpenAI server error (code: {e.status_code}): {e.message}. "
+                    f"This is usually transient — retry in a few seconds. If "
+                    f"issue persists, contact Kaapi."
+                )
+            except openai.APITimeoutError as e:
+                raise InterruptedError(
+                    f"OpenAI request timed out: {e}. Retry the upload, or "
+                    f"split the batch into smaller chunks."
                 )
             except openai.OpenAIError as e:
-                raise InterruptedError(f"OpenAI error: {e}")
+                raise InterruptedError(
+                    f"OpenAI error: {e}. If this persists, contact Kaapi."
+                )
 
             logger.info(
                 f"[OpenAIVectorStoreCrud.update] File upload completed | "

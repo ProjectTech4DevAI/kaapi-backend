@@ -139,7 +139,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.RateLimitError as e:
-            error_message = f"OpenAI rate limit exceeded: {e.message}"
+            error_message = (
+                f"OpenAI rate limit exceeded (code: {e.status_code}): "
+                f"{e.message}. Try again in 1 minute. If issue persists, "
+                f"contact Kaapi."
+            )
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -148,16 +152,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.AuthenticationError as e:
-            error_message = f"OpenAI authentication failed: {e.message}"
-            logger.warning(
-                f"[OpenAIProvider.execute] {error_message} | "
-                f"provider={completion_config.provider}",
-                exc_info=True,
+            error_message = (
+                f"OpenAI authentication failed (code: {e.status_code}): "
+                f"{e.message}. Check your OpenAI API key is valid and has "
+                f"not expired."
             )
-            return None, error_message
-
-        except openai.PermissionDeniedError as e:
-            error_message = f"OpenAI permission denied: {e.message}"
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -166,7 +165,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.NotFoundError as e:
-            error_message = f"OpenAI resource not found: {e.message}"
+            error_message = (
+                f"OpenAI resource not found (code: {e.status_code}): "
+                f"{e.message}. Verify the model name and any referenced IDs "
+                f"in your config are correct."
+            )
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -175,7 +178,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.BadRequestError as e:
-            error_message = f"OpenAI bad request: {e.message}"
+            error_message = (
+                f"OpenAI bad request (code: {e.status_code}): {e.message}. "
+                f"Review your config parameters; the request shape may be "
+                f"invalid."
+            )
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -184,16 +191,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.UnprocessableEntityError as e:
-            error_message = f"OpenAI unprocessable entity: {e.message}"
-            logger.warning(
-                f"[OpenAIProvider.execute] {error_message} | "
-                f"provider={completion_config.provider}",
-                exc_info=True,
+            error_message = (
+                f"OpenAI unprocessable entity (code: {e.status_code}): "
+                f"{e.message}. The model rejected the request payload; "
+                f"check input format and limits."
             )
-            return None, error_message
-
-        except openai.ConflictError as e:
-            error_message = f"OpenAI conflict: {e.message}"
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -202,7 +204,11 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.InternalServerError as e:
-            error_message = f"OpenAI server error: {e.message}"
+            error_message = (
+                f"OpenAI server error (code: {e.status_code}): {e.message}. "
+                f"This is usually transient — retry in a few seconds. If "
+                f"issue persists, contact Kaapi."
+            )
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -211,25 +217,10 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.APITimeoutError as e:
-            error_message = f"OpenAI request timed out: {e}"
-            logger.warning(
-                f"[OpenAIProvider.execute] {error_message} | "
-                f"provider={completion_config.provider}",
-                exc_info=True,
+            error_message = (
+                f"OpenAI request timed out: {e}. Retry the request, or try "
+                f"with a smaller payload."
             )
-            return None, error_message
-
-        except openai.APIConnectionError as e:
-            error_message = f"OpenAI connection error: {e}"
-            logger.warning(
-                f"[OpenAIProvider.execute] {error_message} | "
-                f"provider={completion_config.provider}",
-                exc_info=True,
-            )
-            return None, error_message
-
-        except openai.APIStatusError as e:
-            error_message = f"OpenAI API status error ({e.status_code}): {e.message}"
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
@@ -238,7 +229,7 @@ class OpenAIProvider(BaseProvider):
             return None, error_message
 
         except openai.OpenAIError as e:
-            error_message = f"OpenAI error: {e}"
+            error_message = f"OpenAI error: {e}. If this persists, contact Kaapi."
             logger.warning(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
