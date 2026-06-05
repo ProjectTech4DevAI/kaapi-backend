@@ -8,6 +8,11 @@ on retry if its `batch_job` row already exists.
     Stage 2 — Embeddings unit:  evaluation_run.embedding_batch_job_id
     Stage 3 — Score + trace + cost (no marker; each step is idempotent)
     Stage 4 — Mark completed
+    Stage 5 — Persist score unit (summary + per-trace) via the shared
+              save_score helper, so the cached trace unit (score_trace_url)
+              exists immediately and the read path (trace view / resync /
+              grouped export) mirrors the batch path without racing Langfuse
+              ingestion.
 
 See `Fast Evaluation SRD.md` for the full design.
 """
@@ -32,7 +37,11 @@ from app.core.storage_utils import (
     upload_jsonl_to_object_store,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
+from app.crud.evaluations.core import (
+    resolve_model_from_config,
+    save_score,
+    update_evaluation_run,
+)
 from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
@@ -42,6 +51,7 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
+from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
 from app.crud.job import create_batch_job, get_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJobCreate
@@ -581,8 +591,12 @@ def _stage3_score_and_trace(
     response_results: list[dict[str, Any]],
     embedding_results: list[dict[str, Any]],
     log_prefix: str,
-) -> EvaluationRun:
+) -> tuple[EvaluationRun, EvaluationScore]:
     """Stage 3 — compute cosine, create Langfuse traces, attach costs.
+
+    Returns the run plus the full score unit (summary_scores + per-trace
+    records) in the exact shape `fetch_trace_scores_from_langfuse` produces for
+    the batch path, so the caller can persist it via `save_score`.
 
     No stage marker; each step is idempotent (deterministic cosine, Langfuse
     dedupes on the observe key, attach_cost overwrites per stage).
@@ -604,25 +618,29 @@ def _stage3_score_and_trace(
         model=model,
     )
 
-    # Per-item cosine scores keyed on Langfuse trace_id.
+    # Per-item cosine scores keyed on Langfuse trace_id (for Langfuse updates)
+    # and on item_id (for building the persisted per-trace records below).
     per_item_scores: list[dict[str, Any]] = []
+    item_id_to_score: dict[str, float] = {}
     similarities: list[float] = []
-    for r in response_results:
-        item_id = r["item_id"]
-        pair = item_id_to_pair.get(item_id)
+    for response in response_results:
+        item_id = response["item_id"]
+        embedding_pair = item_id_to_pair.get(item_id)
         trace_id = trace_id_mapping.get(item_id)
-        if not pair or not trace_id:
+        if not embedding_pair or not trace_id:
             continue
         if (
-            pair.get("output_embedding") is None
-            or pair.get("ground_truth_embedding") is None
+            embedding_pair.get("output_embedding") is None
+            or embedding_pair.get("ground_truth_embedding") is None
         ):
             continue
-        score = calculate_cosine_similarity(
-            pair["output_embedding"], pair["ground_truth_embedding"]
+        cosine = calculate_cosine_similarity(
+            embedding_pair["output_embedding"],
+            embedding_pair["ground_truth_embedding"],
         )
-        similarities.append(score)
-        per_item_scores.append({"trace_id": trace_id, "cosine_similarity": score})
+        similarities.append(cosine)
+        item_id_to_score[item_id] = cosine
+        per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
 
     if per_item_scores:
         try:
@@ -691,16 +709,53 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
+    # Build the per-trace records in the same shape the batch path persists (via
+    # fetch_trace_scores_from_langfuse). One record per response that has a
+    # Langfuse trace; the cosine score is attached when its embedding succeeded.
+    traces: list[TraceData] = []
+    for response in response_results:
+        item_id = response["item_id"]
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
+            continue
+        trace_scores: list[TraceScore] = []
+        cosine = item_id_to_score.get(item_id)
+        if cosine is not None:
+            trace_scores.append(
+                {
+                    "name": "Cosine Similarity",
+                    "value": round(cosine, 2),
+                    "data_type": "NUMERIC",
+                    "comment": (
+                        "Cosine similarity between generated output and "
+                        "ground truth embeddings"
+                    ),
+                }
+            )
+        traces.append(
+            {
+                "trace_id": trace_id,
+                "question": response.get("question", ""),
+                "llm_answer": response.get("generated_output", ""),
+                "ground_truth_answer": response.get("ground_truth", ""),
+                "question_id": response.get("question_id"),
+                "scores": trace_scores,
+            }
+        )
+
+    # Persist cost here; the score unit (summary + traces) is persisted by the
+    # caller via save_score so it lands in S3 (score_trace_url) like the batch path.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(
-            score=score_payload,
-            cost=eval_run.cost,
-        ),
+        update=EvaluationRunUpdate(cost=eval_run.cost),
     )
 
-    return eval_run
+    score: EvaluationScore = {
+        "summary_scores": score_payload["summary_scores"],
+        "traces": traces,
+    }
+    return eval_run, score
 
 
 def run_fast_evaluation(
@@ -758,7 +813,7 @@ def run_fast_evaluation(
     )
 
     # Stage 3
-    eval_run = _stage3_score_and_trace(
+    eval_run, score = _stage3_score_and_trace(
         session=session,
         eval_run=eval_run,
         langfuse=langfuse,
@@ -773,6 +828,19 @@ def run_fast_evaluation(
         eval_run=eval_run,
         update=EvaluationRunUpdate(status="completed"),
     )
+
+    # Stage 5 — persist the score unit (traces to S3, summary to DB) via the
+    # shared batch helper so the read path serves the cached unit instead of
+    # racing Langfuse ingestion.
+    saved = save_score(
+        eval_run_id=eval_run.id,
+        organization_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+        score=score,
+    )
+    if saved is not None:
+        eval_run = saved
+        eval_run.score = score
 
     logger.info(
         f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "

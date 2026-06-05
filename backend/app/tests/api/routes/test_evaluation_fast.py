@@ -625,19 +625,36 @@ class TestFastPipelineEndToEnd:
         db.refresh(eval_run)
 
         fake_openai = MagicMock()
-        fake_openai.responses.create.side_effect = (
-            lambda **kwargs: _fake_openai_response(text="LLM answer", item_id="x")
+        fake_openai.responses.create.side_effect = lambda **_: _fake_openai_response(
+            text="LLM answer", item_id="x"
         )
         fake_openai.embeddings.create.return_value = _fake_embedding_response()
         fake_langfuse = MagicMock()
 
-        result = run_fast_evaluation(
-            session=db,
-            openai_client=fake_openai,
-            langfuse=fake_langfuse,
-            eval_run=eval_run,
-            config=TextLLMParams(model="gpt-4o", instructions="be helpful"),
-        )
+        # save_score opens its own Session(engine), which can't see this test's
+        # rolled-back transaction. Mirror its S3-success path against the test
+        # session so the persisted state (summary in DB, traces in S3) is
+        # observable here. (In production the worker's commits are visible across
+        # connections, so the real save_score works unchanged.)
+        def _fake_save_score(*, eval_run_id, score, **_):
+            run = db.get(EvaluationRun, eval_run_id)
+            run.score = {"summary_scores": score["summary_scores"]}
+            run.score_trace_url = f"s3://bucket/traces_{eval_run_id}.json"
+            db.add(run)
+            db.commit()
+            db.refresh(run)
+            return run
+
+        with patch(
+            "app.crud.evaluations.fast.save_score", side_effect=_fake_save_score
+        ):
+            result = run_fast_evaluation(
+                session=db,
+                openai_client=fake_openai,
+                langfuse=fake_langfuse,
+                eval_run=eval_run,
+                config=TextLLMParams(model="gpt-4o", instructions="be helpful"),
+            )
 
         # FR-11/FR-14: status completed, summary cosine ≈ 1.0 for identical vectors
         assert result.status == "completed"
@@ -663,6 +680,21 @@ class TestFastPipelineEndToEnd:
 
         # FR-13: attach_cost called twice (response + embedding stages).
         assert _fast_pipeline_mocks.attach_cost.call_count == 2
+
+        # Cached trace unit is persisted like the batch path so the read path
+        # (trace view / resync / grouped export) never has to hit Langfuse.
+        run = db.get(EvaluationRun, result.id)
+        assert run.score_trace_url is not None
+        # Full unit (summary + per-trace records) is surfaced on the return.
+        traces = result.score["traces"]
+        assert len(traces) == 2
+        by_trace = {t["trace_id"]: t for t in traces}
+        assert {"trace-1", "trace-2"} == set(by_trace)
+        sample = by_trace["trace-1"]
+        assert sample["question"] == "Q1"
+        assert sample["ground_truth_answer"] == "A1"
+        assert sample["scores"][0]["name"] == "Cosine Similarity"
+        assert sample["scores"][0]["value"] == pytest.approx(1.0, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
