@@ -78,8 +78,8 @@ def monitor_rate(category: RateCategory):
                     f"[monitor_rate] Rate threshold exceeded for {category} in project {project.id}: count={count}"
                 )
                 record_rate_threshold(
-                    org_id=project.id,
-                    org_name=project.name,
+                    project_id=project.id,
+                    project_name=project.name,
                     category=category,
                     request_count=count,
                     threshold=threshold,
