@@ -17,6 +17,7 @@ ALLOWED_MIME_TYPES = {
     "application/csv",
     "text/plain",
 }
+DEFAULT_CATEGORY = "Other"
 
 
 def sanitize_dataset_name(name: str) -> str:
@@ -114,13 +115,12 @@ async def validate_csv_file(file: UploadFile) -> bytes:
 
 def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
     """
-    Parse CSV and extract question/answer pairs.
+    Parse CSV and extract question/answer/category triples.
 
-    Args:
-        csv_content: CSV file content as bytes
-
-    Returns:
-        List of dicts with 'question' and 'answer' keys
+    Required columns: `question`, `answer` (case-insensitive).
+    Optional column: `category` (case-insensitive) — free-text label used for
+    per-category analytics. Missing/blank values default to `"Other"` so old
+    CSVs that predate this column continue to work.
 
     Raises:
         HTTPException: If CSV is invalid or empty
@@ -136,31 +136,41 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
         clean_headers = {
             field.strip().lower(): field for field in csv_reader.fieldnames
         }
+        present = set(clean_headers.keys())
+        required = {"question", "answer"}
+        allowed = required | {"category"}
 
-        # Validate exactly 'question' and 'answer' columns (case-insensitive)
-        if set(clean_headers.keys()) != {"question", "answer"}:
-            extra = set(clean_headers.keys()) - {"question", "answer"}
-            missing = {"question", "answer"} - set(clean_headers.keys())
+        missing = required - present
+        unexpected = present - allowed
+        if missing or unexpected:
             parts = []
             if missing:
                 parts.append(f"Missing: {sorted(missing)}")
-            if extra:
-                parts.append(f"Unexpected: {sorted(extra)}")
+            if unexpected:
+                parts.append(f"Unexpected: {sorted(unexpected)}")
             raise HTTPException(
                 status_code=422,
-                detail=f"CSV must contain exactly 'question' and 'answer' columns. "
-                f"{'. '.join(parts)}. Found columns: {csv_reader.fieldnames}",
+                detail=(
+                    "CSV must contain 'question' and 'answer' columns. "
+                    "'category' is optional. "
+                    f"{'. '.join(parts)}. Found columns: {csv_reader.fieldnames}"
+                ),
             )
 
         question_col = clean_headers["question"]
         answer_col = clean_headers["answer"]
+        category_col = clean_headers.get("category")
 
         items = []
         for row in csv_reader:
             question = row.get(question_col, "").strip()
             answer = row.get(answer_col, "").strip()
-            if question and answer:
-                items.append({"question": question, "answer": answer})
+            if not (question and answer):
+                continue
+            category = (
+                (row.get(category_col, "") or "").strip() if category_col else ""
+            ) or DEFAULT_CATEGORY
+            items.append({"question": question, "answer": answer, "category": category})
 
         if not items:
             raise HTTPException(

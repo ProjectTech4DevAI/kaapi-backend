@@ -25,7 +25,22 @@ class TraceData(TypedDict):
     llm_answer: str
     question_id: int | None
     ground_truth_answer: str
+    category: str
     scores: list[TraceScore]
+
+
+class CategoryMetrics(TypedDict):
+    """Aggregated per-category metrics across an eval run.
+
+    `avg_cosine` and `avg_correctness` are the simple arithmetic means of the
+    cosine-similarity and correctness scores for traces in this category; null
+    when the category has no traces with that score.
+    """
+
+    category: str
+    total_evals: int
+    avg_cosine: float | None
+    avg_correctness: float | None
 
 
 class NumericSummaryScore(TypedDict):

@@ -109,6 +109,12 @@ def create_langfuse_dataset_run(
                     if question_id:
                         metadata["question_id"] = question_id
 
+                    item_metadata = getattr(dataset_item, "metadata", None)
+                    if isinstance(item_metadata, dict):
+                        item_category = item_metadata.get("category")
+                        if item_category:
+                            metadata["category"] = item_category
+
                     # Create trace with basic info
                     langfuse.trace(
                         id=trace_id,
@@ -255,6 +261,7 @@ def upload_dataset_to_langfuse(
 
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
+            category = item.get("category") or "Other"
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
@@ -264,6 +271,7 @@ def upload_dataset_to_langfuse(
                     "duplicate_number": duplicate_num + 1,
                     "duplication_factor": duplication_factor,
                     "question_id": question_id,
+                    "category": category,
                 },
             )
             return True
@@ -429,6 +437,7 @@ def fetch_trace_scores_from_langfuse(
                 "llm_answer": "",
                 "ground_truth_answer": "",
                 "question_id": "",
+                "category": "Other",
                 "scores": [],
             }
 
@@ -446,12 +455,15 @@ def fetch_trace_scores_from_langfuse(
                 elif isinstance(trace.output, str):
                     trace_data["llm_answer"] = trace.output
 
-            # Get ground truth and question_id from metadata
+            # Get ground truth, question_id, and category from metadata.
+            # `category` is absent on traces produced before the feature
+            # existed, so default to "Other" for backwards compatibility.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
                 )
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
+                trace_data["category"] = trace.metadata.get("category") or "Other"
 
             # Add scores from this trace
             if trace.scores:

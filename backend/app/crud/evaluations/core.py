@@ -448,6 +448,7 @@ def group_traces_by_question_id(
                 "question_id": 1,
                 "question": "What is Python?",
                 "ground_truth_answer": "...",
+                "category": "health",
                 "llm_answers": ["Answer 1", "Answer 2"],
                 "trace_ids": ["trace-1", "trace-2"],
                 "scores": [[...], [...]]
@@ -478,6 +479,7 @@ def group_traces_by_question_id(
                 "question_id": question_id,
                 "question": first.get("question", ""),
                 "ground_truth_answer": first.get("ground_truth_answer", ""),
+                "category": first.get("category") or "Other",
                 "llm_answers": [t.get("llm_answer", "") for t in group_traces],
                 "trace_ids": [t.get("trace_id", "") for t in group_traces],
                 "scores": [t.get("scores", []) for t in group_traces],
