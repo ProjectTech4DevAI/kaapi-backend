@@ -495,8 +495,9 @@ class TestGoogleAIExecuteTextRouting:
         call_kwargs = mock_client.models.generate_content.call_args[1]
         assert call_kwargs["contents"][0]["parts"] == [{"text": "hello"}]
 
-    def test_missing_model(self):
-        provider, _ = self._make_provider()
+    def test_missing_model_falls_back_to_default(self):
+        """No model in params → provider uses DEFAULT_TEXT_MODELS['google']."""
+        provider, mock_client = self._make_provider()
         config = NativeCompletionConfig(
             provider="google-native", type="text", params={}
         )
@@ -505,8 +506,10 @@ class TestGoogleAIExecuteTextRouting:
             query=self._make_query(),
             resolved_input="hello",
         )
-        assert response is None
-        assert "Missing 'model'" in error
+        assert error is None
+        assert response is not None
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        assert call_kwargs["model"] == "gemini-2.5-pro"
 
     def test_instructions_passed_to_config(self):
         provider, mock_client = self._make_provider()

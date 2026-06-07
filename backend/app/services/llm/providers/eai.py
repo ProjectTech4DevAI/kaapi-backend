@@ -6,6 +6,8 @@ from typing import Any
 
 from elevenlabs import ElevenLabs, SpeechToTextConvertResponse
 
+from app.core.audio_utils import AudioRef
+
 
 from app.models.llm import (
     NativeCompletionConfig,
@@ -15,6 +17,10 @@ from app.models.llm import (
     LLMResponse,
     Usage,
     TextContent,
+)
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
 )
 from app.models.llm.response import AudioOutput
 from app.models.llm.request import AudioContent
@@ -60,14 +66,15 @@ class ElevenlabsAIProvider(BaseProvider):
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_input: str,
+        resolved_input: "AudioRef",
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute speech-to-text completion using Elevenlabs.
 
         Args:
             completion_config: Configuration for the completion request (with already-mapped params)
-            resolved_input: File path to the audio input
+            resolved_input: ``AudioRef``; materialized to a temp file because the
+                ElevenLabs SDK only accepts a file-like.
             include_provider_raw_response: Whether to include raw provider response
 
         Returns:
@@ -76,31 +83,27 @@ class ElevenlabsAIProvider(BaseProvider):
         provider_name = completion_config.provider
         params = completion_config.params
 
+        if not isinstance(resolved_input, AudioRef):
+            return None, f"{provider_name} STT requires AudioRef input"
+
         # Extract already-mapped parameters from the mapper
-        model_id = params.get("model_id") or "scribe_v2"
+        model_id = params.get("model_id") or DEFAULT_ELEVENLABS_STT_MODEL
         if not model_id:
             return None, "Missing 'model_id' in native params for Elevenlabs STT"
 
         language_code = params.get("language_code")
         temperature = params.get("temperature")
 
-        # Parse and validate input
-        parsed_input_path = self._parse_input(
-            query_input=resolved_input,
-            completion_type="stt",
-            provider=provider_name,
-        )
-
         try:
-            # Build optional kwargs
             stt_kwargs: dict[str, Any] = {}
             if language_code:
                 stt_kwargs["language_code"] = language_code
             if temperature is not None:
                 stt_kwargs["temperature"] = temperature
 
-            with open(parsed_input_path, "rb") as audio_file:
-                # Call ElevenLabs transcribe with all mapped parameters
+            with resolved_input.to_path() as parsed_input_path, open(
+                parsed_input_path, "rb"
+            ) as audio_file:
                 elevenlabs_response: SpeechToTextConvertResponse = (
                     self.client.speech_to_text.convert(
                         file=audio_file, model_id=model_id, **stt_kwargs
@@ -168,7 +171,7 @@ class ElevenlabsAIProvider(BaseProvider):
 
         # Extract already-mapped parameters from the mapper
         # Use 'or' to handle both missing keys and falsy values
-        model_id = params.get("model_id") or "eleven_v3"
+        model_id = params.get("model_id") or DEFAULT_ELEVENLABS_TTS_MODEL
         voice_id = params.get("voice_id") or "EXAVITQu4vr4xnSDxMaL"
 
         if not model_id:
