@@ -315,6 +315,7 @@ def get_or_fetch_score(
         langfuse=langfuse,
         dataset_name=eval_run.dataset_name,
         run_name=eval_run.run_name,
+        project_id=eval_run.project_id,
     )
 
     # Merge summary_scores: existing scores + new scores from Langfuse
