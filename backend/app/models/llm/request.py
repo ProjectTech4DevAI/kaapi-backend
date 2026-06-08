@@ -92,11 +92,11 @@ class TTSLLMParams(SQLModel):
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-KaapiLLMParams = Union[
-    TextLLMParams,
-    STTLLMParams,
-    TTSLLMParams,
-]
+class ProxyLLMParams(SQLModel):
+    client_llm_url: str
+
+
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ProxyLLMParams]
 
 
 # Input type models for discriminated union
@@ -232,14 +232,16 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal[
-        "openai-native",
-        "google-native",
-        "sarvamai-native",
-        "elevenlabs-native",
-        "anthropic-native",
-        "google-vertex-native",
-    ] = Field(
+    provider: (
+        Literal[
+            "openai-native",
+            "google-native",
+            "sarvamai-native",
+            "elevenlabs-native",
+            "anthropic-native",
+            "google-vertex-native",
+        ]
+    ) = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -247,7 +249,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: Literal["text", "stt", "tts", "proxy"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -276,7 +278,7 @@ class KaapiCompletionConfig(SQLModel):
         ),
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: Literal["text", "stt", "tts", "proxy"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -291,6 +293,7 @@ class KaapiCompletionConfig(SQLModel):
             "text": TextLLMParams,
             "stt": STTLLMParams,
             "tts": TTSLLMParams,
+            "proxy": ProxyLLMParams,
         }
         model_class = param_models[self.type]
 

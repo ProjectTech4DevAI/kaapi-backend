@@ -117,15 +117,16 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     completion = blob.completion
     raw_provider = completion.provider
     completion_type = completion.type
-    if raw_provider is None:
-        return
 
     if raw_provider.endswith("-native"):
         return
 
+    if raw_provider is None and completion.type != "proxy":
+        return
+
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model")
+    model_name = (completion.params or {}).get("model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,

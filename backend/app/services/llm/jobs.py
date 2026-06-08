@@ -550,6 +550,8 @@ def execute_llm_call(
                 interpolated = template.replace("{{input}}", query.input.content.value)
                 query.input.content.value = interpolated
 
+            # if client_llm_url_present  proxy route
+
             with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
                 _set_traceability_attributes(
                     guard_span,
@@ -559,6 +561,23 @@ def execute_llm_call(
                     project_id=project_id,
                     organization_id=organization_id,
                 )
+                if config_blob.params.client_llm_url:
+                    # apply input guardrails directly
+                    (
+                        query,
+                        input_error,
+                        guardrail_direct_response,
+                    ) = apply_input_guardrails(
+                        config_blob=config_blob,
+                        query=query,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                    )
+                    # get safe text
+                    # make direct call to the client_llm_url
+                    # bypass further execution
+
                 query, input_error, guardrail_direct_response = apply_input_guardrails(
                     config_blob=config_blob,
                     query=query,
