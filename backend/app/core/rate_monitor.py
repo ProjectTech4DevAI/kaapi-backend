@@ -72,27 +72,17 @@ def monitor_rate(category: RateCategory) -> Callable[[AuthContextDep], None]:
         minute_bucket = int(time.time() // 60)
         redis_key = f"rate_monitor:{category}:{project.id}:{minute_bucket}"
 
-        try:
-            count = increment_and_get_count(redis_key)
-            if count is not None and count == threshold + 1:
-                logger.warning(
-                    f"[monitor_rate] Rate threshold exceeded for {category} in project {project.id}: count={count}"
-                )
-                record_rate_threshold(
-                    project_id=project.id,
-                    project_name=project.name,
-                    category=category,
-                    request_count=count,
-                    threshold=threshold,
-                )
-
-        except redis.RedisError as e:
-            logger.error(
-                "[monitor_rate] Redis unavailable, skipping rate check "
-                "(project_id=%s category=%s)",
-                project.id,
-                category,
-                exc_info=e,
+        count = increment_and_get_count(redis_key)
+        if count is not None and count == threshold + 1:
+            logger.warning(
+                f"[monitor_rate] Rate threshold exceeded for {category} in project {project.id}: count={count}"
+            )
+            record_rate_threshold(
+                project_id=project.id,
+                project_name=project.name,
+                category=category,
+                request_count=count,
+                threshold=threshold,
             )
 
     return _checker

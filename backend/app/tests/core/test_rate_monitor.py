@@ -147,18 +147,6 @@ class TestMonitorRate:
 
         record.assert_not_called()
 
-    def test_redis_error_is_swallowed(self):
-        """A RedisError from increment must not propagate out of the checker."""
-        checker = rate_monitor.monitor_rate("llm_call")
-
-        with patch.object(
-            rate_monitor,
-            "increment_and_get_count",
-            side_effect=redis.RedisError("down"),
-        ):
-            # Should not raise.
-            checker(_auth_context())
-
 
 # ---------------------------------------------------------------------------
 # telemetry.record_rate_threshold
