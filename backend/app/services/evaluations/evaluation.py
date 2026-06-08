@@ -346,8 +346,6 @@ def get_evaluation_with_scores(
                 )
 
         if has_cached_traces_db:
-            # Backfill category_metrics on read for runs whose cached score
-            # was written before this feature shipped.
             eval_run.score = _attach_category_metrics(eval_run.score)
             logger.info(
                 f"[get_evaluation_with_scores] Returning traces from DB | "
