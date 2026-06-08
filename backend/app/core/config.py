@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
 
+    # Threshold Request Rate per minute
+    THRESHOLD_LLM_CALL_RATE: int = 15
+    THRESHOLD_COLLECTIONS_RATE: int = 3
+    THRESHOLD_EVALUATIONS_RATE: int = 3
+
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
     CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 150

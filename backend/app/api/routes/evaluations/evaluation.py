@@ -14,6 +14,7 @@ from fastapi import (
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.rate_monitor import monitor_rate
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
 from app.crud.evaluations.core import group_traces_by_question_id
 from app.models.evaluation import EvaluationRunPublic, RunModeEnum
@@ -36,7 +37,10 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
     "",
     description=load_description("evaluation/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("evaluations")),
+    ],
 )
 def evaluate(
     session: SessionDep,

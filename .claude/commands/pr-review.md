@@ -118,6 +118,8 @@ Skip any section in the output that has nothing notable.
 ## Output format
 
 ```
+**PR**: #<number> (<head> → <base>) · <file count> files (<additions>+ / <deletions>-)
+
 ## Summary
 <1–3 sentences: what the PR does + verdict (approve / approve with nits / request changes). Caveats on approval are fine.>
 
@@ -129,7 +131,12 @@ Skip any section in the output that has nothing notable.
 
 ## Nits
 - <style, naming, tiny cleanups — prefix `nit:`>
+
+## What's done well
+- <genuine positives only — a correct race fix, a well-placed constraint, a tricky edge handled. Omit the whole section if there's nothing real to say; never pad.>
 ```
+
+The metadata line comes from `gh pr view`. For a local-branch review (`branch` argument), drop the `#<number>` and derive counts from `git diff main...HEAD --stat`.
 
 Each item gets exactly one bullet — no item appears in more than one section. Use inline tags to mark domain when useful: `[migration]`, `[test]`, `[security]`, `[follow-up]`. Severity drives the section; the tag adds the domain colour.
 
