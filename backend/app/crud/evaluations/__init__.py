@@ -31,11 +31,7 @@ from app.crud.evaluations.langfuse import (
     update_traces_with_cosine_scores,
     upload_dataset_to_langfuse,
 )
-from app.crud.evaluations.merge import (
-    compute_summary_scores,
-    merge_scores_step_forward,
-    merge_trace_data,
-)
+from app.crud.evaluations.merge import merge_scores_step_forward
 from app.crud.evaluations.processing import (
     check_and_process_evaluation,
     poll_all_pending_evaluations,
@@ -85,9 +81,7 @@ __all__ = [
     "update_traces_with_cosine_scores",
     "upload_dataset_to_langfuse",
     # Merge (step-forward resync)
-    "compute_summary_scores",
     "merge_scores_step_forward",
-    "merge_trace_data",
     # Score types
     "CategoricalSummaryScore",
     "EvaluationScore",

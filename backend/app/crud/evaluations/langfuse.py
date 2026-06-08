@@ -328,6 +328,7 @@ def fetch_trace_scores_from_langfuse(
     langfuse: Langfuse,
     dataset_name: str,
     run_name: str,
+    project_id: int | None = None,
 ) -> EvaluationScore:
     """
     Fetch trace scores from Langfuse for an evaluation run.
@@ -529,18 +530,14 @@ def fetch_trace_scores_from_langfuse(
                 f"fetches failed. Try again later."
             )
 
-        # Partial failure below the outage threshold: do NOT fail silently. Make it
-        # explicit that this fetch is incomplete. The caller merges this result with
-        # the cached traces (step-forward), so the missing traces are preserved and a
-        # later resync can fill them in.
+        # Partial failure below the outage threshold: log it instead of dropping
+        # traces silently. The caller backfills the missing ones on a later resync.
         if total_failures > 0:
             logger.warning(
                 f"[fetch_trace_scores_from_langfuse] Partial fetch | "
                 f"fetched={len(traces)}/{len(trace_ids)} | "
-                f"failed={total_failures} | "
                 f"failed_trace_ids={failed_trace_ids} | "
-                f"dataset={dataset_name} | run={run_name} | "
-                f"missing traces will be backfilled on a later resync"
+                f"dataset={dataset_name} | run={run_name} | project_id={project_id}"
             )
 
         # 4. Calculate summary scores from the fetched traces.

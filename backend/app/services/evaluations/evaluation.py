@@ -335,6 +335,7 @@ def get_evaluation_with_scores(
             langfuse=langfuse,
             dataset_name=dataset_name,
             run_name=run_name,
+            project_id=project_id,
         )
     except ValueError as e:
         logger.warning(
