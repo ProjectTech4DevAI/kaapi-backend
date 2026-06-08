@@ -12,9 +12,9 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import numpy as np
 from langfuse import Langfuse
 
+from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
 
 logger = logging.getLogger(__name__)
@@ -336,6 +336,7 @@ def fetch_trace_scores_from_langfuse(
     langfuse: Langfuse,
     dataset_name: str,
     run_name: str,
+    project_id: int | None = None,
 ) -> EvaluationScore:
     """
     Fetch trace scores from Langfuse for an evaluation run.
@@ -420,13 +421,14 @@ def fetch_trace_scores_from_langfuse(
 
         # 3. Fetch trace details with scores concurrently
         traces: list[TraceData] = []
-        # Track score aggregations by name: {name: {"data_type": str, "values": list}}
-        score_aggregations: dict[str, dict[str, Any]] = {}
 
         # Circuit breaker: abort early if too many consecutive failures
         max_consecutive_failures = 5
         consecutive_failures = 0
         total_failures = 0
+        # Track which traces could not be fetched so the failure is explicit in
+        # logs (instead of silently dropping them from the result).
+        failed_trace_ids: list[str] = []
 
         def _fetch_single_trace(trace_id: str) -> TraceData | None:
             """Fetch a single trace from Langfuse and extract its data."""
@@ -510,25 +512,12 @@ def fetch_trace_scores_from_langfuse(
                         continue
 
                     consecutive_failures = 0
-
-                    # Aggregate scores for summary calculation
-                    for score_entry in trace_data["scores"]:
-                        score_name = score_entry["name"]
-                        score_value = score_entry["value"]
-                        data_type = score_entry["data_type"]
-                        if score_value is not None:
-                            if score_name not in score_aggregations:
-                                score_aggregations[score_name] = {
-                                    "data_type": data_type,
-                                    "values": [],
-                                }
-                            score_aggregations[score_name]["values"].append(score_value)
-
                     traces.append(trace_data)
 
                 except Exception as e:
                     consecutive_failures += 1
                     total_failures += 1
+                    failed_trace_ids.append(trace_id)
                     logger.warning(
                         f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
                         f"trace_id={trace_id} | error={e}"
@@ -556,39 +545,18 @@ def fetch_trace_scores_from_langfuse(
                 f"fetches failed. Try again later."
             )
 
-        # 4. Calculate summary scores for all scores that have at least one value
-        summary_scores = []
-        for score_name, agg_data in score_aggregations.items():
-            data_type = agg_data["data_type"]
-            values = agg_data["values"]
+        # Partial failure below the outage threshold: log it instead of dropping
+        # traces silently. The caller backfills the missing ones on a later resync.
+        if total_failures > 0:
+            logger.warning(
+                f"[fetch_trace_scores_from_langfuse] Partial fetch | "
+                f"fetched={len(traces)}/{len(trace_ids)} | "
+                f"failed_trace_ids={failed_trace_ids} | "
+                f"dataset={dataset_name} | run={run_name} | project_id={project_id}"
+            )
 
-            if data_type == "CATEGORICAL":
-                # For categorical scores, compute distribution
-                distribution: dict[str, int] = {}
-                for val in values:
-                    str_val = str(val)
-                    distribution[str_val] = distribution.get(str_val, 0) + 1
-
-                summary_scores.append(
-                    {
-                        "name": score_name,
-                        "distribution": distribution,
-                        "total_pairs": len(values),
-                        "data_type": data_type,
-                    }
-                )
-            else:
-                # For numeric scores, compute avg and std (rounded to 2 decimal places)
-                numeric_values = [float(v) for v in values]
-                summary_scores.append(
-                    {
-                        "name": score_name,
-                        "avg": round(float(np.mean(numeric_values)), 2),
-                        "std": round(float(np.std(numeric_values)), 2),
-                        "total_pairs": len(numeric_values),
-                        "data_type": data_type,
-                    }
-                )
+        # 4. Calculate summary scores from the fetched traces.
+        summary_scores = compute_summary_scores(traces)
 
         result: EvaluationScore = {
             "summary_scores": summary_scores,
@@ -597,7 +565,8 @@ def fetch_trace_scores_from_langfuse(
 
         logger.info(
             f"[fetch_trace_scores_from_langfuse] Successfully fetched scores | "
-            f"total_traces={len(traces)} | score_names={list(score_aggregations.keys())}"
+            f"total_traces={len(traces)} | "
+            f"score_names={[s['name'] for s in summary_scores]}"
         )
 
         return result
