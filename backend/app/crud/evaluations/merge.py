@@ -13,6 +13,7 @@ from collections import Counter
 import numpy as np
 
 from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
     EvaluationScore,
     SummaryScore,
     TraceData,
@@ -87,6 +88,9 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
             fresh.get("ground_truth_answer") or existing.get("ground_truth_answer", "")
         ),
         "question_id": fresh.get("question_id") or existing.get("question_id"),
+        "category": (
+            fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
+        ),
         "scores": list(merged_scores_by_name.values()),
     }
 
