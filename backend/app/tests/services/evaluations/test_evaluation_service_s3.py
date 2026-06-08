@@ -112,7 +112,7 @@ class TestGetEvaluationWithScoresS3:
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
     @patch("app.services.evaluations.evaluation.load_json_from_object_store")
     @patch("app.services.evaluations.evaluation.get_cloud_storage")
-    def test_resync_bypasses_cache_and_fetches_langfuse(
+    def test_resync_merges_cache_with_langfuse(
         self,
         mock_get_storage: MagicMock,
         mock_load: MagicMock,
@@ -122,7 +122,7 @@ class TestGetEvaluationWithScoresS3:
         mock_save_score: MagicMock,
         eval_run_factory: Callable[..., MagicMock],
     ) -> None:
-        """Verify resync=True skips S3/DB and fetches from Langfuse."""
+        """Verify resync=True re-fetches Langfuse and merges with cached traces."""
         eval_run = eval_run_factory(
             id=100,
             status="completed",
@@ -132,10 +132,13 @@ class TestGetEvaluationWithScoresS3:
             run_name="test_run",
         )
         mock_get_eval.return_value = eval_run
+        mock_get_storage.return_value = MagicMock()
+        # Cache currently holds one trace; Langfuse returns a different one.
+        mock_load.return_value = [{"trace_id": "old", "scores": []}]
         mock_get_langfuse.return_value = MagicMock()
         mock_fetch_langfuse.return_value = {
             "summary_scores": [],
-            "traces": [{"trace_id": "new"}],
+            "traces": [{"trace_id": "new", "scores": []}],
         }
         mock_save_score.return_value = eval_run
 
@@ -148,5 +151,100 @@ class TestGetEvaluationWithScoresS3:
             resync_score=True,
         )
 
-        mock_load.assert_not_called()  # S3 skipped
-        mock_fetch_langfuse.assert_called_once()  # Langfuse called
+        mock_load.assert_called_once()  # cache read so it can be merged
+        mock_fetch_langfuse.assert_called_once()  # Langfuse re-fetched
+
+        # Saved score must be the union of cached + fresh traces (step-forward).
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        saved_ids = {t["trace_id"] for t in saved_score["traces"]}
+        assert saved_ids == {"old", "new"}
+
+    @patch("app.services.evaluations.evaluation.save_score")
+    @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
+    @patch("app.services.evaluations.evaluation.get_langfuse_client")
+    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
+    def test_resync_never_shrinks_pair_count(
+        self,
+        mock_get_storage: MagicMock,
+        mock_load: MagicMock,
+        mock_get_eval: MagicMock,
+        mock_get_langfuse: MagicMock,
+        mock_fetch_langfuse: MagicMock,
+        mock_save_score: MagicMock,
+        eval_run_factory: Callable[..., MagicMock],
+    ) -> None:
+        """A resync that returns fewer traces must not drop cached ones (29 -> 27 -> 29)."""
+        eval_run = eval_run_factory(
+            id=100,
+            status="completed",
+            score={"summary_scores": []},
+            score_trace_url="s3://bucket/traces.json",
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+        mock_get_eval.return_value = eval_run
+        mock_get_storage.return_value = MagicMock()
+        # Cache has 29 traces; a transient Langfuse hiccup only returns 27.
+        mock_load.return_value = [{"trace_id": str(i), "scores": []} for i in range(29)]
+        mock_get_langfuse.return_value = MagicMock()
+        mock_fetch_langfuse.return_value = {
+            "summary_scores": [],
+            "traces": [{"trace_id": str(i), "scores": []} for i in range(27)],
+        }
+        mock_save_score.return_value = eval_run
+
+        get_evaluation_with_scores(
+            session=MagicMock(),
+            evaluation_id=100,
+            organization_id=1,
+            project_id=1,
+            get_trace_info=True,
+            resync_score=True,
+        )
+
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        assert len(saved_score["traces"]) == 29  # stayed at 29, not 27
+
+    @patch("app.services.evaluations.evaluation.save_score")
+    @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
+    @patch("app.services.evaluations.evaluation.get_langfuse_client")
+    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
+    def test_resync_skipped_when_cache_unreadable(
+        self,
+        mock_get_storage: MagicMock,
+        mock_load: MagicMock,
+        mock_get_eval: MagicMock,
+        mock_get_langfuse: MagicMock,
+        mock_fetch_langfuse: MagicMock,
+        mock_save_score: MagicMock,
+        eval_run_factory: Callable[..., MagicMock],
+    ) -> None:
+        """If the cache pointer exists but cannot be read, resync must not overwrite it."""
+        eval_run = eval_run_factory(
+            id=100,
+            status="completed",
+            score={"summary_scores": []},
+            score_trace_url="s3://bucket/traces.json",
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+        mock_get_eval.return_value = eval_run
+        mock_get_storage.return_value = MagicMock()
+        mock_load.side_effect = Exception("S3 unavailable")
+
+        result, error = get_evaluation_with_scores(
+            session=MagicMock(),
+            evaluation_id=100,
+            organization_id=1,
+            project_id=1,
+            get_trace_info=True,
+            resync_score=True,
+        )
+
+        assert error is not None
+        mock_fetch_langfuse.assert_not_called()  # did not re-fetch
+        mock_save_score.assert_not_called()  # did not overwrite the cache
