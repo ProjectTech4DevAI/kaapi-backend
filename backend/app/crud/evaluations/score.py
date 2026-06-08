@@ -8,6 +8,9 @@ used throughout the evaluation system.
 from typing import NotRequired, TypedDict
 
 
+DEFAULT_CATEGORY: str = "Other"
+
+
 class TraceScore(TypedDict):
     """A score attached to a trace."""
 

@@ -15,8 +15,12 @@ from typing import Any
 from langfuse import Langfuse
 
 from app.crud.evaluations.merge import compute_summary_scores
-from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
-from app.services.evaluations.validators import DEFAULT_CATEGORY
+from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
+    EvaluationScore,
+    TraceData,
+    TraceScore,
+)
 
 logger = logging.getLogger(__name__)
 

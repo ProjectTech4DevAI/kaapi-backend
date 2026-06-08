@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
+from app.crud.evaluations.score import DEFAULT_CATEGORY  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 1024 * 1024  # 1 MB
@@ -17,7 +19,6 @@ ALLOWED_MIME_TYPES = {
     "application/csv",
     "text/plain",
 }
-DEFAULT_CATEGORY: str = "Other"
 
 
 def sanitize_dataset_name(name: str) -> str:
