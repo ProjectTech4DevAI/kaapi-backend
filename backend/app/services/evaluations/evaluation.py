@@ -42,7 +42,8 @@ def _compute_category_metrics(
     """
     buckets: dict[str, dict[str, list[float]]] = {}
     for trace in traces:
-        category = trace.get("category") or "Other"
+        raw_category = trace.get("category") or ""
+        category = raw_category.title() if raw_category else "Other"
         cosine_vals: list[float] = []
         correctness_vals: list[float] = []
         # Match by substring so we tolerate provider-specific score naming

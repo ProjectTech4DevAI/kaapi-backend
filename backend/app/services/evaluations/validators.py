@@ -167,9 +167,10 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
             answer = row.get(answer_col, "").strip()
             if not (question and answer):
                 continue
-            category = (
+            raw_category = (
                 (row.get(category_col, "") or "").strip() if category_col else ""
-            ) or DEFAULT_CATEGORY
+            )
+            category = raw_category.title() if raw_category else DEFAULT_CATEGORY
             items.append({"question": question, "answer": answer, "category": category})
 
         if not items:

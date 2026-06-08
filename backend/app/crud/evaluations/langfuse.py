@@ -463,7 +463,10 @@ def fetch_trace_scores_from_langfuse(
                     "ground_truth", ""
                 )
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
-                trace_data["category"] = trace.metadata.get("category") or "Other"
+                raw_category = trace.metadata.get("category") or ""
+                trace_data["category"] = (
+                    raw_category.title() if raw_category else "Other"
+                )
 
             # Add scores from this trace
             if trace.scores:
