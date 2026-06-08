@@ -17,6 +17,7 @@ from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
+from app.services.evaluations.validators import DEFAULT_CATEGORY
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +481,7 @@ def group_traces_by_question_id(
                 "question_id": question_id,
                 "question": first.get("question", ""),
                 "ground_truth_answer": first.get("ground_truth_answer", ""),
-                "category": first.get("category") or "Other",
+                "category": first.get("category") or DEFAULT_CATEGORY,
                 "llm_answers": [t.get("llm_answer", "") for t in group_traces],
                 "trace_ids": [t.get("trace_id", "") for t in group_traces],
                 "scores": [t.get("scores", []) for t in group_traces],

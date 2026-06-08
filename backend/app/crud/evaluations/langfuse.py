@@ -16,6 +16,7 @@ from langfuse import Langfuse
 
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
+from app.services.evaluations.validators import DEFAULT_CATEGORY
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +262,7 @@ def upload_dataset_to_langfuse(
 
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
-            category = item.get("category") or "Other"
+            category = item.get("category") or DEFAULT_CATEGORY
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
@@ -439,7 +440,7 @@ def fetch_trace_scores_from_langfuse(
                 "llm_answer": "",
                 "ground_truth_answer": "",
                 "question_id": "",
-                "category": "Other",
+                "category": DEFAULT_CATEGORY,
                 "scores": [],
             }
 
@@ -467,7 +468,7 @@ def fetch_trace_scores_from_langfuse(
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
                 raw_category = trace.metadata.get("category") or ""
                 trace_data["category"] = (
-                    raw_category.title() if raw_category else "Other"
+                    raw_category.title() if raw_category else DEFAULT_CATEGORY
                 )
 
             # Add scores from this trace

@@ -17,7 +17,7 @@ ALLOWED_MIME_TYPES = {
     "application/csv",
     "text/plain",
 }
-DEFAULT_CATEGORY = "Other"
+DEFAULT_CATEGORY: str = "Other"
 
 
 def sanitize_dataset_name(name: str) -> str:
