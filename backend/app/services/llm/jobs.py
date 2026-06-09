@@ -611,6 +611,10 @@ def execute_llm_call(
                     return BlockResult(error=input_error)
             # proxy branch, bypass execution of API CAll
             if config_blob.completion.type == "proxy":
+                if not isinstance(query.input, TextInput):
+                    return BlockResult(
+                        error="Proxy completion only supports text input"
+                    )
                 proxy_params = config_blob.completion.params or {}
                 client_llm_url = proxy_params.get("client_llm_url")
                 if not client_llm_url:

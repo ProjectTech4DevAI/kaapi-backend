@@ -93,7 +93,22 @@ class TTSLLMParams(SQLModel):
 
 
 class ProxyLLMParams(SQLModel):
-    client_llm_url: str
+    model_config = {"extra": "forbid"}
+
+    client_llm_url: str = Field(
+        ...,
+        description=(
+            "HTTPS URL of the client's own LLM endpoint. Kaapi forwards the "
+            "(guardrail-sanitised) input here and applies output guardrails to the response."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_client_llm_url(self):
+        from app.utils import validate_callback_url
+
+        validate_callback_url(self.client_llm_url)
+        return self
 
 
 KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ProxyLLMParams]
@@ -328,6 +343,23 @@ class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_proxy_provider(cls, data: Any) -> Any:
+        """For `type=proxy`, provider is meaningless — let callers omit it.
+        Inject provider=None so the CompletionConfig discriminator picks
+        KaapiCompletionConfig without forcing the client to write \"provider\": null."""
+        if not isinstance(data, dict):
+            return data
+        completion = data.get("completion")
+        if (
+            isinstance(completion, dict)
+            and completion.get("type") == "proxy"
+            and "provider" not in completion
+        ):
+            completion["provider"] = None
+        return data
 
     # used for llm-chain to provide prompt interpolation
     prompt_template: PromptTemplate | None = Field(

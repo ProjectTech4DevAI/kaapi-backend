@@ -118,10 +118,15 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     raw_provider = completion.provider
     completion_type = completion.type
 
-    if raw_provider.endswith("-native"):
+    # Proxy forwards the request to the client's own LLM endpoint — no model
+    # lookup, no provider mapping.
+    if completion_type == "proxy":
         return
 
-    if raw_provider is None and completion.type != "proxy":
+    if raw_provider is None:
+        return
+
+    if raw_provider.endswith("-native"):
         return
 
     provider = _normalize_provider(raw_provider)
