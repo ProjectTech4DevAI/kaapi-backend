@@ -1,10 +1,11 @@
 """Assessment models — DB tables, Pydantic schemas, and LLM param wrappers."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Column, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -15,6 +16,25 @@ from app.models.llm.request import TextLLMParams
 
 if TYPE_CHECKING:
     from app.models.batch_job import BatchJob
+
+
+class Stage(StrEnum):
+    """Pipeline stages, in execution order. Business step only (status is separate)."""
+
+    PRE_FILTER_TOPIC_RELEVANCE = "PRE_FILTER_TOPIC_RELEVANCE"
+    PRE_FILTER_DUPLICATE_DETECTION = "PRE_FILTER_DUPLICATE_DETECTION"
+    L2_ASSESSMENT = "L2_ASSESSMENT"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class StageStatus(StrEnum):
+    """Execution status of the current stage."""
+
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class Assessment(SQLModel, table=True):
@@ -108,8 +128,44 @@ class AssessmentRun(SQLModel, table=True):
     status: str = SQLField(
         default="pending",
         sa_column_kwargs={
-            "comment": "Run status: pending, processing, completed, failed"
+            "comment": (
+                "Overall run status: pending, processing, completed, "
+                "completed_with_errors, failed"
+            )
         },
+    )
+    stage: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": (
+                "Current pipeline stage (Stage enum): PRE_FILTER_TOPIC_RELEVANCE, "
+                "PRE_FILTER_DUPLICATE_DETECTION, L2_ASSESSMENT, COMPLETED, FAILED"
+            )
+        },
+    )
+    stage_status: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "StageStatus of stage: PENDING, PROCESSING, COMPLETED, FAILED"
+        },
+    )
+    pipeline: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Ordered stage config driving execution: {'stages': [...]}",
+        ),
+    )
+    stage_batches: dict[str, int] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Map of stage name -> batch_job id, for per-stage result lookup",
+        ),
     )
     batch_job_id: int | None = SQLField(
         default=None,
@@ -136,7 +192,29 @@ class AssessmentRun(SQLModel, table=True):
     object_store_url: str | None = SQLField(
         default=None,
         nullable=True,
-        sa_column_kwargs={"comment": "S3 URL of processed batch results"},
+        sa_column_kwargs={"comment": "S3 URL of processed L2 batch results"},
+    )
+    prefilter_object_store_url: str | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "S3 URL of stored prefilter filter results JSON"},
+    )
+    prefilter_total_rows: int | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Total rows fed into prefilter pipeline"},
+    )
+    prefilter_total_passed: int | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={"comment": "Rows that passed topic relevance and went to L2"},
+    )
+    prefilter_total_rejected: int | None = SQLField(
+        default=None,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": "Rows rejected by topic relevance, stopped at prefilter"
+        },
     )
     error_message: str | None = SQLField(
         default=None,
@@ -185,6 +263,11 @@ class AssessmentRunStat(BaseModel):
     total_items: int
     error_message: str | None = None
     updated_at: datetime | None = None
+    prefilter_total_rows: int | None = None
+    prefilter_total_passed: int | None = None
+    prefilter_total_rejected: int | None = None
+    stage: str | None = None
+    stage_status: str | None = None
 
 
 class AssessmentPublic(BaseModel):
@@ -224,6 +307,13 @@ class AssessmentRunPublic(BaseModel):
             "text_columns, attachments, output_schema"
         ),
     )
+    prefilter_total_rows: int | None = None
+    prefilter_total_passed: int | None = None
+    prefilter_total_rejected: int | None = None
+    stage: str | None = None
+    stage_status: str | None = None
+    pipeline: dict[str, Any] | None = None
+    post_processing_config: dict[str, Any] | None = None
     inserted_at: datetime
     updated_at: datetime
 
@@ -245,8 +335,39 @@ class AssessmentAttachment(BaseModel):
     """Attachment column configuration."""
 
     column: str = Field(..., description="Column name containing the attachment data")
-    type: Literal["image", "pdf"] = Field(..., description="Attachment type")
+    type: Literal["image", "pdf", "mixed"] = Field(
+        ...,
+        description=(
+            "Attachment type. 'image'/'pdf' force the type for every row. 'mixed' "
+            "resolves the per-row type from type_column via type_value_map."
+        ),
+    )
     format: Literal["url", "base64"] = Field(..., description="Data format")
+    type_column: str | None = Field(
+        None,
+        description=(
+            "For 'mixed': the dataset column whose value decides each row's type."
+        ),
+    )
+    type_value_map: dict[str, Literal["image", "pdf"]] | None = Field(
+        None,
+        description=(
+            "For 'mixed': maps a type_column value to 'image' or 'pdf' "
+            "(e.g. {'Photo': 'image', 'Report': 'pdf'})."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_mixed_config(self) -> "AssessmentAttachment":
+        """A 'mixed' column must carry the per-row routing fields; others must not."""
+        if self.type == "mixed":
+            if self.type_column is None or self.type_value_map is None:
+                raise ValueError(
+                    "type='mixed' requires both 'type_column' and 'type_value_map'."
+                )
+            if not self.type_value_map:
+                raise ValueError("type_value_map must not be empty for type='mixed'.")
+        return self
 
 
 class AssessmentConfigRef(BaseModel):
@@ -286,6 +407,20 @@ class AssessmentCreate(BaseModel):
     configs: list[AssessmentConfigRef] = Field(
         ..., min_length=1, max_length=4, description="Config versions to run"
     )
+    prefilter_config: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "prefilter pipeline config. Keys: topic_relevance (columns, prompt), "
+            "duplicate_detection (columns). Omit to skip prefilter."
+        ),
+    )
+    post_processing_config: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Post-processing config applied at export. "
+            "Keys: computed_columns, sort, filter."
+        ),
+    )
 
 
 class AssessmentRunSummary(BaseModel):
@@ -324,6 +459,8 @@ class AssessmentExportRow(BaseModel):
     row_id: str
     result_status: str
     input_data: dict[str, str] | None = None
+    topic_relevance: str | None = None
+    duplicate_detection: str | None = None
     output: str | None = None
     error: str | None = None
     response_id: str | None = None

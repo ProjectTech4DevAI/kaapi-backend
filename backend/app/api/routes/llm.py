@@ -9,6 +9,7 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.cloud.storage import get_cloud_storage
 from app.core.telemetry import log_context
+from app.core.rate_monitor import monitor_rate
 from app.crud.jobs import JobCrud
 from app.crud.llm import get_llm_calls_by_job_id
 from app.models import (
@@ -21,7 +22,6 @@ from app.models import (
 from app.models.llm.response import LLMResponse, Usage
 from app.services.llm.jobs import start_job
 from app.utils import APIResponse, validate_callback_url, load_description
-
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,10 @@ def llm_callback_notification(body: APIResponse[LLMCallResponse]):
     description=load_description("llm/llm_call.md"),
     response_model=APIResponse[LLMJobImmediatePublic],
     callbacks=llm_callback_router.routes,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("llm_call")),
+    ],
 )
 def llm_call(
     _current_user: AuthContextDep, session: SessionDep, request: LLMCallRequest
