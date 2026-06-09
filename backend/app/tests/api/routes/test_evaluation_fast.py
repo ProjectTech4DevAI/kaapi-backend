@@ -18,7 +18,7 @@ from sqlmodel import Session
 from app.crud.evaluations.fast import (
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
-    _call_with_retry,
+    _create_response,
     _is_failure_threshold_breached,
     _stage1_responses,
     _stage2_embeddings,
@@ -75,35 +75,42 @@ class TestCallWithRetry:
     """FR-8: transient OpenAI errors retry; permanent ones do not."""
 
     def test_returns_immediately_on_success(self) -> None:
-        result = _call_with_retry(label="t", fn=lambda: "ok")
+        client = MagicMock()
+        client.responses.create.return_value = "ok"
+
+        result = _create_response(client, {"model": "gpt-4o"})
+
         assert result == "ok"
+        assert client.responses.create.call_count == 1
 
     def test_retries_on_transient_then_succeeds(self, monkeypatch) -> None:
-        # Avoid sleeping — make backoff a no-op.
-        monkeypatch.setattr("app.crud.evaluations.fast.time.sleep", lambda *_: None)
+        # tenacity sleeps via tenacity.nap.sleep — make backoff a no-op.
+        monkeypatch.setattr("tenacity.nap.sleep", lambda *_: None)
 
-        calls = {"n": 0}
+        client = MagicMock()
+        client.responses.create.side_effect = [
+            # APIConnectionError needs a request; pass a minimal object.
+            openai.APIConnectionError(request=MagicMock()),
+            openai.APIConnectionError(request=MagicMock()),
+            "ok",
+        ]
 
-        def flaky():
-            calls["n"] += 1
-            if calls["n"] < 3:
-                # APIConnectionError needs a request; pass a minimal object.
-                raise openai.APIConnectionError(request=MagicMock())
-            return "ok"
+        result = _create_response(client, {"model": "gpt-4o"})
 
-        result = _call_with_retry(label="t", fn=flaky)
         assert result == "ok"
-        assert calls["n"] == 3
+        assert client.responses.create.call_count == 3
 
     def test_does_not_retry_on_permanent_error(self) -> None:
-        def bad():
-            # AuthenticationError is a non-retryable OpenAIError subclass.
-            raise openai.AuthenticationError(
-                message="bad key", response=MagicMock(), body=None
-            )
+        client = MagicMock()
+        # AuthenticationError is a non-retryable OpenAIError subclass.
+        client.responses.create.side_effect = openai.AuthenticationError(
+            message="bad key", response=MagicMock(), body=None
+        )
 
         with pytest.raises(openai.AuthenticationError):
-            _call_with_retry(label="t", fn=bad)
+            _create_response(client, {"model": "gpt-4o"})
+
+        assert client.responses.create.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +350,7 @@ class TestDatasetListEligibleForFast:
         db: Session,
         user_api_key: TestAuthContext,
     ):
-        """FR-5: eligible_for=fast filters list to datasets with ≤10 unique rows."""
+        """FR-5: eligible_for_fast=true filters list to datasets with ≤10 unique rows."""
         eligible = _make_fast_eligible_dataset(
             db=db, user_api_key=user_api_key, original_items_count=5
         )
@@ -353,7 +360,7 @@ class TestDatasetListEligibleForFast:
 
         resp = client.get(
             "/api/v1/evaluations/datasets",
-            params={"eligible_for": "fast"},
+            params={"eligible_for_fast": "true"},
             headers=user_api_key_header,
         )
         assert resp.status_code == 200

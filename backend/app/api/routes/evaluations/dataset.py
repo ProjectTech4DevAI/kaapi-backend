@@ -111,14 +111,12 @@ def list_datasets(
         default=50, ge=1, le=100, description="Maximum number of datasets to return"
     ),
     offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
-    eligible_for: str
-    | None = Query(
-        default=None,
+    eligible_for_fast: bool = Query(
+        default=False,
         description=(
-            "If 'fast', return only datasets eligible for run_mode='fast' "
+            "When true, return only datasets eligible for run_mode='fast' "
             "(unique-row count within EVAL_FAST_MAX_UNIQUE_ROWS)."
         ),
-        enum=["fast"],
     ),
 ) -> APIResponse[list[DatasetUploadResponse]]:
     """List evaluation datasets."""
@@ -128,7 +126,7 @@ def list_datasets(
         project_id=auth_context.project_.id,
         limit=limit,
         offset=offset,
-        eligible_for_fast=(eligible_for == "fast"),
+        eligible_for_fast=eligible_for_fast,
     )
 
     dataset_responses = [_dataset_to_response(dataset) for dataset in datasets]

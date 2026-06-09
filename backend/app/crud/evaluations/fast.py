@@ -18,17 +18,21 @@ See `Fast Evaluation SRD.md` for the full design.
 """
 
 import logging
-import random
-import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
 import openai
 from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.config import settings
@@ -61,8 +65,6 @@ from app.services.llm.mappers import map_kaapi_to_openai_params
 
 logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
-
 
 # job_type discriminators on batch_job for the two fast-path stages. The row's
 # presence + raw_output_url is what marks a stage as already done on retry.
@@ -83,40 +85,30 @@ _RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
-def _sleep_with_backoff(attempt: int) -> None:
-    """Exponential backoff with full jitter, capped at _RETRY_MAX_DELAY_SECONDS."""
-    base = min(
-        _RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_SECONDS
+# reraise=True so call-site handlers see the original OpenAIError, not RetryError.
+_retry_openai_call = retry(
+    retry=retry_if_exception_type(_RETRYABLE_OPENAI_ERRORS),
+    wait=wait_random_exponential(
+        multiplier=_RETRY_BASE_DELAY_SECONDS, max=_RETRY_MAX_DELAY_SECONDS
+    ),
+    stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
+    before_sleep=before_sleep_log(logger, logging.INFO),
+    reraise=True,
+)
+
+
+@_retry_openai_call
+def _create_response(openai_client: OpenAI, params: dict[str, Any]) -> Any:
+    return openai_client.responses.create(**params)
+
+
+@_retry_openai_call
+def _create_embedding(
+    openai_client: OpenAI, *, model: str, output_text: str, ground_truth: str
+) -> Any:
+    return openai_client.embeddings.create(
+        model=model, input=[output_text, ground_truth], encoding_format="float"
     )
-    delay = random.uniform(0, base)
-    time.sleep(delay)
-
-
-def _call_with_retry(label: str, fn: Callable[[], _T]) -> _T:
-    """Call `fn()`, retrying transient OpenAI errors; permanent errors fail fast."""
-    for attempt in range(1, _RETRY_MAX_ATTEMPTS + 1):
-        try:
-            return fn()
-        except _RETRYABLE_OPENAI_ERRORS as exc:
-            if attempt == _RETRY_MAX_ATTEMPTS:
-                logger.warning(
-                    f"[_call_with_retry] Exhausted retries | label={label} | "
-                    f"attempt={attempt} | error={exc}"
-                )
-                raise
-            logger.info(
-                f"[_call_with_retry] Transient error, retrying | label={label} | "
-                f"attempt={attempt} | error={exc}"
-            )
-            _sleep_with_backoff(attempt)
-        except openai.OpenAIError as exc:
-            logger.warning(
-                f"[_call_with_retry] Permanent error, no retry | label={label} | "
-                f"error={exc}"
-            )
-            raise
-    # Unreachable: the loop always returns or raises. Keeps mypy happy.
-    raise RuntimeError(f"_call_with_retry exited without result for {label}")
 
 
 def _field(obj: Any, name: str, default: Any = None) -> Any:
@@ -149,6 +141,30 @@ def _extract_response_text(response: Any) -> str:
     return ""
 
 
+def _response_result(
+    *,
+    item_id: str,
+    question: str,
+    ground_truth: str,
+    question_id: Any,
+    generated_output: str,
+    failed: bool,
+    response_id: str | None = None,
+    usage: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """One Stage-1 per-item result, in the batch path's shape."""
+    return {
+        "item_id": item_id,
+        "question": question,
+        "generated_output": generated_output,
+        "ground_truth": ground_truth,
+        "response_id": response_id,
+        "usage": usage,
+        "question_id": question_id,
+        "failed": failed,
+    }
+
+
 def _responses_call_for_item(
     *,
     openai_client: OpenAI,
@@ -168,53 +184,58 @@ def _responses_call_for_item(
     question_id = (item.get("metadata") or {}).get("question_id")
 
     if not question:
-        return {
-            "item_id": item_id,
-            "question": "",
-            "generated_output": "ERROR: missing question in dataset item",
-            "ground_truth": ground_truth,
-            "response_id": None,
-            "usage": None,
-            "question_id": question_id,
-            "failed": True,
-        }
+        return _response_result(
+            item_id=item_id,
+            question="",
+            ground_truth=ground_truth,
+            question_id=question_id,
+            generated_output="ERROR: missing question in dataset item",
+            failed=True,
+        )
 
     params = {**base_params, "input": question}
 
     try:
-        response = _call_with_retry(
-            label=f"responses.create:{item_id}",
-            fn=lambda: openai_client.responses.create(**params),
-        )
+        response = _create_response(openai_client, params)
     except openai.OpenAIError as exc:
         logger.warning(
             f"[_responses_call_for_item] Item failed | item_id={item_id} | error={exc}"
         )
-        return {
-            "item_id": item_id,
-            "question": question,
-            "generated_output": f"ERROR: {exc}",
-            "ground_truth": ground_truth,
-            "response_id": None,
-            "usage": None,
-            "question_id": question_id,
-            "failed": True,
-        }
+        return _response_result(
+            item_id=item_id,
+            question=question,
+            ground_truth=ground_truth,
+            question_id=question_id,
+            generated_output=f"ERROR: {exc}",
+            failed=True,
+        )
 
     usage = getattr(response, "usage", None)
-    return {
-        "item_id": item_id,
-        "question": question,
-        "generated_output": _extract_response_text(response),
-        "ground_truth": ground_truth,
-        "response_id": getattr(response, "id", None),
-        "usage": {
+    return _response_result(
+        item_id=item_id,
+        question=question,
+        ground_truth=ground_truth,
+        question_id=question_id,
+        generated_output=_extract_response_text(response),
+        response_id=getattr(response, "id", None),
+        usage={
             "input_tokens": int(_field(usage, "input_tokens", 0) or 0),
             "output_tokens": int(_field(usage, "output_tokens", 0) or 0),
             "total_tokens": int(_field(usage, "total_tokens", 0) or 0),
         },
-        "question_id": question_id,
-        "failed": False,
+        failed=False,
+    )
+
+
+def _embedding_failure(item_id: str, error: str) -> dict[str, Any]:
+    """One failed Stage-2 per-pair result."""
+    return {
+        "item_id": item_id,
+        "output_embedding": None,
+        "ground_truth_embedding": None,
+        "usage": None,
+        "failed": True,
+        "error": error,
     }
 
 
@@ -228,47 +249,24 @@ def _embedding_call_for_pair(
 ) -> dict[str, Any]:
     """Embed an (output, ground_truth) pair; `failed=True` on a terminal failure."""
     if not output_text or not ground_truth:
-        return {
-            "item_id": item_id,
-            "output_embedding": None,
-            "ground_truth_embedding": None,
-            "usage": None,
-            "failed": True,
-            "error": "empty output or ground_truth",
-        }
+        return _embedding_failure(item_id, "empty output or ground_truth")
 
     try:
-        response = _call_with_retry(
-            label=f"embeddings.create:{item_id}",
-            fn=lambda: openai_client.embeddings.create(
-                model=embedding_model,
-                input=[output_text, ground_truth],
-                encoding_format="float",
-            ),
+        response = _create_embedding(
+            openai_client,
+            model=embedding_model,
+            output_text=output_text,
+            ground_truth=ground_truth,
         )
     except openai.OpenAIError as exc:
         logger.warning(
             f"[_embedding_call_for_pair] Item failed | item_id={item_id} | error={exc}"
         )
-        return {
-            "item_id": item_id,
-            "output_embedding": None,
-            "ground_truth_embedding": None,
-            "usage": None,
-            "failed": True,
-            "error": str(exc),
-        }
+        return _embedding_failure(item_id, str(exc))
 
     data = _field(response, "data") or []
     if len(data) < 2:
-        return {
-            "item_id": item_id,
-            "output_embedding": None,
-            "ground_truth_embedding": None,
-            "usage": None,
-            "failed": True,
-            "error": f"expected 2 embeddings, got {len(data)}",
-        }
+        return _embedding_failure(item_id, f"expected 2 embeddings, got {len(data)}")
 
     output_embedding: list[float] | None = None
     ground_truth_embedding: list[float] | None = None
@@ -300,6 +298,16 @@ def _is_failure_threshold_breached(*, failed_rows: int, total_rows: int) -> bool
     if total_rows == 0:
         return False
     return (failed_rows / total_rows) > settings.EVAL_FAST_FAILURE_THRESHOLD
+
+
+def _sum_usage(results: list[dict[str, Any]], keys: tuple[str, ...]) -> dict[str, int]:
+    """Sum the per-item `usage` token counts across results, for the given keys."""
+    totals = dict.fromkeys(keys, 0)
+    for r in results:
+        usage = r.get("usage") or {}
+        for k in keys:
+            totals[k] += int(usage.get(k, 0) or 0)
+    return totals
 
 
 def _upload_unit_to_s3(
@@ -336,6 +344,33 @@ def _load_unit_from_s3(
     return data
 
 
+def _load_completed_stage(
+    *,
+    session: Session,
+    batch_job_id: int | None,
+    project_id: int,
+    log_prefix: str,
+    stage: str,
+) -> list[dict[str, Any]] | None:
+    """Return a stage's persisted unit if its batch_job already completed, else None.
+
+    This is the per-stage retry skip: a `batch_job` row with a `raw_output_url`
+    means the stage finished on an earlier attempt, so we reload from S3 instead
+    of re-calling OpenAI.
+    """
+    if not batch_job_id:
+        return None
+    existing = get_batch_job(session=session, batch_job_id=batch_job_id)
+    if not (existing and existing.raw_output_url):
+        return None
+    logger.info(
+        f"[{stage}] {log_prefix} Skipping (already done) | batch_job_id={existing.id}"
+    )
+    return _load_unit_from_s3(
+        session=session, project_id=project_id, url=existing.raw_output_url
+    )
+
+
 def _stage1_responses(
     *,
     session: Session,
@@ -358,19 +393,15 @@ def _stage1_responses(
     that assumption is ever broken, two workers could both pass this guard; add
     an advisory lock / atomic claim here before introducing concurrent delivery.
     """
-    if eval_run.batch_job_id:
-        existing = get_batch_job(session=session, batch_job_id=eval_run.batch_job_id)
-        if existing and existing.raw_output_url:
-            logger.info(
-                f"[_stage1_responses] {log_prefix} Skipping stage 1 (already done) | "
-                f"batch_job_id={existing.id}"
-            )
-            results = _load_unit_from_s3(
-                session=session,
-                project_id=eval_run.project_id,
-                url=existing.raw_output_url,
-            )
-            return eval_run, results
+    cached = _load_completed_stage(
+        session=session,
+        batch_job_id=eval_run.batch_job_id,
+        project_id=eval_run.project_id,
+        log_prefix=log_prefix,
+        stage="_stage1_responses",
+    )
+    if cached is not None:
+        return eval_run, cached
 
     logger.info(
         f"[_stage1_responses] {log_prefix} Running stage 1 | "
@@ -425,11 +456,9 @@ def _stage1_responses(
     )
 
     # Aggregate usage for the batch_job summary.
-    summed_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for r in results:
-        usage = r.get("usage") or {}
-        for k in summed_usage:
-            summed_usage[k] += int(usage.get(k, 0) or 0)
+    summed_usage = _sum_usage(
+        results, ("input_tokens", "output_tokens", "total_tokens")
+    )
 
     batch_job = create_batch_job(
         session=session,
@@ -470,21 +499,15 @@ def _stage2_embeddings(
     log_prefix: str,
 ) -> tuple[EvaluationRun, list[dict[str, Any]]]:
     """Stage 2 — embed each (output, ground_truth) pair; skipped on retry if done."""
-    if eval_run.embedding_batch_job_id:
-        existing = get_batch_job(
-            session=session, batch_job_id=eval_run.embedding_batch_job_id
-        )
-        if existing and existing.raw_output_url:
-            logger.info(
-                f"[_stage2_embeddings] {log_prefix} Skipping stage 2 (already done) | "
-                f"batch_job_id={existing.id}"
-            )
-            embeddings = _load_unit_from_s3(
-                session=session,
-                project_id=eval_run.project_id,
-                url=existing.raw_output_url,
-            )
-            return eval_run, embeddings
+    cached = _load_completed_stage(
+        session=session,
+        batch_job_id=eval_run.embedding_batch_job_id,
+        project_id=eval_run.project_id,
+        log_prefix=log_prefix,
+        stage="_stage2_embeddings",
+    )
+    if cached is not None:
+        return eval_run, cached
 
     # Only embed items that succeeded in Stage 1.
     embed_candidates = [r for r in response_results if not r.get("failed")]
@@ -538,11 +561,7 @@ def _stage2_embeddings(
         results=embedding_results,
     )
 
-    summed_usage = {"prompt_tokens": 0, "total_tokens": 0}
-    for r in embedding_results:
-        usage = r.get("usage") or {}
-        for k in summed_usage:
-            summed_usage[k] += int(usage.get(k, 0) or 0)
+    summed_usage = _sum_usage(embedding_results, ("prompt_tokens", "total_tokens"))
 
     batch_job = create_batch_job(
         session=session,
