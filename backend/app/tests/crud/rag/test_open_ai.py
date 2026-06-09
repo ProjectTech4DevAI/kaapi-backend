@@ -212,7 +212,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI rate limit exceeded",
+                "[OPENAI] Rate limit exceeded",
                 429,
                 "quota exceeded",
             ),
@@ -224,7 +224,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI authentication failed",
+                "[OPENAI] Authentication failed",
                 401,
                 "bad api key",
             ),
@@ -236,7 +236,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI resource not found",
+                "[OPENAI] Resource not found",
                 404,
                 "missing resource",
             ),
@@ -248,7 +248,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI bad request",
+                "[OPENAI] Bad request",
                 400,
                 "invalid file",
             ),
@@ -260,7 +260,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI unprocessable entity",
+                "[OPENAI] Unprocessable entity",
                 422,
                 "cannot process",
             ),
@@ -272,7 +272,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
                     ),
                     body=None,
                 ),
-                "OpenAI server error",
+                "[OPENAI] Server error",
                 500,
                 "upstream boom",
             ),
@@ -308,7 +308,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
 
         with pytest.raises(InterruptedError) as exc_info:
             list(crud.update("vs_1", mock_storage, docs_batch))
-        assert str(exc_info.value).startswith("OpenAI request timed out:")
+        assert str(exc_info.value).startswith("[KAAPI] OpenAI request timed out")
 
     def test_generic_openai_error_falls_through(
         self, crud, mock_client, mock_storage, docs_batch
@@ -324,7 +324,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         with pytest.raises(InterruptedError) as exc_info:
             list(crud.update("vs_1", mock_storage, docs_batch))
         msg = str(exc_info.value)
-        assert msg.startswith("OpenAI error:"), msg
+        assert msg.startswith("[OPENAI] SDK error:"), msg
         assert "something else" in msg, msg
 
 

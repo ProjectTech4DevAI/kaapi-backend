@@ -160,7 +160,7 @@ class TestGoogleVertexAIProvider:
         bad = AudioRef(bytes_=b"x", mime_type="audio/xyz")
         resp, err = provider.execute(stt_config, query, bad)
         assert resp is None
-        assert "Unsupported audio mime" in err
+        assert "unsupported audio mime" in err
 
     def test_stt_gcs_upload_failure_returns_clean_error(
         self, provider, stt_config, query, audio_ref, monkeypatch
@@ -183,7 +183,8 @@ class TestGoogleVertexAIProvider:
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Vertex AI HTTP 403" in err
+        assert "[VERTEX]" in err
+        assert "403" in err
         assert "permission denied" in err
 
     def test_stt_network_error_returns_clean_message(
@@ -195,7 +196,7 @@ class TestGoogleVertexAIProvider:
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Vertex AI request failed" in err
+        assert "Vertex AI connection failed" in err
 
     def test_stt_missing_transcript_returns_error(
         self, provider, stt_config, query, audio_ref
@@ -206,7 +207,7 @@ class TestGoogleVertexAIProvider:
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "missing transcript text" in err
+        assert "missing transcribed text" in err
 
     def test_stt_input_language_overrides_prompt(self, provider, query, audio_ref):
         config = NativeCompletionConfig(
@@ -261,7 +262,7 @@ class TestGoogleVertexAIProvider:
     def test_tts_rejects_empty_input(self, provider, tts_config, query):
         resp, err = provider.execute(tts_config, query, "   ")
         assert resp is None
-        assert "Text input cannot be empty" in err
+        assert "text input is empty" in err
 
     def test_tts_missing_audio_returns_error(self, provider, tts_config, query):
         with patch(
@@ -295,7 +296,7 @@ class TestGoogleVertexAIProvider:
         )
         resp, err = provider.execute(config, query, "hello")
         assert resp is None
-        assert "does not support completion type 'text'" in err
+        assert "Unsupported completion type 'text'" in err
 
     def test_raw_response_included_when_requested(
         self, provider, stt_config, query, audio_ref
