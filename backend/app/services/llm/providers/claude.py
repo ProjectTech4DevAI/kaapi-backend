@@ -7,6 +7,7 @@ import anthropic
 from anthropic import Anthropic
 from anthropic.types import Message
 
+
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -198,11 +199,210 @@ class ClaudeProvider(BaseProvider):
             return llm_response, None
 
         except TypeError as e:
-            error_message = f"Invalid or unexpected parameter in Config: {str(e)}"
+            error_message = (
+                f"[KAAPI] Invalid or unexpected parameter in Config: {str(e)}. "
+                f"Review the completion config; one of the parameters does "
+                f"not match Anthropic's expected signature."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.BadRequestError as e:
+            error_message = (
+                f"[ANTHROPIC] Bad request (code: 400, request_id={e.request_id}): "
+                f"{e.message}. Review your config parameters and input "
+                f"payload — the request shape, model, or content may be "
+                f"invalid for this Anthropic endpoint."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.AuthenticationError as e:
+            error_message = (
+                f"[ANTHROPIC] Authentication failed (code: 401, "
+                f"request_id={e.request_id}): {e.message}. Verify the "
+                f"Anthropic API key is valid, has not expired, and has been "
+                f"correctly configured for this project."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.PermissionDeniedError as e:
+            error_message = (
+                f"[ANTHROPIC] Permission denied (code: 403, "
+                f"request_id={e.request_id}): {e.message}. The API key does "
+                f"not have access to the requested model or feature — check "
+                f"your Anthropic plan and key scopes."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.NotFoundError as e:
+            error_message = (
+                f"[ANTHROPIC] Resource not found (code: 404, "
+                f"request_id={e.request_id}): {e.message}. Verify the model "
+                f"name and any referenced IDs (e.g. file_id) in your config "
+                f"are correct and available on your Anthropic plan."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.ConflictError as e:
+            error_message = (
+                f"[ANTHROPIC] Conflict (code: 409, request_id={e.request_id}): "
+                f"{e.message}. The request conflicts with the current "
+                f"resource state — review concurrent requests before retrying."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.UnprocessableEntityError as e:
+            error_message = (
+                f"[ANTHROPIC] Unprocessable entity (code: 422, "
+                f"request_id={e.request_id}): {e.message}. Anthropic rejected "
+                f"the request payload — check input format, message shape, "
+                f"and parameter values against the Messages API spec."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.RateLimitError as e:
+            error_message = (
+                f"[ANTHROPIC] Rate limit exceeded (code: 429, "
+                f"request_id={e.request_id}): {e.message}. You have hit "
+                f"Anthropic's request rate or token quota. Wait at least 1 "
+                f"minute and retry; if the issue persists, request a quota "
+                f"increase from Anthropic or contact Kaapi."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.InternalServerError as e:
+            error_message = (
+                f"[ANTHROPIC] Internal server error (code: {e.status_code}, "
+                f"request_id={e.request_id}): {e.message}. This is typically "
+                f"transient — retry in a few seconds. If the issue persists, "
+                f"contact Kaapi."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.APITimeoutError as e:
+            # Must come before APIConnectionError — APITimeoutError is a subclass.
+            error_message = (
+                f"[KAAPI] Anthropic request timed out (code: "
+                f"{type(e).__name__}): {e.message}. The request took too "
+                f"long to complete — retry with a smaller payload or shorter "
+                f"max_tokens. If the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.APIConnectionError as e:
+            error_message = (
+                f"[KAAPI] Anthropic connection failed (code: "
+                f"{type(e).__name__}): {e.message}. Network or DNS issue "
+                f"reaching Anthropic — check network connectivity from the "
+                f"Kaapi backend. If the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.APIResponseValidationError as e:
+            error_message = (
+                f"[ANTHROPIC] Returned a response that failed schema "
+                f"validation (code: {e.status_code}): {e.message}. This "
+                f"indicates an unexpected payload shape from Anthropic — "
+                f"retry the request. If the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except anthropic.APIStatusError as e:
+            status = e.status_code
+            if status == 413:
+                error_message = (
+                    f"[ANTHROPIC] Request too large (code: 413, "
+                    f"request_id={e.request_id}): {e.message}. The input "
+                    f"payload exceeds Anthropic's size limit — reduce prompt "
+                    f"length, shrink attached files, or upload via the Files API."
+                )
+            elif status == 503:
+                error_message = (
+                    f"[ANTHROPIC] Service unavailable (code: 503, "
+                    f"request_id={e.request_id}): {e.message}. Anthropic is "
+                    f"temporarily down or undergoing maintenance — retry in "
+                    f"a few seconds. If the issue persists, contact Kaapi."
+                )
+            elif status == 504:
+                error_message = (
+                    f"[ANTHROPIC] Deadline exceeded (code: 504, "
+                    f"request_id={e.request_id}): {e.message}. Anthropic took "
+                    f"too long to complete the request — retry with a smaller "
+                    f"payload or shorter max_tokens."
+                )
+            elif status == 529:
+                error_message = (
+                    f"[ANTHROPIC] Overloaded (code: 529, "
+                    f"request_id={e.request_id}): {e.message}. Anthropic's "
+                    f"infrastructure is currently overloaded — this is "
+                    f"transient. Retry with exponential backoff. If the "
+                    f"issue persists, contact Kaapi."
+                )
+            else:
+                error_message = (
+                    f"[ANTHROPIC] API status error (code: {status}, "
+                    f"request_id={e.request_id}): {e.message}. If the issue "
+                    f"persists, contact Kaapi."
+                )
+            logger.warning(
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
+                exc_info=True,
+            )
             return None, error_message
 
         except anthropic.AnthropicError as e:
-            error_message = f"Anthropic API error: {str(e)}"
+            # Final Anthropic catch-all for any non-APIStatusError SDK exception.
+            error_message = (
+                f"[ANTHROPIC] SDK error: {str(e)}. If the issue persists, "
+                f"contact Kaapi."
+            )
             logger.warning(
                 f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
@@ -210,9 +410,14 @@ class ClaudeProvider(BaseProvider):
             return None, error_message
 
         except Exception as e:
-            error_message = "Unexpected error occurred"
+            error_message = (
+                f"[KAAPI] Unexpected error during Anthropic execution: "
+                f"{str(e)}. This was not raised by the Anthropic SDK "
+                f"directly — likely a Kaapi-side failure. Contact Kaapi if "
+                f"the issue persists."
+            )
             logger.error(
-                f"[ClaudeProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message

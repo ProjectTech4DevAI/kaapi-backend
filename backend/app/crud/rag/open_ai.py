@@ -141,50 +141,99 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     files=files,
                 )
             except openai.RateLimitError as e:
-                raise InterruptedError(
-                    f"OpenAI rate limit exceeded (code: {e.status_code}): "
+                error_message = (
+                    f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "
                     f"{e.message}. Try again in 1 minute. If issue persists, "
                     f"contact Kaapi."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.AuthenticationError as e:
-                raise InterruptedError(
-                    f"OpenAI authentication failed (code: {e.status_code}): "
+                error_message = (
+                    f"[OPENAI] Authentication failed (code: {e.status_code}): "
                     f"{e.message}. Check your OpenAI API key is valid and "
                     f"has not expired."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.NotFoundError as e:
-                raise InterruptedError(
-                    f"OpenAI resource not found (code: {e.status_code}): "
+                error_message = (
+                    f"[OPENAI] Resource not found (code: {e.status_code}): "
                     f"{e.message}. Verify the vector store ID exists and "
                     f"hasn't been deleted."
                 )
-            except openai.BadRequestError as e:
-                raise InterruptedError(
-                    f"OpenAI bad request (code: {e.status_code}): {e.message}. "
-                    f"Review the file payload and metadata; the request may "
-                    f"be malformed."
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}",
+                    exc_info=True,
                 )
+                raise InterruptedError(error_message)
+            except openai.BadRequestError as e:
+                error_message = (
+                    f"[OPENAI] Bad request (code: {e.status_code}): "
+                    f"{e.message}. Review the file payload and metadata; the "
+                    f"request may be malformed."
+                )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.UnprocessableEntityError as e:
-                raise InterruptedError(
-                    f"OpenAI unprocessable entity (code: {e.status_code}): "
+                error_message = (
+                    f"[OPENAI] Unprocessable entity (code: {e.status_code}): "
                     f"{e.message}. The uploaded files may be in an "
                     f"unsupported format or exceed size limits."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.InternalServerError as e:
-                raise InterruptedError(
-                    f"OpenAI server error (code: {e.status_code}): {e.message}. "
-                    f"This is usually transient — retry in a few seconds. If "
-                    f"issue persists, contact Kaapi."
+                error_message = (
+                    f"[OPENAI] Server error (code: {e.status_code}): "
+                    f"{e.message}. This is usually transient — retry in a "
+                    f"few seconds. If issue persists, contact Kaapi."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.APITimeoutError as e:
-                raise InterruptedError(
-                    f"OpenAI request timed out: {e}. Retry the upload, or "
-                    f"split the batch into smaller chunks."
+                error_message = (
+                    f"[KAAPI] OpenAI request timed out (code: "
+                    f"{type(e).__name__}): {e}. Retry the upload, or split "
+                    f"the batch into smaller chunks."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
             except openai.OpenAIError as e:
-                raise InterruptedError(
-                    f"OpenAI error: {e}. If this persists, contact Kaapi."
+                error_message = (
+                    f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
                 )
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                    f"vector_store_id={vector_store_id}",
+                    exc_info=True,
+                )
+                raise InterruptedError(error_message)
 
             logger.info(
                 f"[OpenAIVectorStoreCrud.update] File upload completed | "
