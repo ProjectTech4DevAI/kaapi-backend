@@ -121,6 +121,9 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
 
     model_config is the source of truth — all providers/types validated.
     Native configs are exempt (they forward raw params to the provider).
+
+    # As of now - this whole validation is liberal
+    # change this if we want to be more strict about unsupported models/providers or missing model configs.
     """
     completion = blob.completion
     raw_provider = completion.provider
