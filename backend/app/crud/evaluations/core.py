@@ -11,7 +11,11 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
+from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
+    EvaluationScore,
+    trace_sort_key,
+)
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
@@ -442,11 +446,17 @@ def group_traces_by_question_id(
     """
     Group evaluation traces by question_id for horizontal comparison.
 
+    Output rows are sorted by user-provided `external_id` (CSV `id` column)
+    when available, falling back to `question_id` for legacy datasets. The
+    sort key matches the row-format sort so both export formats produce
+    the same ordering.
+
     Returns:
-        List of grouped traces sorted by question_id:
+        List of grouped traces:
         [
             {
                 "question_id": 1,
+                "external_id": "1",
                 "question": "What is Python?",
                 "ground_truth_answer": "...",
                 "category": "health",
@@ -471,13 +481,17 @@ def group_traces_by_question_id(
             groups[question_id] = []
         groups[question_id].append(trace)
 
-    result: list[dict[str, Any]] = []
-    for question_id in sorted(groups.keys()):
-        group_traces = groups[question_id]
+    # Build the grouped rows first, then sort by the same key used for the
+    # row format. All duplicates of one question share the same external_id
+    # (they came from the same dataset item), so picking the first trace's
+    # value gives a deterministic group-level sort.
+    grouped_rows: list[dict[str, Any]] = []
+    for question_id, group_traces in groups.items():
         first = group_traces[0]
-        result.append(
+        grouped_rows.append(
             {
                 "question_id": question_id,
+                "external_id": first.get("external_id"),
                 "question": first.get("question", ""),
                 "ground_truth_answer": first.get("ground_truth_answer", ""),
                 "category": first.get("category") or DEFAULT_CATEGORY,
@@ -487,8 +501,10 @@ def group_traces_by_question_id(
             }
         )
 
-    logger.info(f"[group_traces_by_question_id] Created {len(result)} groups")
-    return result
+    grouped_rows.sort(key=trace_sort_key)
+
+    logger.info(f"[group_traces_by_question_id] Created {len(grouped_rows)} groups")
+    return grouped_rows
 
 
 def resolve_model_from_config(

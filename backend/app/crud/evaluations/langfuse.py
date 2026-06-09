@@ -20,6 +20,7 @@ from app.crud.evaluations.score import (
     EvaluationScore,
     TraceData,
     TraceScore,
+    trace_sort_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,11 @@ def create_langfuse_dataset_run(
                         item_category = item_metadata.get("category")
                         if item_category:
                             metadata["category"] = item_category
+                        # Copy external_id so the response sort can find it on
+                        # the trace without re-reading the dataset item.
+                        item_external_id = item_metadata.get("external_id")
+                        if item_external_id is not None:
+                            metadata["external_id"] = item_external_id
 
                     # Create trace with basic info
                     langfuse.trace(
@@ -267,17 +273,25 @@ def upload_dataset_to_langfuse(
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
             category = item.get("category") or DEFAULT_CATEGORY
+            # `external_id` is the user-provided value from the optional `id`
+            # CSV column. None for rows that didn't provide one — the trace
+            # will fall back to `question_id` at sort time.
+            external_id = item.get("external_id")
+            metadata: dict[str, Any] = {
+                "original_question": item["question"],
+                "duplicate_number": duplicate_num + 1,
+                "duplication_factor": duplication_factor,
+                "question_id": question_id,
+                "category": category,
+            }
+            if external_id is not None:
+                metadata["external_id"] = external_id
+
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
                 expected_output={"answer": item["answer"]},
-                metadata={
-                    "original_question": item["question"],
-                    "duplicate_number": duplicate_num + 1,
-                    "duplication_factor": duplication_factor,
-                    "question_id": question_id,
-                    "category": category,
-                },
+                metadata=metadata,
             )
             return True
         except Exception as e:
@@ -445,6 +459,7 @@ def fetch_trace_scores_from_langfuse(
                 "ground_truth_answer": "",
                 "question_id": "",
                 "category": DEFAULT_CATEGORY,
+                "external_id": None,
                 "scores": [],
             }
 
@@ -462,9 +477,10 @@ def fetch_trace_scores_from_langfuse(
                 elif isinstance(trace.output, str):
                     trace_data["llm_answer"] = trace.output
 
-            # Get ground truth, question_id, and category from metadata.
-            # `category` is absent on traces produced before the feature
-            # existed, so default to "Other" for backwards compatibility.
+            # Get ground truth, question_id, category, and external_id from
+            # metadata. `category` and `external_id` are absent on traces
+            # produced before those features existed — default gracefully so
+            # old runs still render.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
@@ -473,6 +489,10 @@ def fetch_trace_scores_from_langfuse(
                 raw_category = trace.metadata.get("category") or ""
                 trace_data["category"] = (
                     raw_category.title() if raw_category else DEFAULT_CATEGORY
+                )
+                external_id = trace.metadata.get("external_id")
+                trace_data["external_id"] = (
+                    str(external_id).strip() if external_id not in (None, "") else None
                 )
 
             # Add scores from this trace
@@ -560,7 +580,14 @@ def fetch_trace_scores_from_langfuse(
                 f"dataset={dataset_name} | run={run_name} | project_id={project_id}"
             )
 
-        # 4. Calculate summary scores from the fetched traces.
+        # 4. Sort traces by user-provided `external_id` (CSV `id` column).
+        # Traces without an external_id fall back to `question_id` order,
+        # which preserves the legacy behaviour for datasets uploaded before
+        # this feature. Sort is applied here (before caching) so cache reads
+        # and resyncs all return traces in the same order.
+        traces.sort(key=trace_sort_key)
+
+        # 5. Calculate summary scores from the fetched traces.
         summary_scores = compute_summary_scores(traces)
 
         result: EvaluationScore = {

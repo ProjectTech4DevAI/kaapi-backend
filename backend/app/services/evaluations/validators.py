@@ -139,7 +139,7 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
         }
         present = set(clean_headers.keys())
         required = {"question", "answer"}
-        allowed = required | {"category"}
+        allowed = required | {"category", "id"}
 
         missing = required - present
         unexpected = present - allowed
@@ -153,7 +153,9 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
                 status_code=422,
                 detail=(
                     "CSV must contain 'question' and 'answer' columns. "
-                    "'category' is optional. "
+                    "'category' is optional (free-text). "
+                    "'id' is optional (when present, every row must have a "
+                    "non-empty integer value). "
                     f"{'. '.join(parts)}. Found columns: {csv_reader.fieldnames}"
                 ),
             )
@@ -161,9 +163,17 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
         question_col = clean_headers["question"]
         answer_col = clean_headers["answer"]
         category_col = clean_headers.get("category")
+        # `id` is case-insensitive (`id` / `Id` / `iD` / `ID` all map here).
+        # When the column exists, the per-row value controls the order of
+        # the response traces — see fetch_trace_scores_from_langfuse for the
+        # sort logic.
+        id_col = clean_headers.get("id")
 
         items = []
-        for row in csv_reader:
+        seen_external_ids: set[str] = set()
+        # `row_num` reflects the CSV row number as a user would see it in
+        # their spreadsheet — row 1 is the header, data starts at row 2.
+        for row_num, row in enumerate(csv_reader, start=2):
             question = row.get(question_col, "").strip()
             answer = row.get(answer_col, "").strip()
             if not (question and answer):
@@ -172,7 +182,56 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
                 (row.get(category_col, "") or "").strip() if category_col else ""
             )
             category = raw_category.title() if raw_category else DEFAULT_CATEGORY
-            items.append({"question": question, "answer": answer, "category": category})
+
+            # `external_id`: user-provided ordering key. When the `id` column
+            # exists, every row MUST have a valid integer value — otherwise
+            # the entire upload is rejected with a clear 422 below. This
+            # keeps response ordering deterministic and matches the spec
+            # that IDs are simple numerics (1, 2, 3, ...). When the column
+            # is absent, traces fall back to `question_id` order — the
+            # legacy behaviour for datasets uploaded before this feature.
+            external_id: str | None = None
+            if id_col is not None:
+                raw_external_id = (row.get(id_col, "") or "").strip()
+                if not raw_external_id:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Row {row_num}: 'id' column is present but the "
+                            f"value is missing. When the id column is provided, "
+                            f"every row must have a non-empty integer id."
+                        ),
+                    )
+                try:
+                    int(raw_external_id)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Row {row_num}: id={raw_external_id!r} is not a "
+                            f"valid integer. Only integer ids are allowed "
+                            f"(e.g. 1, 2, 3, -1). Decimals, trailing "
+                            f"punctuation, and letters are not accepted."
+                        ),
+                    )
+                external_id = raw_external_id
+                # Surface accidental duplicates so the eval doesn't silently
+                # ship two questions with the same ordering key.
+                if external_id in seen_external_ids:
+                    logger.warning(
+                        f"[parse_csv_items] Duplicate id={external_id!r} in CSV; "
+                        f"the response order between duplicates is undefined"
+                    )
+                seen_external_ids.add(external_id)
+
+            items.append(
+                {
+                    "question": question,
+                    "answer": answer,
+                    "category": category,
+                    "external_id": external_id,
+                }
+            )
 
         if not items:
             raise HTTPException(

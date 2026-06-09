@@ -91,6 +91,10 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
         "category": (
             fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
         ),
+        # Preserve external_id across resync — without this, every merged
+        # trace would lose its ordering key and the response would fall
+        # back to question_id ordering on resyncs.
+        "external_id": fresh.get("external_id") or existing.get("external_id"),
         "scores": list(merged_scores_by_name.values()),
     }
 

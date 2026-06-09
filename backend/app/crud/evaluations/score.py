@@ -27,6 +27,11 @@ class TraceData(TypedDict):
     question: str
     llm_answer: str
     question_id: int | None
+    # User-provided value from the optional `id` CSV column. Used as the
+    # primary sort key in the response — when present it determines the
+    # order traces appear in. None for rows that didn't supply an id (or
+    # for traces from datasets uploaded before this feature existed).
+    external_id: str | None
     ground_truth_answer: str
     category: str
     scores: list[TraceScore]
@@ -66,6 +71,35 @@ class CategoricalSummaryScore(TypedDict):
 
 
 SummaryScore = NumericSummaryScore | CategoricalSummaryScore
+
+
+def trace_sort_key(trace: dict) -> tuple:
+    """Stable ordering key for a TraceData-like dict.
+
+    Priority:
+      1. User-provided `external_id`, numeric: sorted ascending by value.
+      2. User-provided `external_id`, non-numeric: sorted lexicographically
+         after all numeric ids.
+      3. Fallback to auto-generated `question_id` (numeric path).
+      4. Final fallback: stringified `question_id` for legacy data where
+         the field isn't an int.
+
+    Using a tuple-of-tuples key keeps the ordering total and avoids
+    `int < str` TypeError when the data mixes types within one list.
+    """
+    eid = trace.get("external_id")
+    if eid is not None:
+        eid_str = str(eid).strip()
+        if eid_str:
+            try:
+                return (0, 0, int(eid_str), "")
+            except ValueError:
+                return (0, 1, 0, eid_str)
+    qid = trace.get("question_id")
+    try:
+        return (1, 0, int(qid) if qid not in (None, "") else 0, "")
+    except (ValueError, TypeError):
+        return (1, 1, 0, str(qid) if qid is not None else "")
 
 
 class EvaluationScore(TypedDict):
