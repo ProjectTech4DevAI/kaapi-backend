@@ -90,7 +90,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
-        run_mode=run_mode.value,
+        run_mode=run_mode,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),

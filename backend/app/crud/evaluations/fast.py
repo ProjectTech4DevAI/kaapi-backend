@@ -57,6 +57,7 @@ from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJobCreate
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import TextLLMParams
+from app.services.llm.mappers import map_kaapi_to_openai_params
 
 logger = logging.getLogger(__name__)
 
@@ -118,36 +119,6 @@ def _call_with_retry(label: str, fn: Callable[[], _T]) -> _T:
     raise RuntimeError(f"_call_with_retry exited without result for {label}")
 
 
-def _build_responses_params(
-    *,
-    config: TextLLMParams,
-    question: str,
-) -> dict[str, Any]:
-    """Build params for one Responses call, mirroring the batch path's body shape."""
-    params: dict[str, Any] = {
-        "model": config.model,
-        "instructions": config.instructions,
-        "input": question,
-    }
-
-    if "temperature" in config.model_fields_set:
-        params["temperature"] = config.temperature
-
-    if config.reasoning:
-        params["reasoning"] = {"effort": config.reasoning}
-
-    if config.knowledge_base_ids:
-        params["tools"] = [
-            {
-                "type": "file_search",
-                "vector_store_ids": config.knowledge_base_ids,
-                "max_num_results": config.max_num_results or 20,
-            }
-        ]
-
-    return params
-
-
 def _field(obj: Any, name: str, default: Any = None) -> Any:
     """Read a field from an object or dict (SDK object vs test dict), with a default."""
     if obj is None:
@@ -181,10 +152,14 @@ def _extract_response_text(response: Any) -> str:
 def _responses_call_for_item(
     *,
     openai_client: OpenAI,
-    config: TextLLMParams,
+    base_params: dict[str, Any],
     item: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run one Responses call for a dataset item, in the batch path's per-item shape."""
+    """Run one Responses call for a dataset item, in the batch path's per-item shape.
+
+    `base_params` is the question-independent OpenAI body produced once by
+    `map_kaapi_to_openai_params`; only `input` varies per item.
+    """
     item_id = item["id"]
     question = item["input"].get("question", "") if item.get("input") else ""
     ground_truth = (
@@ -204,7 +179,7 @@ def _responses_call_for_item(
             "failed": True,
         }
 
-    params = _build_responses_params(config=config, question=question)
+    params = {**base_params, "input": question}
 
     try:
         response = _call_with_retry(
@@ -403,6 +378,14 @@ def _stage1_responses(
         f"concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
     )
 
+    base_params, mapper_warnings = map_kaapi_to_openai_params(
+        session=session, kaapi_params=config.model_dump(exclude_unset=True)
+    )
+    if mapper_warnings:
+        logger.info(
+            f"[_stage1_responses] {log_prefix} Mapper warnings: {mapper_warnings}"
+        )
+
     results: list[dict[str, Any]] = []
     max_workers = max(1, min(settings.EVAL_FAST_API_CONCURRENCY, len(dataset_items)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -410,7 +393,7 @@ def _stage1_responses(
             executor.submit(
                 _responses_call_for_item,
                 openai_client=openai_client,
-                config=config,
+                base_params=base_params,
                 item=item,
             ): item["id"]
             for item in dataset_items

@@ -8,6 +8,7 @@ Create Date: 2026-05-20 00:00:00.000000
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "065"
@@ -19,30 +20,32 @@ disable_per_migration_transaction = True
 
 _UNIQUE_INDEX = "uq_evaluation_run_org_project_run_name"
 _UNIQUE_CONSTRAINT = "uq_evaluation_run_org_project_run_name"
+_RUN_MODE_ENUM_NAME = "run_mode_enum"
+_RUN_MODE_VALUES = ("batch", "fast")
 
 
 def upgrade():
-    # 1. Add run_mode as nullable first so existing rows are backfilled by the
-    #    server default, then tighten to NOT NULL.  The server default is left
-    #    in place as a safety net.
+    run_mode_enum = postgresql.ENUM(
+        *_RUN_MODE_VALUES,
+        name=_RUN_MODE_ENUM_NAME,
+        create_type=False,
+    )
+    run_mode_enum.create(op.get_bind(), checkfirst=True)
+
     with op.get_context().autocommit_block():
         op.add_column(
             "evaluation_run",
             sa.Column(
                 "run_mode",
-                sa.String(length=10),
-                nullable=True,
-                server_default=sa.text("'batch'"),
+                run_mode_enum,
+                nullable=False,
+                server_default=sa.text(f"'batch'::{_RUN_MODE_ENUM_NAME}"),
                 comment="Execution mode: batch or fast",
             ),
         )
-        op.execute("ALTER TABLE evaluation_run ALTER COLUMN run_mode SET NOT NULL")
 
-    # 2. Resolve duplicate (organization_id, project_id, run_name) tuples
-    #    non-destructively before adding the unique constraint. Keep the
-    #    lowest-id row's run_name untouched and rename the rest by appending a
-    #    unique "__dup_<id>" suffix so no historical run (and its scores, result
-    #    URLs, or batch_job links) is lost.
+    # Rename duplicate (org, project, run_name) rows (keeping the lowest id) so
+    # the unique constraint can be added without dropping any history.
     with op.get_context().autocommit_block():
         op.execute(
             """
@@ -58,9 +61,8 @@ def upgrade():
             """
         )
 
-    # 3. Build the unique index CONCURRENTLY so the scan does not take an
-    #    AccessExclusiveLock, then attach it as a named constraint via
-    #    ADD CONSTRAINT ... USING INDEX (brief catalog-only lock).
+    # Build the index CONCURRENTLY (avoids an AccessExclusiveLock), then attach
+    # it as the named unique constraint.
     with op.get_context().autocommit_block():
         op.execute(
             f"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "
@@ -75,7 +77,6 @@ def upgrade():
 
 
 def downgrade():
-    # Reverse in opposite order to upgrade().
     op.execute(
         f"ALTER TABLE evaluation_run "
         f'DROP CONSTRAINT IF EXISTS "{_UNIQUE_CONSTRAINT}"'
@@ -83,3 +84,4 @@ def downgrade():
     with op.get_context().autocommit_block():
         op.execute(f'DROP INDEX CONCURRENTLY IF EXISTS "{_UNIQUE_INDEX}"')
     op.drop_column("evaluation_run", "run_mode")
+    sa.Enum(name=_RUN_MODE_ENUM_NAME).drop(op.get_bind(), checkfirst=True)

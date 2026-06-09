@@ -210,13 +210,13 @@ def execute_fast_evaluation(*, eval_run_id: int) -> None:
             )
             raise ValueError(f"EvaluationRun {eval_run_id} not found")
 
-        if eval_run.run_mode != RunModeEnum.FAST.value:
+        if eval_run.run_mode != RunModeEnum.FAST:
             logger.error(
                 f"[execute_fast_evaluation] Wrong run_mode for fast task | "
-                f"eval_run_id={eval_run_id} | run_mode={eval_run.run_mode}"
+                f"eval_run_id={eval_run_id} | run_mode={eval_run.run_mode.value}"
             )
             raise ValueError(
-                f"EvaluationRun {eval_run_id} has run_mode={eval_run.run_mode}, "
+                f"EvaluationRun {eval_run_id} has run_mode={eval_run.run_mode.value}, "
                 f"expected 'fast'"
             )
 

@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Index, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, Index, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
 
@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 class RunModeEnum(str, Enum):
     BATCH = "batch"
     FAST = "fast"
+
+
+_RUN_MODE_PG_ENUM = ENUM(
+    RunModeEnum,
+    name="run_mode_enum",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
 
 
 class DatasetItem(BaseModel):
@@ -305,11 +313,14 @@ class EvaluationRun(SQLModel, table=True):
             "comment": "Evaluation status (pending, processing, completed, failed)"
         },
     )
-    run_mode: str = SQLField(
-        default=RunModeEnum.BATCH.value,
-        max_length=10,
-        nullable=False,
-        sa_column_kwargs={"comment": "Execution mode: batch or fast"},
+    run_mode: RunModeEnum = SQLField(
+        default=RunModeEnum.BATCH,
+        sa_column=Column(
+            _RUN_MODE_PG_ENUM,
+            nullable=False,
+            server_default=text("'batch'::run_mode_enum"),
+            comment="Execution mode: batch or fast",
+        ),
     )
     object_store_url: str | None = SQLField(
         default=None,
@@ -448,7 +459,7 @@ class EvaluationRunPublic(SQLModel):
     batch_job_id: int | None
     embedding_batch_job_id: int | None
     status: str
-    run_mode: str
+    run_mode: RunModeEnum
     object_store_url: str | None
     score_trace_url: str | None
     total_items: int
