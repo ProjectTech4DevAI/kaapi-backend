@@ -11,11 +11,7 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import (
-    DEFAULT_CATEGORY,
-    EvaluationScore,
-    trace_sort_key,
-)
+from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, trace_sort_key
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
