@@ -61,7 +61,7 @@ def create_evaluation_run_or_409(
     config_version: int,
     organization_id: int,
     project_id: int,
-    run_mode: RunModeEnum | str = RunModeEnum.BATCH,
+    run_mode: RunModeEnum = RunModeEnum.BATCH,
     log_context: str,
 ) -> EvaluationRun:
     """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
@@ -108,7 +108,7 @@ def create_evaluation_run_or_409(
         )
 
 
-def start_evaluation(
+def validate_and_start_batch_evaluation(
     session: Session,
     dataset_id: int,
     experiment_name: str,
@@ -142,7 +142,7 @@ def start_evaluation(
         HTTPException: If dataset not found, config invalid, or evaluation fails to start
     """
     logger.info(
-        f"[start_evaluation] Starting evaluation | experiment_name={experiment_name} | "
+        f"[validate_and_start_batch_evaluation] Starting evaluation | experiment_name={experiment_name} | "
         f"dataset_id={dataset_id} | "
         f"org_id={organization_id} | "
         f"config_id={config_id} | "
@@ -165,7 +165,7 @@ def start_evaluation(
         )
 
     logger.info(
-        f"[start_evaluation] Found dataset | id={dataset.id} | name={dataset.name} | "
+        f"[validate_and_start_batch_evaluation] Found dataset | id={dataset.id} | name={dataset.name} | "
         f"object_store_url={'present' if dataset.object_store_url else 'None'} | "
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
@@ -196,7 +196,7 @@ def start_evaluation(
         )
 
     logger.info(
-        "[start_evaluation] Successfully resolved config from config management"
+        "[validate_and_start_batch_evaluation] Successfully resolved config from config management"
     )
 
     # Get API clients
@@ -221,7 +221,7 @@ def start_evaluation(
         config_version=config_version,
         organization_id=organization_id,
         project_id=project_id,
-        log_context="start_evaluation",
+        log_context="validate_and_start_batch_evaluation",
     )
 
     # Step 4: Start the batch evaluation
@@ -244,7 +244,7 @@ def start_evaluation(
         )
 
         logger.info(
-            f"[start_evaluation] Evaluation started successfully | "
+            f"[validate_and_start_batch_evaluation] Evaluation started successfully | "
             f"batch_job_id={eval_run.batch_job_id} | total_items={eval_run.total_items}"
         )
 
@@ -252,7 +252,7 @@ def start_evaluation(
 
     except Exception as e:
         logger.error(
-            f"[start_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
+            f"[validate_and_start_batch_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
             exc_info=True,
         )
         # Error is already handled in start_evaluation_batch

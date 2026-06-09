@@ -3,7 +3,7 @@
 from app.services.evaluations.dataset import upload_dataset
 from app.services.evaluations.evaluation import (
     get_evaluation_with_scores,
-    start_evaluation,
+    validate_and_start_batch_evaluation,
 )
 from app.services.evaluations.fast import (
     execute_fast_evaluation,

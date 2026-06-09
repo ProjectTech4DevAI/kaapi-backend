@@ -20,7 +20,7 @@ from app.crud.evaluations.core import group_traces_by_question_id
 from app.models.evaluation import EvaluationRunPublic, RunModeEnum
 from app.services.evaluations import (
     get_evaluation_with_scores,
-    start_evaluation,
+    validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
 from app.utils import (
@@ -77,7 +77,7 @@ def evaluate(
         )
         return APIResponse.success_response(data=eval_run)
 
-    eval_run = start_evaluation(
+    eval_run = validate_and_start_batch_evaluation(
         session=session,
         dataset_id=dataset_id,
         experiment_name=experiment_name,

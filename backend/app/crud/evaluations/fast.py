@@ -70,7 +70,7 @@ JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
-_RETRY_MAX_ATTEMPTS = 5
+_RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRY_MAX_DELAY_SECONDS = 30.0
 
@@ -178,15 +178,6 @@ def _extract_response_text(response: Any) -> str:
     return ""
 
 
-def _usage_to_dict(usage: Any) -> dict[str, int]:
-    """Normalize an OpenAI usage object into the cost layer's dict shape."""
-    return {
-        "input_tokens": int(_field(usage, "input_tokens", 0) or 0),
-        "output_tokens": int(_field(usage, "output_tokens", 0) or 0),
-        "total_tokens": int(_field(usage, "total_tokens", 0) or 0),
-    }
-
-
 def _responses_call_for_item(
     *,
     openai_client: OpenAI,
@@ -235,13 +226,18 @@ def _responses_call_for_item(
             "failed": True,
         }
 
+    usage = getattr(response, "usage", None)
     return {
         "item_id": item_id,
         "question": question,
         "generated_output": _extract_response_text(response),
         "ground_truth": ground_truth,
         "response_id": getattr(response, "id", None),
-        "usage": _usage_to_dict(getattr(response, "usage", None)),
+        "usage": {
+            "input_tokens": int(_field(usage, "input_tokens", 0) or 0),
+            "output_tokens": int(_field(usage, "output_tokens", 0) or 0),
+            "total_tokens": int(_field(usage, "total_tokens", 0) or 0),
+        },
         "question_id": question_id,
         "failed": False,
     }

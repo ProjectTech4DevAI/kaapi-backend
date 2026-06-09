@@ -63,7 +63,7 @@ def create_evaluation_run(
     config_version: int,
     organization_id: int,
     project_id: int,
-    run_mode: RunModeEnum | str = RunModeEnum.BATCH,
+    run_mode: RunModeEnum = RunModeEnum.BATCH,
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -81,14 +81,7 @@ def create_evaluation_run(
 
     Returns:
         The created EvaluationRun instance
-
-    Raises:
-        ValueError: If run_mode is not a valid RunModeEnum value.
     """
-    # Validate against the allowed run modes before hitting the DB CHECK
-    # constraint, so callers get a clear error instead of an IntegrityError.
-    run_mode_value = RunModeEnum(run_mode).value
-
     eval_run = EvaluationRun(
         run_name=run_name,
         dataset_name=dataset_name,
@@ -97,7 +90,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
-        run_mode=run_mode_value,
+        run_mode=run_mode.value,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
