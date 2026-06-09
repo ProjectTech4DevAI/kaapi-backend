@@ -4,4 +4,5 @@ from .storage import (
     CloudStorage,
     CloudStorageError,
     get_cloud_storage,
+    upload_audio_to_gcs,
 )
