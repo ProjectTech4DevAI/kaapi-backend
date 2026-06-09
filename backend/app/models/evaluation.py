@@ -6,8 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
-from sqlmodel import Field as SQLField
-from sqlmodel import Relationship, SQLModel
+from sqlmodel import Field as SQLField, Relationship, SQLModel
 
 from app.core.util import now
 
