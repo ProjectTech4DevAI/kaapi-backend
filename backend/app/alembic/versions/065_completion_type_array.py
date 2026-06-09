@@ -1,15 +1,15 @@
 """completion_type scalar to array
 
-Revision ID: 064
-Revises: 063
+Revision ID: 065
+Revises: 064
 Create Date: 2026-05-26 00:00:00.000000
 
 """
 
 from alembic import op
 
-revision = "064"
-down_revision = "063"
+revision = "065"
+down_revision = "064"
 branch_labels = None
 depends_on = None
 
