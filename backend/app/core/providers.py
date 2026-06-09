@@ -17,6 +17,7 @@ class Provider(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE_VERTEX = "google-vertex"
     WEBHOOK_SECRET = "webhook_secret"
+    PROXY = "proxy"
 
 
 @dataclass
@@ -60,6 +61,9 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
         required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]
+    ),
+    Provider.PROXY: ProviderConfig(
+        required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
 }
 

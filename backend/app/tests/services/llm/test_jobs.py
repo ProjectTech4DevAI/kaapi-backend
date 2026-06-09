@@ -478,6 +478,137 @@ class TestExecuteJob:
         assert not result["success"]
         assert "Provider not configured" in result["error"]
 
+    def test_proxy_config_success(self, db, job_env, job_for_execution):
+        """Proxy completion forwards the (guardrail-sanitised) input to
+        client_llm_url and extracts output[0].content[0].text."""
+        env = job_env
+        request_data = {
+            "query": {"input": "Brief overview of land rights."},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "id": "resp_abc",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "Safe answer from TAP."}
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+        }
+
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        env["get_provider"].assert_not_called()
+        fake_client.post.assert_called_once()
+        _, kwargs = fake_client.post.call_args
+        assert kwargs["json"] == {"input": "Brief overview of land rights."}
+        assert kwargs["headers"]["Authorization"] == "Bearer tap-token"
+
+        assert result["success"]
+        assert (
+            result["data"]["response"]["output"]["content"]["value"]
+            == "Safe answer from TAP."
+        )
+        assert result["data"]["response"]["provider"] == "proxy"
+        assert result["data"]["response"]["model"] == "gpt-5"
+        assert result["data"]["usage"]["total_tokens"] == 18
+
+    def test_proxy_config_missing_credentials_fails(
+        self, db, job_env, job_for_execution
+    ):
+        """Proxy flow returns a failure when no 'proxy' credential is registered."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        with patch("app.services.llm.jobs.get_provider_credential", return_value=None):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert "Proxy credentials not registered" in result["error"]
+
+    def test_proxy_config_http_error_fails(self, db, job_env, job_for_execution):
+        """HTTP error during proxy call surfaces as BlockResult.error."""
+        import httpx as _httpx
+
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.side_effect = _httpx.ConnectError("boom")
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert "Proxy call failed" in result["error"]
+
     def test_metadata_in_callback_response(
         self, db, job_env, job_for_execution, request_data
     ):
