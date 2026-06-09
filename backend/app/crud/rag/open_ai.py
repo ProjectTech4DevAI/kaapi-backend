@@ -206,7 +206,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     f"{e.message}. This is usually transient — retry in a "
                     f"few seconds. If issue persists, contact Kaapi."
                 )
-                logger.warning(
+                logger.error(
                     f"[OpenAIVectorStoreCrud.update] {error_message} | "
                     f"vector_store_id={vector_store_id}",
                     exc_info=True,
@@ -218,7 +218,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     f"{type(e).__name__}): {e}. Retry the upload, or split "
                     f"the batch into smaller chunks."
                 )
-                logger.warning(
+                logger.error(
                     f"[OpenAIVectorStoreCrud.update] {error_message} | "
                     f"vector_store_id={vector_store_id}, file_count={len(files)}",
                     exc_info=True,

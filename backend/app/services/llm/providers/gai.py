@@ -691,7 +691,7 @@ class GoogleAIProvider(BaseProvider):
                 f"overloaded, internal error, or deadline exceeded) — retry "
                 f"in a few seconds. If the issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[GoogleAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}, type={completion_type}",
                 exc_info=True,

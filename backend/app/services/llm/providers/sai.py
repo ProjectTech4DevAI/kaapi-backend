@@ -403,7 +403,7 @@ class SarvamAIProvider(BaseProvider):
                 f"{e.body}. This is typically transient — retry in a few "
                 f"seconds. If the issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[SarvamAIProvider.execute] {error_message} | "
                 f"provider={provider_name}, type={completion_type}",
                 exc_info=True,
@@ -417,7 +417,7 @@ class SarvamAIProvider(BaseProvider):
                 f"down — retry in a few seconds. If the issue persists, "
                 f"contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[SarvamAIProvider.execute] {error_message} | "
                 f"provider={provider_name}, type={completion_type}",
                 exc_info=True,
@@ -431,7 +431,12 @@ class SarvamAIProvider(BaseProvider):
                 f"(code: {e.status_code}): {e.body}. If this persists, "
                 f"contact Kaapi."
             )
-            logger.warning(
+            log = (
+                logger.error
+                if e.status_code and e.status_code >= 500
+                else logger.warning
+            )
+            log(
                 f"[SarvamAIProvider.execute] {error_message} | "
                 f"provider={provider_name}, type={completion_type}",
                 exc_info=True,

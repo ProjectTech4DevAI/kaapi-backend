@@ -479,7 +479,10 @@ class ElevenlabsAIProvider(BaseProvider):
                 f"[ELEVENLABS] {completion_type.upper()} API error "
                 f"(code: {status}): {e.body}. {hint}"
             )
-            logger.warning(
+            # 5xx server errors are escalation-worthy; 4xx (including 429)
+            # are caller's fault and only need a warning.
+            log = logger.error if status and status >= 500 else logger.warning
+            log(
                 f"[ElevenlabsAIProvider.execute] {error_message} | "
                 f"provider={provider_name}, type={completion_type}",
                 exc_info=True,

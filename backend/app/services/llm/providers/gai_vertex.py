@@ -191,7 +191,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"long to complete — retry with a smaller payload or contact "
                 f"Kaapi if the issue persists."
             )
-            logger.warning(
+            logger.error(
                 f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
@@ -203,7 +203,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"reaching Vertex — check network connectivity from the "
                 f"Kaapi backend. If the issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
@@ -214,7 +214,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"{type(e).__name__}): {str(e)}. Unexpected requests-library "
                 f"error — contact Kaapi if the issue persists."
             )
-            logger.warning(
+            logger.error(
                 f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
@@ -278,7 +278,10 @@ class GoogleVertexAIProvider(BaseProvider):
                     f"{google_msg}. If the issue persists, contact Kaapi."
                 )
 
-            logger.warning(
+            # 5xx server errors are escalation-worthy; 4xx (including 429)
+            # are caller's fault and only need a warning.
+            log = logger.error if 500 <= status_code < 600 else logger.warning
+            log(
                 f"[GoogleVertexAIProvider._post] {error_message} | "
                 f"model={model}, {log_context}"
             )

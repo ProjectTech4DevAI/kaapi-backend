@@ -308,7 +308,7 @@ class ClaudeProvider(BaseProvider):
                 f"transient — retry in a few seconds. If the issue persists, "
                 f"contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
@@ -322,7 +322,7 @@ class ClaudeProvider(BaseProvider):
                 f"long to complete — retry with a smaller payload or shorter "
                 f"max_tokens. If the issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
@@ -335,7 +335,7 @@ class ClaudeProvider(BaseProvider):
                 f"reaching Anthropic — check network connectivity from the "
                 f"Kaapi backend. If the issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
@@ -391,7 +391,10 @@ class ClaudeProvider(BaseProvider):
                     f"request_id={e.request_id}): {e.message}. If the issue "
                     f"persists, contact Kaapi."
                 )
-            logger.warning(
+            # 5xx server errors are escalation-worthy; 4xx (including 413)
+            # are caller's fault and only need a warning.
+            log = logger.error if status and status >= 500 else logger.warning
+            log(
                 f"[ClaudeProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )

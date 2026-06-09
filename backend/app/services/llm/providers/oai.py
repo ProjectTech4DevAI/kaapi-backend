@@ -209,7 +209,7 @@ class OpenAIProvider(BaseProvider):
                 f"This is usually transient — retry in a few seconds. If "
                 f"issue persists, contact Kaapi."
             )
-            logger.warning(
+            logger.error(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
                 exc_info=True,
@@ -221,7 +221,7 @@ class OpenAIProvider(BaseProvider):
                 f"OpenAI request timed out: {e}. Retry the request, or try "
                 f"with a smaller payload."
             )
-            logger.warning(
+            logger.error(
                 f"[OpenAIProvider.execute] {error_message} | "
                 f"provider={completion_config.provider}",
                 exc_info=True,
