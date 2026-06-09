@@ -46,7 +46,6 @@ class DocumentMaker:
             project_id=self.project.id,
             fname=f"{doc_id}.xyz",
             object_store_url=object_store_url,
-            is_deleted=False,
         )
 
 

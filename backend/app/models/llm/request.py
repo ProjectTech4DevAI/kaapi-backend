@@ -13,13 +13,17 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
-    SUPPORTED_MODELS,
-    SUPPORTED_VOICES,
 )
 
 
 class TextLLMParams(SQLModel):
-    model: str
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Provider model to use. If omitted, the Kaapi mapper falls back to "
+            "DEFAULT_TEXT_MODELS for the selected provider."
+        ),
+    )
     instructions: str | None = Field(
         default=None,
     )
@@ -31,10 +35,31 @@ class TextLLMParams(SQLModel):
         default=None,
         description="Reasoning configuration or instructions",
     )
+    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = Field(
+        default=None,
+        description="Model-specific reasoning effort setting for reasoning-capable models",
+    )
+    summary: Literal["auto", "detailed", "concise"] | None = Field(
+        default=None,
+        description=(
+            "Model-specific reasoning summary preference. " "Use null/None to disable."
+        ),
+    )
     temperature: float | None = Field(
         default=0.1,
         ge=0.0,
         le=2.0,
+    )
+    top_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Nucleus sampling parameter",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum tokens to generate in the response",
     )
     max_num_results: int | None = Field(
         default=None,
@@ -81,12 +106,18 @@ class TextContent(SQLModel):
 
 
 class AudioContent(SQLModel):
-    format: Literal["base64"] = "base64"
-    value: str = Field(..., description="Base64 encoded audio")
+    format: Literal["base64", "url"] = "base64"
+    value: str = Field(
+        ..., description="Base64 encoded audio or public URL to download from"
+    )
     # keeping the mime_type liberal here, since does not affect base64 encoding
     mime_type: str | None = Field(
         None,
         description="MIME type of the audio (e.g., audio/wav, audio/mp3, audio/ogg)",
+    )
+    uri: str | None = Field(
+        None,
+        description="Presigned URL to the audio file in object storage (when available)",
     )
 
 
@@ -202,7 +233,12 @@ class NativeCompletionConfig(SQLModel):
     """
 
     provider: Literal[
-        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+        "openai-native",
+        "google-native",
+        "sarvamai-native",
+        "elevenlabs-native",
+        "anthropic-native",
+        "google-vertex-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -223,8 +259,21 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
-        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
+    provider: (
+        Literal[
+            "openai",
+            "google",
+            "sarvamai",
+            "elevenlabs",
+            "anthropic",
+            "google-vertex",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+        ),
     )
 
     type: Literal["text", "stt", "tts"] = Field(
@@ -245,49 +294,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        provider = self.provider
-        provider_was_auto_assigned = False
-        if self.type in ("stt", "tts") and provider is None:
+        if self.type in ("stt", "tts") and self.provider is None:
             self.provider = "google"
-            provider = self.provider
-            provider_was_auto_assigned = True
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
-
-        if provider is not None:
-            key = (provider, self.type)
-
-            allowed_models = SUPPORTED_MODELS.get(key)
-            if allowed_models and validated.model not in allowed_models:
-                if provider_was_auto_assigned:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported. "
-                        f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires models: {allowed_models}. "
-                        f"Either specify a supported model or explicitly set 'provider' to match your model."
-                    )
-                else:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported for provider='{provider}' type='{self.type}'. "
-                        f"Allowed: {allowed_models}"
-                    )
-
-            if self.type == "tts":
-                # voice = self.params.get("voice")
-                voice = validated.voice
-                allowed_voices = SUPPORTED_VOICES.get(key)
-                if allowed_voices and voice and voice not in allowed_voices:
-                    if provider_was_auto_assigned:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported. "
-                            f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires voices: {allowed_voices}. "
-                            f"Either specify a supported voice or explicitly set 'provider' to match your voice."
-                        )
-                    else:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported for provider='{provider}'. "
-                            f"Allowed: {allowed_voices}"
-                        )
 
         self.params = validated.model_dump(exclude_none=True)
         if not user_provided_temperature:
@@ -597,7 +608,7 @@ class LlmCall(SQLModel, table=True):
     )
 
     # Timestamps
-    created_at: datetime = Field(
+    inserted_at: datetime = Field(
         default_factory=now,
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the LLM call was created"},

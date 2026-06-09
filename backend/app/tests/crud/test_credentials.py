@@ -86,6 +86,52 @@ def test_get_creds_by_org(db: Session) -> None:
     assert {cred.provider for cred in retrieved_creds} == {"openai", "langfuse"}
 
 
+def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
+    """google-vertex sa_key is stored directly in the credentials table
+    (encrypted by the same Fernet key as every other credential field)."""
+    project = create_test_project(db)
+
+    sa_key = {
+        "type": "service_account",
+        "project_id": "starlit-lotus-492004-k0",
+        "client_email": "test@starlit-lotus-492004-k0.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
+    }
+    payload = CredsCreate(
+        is_active=True,
+        credential={
+            "google-vertex": {
+                "api_key": "vkey",
+                "project_id": "starlit-lotus-492004-k0",
+                "location": "us-central1",
+                "sa_key": sa_key,
+                "gcs_bucket": "my-bucket",
+            }
+        },
+    )
+
+    created = set_creds_for_org(
+        session=db,
+        creds_add=payload,
+        organization_id=project.organization_id,
+        project_id=project.id,
+    )
+
+    assert len(created) == 1
+    stored = get_provider_credential(
+        session=db,
+        org_id=project.organization_id,
+        provider="google-vertex",
+        project_id=project.id,
+    )
+    assert stored is not None
+    assert stored["sa_key"] == sa_key
+    assert stored["api_key"] == "vkey"
+    assert stored["project_id"] == "starlit-lotus-492004-k0"
+    assert stored["location"] == "us-central1"
+    assert stored["gcs_bucket"] == "my-bucket"
+
+
 def test_get_provider_credential(db: Session) -> None:
     """Test retrieving credentials for a specific provider."""
     credentials_create = test_credential_data(db)

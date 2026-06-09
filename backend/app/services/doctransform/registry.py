@@ -1,4 +1,6 @@
 from pathlib import Path
+from gevent import Timeout
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.services.doctransform.transformer import Transformer
 from app.services.doctransform.zerox_transformer import ZeroxTransformer
@@ -124,6 +126,8 @@ def convert_document(
     transformer = transformer_cls()
     try:
         return transformer.transform(input_path, output_path)
+    except (Timeout, SoftTimeLimitExceeded):
+        raise
     except Exception as e:
         raise TransformationError(
             f"Error applying transformer '{transformer_name}': {e}"

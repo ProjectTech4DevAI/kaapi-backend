@@ -14,6 +14,9 @@ class Provider(str, Enum):
     GOOGLE = "google"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
+    ANTHROPIC = "anthropic"
+    GOOGLE_VERTEX = "google-vertex"
+    WEBHOOK_SECRET = "webhook_secret"
 
 
 @dataclass
@@ -42,6 +45,22 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.ELEVENLABS: ProviderConfig(
         required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
+    Provider.ANTHROPIC: ProviderConfig(
+        required_fields=["api_key"], sensitive_fields=["api_key"]
+    ),
+    Provider.GOOGLE_VERTEX: ProviderConfig(
+        required_fields=[
+            "api_key",
+            "project_id",
+            "location",
+            "sa_key",
+            "gcs_bucket",
+        ],
+        sensitive_fields=["api_key", "sa_key"],
+    ),
+    Provider.WEBHOOK_SECRET: ProviderConfig(
+        required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]
+    ),
 }
 
 
@@ -61,7 +80,7 @@ def validate_provider(provider: str) -> Provider:
         return Provider(provider.lower())
     except ValueError:
         supported = ", ".join(p.value for p in Provider)
-        logger.error(
+        logger.warning(
             f"[validate_provider] Unsupported provider | provider: {provider}, supported_providers: {supported}"
         )
         raise ValueError(
@@ -85,7 +104,7 @@ def validate_provider_credentials(provider: str, credentials: Dict[str, str]) ->
     if missing_fields := [
         field for field in required_fields if field not in credentials
     ]:
-        logger.error(
+        logger.warning(
             f"[validate_provider_credentials] Missing required fields | provider: {provider}, missing_fields: {', '.join(missing_fields)}"
         )
         raise ValueError(
@@ -119,6 +138,14 @@ def mask_credential_fields(
     sensitive_fields = PROVIDER_CONFIGS[provider_enum].sensitive_fields
     masked = dict(credentials)
     for field_name in sensitive_fields:
-        if field_name in masked and isinstance(masked[field_name], str):
-            masked[field_name] = mask_string(masked[field_name])
+        if field_name not in masked:
+            continue
+        value = masked[field_name]
+        if isinstance(value, str):
+            masked[field_name] = mask_string(value)
+        else:
+            # Non-string secrets (e.g. google-vertex `sa_key` is a dict)
+            # are masked wholesale — the raw value is only decrypted at
+            # provider runtime, never returned via the API.
+            masked[field_name] = "********"
     return masked

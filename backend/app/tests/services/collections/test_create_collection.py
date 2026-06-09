@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 import uuid
 from uuid import UUID, uuid4
 
+from gevent import Timeout
+
 import pytest
 from moto import mock_aws
 from sqlmodel import Session
@@ -461,6 +463,97 @@ def test_execute_job_failure_flow_callback_job_and_marks_failed(
     assert str(cb_url_arg) == callback_url
     assert payload_arg["success"] is False
     assert "Requested atleast 1 document retrieved 0" in (payload_arg["error"] or "")
+    assert payload_arg["data"]["status"] == CollectionJobStatus.FAILED
+    assert payload_arg["data"]["collection"] is None
+    assert uuid.UUID(payload_arg["data"]["job_id"]) == job.id
+
+
+@patch("app.services.collections.create_collection.get_llm_provider")
+def test_execute_job_timeout_marks_job_failed(
+    mock_get_llm_provider: MagicMock, db: Session
+) -> None:
+    project = get_project(db)
+
+    job = get_collection_job(
+        db,
+        project,
+        job_id=uuid4(),
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=None,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.create.side_effect = Timeout(300)
+    mock_get_llm_provider.return_value = mock_provider
+
+    req = CreationRequest(documents=[], callback_url=None, provider="openai")
+
+    with patch("app.services.collections.create_collection.Session") as SessionCtor:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        with pytest.raises(Timeout):
+            execute_job(
+                request=req.model_dump(),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                with_assistant=False,
+                job_id=str(job.id),
+                task_instance=None,
+            )
+
+    updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
+    assert updated_job.status == CollectionJobStatus.FAILED
+    assert "soft time limit" in (updated_job.error_message or "")
+
+
+@patch("app.services.collections.create_collection.get_llm_provider")
+@patch("app.services.collections.create_collection.send_callback")
+def test_execute_job_timeout_sends_failure_callback(
+    mock_send_callback: MagicMock,
+    mock_get_llm_provider: MagicMock,
+    db: Session,
+) -> None:
+    project = get_project(db)
+    callback_url = "https://example.com/collections/timeout"
+
+    job = get_collection_job(
+        db,
+        project,
+        job_id=uuid4(),
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.PENDING,
+        collection_id=None,
+    )
+
+    mock_provider = MagicMock()
+    mock_provider.create.side_effect = Timeout(300)
+    mock_get_llm_provider.return_value = mock_provider
+
+    req = CreationRequest(documents=[], callback_url=callback_url, provider="openai")
+
+    with patch("app.services.collections.create_collection.Session") as SessionCtor:
+        SessionCtor.return_value.__enter__.return_value = db
+        SessionCtor.return_value.__exit__.return_value = False
+
+        with pytest.raises(Timeout):
+            execute_job(
+                request=req.model_dump(),
+                project_id=project.id,
+                organization_id=project.organization_id,
+                task_id=str(uuid4()),
+                with_assistant=False,
+                job_id=str(job.id),
+                task_instance=None,
+            )
+
+    mock_send_callback.assert_called_once()
+    cb_url_arg, payload_arg = mock_send_callback.call_args.args
+    assert str(cb_url_arg) == callback_url
+    assert payload_arg["success"] is False
+    assert "soft time limit" in (payload_arg["error"] or "")
     assert payload_arg["data"]["status"] == CollectionJobStatus.FAILED
     assert payload_arg["data"]["collection"] is None
     assert uuid.UUID(payload_arg["data"]["job_id"]) == job.id

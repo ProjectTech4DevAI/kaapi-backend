@@ -1,7 +1,9 @@
 import logging
 
 from sqlmodel import Session
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.crud.jobs import JobCrud
 from app.crud.llm_chain import update_llm_chain_block_completed, update_llm_chain_status
@@ -10,10 +12,14 @@ from app.models.llm.request import (
     ChainStatus,
     LLMChainRequest,
 )
-from app.models.llm.response import IntermediateChainResponse, LLMChainResponse
+from app.models.llm.response import (
+    AudioOutput,
+    IntermediateChainResponse,
+    LLMChainResponse,
+)
 from app.services.llm.chain.chain import ChainContext, LLMChain
 from app.services.llm.chain.types import BlockResult
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,7 @@ class ChainExecutor:
         self._chain = chain
         self._context = context
         self._request = request
+        self._webhook_secret: str | None = None
 
     def run(self) -> dict:
         """Execute the full chain lifecycle. Returns serialized APIResponse."""
@@ -60,22 +67,45 @@ class ChainExecutor:
                 status=ChainStatus.RUNNING,
             )
 
+        self._webhook_secret = get_webhook_secret(
+            self._context.project_id, self._context.organization_id
+        )
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0))
+    def _presign_with_retry(self, storage, uri: str) -> str:
+        return storage.get_signed_url(uri, expires_in=3600)
+
+    def _resolve_presigned_url(self, output) -> None:
+        """Swap the s3:// URI in content.uri for a presigned URL in-place."""
+        if not isinstance(output, AudioOutput) or not output.content.uri:
+            return
+        with Session(engine) as session:
+            storage = get_cloud_storage(session, self._context.project_id)
+            output.content.uri = self._presign_with_retry(storage, output.content.uri)
+
     def _teardown(self, result: BlockResult) -> dict:
         """Finalize chain record, send callback, and update job status."""
 
         if result.success:
+            if result.response:
+                output = result.response.response.output
+
             final = LLMChainResponse(
                 response=result.response.response,
                 usage=result.usage,
                 provider_raw_response=result.response.provider_raw_response,
             )
+            callback_final = final.model_copy(deep=True)
+            self._resolve_presigned_url(callback_final.response.output)
+
             callback_response = APIResponse.success_response(
-                data=final, metadata=self._request.request_metadata
+                data=callback_final, metadata=self._request.request_metadata
             )
             if self._request.callback_url:
                 send_callback(
                     callback_url=str(self._request.callback_url),
                     data=callback_response.model_dump(),
+                    webhook_secret=self._webhook_secret,
                 )
             with Session(engine) as session:
                 JobCrud(session).update(
@@ -86,7 +116,7 @@ class ChainExecutor:
                     session=session,
                     chain_id=self._context.chain_id,
                     status=ChainStatus.COMPLETED,
-                    output=result.response.response.output.model_dump(),
+                    output=output.model_dump(),
                     total_usage=self._context.aggregated_usage.model_dump(),
                 )
             return callback_response.model_dump()
@@ -98,7 +128,7 @@ class ChainExecutor:
             error=error or "Unknown error occurred",
             metadata=self._request.request_metadata,
         )
-        logger.error(
+        logger.warning(
             f"[_handle_error] Chain execution failed | "
             f"chain_id={self._context.chain_id}, job_id={self._context.job_id}, error={error}"
         )
@@ -107,6 +137,7 @@ class ChainExecutor:
             send_callback(
                 callback_url=str(self._request.callback_url),
                 data=callback_response.model_dump(),
+                webhook_secret=self._webhook_secret,
             )
 
         with Session(engine) as session:
@@ -152,6 +183,9 @@ class ChainExecutor:
     ) -> None:
         """Send intermediate callback for a completed block."""
         try:
+            if result.response:
+                self._resolve_presigned_url(result.response.response.output)
+
             intermediate = IntermediateChainResponse(
                 block_index=block_index + 1,
                 total_blocks=self._context.total_blocks,
@@ -166,6 +200,7 @@ class ChainExecutor:
             send_callback(
                 callback_url=str(self._request.callback_url),
                 data=callback_data.model_dump(),
+                webhook_secret=self._webhook_secret,
             )
             logger.info(
                 f"[_send_intermediate_callback] Sent intermediate callback | "

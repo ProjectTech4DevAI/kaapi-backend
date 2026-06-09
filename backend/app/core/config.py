@@ -104,6 +104,17 @@ class Settings(BaseSettings):
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
 
+    # GCP Vertex AI platform defaults. Used when a project does not register
+    # its own google-vertex credential row (BYOK is all-or-nothing — see the
+    # Provider.GOOGLE_VERTEX comment in app/core/providers.py).
+    GCP_VERTEX_API_KEY: str = ""
+    GCP_VERTEX_LOCATION: str = ""
+    GCP_PROJECT_ID: str = ""
+    # Filesystem path to the platform-default GCP service-account JSON.
+    # Used by the registry fallback when a project has no google-vertex row.
+    GCP_SA_KEY: str = ""
+    GCS_AUDIO_BUCKET: str = ""
+
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672
@@ -137,6 +148,13 @@ class Settings(BaseSettings):
     LOG_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
     OTEL_ENABLED: bool = False
     OTEL_SERVICE_NAME: str = "kaapi-backend"
+    BACKEND_SERVICE_NAME: str = "kaapi-backend"
+    CRON_SERVICE_NAME: str = "kaapi-cron"
+
+    # Threshold Request Rate per minute
+    THRESHOLD_LLM_CALL_RATE: int = 15
+    THRESHOLD_COLLECTIONS_RATE: int = 3
+    THRESHOLD_EVALUATIONS_RATE: int = 3
 
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
@@ -155,6 +173,19 @@ class Settings(BaseSettings):
     # callback timeouts and limits
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10
+
+    # Evaluation cron invocation interval (minutes). In staging/production the
+    # endpoint is triggered by AWS EventBridge on this cadence; locally it can
+    # be driven by scripts/python/invoke-cron.py. The Sentry cron monitor reads
+    # this same value so its expected schedule stays aligned with the trigger.
+    CRON_INTERVAL_MINUTES: int = 5
+
+    PENDING_JOB_MONITOR_INTERVAL_MINUTES: int = 5
+    PENDING_RECENT_GRACE_MINUTES: int = 3
+    LLM_PENDING_THRESHOLD_MINUTES: int = 30
+    COLLECTION_PENDING_THRESHOLD_MINUTES: int = 30
+    DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
+    PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -154,7 +154,7 @@ class TestGetMultipleTransformationJobs:
         job_ids_params = "&".join(f"job_ids={job.id}" for job in jobs)
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?{job_ids_params}",
+            f"{settings.API_V1_STR}/documents/transformation?{job_ids_params}",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -186,7 +186,7 @@ class TestGetMultipleTransformationJobs:
         )
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?{job_ids_params}",
+            f"{settings.API_V1_STR}/documents/transformation?{job_ids_params}",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -201,7 +201,7 @@ class TestGetMultipleTransformationJobs:
     ) -> None:
         """Test retrieving jobs with empty job_ids parameter."""
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?job_ids=",
+            f"{settings.API_V1_STR}/documents/transformation?job_ids=",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -221,7 +221,7 @@ class TestGetMultipleTransformationJobs:
     ) -> None:
         """Test retrieving jobs with whitespace-only job_ids."""
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?job_ids=   ",
+            f"{settings.API_V1_STR}/documents/transformation?job_ids=   ",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -239,7 +239,7 @@ class TestGetMultipleTransformationJobs:
         invalid_uuid = "not-a-uuid"
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?job_ids={invalid_uuid}",
+            f"{settings.API_V1_STR}/documents/transformation?job_ids={invalid_uuid}",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -266,7 +266,7 @@ class TestGetMultipleTransformationJobs:
         job_ids_params = f"job_ids={job.id}&job_ids=not-a-uuid"
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?{job_ids_params}",
+            f"{settings.API_V1_STR}/documents/transformation?{job_ids_params}",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -288,7 +288,7 @@ class TestGetMultipleTransformationJobs:
     ) -> None:
         """Missing job_ids parameter should 422 (Query(min=1))."""
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/",
+            f"{settings.API_V1_STR}/documents/transformation",
             headers={"X-API-KEY": user_api_key.key},
         )
 
@@ -314,7 +314,7 @@ class TestGetMultipleTransformationJobs:
         job = crud.create(DocTransformJobCreate(source_document_id=document.id))
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?job_ids={job.id}",
+            f"{settings.API_V1_STR}/documents/transformation?job_ids={job.id}",
             headers={"X-API-KEY": superuser_api_key.key},
         )
 
@@ -357,7 +357,7 @@ class TestGetMultipleTransformationJobs:
         job_ids_params = "&".join(f"job_ids={job.id}" for job in jobs)
 
         response = client.get(
-            f"{settings.API_V1_STR}/documents/transformation/?{job_ids_params}",
+            f"{settings.API_V1_STR}/documents/transformation?{job_ids_params}",
             headers={"X-API-KEY": user_api_key.key},
         )
 

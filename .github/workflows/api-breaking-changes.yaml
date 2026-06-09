@@ -1,0 +1,191 @@
+# Generate an API changelog by diffing the OpenAPI schema between base and HEAD.
+name: API Breaking Changes Check
+
+on:
+  pull_request:
+    branches: ["main"]
+    # Re-run when the approval label is added/removed so merge gating updates immediately.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+  # One run per PR. A new commit (or label toggle) cancels the in-flight run instead
+concurrency:
+  group: api-changes-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  breaking-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          path: head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout base ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Prepare env files
+        run: |
+          cp head/.env.test.example head/.env.test
+          cp head/.env.test.example base/.env.test
+
+      - name: Export base OpenAPI schema
+        working-directory: base/backend
+        env:
+          ENVIRONMENT: testing
+        run: |
+          uv sync --frozen
+          if [ -f scripts/kaapi_export_openapi.py ]; then
+            uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+          else
+            # Base ref predates this workflow; copy the HEAD script in to bootstrap.
+            cp "$GITHUB_WORKSPACE/head/backend/scripts/kaapi_export_openapi.py" scripts/
+            uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/base-openapi.yaml"
+          fi
+
+      - name: Export HEAD OpenAPI schema
+        working-directory: head/backend
+        env:
+          ENVIRONMENT: testing
+        run: |
+          uv sync --frozen
+          uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
+
+      - name: Generate diff (JSON)
+        env:
+          OASDIFF_IMAGE: tufin/oasdiff:latest
+        run: |
+          set -euo pipefail
+
+          run_diff() {
+            local cmd="$1" out="$2"
+            docker run --rm -v "$PWD:/specs" "$OASDIFF_IMAGE" \
+              "$cmd" /specs/base-openapi.yaml /specs/head-openapi.yaml \
+              --format json > "$out" || true
+            if ! jq -e . "$out" >/dev/null 2>&1; then
+              echo "[]" > "$out"
+            fi
+          }
+          run_diff changelog changelog.json
+          run_diff breaking  breaking.json
+
+          echo "breaking=$(jq 'length' breaking.json) changelog=$(jq 'length' changelog.json)"
+
+      - name: Debug raw oasdiff output
+        run: |
+          echo "=== breaking.json ==="
+          cat breaking.json || echo "(missing)"
+          echo
+          echo "=== changelog.json ==="
+          cat changelog.json || echo "(missing)"
+
+      - name: Build PR comment body
+        if: always()
+        run: |
+          plural() { if [ "$1" -ne 1 ]; then echo s; fi; }
+
+          # Render an oasdiff JSON array as a markdown table.
+          # Severity dot: red only for breaking (ERR), green for everything else
+          # (WARN / INFO — non-breaking additions like optional params).
+          to_table() {
+            jq -r '
+              def dot(lvl):
+                if lvl >= 2 then "🔴"
+                else "🟢" end;
+              if (. // []) | length == 0 then "_No entries._"
+              else
+                "|  | Method | Path | Change |",
+                "|:-:|:-:|:--|:--|",
+                (.[] | "| \(dot(.level)) | `\(.operation // "—")` | `\(.path // "—")` | \((.text // "") | gsub("[\r\n]+"; " ")) |")
+              end
+            ' "$1"
+          }
+
+          BREAKING=$(jq 'length' breaking.json)
+          CHANGES=$(jq 'length' changelog.json)
+
+          if [ "$BREAKING" -gt 0 ]; then
+            STATUS="🔴 **${BREAKING} breaking change$(plural $BREAKING)**"
+            ALERT='> [!CAUTION]'
+            HEADLINE="Downstream consumers may need an update before merging."
+            BREAKING_OPEN=" open"
+          elif [ "$CHANGES" -gt 0 ]; then
+            STATUS="🟢 **${CHANGES} non-breaking change$(plural $CHANGES)**"
+            ALERT='> [!TIP]'
+            HEADLINE="Safe to merge from an API-contract perspective."
+            BREAKING_OPEN=""
+          else
+            STATUS="⚪ **No API surface changes**"
+            ALERT='> [!NOTE]'
+            HEADLINE="This PR does not modify the API contract."
+            BREAKING_OPEN=""
+          fi
+
+          {
+            echo "## OpenAPI changes &nbsp; ${STATUS}"
+            echo
+            echo "${ALERT}"
+            echo "> ${HEADLINE}"
+            echo
+
+            if [ "$BREAKING" -gt 0 ]; then
+              echo "<details${BREAKING_OPEN}>"
+              echo "<summary><b>Breaking changes</b> &nbsp;·&nbsp; <code>${BREAKING}</code></summary>"
+              echo
+              to_table breaking.json
+              echo
+              echo "</details>"
+              echo
+            fi
+
+            if [ "$CHANGES" -gt 0 ]; then
+              echo "<details>"
+              echo "<summary><b>Full changelog</b> &nbsp;·&nbsp; <code>${CHANGES}</code></summary>"
+              echo
+              to_table changelog.json
+              echo
+              echo "</details>"
+              echo
+            fi
+
+            echo "<sub><code>${GITHUB_BASE_REF}</code> ↔ <code>${GITHUB_SHA::8}</code> · generated by <a href=\"https://github.com/oasdiff/oasdiff\">oasdiff</a></sub>"
+          } > comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: oasdiff
+          path: comment.md
+
+      - name: Enforce breaking-change gate
+        # Skip the hard fail when a reviewer has explicitly acknowledged the breaking change
+        # by applying the `breaking-change-approved` label to the PR.
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'breaking-change-approved') }}
+        run: |
+          set -euo pipefail
+          count=$(jq 'length' breaking.json)
+          if [ "$count" -gt 0 ]; then
+            echo "::error::${count} breaking change(s) detected. Apply the 'breaking-change-approved' label to override the gate."
+            exit 1
+          fi
+          echo "No breaking changes detected."

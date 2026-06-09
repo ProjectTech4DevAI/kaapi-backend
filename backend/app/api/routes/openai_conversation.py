@@ -100,7 +100,7 @@ def get_conversation_by_ancestor_id_route(
 
 
 @router.get(
-    "/",
+    "",
     response_model=APIResponse[list[OpenAIConversationPublic]],
     summary="List all conversations in the current project",
     description=load_description("openai_conversation/list.md"),

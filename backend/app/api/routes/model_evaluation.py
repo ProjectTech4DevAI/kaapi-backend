@@ -113,7 +113,7 @@ def run_model_evaluation(
 
 
 @router.post(
-    "/evaluate_models/",
+    "/evaluate_models",
     response_model=APIResponse,
     description=load_description("model_evaluation/evaluate.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -143,7 +143,7 @@ def evaluate_models(
     # even though the client will be initialized separately inside the background task
 
     if not request.fine_tuning_ids:
-        logger.error(
+        logger.warning(
             f"[evaluate_model] No fine tuning IDs provided | project_id:{current_user.project_.id}"
         )
         raise HTTPException(status_code=400, detail="No fine-tuned job IDs provided")

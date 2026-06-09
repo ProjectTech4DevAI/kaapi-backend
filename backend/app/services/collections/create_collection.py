@@ -4,6 +4,8 @@ from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from sqlmodel import Session
+from celery.exceptions import SoftTimeLimitExceeded
+from gevent import Timeout
 from asgi_correlation_id import correlation_id
 
 from app.core.cloud import get_cloud_storage
@@ -29,7 +31,7 @@ from app.services.collections.helpers import (
 )
 from app.services.collections.providers.registry import get_llm_provider
 from app.celery.utils import start_create_collection_job
-from app.utils import send_callback, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse
 
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,44 @@ def _mark_job_failed(
     except Exception:
         logger.warning("[create_collection.execute_job] Failed to mark job as FAILED")
         return None
+
+
+def _handle_job_failure(
+    span,
+    project_id: int,
+    organization_id: int,
+    job_id: str,
+    err: Exception,
+    collection_job: CollectionJob | None,
+    creation_request: CreationRequest | None,
+    provider=None,
+    result=None,
+) -> None:
+    """Record failure on span, clean up provider, mark job failed, and send failure callback."""
+    span.record_exception(err)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
+
+    if provider is not None and result is not None:
+        try:
+            provider.delete(result)
+        except Exception:
+            logger.warning("[create_collection.execute_job] Provider cleanup failed")
+
+    collection_job = _mark_job_failed(
+        project_id=project_id,
+        job_id=job_id,
+        err=err,
+        collection_job=collection_job,
+    )
+
+    if creation_request and creation_request.callback_url and collection_job:
+        failure_payload = build_failure_payload(collection_job, str(err))
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        send_callback(
+            str(creation_request.callback_url),
+            failure_payload,
+            webhook_secret=webhook_secret,
+        )
 
 
 def execute_job(
@@ -274,34 +314,49 @@ def execute_job(
             )
 
             if creation_request.callback_url:
-                send_callback(creation_request.callback_url, success_payload)
+                webhook_secret = get_webhook_secret(project_id, organization_id)
+                send_callback(
+                    str(creation_request.callback_url),
+                    success_payload,
+                    webhook_secret=webhook_secret,
+                )
+
+        except (Timeout, SoftTimeLimitExceeded) as err:
+            timeout_err = TimeoutError("Task exceeded soft time limit")
+            logger.warning(
+                "[create_collection.execute_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
+                job_id,
+                str(timeout_err),
+            )
+            _handle_job_failure(
+                span,
+                project_id,
+                organization_id,
+                job_id,
+                timeout_err,
+                collection_job,
+                creation_request,
+                provider,
+                result,
+            )
+            raise
 
         except Exception as err:
-            span.record_exception(err)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, str(err)))
             logger.error(
                 "[create_collection.execute_job] Collection Creation Failed | {'collection_job_id': '%s', 'error': '%s'}",
                 job_id,
                 str(err),
                 exc_info=True,
             )
-
-            if provider is not None and result is not None:
-                try:
-                    provider.delete(result)
-                except Exception:
-                    logger.warning(
-                        "[create_collection.execute_job] Provider cleanup failed"
-                    )
-
-            collection_job = _mark_job_failed(
-                project_id=project_id,
-                job_id=job_id,
-                err=err,
-                collection_job=collection_job,
+            _handle_job_failure(
+                span,
+                project_id,
+                organization_id,
+                job_id,
+                err,
+                collection_job,
+                creation_request,
+                provider,
+                result,
             )
-
-            if creation_request and creation_request.callback_url and collection_job:
-                failure_payload = build_failure_payload(collection_job, str(err))
-                send_callback(creation_request.callback_url, failure_payload)
             raise

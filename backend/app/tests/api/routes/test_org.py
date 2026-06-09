@@ -23,7 +23,7 @@ def test_create_organization(
     org_name = "Test-Org"
     org_data = {"name": org_name, "is_active": True}
     response = client.post(
-        f"{settings.API_V1_STR}/organizations/",
+        f"{settings.API_V1_STR}/organizations",
         json=org_data,
         headers=superuser_token_headers,
     )
@@ -43,7 +43,7 @@ def test_read_organizations(
     db: Session, superuser_token_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        f"{settings.API_V1_STR}/organizations/", headers=superuser_token_headers
+        f"{settings.API_V1_STR}/organizations", headers=superuser_token_headers
     )
     assert response.status_code == 200
     response_data = response.json()
@@ -101,7 +101,7 @@ def test_read_organizations_has_more(
     create_test_organization(db)
 
     response = client.get(
-        f"{settings.API_V1_STR}/organizations/?skip=0&limit=1",
+        f"{settings.API_V1_STR}/organizations?skip=0&limit=1",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200
@@ -111,7 +111,7 @@ def test_read_organizations_has_more(
 
     # Request all with large limit to verify has_more=False
     response = client.get(
-        f"{settings.API_V1_STR}/organizations/?skip=0&limit=100",
+        f"{settings.API_V1_STR}/organizations?skip=0&limit=100",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200

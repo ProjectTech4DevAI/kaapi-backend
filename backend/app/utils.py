@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import base64
 import functools as ft
+import hashlib
+import hmac
 import ipaddress
+import json
 import logging
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -24,6 +28,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.core import security
+from app.core.audio_utils import AudioRef
 from app.core.config import settings
 from app.crud.credentials import get_provider_credential
 from app.models.llm.request import (
@@ -40,6 +45,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 class ValidationErrorDetail(BaseModel):
@@ -205,6 +212,33 @@ def generate_invite_email(
     return EmailData(html_content=html_content, subject=subject)
 
 
+def generate_eval_completion_email(
+    *,
+    run_name: str,
+    project_name: str,
+    status: str,
+    completed_at: str,
+    link: str,
+    error_message: str | None = None,
+) -> EmailData:
+    app_name = settings.PROJECT_NAME
+    status_label = "Completed" if status == "completed" else "Failed"
+    subject = f"{app_name} - Evaluation {status_label}: {run_name}"
+    html_content = render_email_template(
+        template_name="eval_completion.html",
+        context={
+            "app_name": app_name,
+            "run_name": run_name,
+            "project_name": project_name,
+            "status_label": status_label,
+            "completed_at": completed_at,
+            "link": link,
+            "error_message": error_message,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)
+
+
 def generate_magic_link_email(*, email_to: str, magic_link_token: str) -> EmailData:
     app_name = settings.PROJECT_NAME
     subject = f"{app_name} - Sign in to your account"
@@ -258,7 +292,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     )
 
     if not credentials or "api_key" not in credentials:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] OpenAI credentials not found. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -269,7 +303,7 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     try:
         return OpenAI(api_key=credentials["api_key"])
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_openai_client] Failed to configure OpenAI client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -293,7 +327,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
     if not credentials or not all(
         key in credentials for key in ["public_key", "secret_key", "host"]
     ):
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Langfuse credentials not found or incomplete. | project_id: {project_id}"
         )
         raise HTTPException(
@@ -309,7 +343,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             timeout=60,
         )
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
@@ -410,7 +444,72 @@ def validate_callback_url(url: str) -> None:
         raise ValueError(f"Error validating callback URL: {str(e)}") from e
 
 
-def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
+def sign_webhook_payload(
+    secret: str, raw_body: bytes, timestamp_ms: int | None = None
+) -> tuple[str, int]:
+    """
+    Generate an HMAC-SHA256 signature for a webhook payload.
+
+    Signing string format: "<timestamp_ms>.<raw_body>"
+    The receiver must reconstruct the exact same signing string to verify.
+
+    Args:
+        secret: Shared HMAC secret (pre-registered by the receiver).
+        raw_body: Exact bytes that will be sent in the HTTP body.
+        timestamp_ms: Unix timestamp in milliseconds. Generated if not provided.
+
+    Returns:
+        (hex_signature, timestamp_ms)
+    """
+    if timestamp_ms is None:
+        timestamp_ms = int(time.time() * 1000)
+
+    signing_string = f"{timestamp_ms}.".encode() + raw_body
+    signature = hmac.new(
+        secret.encode(),
+        signing_string,
+        hashlib.sha256,
+    ).hexdigest()
+    return signature, timestamp_ms
+
+
+def require_organization_for_project(
+    project_id: int | None,
+    organization_id: int | None,
+) -> None:
+    """Raise 400 if project_id is provided without organization_id."""
+    if project_id is not None and organization_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="organization_id is required when project_id is set",
+        )
+
+
+def get_webhook_secret(
+    project_id: int | None, organization_id: int | None
+) -> str | None:
+    """Look up the configured webhook signing secret for this project, or None."""
+    if project_id is None or organization_id is None:
+        return None
+    # Imported lazily: app.core.db pulls in app.crud, which imports app.utils,
+    # so a top-level import here would deadlock module initialization.
+    from app.core.db import engine
+
+    with Session(engine) as session:
+        creds = get_provider_credential(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+            provider="webhook_secret",
+        )
+    return creds.get("webhook_secret") if isinstance(creds, dict) else None
+
+
+def send_callback(
+    callback_url: str,
+    data: dict[str, Any],
+    webhook_secret: str | None = None,
+) -> bool:
     """
     Send results to the callback URL (synchronously) with SSRF protection.
 
@@ -422,10 +521,13 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     - DNS rebinding protection
     - Redirect following disabled
     - Strict timeouts
+    - Optional HMAC-SHA256 signing when webhook_secret is provided
 
     Args:
         callback_url: The HTTPS URL to send the callback to
         data: The JSON data to send in the POST request
+        webhook_secret: If provided, sign the request with HMAC-SHA256 and
+            attach X-Webhook-Signature / X-Webhook-Timestamp headers.
 
     Returns:
         bool: True if callback succeeded, False otherwise
@@ -433,16 +535,23 @@ def send_callback(callback_url: str, data: dict[str, Any]) -> bool:
     try:
         validate_callback_url(str(callback_url))
     except ValueError as ve:
-        logger.error(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
+        logger.warning(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
-
     try:
+        raw_body = json.dumps(data, separators=(",", ":")).encode()
+        headers = {"Content-Type": "application/json"}
+
+        if webhook_secret:
+            signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
+            headers["X-Webhook-Signature"] = signature
+            headers["X-Webhook-Timestamp"] = str(timestamp_ms)
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
             response = session.post(
                 callback_url,
-                json=data,
+                data=raw_body,
+                headers=headers,
                 timeout=(
                     settings.CALLBACK_CONNECT_TIMEOUT,
                     settings.CALLBACK_READ_TIMEOUT,
@@ -492,25 +601,71 @@ def get_file_extension(mime_type: str) -> str:
     return mime_to_ext.get(mime_type, ".audio")
 
 
-def resolve_audio_base64(data: str, mime_type: str) -> tuple[str, str | None]:
-    """Decode base64 audio and write to temp file. Returns (file_path, error)."""
+def resolve_audio_base64(
+    data: str, mime_type: str
+) -> tuple["AudioRef | None", str | None]:
+    """Decode base64 audio into an in-memory AudioRef."""
     try:
         audio_bytes = base64.b64decode(data)
     except Exception as e:
-        return "", f"Invalid base64 audio data: {str(e)}"
+        return None, f"Invalid base64 audio data: {str(e)}"
+    return AudioRef(bytes_=audio_bytes, mime_type=mime_type), None
 
-    ext = get_file_extension(mime_type)
+
+def download_audio_bytes(url: str) -> tuple[bytes | None, str | None]:
+    """Download audio from a public URL. Returns (bytes, error)."""
     try:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, prefix="audio_"
-        ) as tmp:
-            tmp.write(audio_bytes)
-            temp_path = tmp.name
+        validate_callback_url(str(url))
+    except ValueError as e:
+        logger.error(
+            f"[download_audio_bytes] Invalid public url URL, only supports HTTPS prefixed URLs.: {e}",
+            exc_info=True,
+        )
+        return None, f"[download_audio_bytes] Invalid public URL: {e}"
 
-        logger.info(f"[resolve_audio_base64] Wrote audio to temp file: {temp_path}")
-        return temp_path, None
+    try:
+        with requests.get(url, timeout=30, stream=True) as resp:
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "")
+            if not content_type.startswith("audio/"):
+                logger.error(
+                    f"[download_audio_bytes] Unexpected Content-Type: {content_type}"
+                )
+                return None, f"Unexpected Content-Type: {content_type}"
+
+            length = resp.headers.get("Content-Length")
+            if length and int(length) > MAX_AUDIO_SIZE:
+                logger.error(
+                    f"[download_audio_bytes] File too large: {length} bytes. Upto 50 MB audio files are allowed."
+                )
+                return None, f"File too large : {length} bytes."
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > MAX_AUDIO_SIZE:
+                    logger.error(
+                        f"[download_audio_bytes] File size exceeded max size of 50MB during download."
+                    )
+                    return None, "File exceeded max size during download."
+                chunks.append(chunk)
+
+            return b"".join(chunks), None
+    except requests.exceptions.Timeout:
+        return None, f"Timed out downloading audio from URL: {url}"
+    except requests.exceptions.HTTPError as e:
+        return None, f"HTTP {e.response.status_code} downloading audio from URL: {url}"
     except Exception as e:
-        return "", f"Failed to write audio to temp file: {str(e)}"
+        return None, f"Failed to download audio from URL: {str(e)}"
+
+
+def resolve_audio_url(url: str, mime_type: str) -> tuple["AudioRef | None", str | None]:
+    """Download audio from a public URL into an in-memory AudioRef."""
+    audio_bytes, error = download_audio_bytes(url)
+    if error or not audio_bytes:
+        return None, error
+    return AudioRef(bytes_=audio_bytes, mime_type=mime_type), None
 
 
 def resolve_image_content(image_input: ImageInput) -> list[ImageContent]:
@@ -539,15 +694,19 @@ def resolve_pdf_content(pdf_input: PDFInput) -> list[PDFContent]:
 
 def resolve_input(
     query_input,
-) -> tuple[str | list[ImageContent] | list[PDFContent] | "MultiModalInput", str | None]:
+) -> tuple[
+    "str | AudioRef | list[ImageContent] | list[PDFContent] | MultiModalInput | None",
+    str | None,
+]:
     """Resolve query input to provider-ready format.
 
     Returns:
-        - TextInput/AudioInput: (str, None)
+        - TextInput: (str, None)
+        - AudioInput: (AudioRef, None)
         - ImageInput: (list[ImageContent], None)
         - PDFInput: (list[PDFContent], None)
         - list[QueryInput]: (MultiModalInput, None)
-        - Error: ("", error_message)
+        - Error: (None, error_message)
     """
 
     try:
@@ -556,6 +715,8 @@ def resolve_input(
 
         elif isinstance(query_input, AudioInput):
             mime_type = query_input.content.mime_type or "audio/wav"
+            if query_input.content.format == "url":
+                return resolve_audio_url(query_input.content.value, mime_type)
             return resolve_audio_base64(query_input.content.value, mime_type)
 
         elif isinstance(query_input, ImageInput):
@@ -575,22 +736,22 @@ def resolve_input(
                     parts.extend(resolve_pdf_content(item))
                 elif isinstance(item, AudioInput):
                     return (
-                        "",
+                        None,
                         "Audio input is not supported in multimodal. Please use completion type 'stt' for audio processing.",
                     )
                 else:
                     return (
-                        "",
+                        None,
                         "Unsupported input type in multimodal list. Multimodal only supports text, image, and pdf inputs.",
                     )
             return MultiModalInput(parts=parts), None
 
         else:
-            return "", f"Unknown input type: {type(query_input)}"
+            return None, f"Unknown input type: {type(query_input)}"
 
     except Exception as e:
-        logger.error(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
-        return "", f"Failed to resolve input: {str(e)}"
+        logger.warning(f"[resolve_input] Failed to resolve input: {e}", exc_info=True)
+        return None, f"Failed to resolve input: {str(e)}"
 
 
 def cleanup_temp_file(file_path: str) -> None:

@@ -70,11 +70,11 @@ class TestElevenlabsProviderSTT:
         return QueryParams(input="Test audio input")
 
     @pytest.fixture
-    def temp_audio_file(self, tmp_path):
-        """Create a temporary audio file for testing."""
-        audio_file = tmp_path / "test_audio.wav"
-        audio_file.write_bytes(b"fake audio data")
-        return str(audio_file)
+    def temp_audio_file(self):
+        """Resolved STT input handle (provider materializes temp file internally)."""
+        from app.core.audio_utils import AudioRef
+
+        return AudioRef(bytes_=b"fake audio data", mime_type="audio/wav")
 
     def test_stt_success_basic_transcription(
         self, provider, mock_client, stt_config, query_params, temp_audio_file
@@ -156,16 +156,17 @@ class TestElevenlabsProviderSTT:
         call_kwargs = mock_client.speech_to_text.convert.call_args.kwargs
         assert call_kwargs["model_id"] == "scribe_v2"
 
-    def test_stt_invalid_file_path(
+    def test_stt_rejects_non_audioref_input(
         self, provider, mock_client, stt_config, query_params
     ):
-        """Test STT with non-existent file path."""
+        """STT requires AudioRef; raw path strings are no longer accepted."""
         result, error = provider.execute(
             stt_config, query_params, "/nonexistent/path/audio.wav"
         )
 
         assert result is None
         assert error is not None
+        assert "AudioRef input" in error
 
     def test_stt_api_exception(
         self, provider, mock_client, stt_config, query_params, temp_audio_file

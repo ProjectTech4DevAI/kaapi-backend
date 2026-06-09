@@ -3,10 +3,9 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 
-
 PROTECTED_ENDPOINTS = [
-    (f"{settings.API_V1_STR}/collections/", "GET"),
-    (f"{settings.API_V1_STR}/collections/", "POST"),
+    (f"{settings.API_V1_STR}/collections", "GET"),
+    (f"{settings.API_V1_STR}/collections", "POST"),
     (f"{settings.API_V1_STR}/collections/12345678-1234-5678-1234-567812345678", "GET"),
     (
         f"{settings.API_V1_STR}/collections/12345678-1234-5678-1234-567812345678",
@@ -16,8 +15,8 @@ PROTECTED_ENDPOINTS = [
         f"{settings.API_V1_STR}/collections/jobs/12345678-1234-5678-1234-567812345678",
         "GET",
     ),
-    (f"{settings.API_V1_STR}/documents/", "GET"),
-    (f"{settings.API_V1_STR}/documents/", "POST"),
+    (f"{settings.API_V1_STR}/documents", "GET"),
+    (f"{settings.API_V1_STR}/documents", "POST"),
     (f"{settings.API_V1_STR}/documents/12345678-1234-5678-1234-567812345678", "GET"),
     (f"{settings.API_V1_STR}/documents/12345678-1234-5678-1234-567812345678", "DELETE"),
     (
@@ -25,8 +24,9 @@ PROTECTED_ENDPOINTS = [
         "GET",
     ),
     (f"{settings.API_V1_STR}/cron/evaluations", "GET"),
-    (f"{settings.API_V1_STR}/evaluations/datasets/", "POST"),
-    (f"{settings.API_V1_STR}/evaluations/datasets/", "GET"),
+    (f"{settings.API_V1_STR}/cron/pending-jobs", "GET"),
+    (f"{settings.API_V1_STR}/evaluations/datasets", "POST"),
+    (f"{settings.API_V1_STR}/evaluations/datasets", "GET"),
     (
         f"{settings.API_V1_STR}/evaluations/datasets/12345678-1234-5678-1234-567812345678",
         "GET",

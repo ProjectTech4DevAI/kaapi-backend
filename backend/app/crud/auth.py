@@ -41,7 +41,7 @@ def get_user_accessible_projects(*, session: Session, user_id: int) -> list[dict
         .where(
             and_(
                 APIKey.user_id == user_id,
-                APIKey.is_deleted.is_(False),
+                APIKey.deleted_at.is_(None),
                 Organization.is_active.is_(True),
                 Project.is_active.is_(True),
             )

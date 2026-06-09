@@ -2,17 +2,19 @@ import logging
 from uuid import UUID
 from typing import List
 
-from fastapi import APIRouter, Query, Body, Depends
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from fastapi import Path as FastPath
 
 from app.api.deps import SessionDep, AuthContextDep
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
+from app.core.rate_monitor import monitor_rate
 from app.crud import (
     CollectionCrud,
     CollectionJobCrud,
     DocumentCollectionCrud,
 )
+from app.crud.collection.collection import CollectionNameConflictError
 from app.core.cloud import get_cloud_storage
 from app.models import (
     CollectionJobStatus,
@@ -27,6 +29,7 @@ from app.models.collection import (
     CallbackRequest,
     DeletionRequest,
     CollectionPublic,
+    CollectionUpdate,
 )
 from app.utils import APIResponse, load_description, validate_callback_url
 from app.services.collections.helpers import ensure_unique_name, to_collection_public
@@ -60,7 +63,7 @@ def collection_callback_notification(body: APIResponse[CollectionJobPublic]):
 
 
 @router.get(
-    "/",
+    "",
     description=load_description("collections/list.md"),
     response_model=APIResponse[List[CollectionPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
@@ -79,11 +82,14 @@ def list_collections(
 
 
 @router.post(
-    "/",
+    "",
     description=load_description("collections/create.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("collections")),
+    ],
 )
 def create_collection(
     session: SessionDep,
@@ -199,6 +205,43 @@ def delete_collection(
         return APIResponse.success_response(
             CollectionJobImmediatePublic.model_validate(collection_job)
         )
+
+
+@router.patch(
+    "/{collection_id}",
+    description=load_description("collections/update.md"),
+    response_model=APIResponse[CollectionPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def update_collection(
+    session: SessionDep,
+    current_user: AuthContextDep,
+    patch: CollectionUpdate,
+    collection_id: UUID = FastPath(description="Collection to update"),
+) -> APIResponse[CollectionPublic]:
+    with log_context(
+        tag="collection",
+        system="collection",
+        lifecycle="api.collection.update",
+        action="update",
+        collection_id=collection_id,
+        project_id=current_user.project_.id,
+        organization_id=current_user.organization_.id,
+    ):
+        collection_crud = CollectionCrud(session, current_user.project_.id)
+        try:
+            collection = collection_crud.update(collection_id, patch)
+        except CollectionNameConflictError as err:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Collection '{err.name}' already exists. Choose a different name.",
+            )
+
+        logger.info(
+            f"[update_collection] Collection updated | {{'collection_id': '{collection_id}'}}"
+        )
+
+        return APIResponse.success_response(to_collection_public(collection))
 
 
 @router.get(

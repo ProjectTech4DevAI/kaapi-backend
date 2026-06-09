@@ -14,6 +14,8 @@ from app.models.llm.request import (
     QueryInput,
     ImageInput,
     PDFInput,
+    LLMCallConfig,
+    QueryParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,15 @@ def serialize_input(query_input: QueryInput | str) -> str:
     elif isinstance(query_input, TextInput):
         return query_input.content.value
     elif isinstance(query_input, AudioInput):
+        if query_input.content.format == "url":
+            return json.dumps(
+                {
+                    "type": "audio",
+                    "format": "url",
+                    "mime_type": query_input.content.mime_type,
+                    "url": query_input.content.value,
+                }
+            )
         return json.dumps(
             {
                 "type": "audio",
@@ -116,7 +127,7 @@ def create_llm_call(
         }
     else:
         config_dict = {
-            "config_blob": resolved_config.model_dump(),
+            "config_blob": resolved_config.model_dump(mode="json"),
         }
 
     # Extract conversation info if present
@@ -187,11 +198,12 @@ def update_llm_call_response(
         db_llm_call.provider_response_id = provider_response_id
 
     if content is not None:
-        # For audio outputs (AudioOutput model): calculate size metadata from base64 content
-        # AudioOutput serializes as: {"type": "audio", "content": {"format": "base64", "value": "...", "mime_type": "..."}}
+        # For audio outputs: calculate size only when content is still base64 (not a URI)
         if content.get("type") == "audio":
-            audio_value = content.get("content", {}).get("value")
-            if audio_value:
+            audio_content = content.get("content", {})
+            audio_format = audio_content.get("format")
+            audio_value = audio_content.get("value")
+            if audio_value and audio_format == "base64":
                 try:
                     audio_data = base64.b64decode(audio_value)
                     content["audio_size_bytes"] = len(audio_data)
@@ -216,6 +228,95 @@ def update_llm_call_response(
     logger.info(f"[update_llm_call_response] Updated LLM call id={llm_call_id}")
 
     return db_llm_call
+
+
+def update_llm_call_input(
+    session: Session,
+    llm_call_id: UUID,
+    s3_uri: str,
+) -> None:
+    """Overwrite llm_call.input with an S3 URI after uploading STT audio."""
+    db_llm_call = session.get(LlmCall, llm_call_id)
+    if not db_llm_call:
+        logger.warning(
+            f"[update_llm_call_input] LLM call not found | llm_call_id={llm_call_id}"
+        )
+        return
+    db_llm_call.input = s3_uri
+    db_llm_call.updated_at = now()
+    session.add(db_llm_call)
+    session.commit()
+    logger.info(
+        f"[update_llm_call_input] Updated input URI | llm_call_id={llm_call_id}"
+    )
+
+
+def save_rephrase_guardrail_call(
+    *,
+    session: Session,
+    query: QueryParams,
+    config: LLMCallConfig,
+    request_metadata: dict | None,
+    config_blob: ConfigBlob,
+    guardrail_direct_response: str,
+    job_id: UUID,
+    project_id: int,
+    organization_id: int,
+    chain_id: UUID | None,
+) -> UUID | None:
+    """Persist the LLM call record for a guardrail rephrase response.
+
+    Returns the llm_call_id on success, None if the DB write fails (non-fatal).
+    """
+    try:
+        rephrase_call_request = LLMCallRequest(
+            query=query,
+            config=config,
+            request_metadata=request_metadata,
+        )
+        rephrase_llm_call = create_llm_call(
+            session,
+            request=rephrase_call_request,
+            job_id=job_id,
+            project_id=project_id,
+            organization_id=organization_id,
+            resolved_config=config_blob,
+            original_provider=str(config_blob.completion.provider),
+            chain_id=chain_id,
+        )
+        try:
+            update_llm_call_response(
+                session,
+                llm_call_id=rephrase_llm_call.id,
+                provider_response_id=None,
+                content={
+                    "type": "text",
+                    "content": {
+                        "format": "text",
+                        "value": guardrail_direct_response,
+                    },
+                },
+                # No LLM was invoked, so token counts are genuinely zero.
+                usage={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
+            )
+        except Exception:
+            try:
+                session.delete(rephrase_llm_call)
+                session.commit()
+            except Exception:
+                pass
+            raise
+        return rephrase_llm_call.id
+    except Exception as e:
+        logger.error(
+            f"[save_rephrase_guardrail_call] Failed to record rephrase guardrail call: {e} | job_id={job_id}",
+            exc_info=True,
+        )
+        return None
 
 
 def get_llm_call_by_id(
@@ -244,7 +345,7 @@ def get_llm_calls_by_job_id(
             LlmCall.project_id == project_id,
             LlmCall.deleted_at.is_(None),
         )
-        .order_by(LlmCall.created_at.desc())
+        .order_by(LlmCall.inserted_at.desc())
     )
 
     return list(session.exec(statement).all())

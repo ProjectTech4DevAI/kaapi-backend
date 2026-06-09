@@ -41,7 +41,7 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
     try:
         dataset = langfuse.get_dataset(dataset_name)
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"[fetch_dataset_items] Failed to fetch dataset | dataset={dataset_name} | {e}"
         )
         raise ValueError(f"Dataset '{dataset_name}' not found: {e}")

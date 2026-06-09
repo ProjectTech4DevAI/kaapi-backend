@@ -1,3 +1,4 @@
+import json
 import socket
 from typing import Any
 import requests
@@ -5,7 +6,15 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from app.utils import _is_private_ip, validate_callback_url, send_callback
+import hashlib
+import hmac
+
+from app.utils import (
+    _is_private_ip,
+    validate_callback_url,
+    send_callback,
+    sign_webhook_payload,
+)
 
 
 class TestIsPrivateIP:
@@ -326,5 +335,46 @@ class TestSendCallback:
         send_callback("https://api.example.com/callback", test_data)
 
         call_kwargs = mock_session.post.call_args[1]
-        assert "json" in call_kwargs
-        assert call_kwargs["json"] == test_data
+        # Body is now pre-serialized so HMAC signs the exact bytes we send.
+        assert "data" in call_kwargs
+        assert (
+            call_kwargs["data"] == json.dumps(test_data, separators=(",", ":")).encode()
+        )
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
+        # No webhook_secret passed → no signature headers.
+        assert "X-Webhook-Signature" not in call_kwargs["headers"]
+        assert "X-Webhook-Timestamp" not in call_kwargs["headers"]
+
+
+class TestSignWebhookPayload:
+    def test_returns_hex_signature_and_timestamp(self):
+        sig, ts = sign_webhook_payload("secret", b"body")
+        assert isinstance(sig, str) and len(sig) == 64  # sha256 hex
+        assert isinstance(ts, int) and ts > 0
+
+    def test_deterministic_with_fixed_timestamp(self):
+        body = b'{"key":"value"}'
+        sig1, _ = sign_webhook_payload("secret", body, timestamp_ms=1000)
+        sig2, _ = sign_webhook_payload("secret", body, timestamp_ms=1000)
+        assert sig1 == sig2
+
+    def test_different_secrets_produce_different_signatures(self):
+        body = b"payload"
+        sig1, _ = sign_webhook_payload("secret-a", body, timestamp_ms=1000)
+        sig2, _ = sign_webhook_payload("secret-b", body, timestamp_ms=1000)
+        assert sig1 != sig2
+
+    def test_different_timestamps_produce_different_signatures(self):
+        body = b"payload"
+        sig1, _ = sign_webhook_payload("secret", body, timestamp_ms=1000)
+        sig2, _ = sign_webhook_payload("secret", body, timestamp_ms=2000)
+        assert sig1 != sig2
+
+    def test_signature_matches_manual_hmac(self):
+        secret, body, ts = "mysecret", b"hello", 999
+        expected = hmac.new(
+            secret.encode(), f"{ts}.".encode() + body, hashlib.sha256
+        ).hexdigest()
+        sig, returned_ts = sign_webhook_payload(secret, body, timestamp_ms=ts)
+        assert sig == expected
+        assert returned_ts == ts

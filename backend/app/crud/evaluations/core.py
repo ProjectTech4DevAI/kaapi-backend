@@ -13,6 +13,7 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -25,6 +26,7 @@ def resolve_evaluation_config(
     config_id: UUID,
     config_version: int,
     project_id: int,
+    tag: ConfigTag = ConfigTag.DEFAULT,
 ) -> tuple[ConfigBlob | None, str | None]:
     """
     Resolve config blob from stored config management.
@@ -42,6 +44,7 @@ def resolve_evaluation_config(
         session=session,
         config_id=config_id,
         project_id=project_id,
+        tag=tag,
     )
 
     return resolve_config_blob(
@@ -188,6 +191,9 @@ def get_evaluation_run_by_id(
     return eval_run
 
 
+TERMINAL_EVAL_STATUSES = {"completed", "failed"}
+
+
 def update_evaluation_run(
     session: Session,
     eval_run: EvaluationRun,
@@ -199,8 +205,22 @@ def update_evaluation_run(
     Only fields explicitly set on `update` are applied (`exclude_unset=True`
     semantics), so callers don't accidentally clear unrelated columns.
     `updated_at` is always bumped.
+
+    When the update transitions the run into a terminal status (`completed`
+    or `failed`) for the first time, enqueues a Celery task to send
+    completion notifications. The downstream task re-checks the
+    `notification` table for existing rows so a duplicate enqueue is a
+    no-op rather than a duplicate send.
     """
-    for field_name, new_value in update.model_dump(exclude_unset=True).items():
+    update_fields = update.model_dump(exclude_unset=True)
+    incoming_status = update_fields.get("status")
+    previous_status = eval_run.status
+    should_notify = (
+        incoming_status in TERMINAL_EVAL_STATUSES
+        and previous_status not in TERMINAL_EVAL_STATUSES
+    )
+
+    for field_name, new_value in update_fields.items():
         setattr(eval_run, field_name, new_value)
 
     eval_run.updated_at = now()
@@ -215,7 +235,33 @@ def update_evaluation_run(
         logger.error(f"Failed to update EvaluationRun: {e}", exc_info=True)
         raise
 
+    if should_notify:
+        _enqueue_eval_completion_notification(eval_run)
+
     return eval_run
+
+
+def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
+    """Enqueue the completion email task, swallowing broker errors.
+
+    Imported lazily to avoid a circular import: the celery task module
+    pulls in CRUD helpers via `app.crud.user_project`, which would loop
+    back through `app.crud` package init.
+    """
+    try:
+        from app.celery.tasks.notifications import send_eval_completion_notification
+
+        send_eval_completion_notification.delay(eval_run.id)
+        logger.info(
+            f"[update_evaluation_run] Enqueued completion notification | "
+            f"evaluation_id={eval_run.id} | status={eval_run.status}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[update_evaluation_run] Failed to enqueue completion notification | "
+            f"evaluation_id={eval_run.id} | error={e}",
+            exc_info=True,
+        )
 
 
 def get_or_fetch_score(
@@ -269,6 +315,7 @@ def get_or_fetch_score(
         langfuse=langfuse,
         dataset_name=eval_run.dataset_name,
         run_name=eval_run.run_name,
+        project_id=eval_run.project_id,
     )
 
     # Merge summary_scores: existing scores + new scores from Langfuse

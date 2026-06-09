@@ -16,6 +16,7 @@ from app.models.llm import (
     ImageContent,
     PDFContent,
 )
+from app.models.llm.constants import DEFAULT_TEXT_MODELS
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class OpenAIProvider(BaseProvider):
             params = {
                 **completion_config.params,
             }
+            params["model"] = params.get("model") or DEFAULT_TEXT_MODELS["openai"]
             if isinstance(resolved_input, MultiModalInput):
                 params["input"] = [
                     {"role": "user", "content": self.format_parts(resolved_input.parts)}
@@ -141,7 +143,7 @@ class OpenAIProvider(BaseProvider):
             from app.utils import handle_openai_error
 
             error_message = handle_openai_error(e)
-            logger.error(
+            logger.warning(
                 f"[OpenAIProvider.execute] OpenAI API error: {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )

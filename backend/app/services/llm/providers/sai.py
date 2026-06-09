@@ -3,6 +3,7 @@ import os
 import uuid
 from typing import Any
 from sarvamai import SarvamAI
+from app.core.audio_utils import AudioRef
 from app.models.llm import (
     NativeCompletionConfig,
     LLMCallResponse,
@@ -11,6 +12,10 @@ from app.models.llm import (
     LLMResponse,
     Usage,
     TextContent,
+)
+from app.models.llm.constants import (
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
 )
 from app.models.llm.response import AudioOutput
 from app.models.llm.request import AudioContent
@@ -56,14 +61,15 @@ class SarvamAIProvider(BaseProvider):
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
-        resolved_input: str,
+        resolved_input: "AudioRef",
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
         """Execute speech-to-text completion using SarvamAI.
 
         Args:
             completion_config: Configuration for the completion request (with already-mapped params)
-            resolved_input: File path to the audio input
+            resolved_input: ``AudioRef`` carrying the audio bytes; materialized to a temp file
+                because the SarvamAI SDK only accepts a file-like.
             include_provider_raw_response: Whether to include raw provider response
 
         Returns:
@@ -72,38 +78,29 @@ class SarvamAIProvider(BaseProvider):
         provider_name = completion_config.provider
         params = completion_config.params
 
+        if not isinstance(resolved_input, AudioRef):
+            return None, f"{provider_name} STT requires AudioRef input"
+
         # Extract already-mapped parameters from the mapper
-        model = params.get("model") or "saaras:v3"
+        model = params.get("model") or DEFAULT_SARVAM_STT_MODEL
         language_code = params.get("language_code")
         mode = params.get("mode") or "transcribe"
 
-        # Parse and validate input
-        parsed_input_path = self._parse_input(
-            query_input=resolved_input,
-            completion_type="stt",
-            provider=provider_name,
-        )
-
         try:
-            # Build kwargs for API call, only including non-None parameters
-            stt_kwargs = {
-                "file": None,  # Will be set below
-                "model": model,
-            }
+            with resolved_input.to_path() as parsed_input_path:
+                stt_kwargs = {"file": None, "model": model}
 
-            if language_code:
-                stt_kwargs["language_code"] = language_code
+                if language_code:
+                    stt_kwargs["language_code"] = language_code
+                if mode:
+                    stt_kwargs["mode"] = mode
 
-            # mode only applies to saaras:v3 model
-            if mode:
-                stt_kwargs["mode"] = mode
+                with open(parsed_input_path, "rb") as audio_file:
+                    stt_kwargs["file"] = audio_file
+                    sarvam_response = self.client.speech_to_text.transcribe(
+                        **stt_kwargs
+                    )
 
-            with open(parsed_input_path, "rb") as audio_file:
-                # Call SarvamAI transcribe with mapped parameters
-                stt_kwargs["file"] = audio_file
-                sarvam_response = self.client.speech_to_text.transcribe(**stt_kwargs)
-
-            # Estimate token usage (not directly provided by SarvamAI STT)
             input_tokens_estimate = 0
             output_tokens_estimate = len(sarvam_response.transcript.split())
             total_tokens_estimate = input_tokens_estimate + output_tokens_estimate
@@ -164,7 +161,7 @@ class SarvamAIProvider(BaseProvider):
         params = completion_config.params
 
         # Extract already-mapped parameters from the mapper
-        model = params.get("model") or "bulbul:v3"
+        model = params.get("model") or DEFAULT_SARVAM_TTS_MODEL
         target_language_code = params.get("target_language_code")
         if not target_language_code:
             return (
@@ -283,7 +280,7 @@ class SarvamAIProvider(BaseProvider):
 
         except ValueError as e:
             error_message = f"Input validation error: {str(e)}"
-            logger.error(
+            logger.warning(
                 f"[SarvamAIProvider.execute] {error_message} | provider={provider_name}",
                 exc_info=True,
             )

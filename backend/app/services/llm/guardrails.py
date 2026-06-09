@@ -17,17 +17,20 @@ def run_guardrails_validation(
     project_id: int | None,
     organization_id: int | None,
     suppress_pass_logs: bool = True,
+    output_text: str | None = None,
 ) -> dict[str, Any]:
     """
     Call the Kaapi guardrails service to validate and process input text.
 
     Args:
-        input_text: Text to validate and process.
+        input_text: User query text, maps to payload["input"].
         guardrail_config: List of validator configurations to apply.
         job_id: Unique identifier for the request.
         project_id: Project identifier expected by guardrails API.
         organization_id: Organization identifier expected by guardrails API.
         suppress_pass_logs: Whether to suppress successful validation logs in guardrails service.
+        output_text: LLM response text, maps to payload["output"]. Required for validators
+            that evaluate input/output pairs.
 
     Returns:
         JSON response from the guardrails service with validation results.
@@ -47,6 +50,9 @@ def run_guardrails_validation(
         "validators": validators,
     }
 
+    if output_text is not None:
+        payload["output"] = output_text
+
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
@@ -54,7 +60,7 @@ def run_guardrails_validation(
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=45.0) as client:
             response = client.post(
                 f"{settings.KAAPI_GUARDRAILS_URL}/",
                 json=payload,

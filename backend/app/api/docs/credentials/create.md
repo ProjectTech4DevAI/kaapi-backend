@@ -6,6 +6,7 @@ Credentials are encrypted and stored securely for provider integrations (OpenAI,
 - **LLM:** openai, sarvamai, google(gemini)
 - **Observability:** langfuse
 - **Audio:** elevenlabs
+- **Miscellaneous** webhook_secret
 
 ### Examples:
 
@@ -40,6 +41,19 @@ Credentials are encrypted and stored securely for provider integrations (OpenAI,
       "public_key": "pk-lf-....",
       "secret_key": "sk-lf-...",
       "host": "https://cloud.langfuse.com"
+    },
+    "webhook_secret": {
+      "webhook_secret": "webhook_secret"
+    }
+  }
+}
+```
+#### For registering Webhook Secret
+```json
+{
+  "credential": {
+    "webhook_secret": {
+      "webhook_secret": "webhook_secret"
     }
   }
 }

@@ -1,5 +1,5 @@
 from app.models import ResponsesAPIRequest, ResponsesSyncAPIRequest
-from app.utils import APIResponse, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 
 def get_additional_data(request: dict) -> dict:
@@ -19,10 +19,15 @@ def send_response_callback(
     callback_url: str,
     callback_response: APIResponse,
     request_dict: dict,
+    organization_id: int,
+    project_id: int,
 ) -> None:
     """Send a standardized callback response to the provided callback URL."""
 
     callback_response = callback_response.model_dump()
+
+    webhook_secret = get_webhook_secret(project_id, organization_id)
+
     send_callback(
         callback_url,
         {
@@ -34,4 +39,5 @@ def send_response_callback(
             "error": callback_response.get("error"),
             "metadata": None,
         },
+        webhook_secret=webhook_secret,
     )

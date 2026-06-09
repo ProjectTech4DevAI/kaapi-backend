@@ -73,12 +73,6 @@ class APIKey(APIKeyBase, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Bcrypt hash of the secret of the API key"},
     )
-    is_deleted: bool = Field(
-        default=False,
-        nullable=False,
-        sa_column_kwargs={"comment": "Soft delete flag"},
-    )
-
     # Timestamps
     inserted_at: datetime = Field(
         default_factory=now,

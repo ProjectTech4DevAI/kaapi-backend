@@ -1,18 +1,19 @@
 from uuid import uuid4
 
 import pytest
-from sqlmodel import Session
 from fastapi import HTTPException
+from sqlmodel import Session
 
+from app.crud.config import ConfigCrud
 from app.models import (
-    ConfigBlob,
     CompletionConfig,
+    ConfigBlob,
     ConfigCreate,
     ConfigUpdate,
 )
+from app.models.config.config import ConfigTag
 from app.models.llm.request import NativeCompletionConfig
-from app.crud.config import ConfigCrud
-from app.tests.utils.test_data import create_test_project, create_test_config
+from app.tests.utils.test_data import create_test_config, create_test_project
 from app.tests.utils.utils import random_lower_string
 
 
@@ -183,6 +184,48 @@ def test_read_all_configs(db: Session) -> None:
     assert config1.id in config_ids
     assert config2.id in config_ids
     assert config3.id in config_ids
+
+
+def test_read_all_configs_without_tag_returns_default_configs(
+    db: Session,
+) -> None:
+    """Test unscoped config lists include default configs."""
+    project = create_test_project(db)
+
+    implicit_default_config = create_test_config(
+        db, project_id=project.id, name="implicit-default-config"
+    )
+    default_config = create_test_config(
+        db, project_id=project.id, name="default-config", tag=ConfigTag.DEFAULT
+    )
+
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+    configs, _ = config_crud.read_all(query=None)
+
+    config_ids = [c.id for c in configs]
+    assert implicit_default_config.id in config_ids
+    assert default_config.id in config_ids
+
+
+def test_read_all_configs_with_explicit_default_tag_returns_default_configs(
+    db: Session,
+) -> None:
+    """Test explicit default tag lists default configs."""
+    project = create_test_project(db)
+
+    implicit_default_config = create_test_config(
+        db, project_id=project.id, name="implicit-default-config"
+    )
+    default_config = create_test_config(
+        db, project_id=project.id, name="default-config", tag=ConfigTag.DEFAULT
+    )
+
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+    configs, _ = config_crud.read_all(query=None, tag=ConfigTag.DEFAULT)
+
+    config_ids = [c.id for c in configs]
+    assert implicit_default_config.id in config_ids
+    assert default_config.id in config_ids
 
 
 def test_read_all_configs_pagination(db: Session) -> None:
