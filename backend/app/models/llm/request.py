@@ -69,6 +69,8 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
     input_language: str | None = "auto"
@@ -86,6 +88,8 @@ class STTLLMParams(SQLModel):
 
 
 class TTSLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
     language: str | None = None
@@ -95,7 +99,7 @@ class TTSLLMParams(SQLModel):
 class ProxyLLMParams(SQLModel):
     model_config = {"extra": "forbid"}
 
-    client_llm_url: str = Field(
+    client_llm_url: HttpUrl = Field(
         ...,
         description=(
             "HTTPS URL of the client's own LLM endpoint. Kaapi forwards the "
@@ -104,10 +108,11 @@ class ProxyLLMParams(SQLModel):
     )
 
     @model_validator(mode="after")
-    def _validate_client_llm_url(self):
-        from app.utils import validate_callback_url
-
-        validate_callback_url(self.client_llm_url)
+    def _require_https(self):
+        if self.client_llm_url.scheme != "https":
+            raise ValueError(
+                f"client_llm_url must be HTTPS, got scheme: {self.client_llm_url.scheme}"
+            )
         return self
 
 
@@ -264,7 +269,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts", "proxy"] = Field(
+    type: Literal["text", "stt", "tts"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -293,7 +298,7 @@ class KaapiCompletionConfig(SQLModel):
         ),
     )
 
-    type: Literal["text", "stt", "tts", "proxy"] = Field(
+    type: Literal["text", "stt", "tts"] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -308,7 +313,6 @@ class KaapiCompletionConfig(SQLModel):
             "text": TextLLMParams,
             "stt": STTLLMParams,
             "tts": TTSLLMParams,
-            "proxy": ProxyLLMParams,
         }
         model_class = param_models[self.type]
 
@@ -324,9 +328,39 @@ class KaapiCompletionConfig(SQLModel):
         return self
 
 
+class ProxyCompletionConfig(SQLModel):
+    """
+    Proxy completion: Kaapi forwards the (guardrail-sanitised) input to the
+    client's own LLM endpoint and applies output guardrails to the response.
+    No upstream provider is dispatched — `provider` is fixed to "proxy" so
+    the discriminated union can route cleanly.
+    """
+
+    provider: Literal["proxy"] = Field(
+        "proxy",
+        description=(
+            "Discriminator value for the proxy variant. Auto-injected when "
+            "type=proxy; clients may omit it."
+        ),
+    )
+    type: Literal["proxy"] = Field(..., description="Must be 'proxy'.")
+    params: dict[str, Any] = Field(
+        ...,
+        description="Proxy params (client_llm_url, ...)",
+    )
+
+    @model_validator(mode="after")
+    def validate_params(self):
+        validated = ProxyLLMParams.model_validate(self.params)
+        # mode="json" coerces HttpUrl → plain str so downstream consumers
+        # (httpx.post, urlparse) get the type they expect from params dict.
+        self.params = validated.model_dump(mode="json", exclude_none=True)
+        return self
+
+
 # Discriminated union for completion configs based on provider field
 CompletionConfig = Annotated[
-    Union[NativeCompletionConfig, KaapiCompletionConfig],
+    Union[NativeCompletionConfig, KaapiCompletionConfig, ProxyCompletionConfig],
     Field(discriminator="provider"),
 ]
 
@@ -347,18 +381,16 @@ class ConfigBlob(SQLModel):
     @model_validator(mode="before")
     @classmethod
     def _default_proxy_provider(cls, data: Any) -> Any:
-        """For `type=proxy`, provider is meaningless — let callers omit it.
-        Inject provider=None so the CompletionConfig discriminator picks
-        KaapiCompletionConfig without forcing the client to write \"provider\": null."""
+        """For `type=proxy`, provider is meaningless to the caller.
+        Inject provider="proxy" so the CompletionConfig discriminator routes
+        to ProxyCompletionConfig without forcing the client to set it."""
         if not isinstance(data, dict):
             return data
         completion = data.get("completion")
-        if (
-            isinstance(completion, dict)
-            and completion.get("type") == "proxy"
-            and "provider" not in completion
-        ):
-            completion["provider"] = None
+        if isinstance(completion, dict) and completion.get("type") == "proxy":
+            existing = completion.get("provider")
+            if existing in (None, "proxy"):
+                completion["provider"] = "proxy"
         return data
 
     # used for llm-chain to provide prompt interpolation

@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import socket
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -73,6 +74,7 @@ from app.utils import (
     get_webhook_secret,
     resolve_input,
     send_callback,
+    validate_callback_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -619,6 +621,27 @@ def execute_llm_call(
                 client_llm_url = proxy_params.get("client_llm_url")
                 if not client_llm_url:
                     return BlockResult(error="Proxy config missing client_llm_url")
+
+                # SSRF guard: block proxy URLs that resolve to private/internal IPs.
+                # DNS resolution failures are not treated as blocks — httpx will
+                # fail the request naturally if the host is genuinely unreachable.
+                try:
+                    validate_callback_url(client_llm_url)
+                except ValueError as e:
+                    if isinstance(e.__cause__, socket.gaierror):
+                        logger.warning(
+                            f"[execute_llm_call] DNS resolution failed during proxy "
+                            f"SSRF check; allowing request to proceed | "
+                            f"url={client_llm_url}, err={e}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] Proxy URL rejected by SSRF guard | "
+                            f"url={client_llm_url}, err={e}"
+                        )
+                        return BlockResult(
+                            error=f"[KAAPI] Proxy URL rejected: {str(e)}"
+                        )
 
                 with Session(engine) as session:
                     creds = get_provider_credential(
