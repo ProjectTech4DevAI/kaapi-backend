@@ -12,15 +12,32 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
+from app.core.batch import download_batch_results
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import generate_timestamped_filename
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.job import get_batch_job
-from app.models.assessment import Assessment, AssessmentExportRow, AssessmentRun
+from app.models.assessment import (
+    Assessment,
+    AssessmentExportRow,
+    AssessmentRun,
+    Stage,
+)
 from app.models.batch_job import BatchJob
 from app.models.evaluation import EvaluationDataset
+from app.services.assessment.prefilter.duplicate_detection import (
+    parse_duplicate_detection_results,
+)
+from app.services.assessment.prefilter.topic_relevance import (
+    parse_topic_relevance_results,
+)
+from app.services.assessment.stages import _get_batch_provider, load_raw_batch_results
 from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
+from app.services.assessment.utils.post_processing import apply_post_processing
 from app.utils import APIResponse
+
+_PREFILTER_JSON_COLUMNS = ["topic_relevance", "duplicate_detection"]
+_XLSX_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff﷐-﷯￾￿]")
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +46,59 @@ def _load_dataset_rows(
     session: Session,
     dataset: EvaluationDataset,
 ) -> list[dict[str, str]]:
+    # Imported lazily: app.crud.assessment.batch pulls this module via
+    # app.services.assessment.utils, so a top-level import would be circular.
     from app.crud.assessment.batch import _load_dataset_rows as load_dataset_rows
 
     return load_dataset_rows(session, dataset)
+
+
+def _stage_batch_job(
+    session: Session, run: AssessmentRun, stage: str
+) -> BatchJob | None:
+    """The batch job a run produced for a given stage, via stage_batches."""
+    batch_id = (run.stage_batches or {}).get(stage)
+    return get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
+
+
+def _load_prefilter_results(
+    session: Session,
+    run: AssessmentRun,
+    assessment: Assessment,
+) -> dict[str, dict[str, Any]]:
+    """Build per-row prefilter annotations from the TR + dup stage batches."""
+    out: dict[str, dict[str, Any]] = {}
+
+    tr_job = _stage_batch_job(session, run, Stage.PRE_FILTER_TOPIC_RELEVANCE)
+    if tr_job:
+        try:
+            raw = load_raw_batch_results(session, tr_job, assessment.project_id)
+            outputs = parse_assessment_output(raw, tr_job.provider)
+            for idx, r in parse_topic_relevance_results(outputs).items():
+                out.setdefault(f"row_{idx}", {})["prefilter_passed"] = r["verdict"]
+                out[f"row_{idx}"]["topic_relevance"] = {
+                    "decision": r["decision"],
+                    "reasoning": r["reasoning"],
+                    "column_relevance": r.get("column_relevance") or {},
+                }
+        except Exception as exc:
+            logger.warning(
+                "[_load_prefilter_results] TR load failed run=%s: %s", run.id, exc
+            )
+
+    dup_job = _stage_batch_job(session, run, Stage.PRE_FILTER_DUPLICATE_DETECTION)
+    if dup_job:
+        try:
+            raw = load_raw_batch_results(session, dup_job, assessment.project_id)
+            outputs = parse_assessment_output(raw, dup_job.provider)
+            for idx, r in parse_duplicate_detection_results(outputs).items():
+                out.setdefault(f"row_{idx}", {})["duplicate_detection"] = r
+        except Exception as exc:
+            logger.warning(
+                "[_load_prefilter_results] dup load failed run=%s: %s", run.id, exc
+            )
+
+    return out
 
 
 def _safe_filename_part(value: str) -> str:
@@ -113,111 +180,144 @@ def _drop_empty_columns(
     return pruned, non_empty_fields
 
 
+def _parse_json_col(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
 def _expand_output_columns(
     row_payload: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Expand the ``output`` field into separate columns when it contains valid JSON.
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[str], list[str]]:
+    """Expand ``output``, ``topic_relevance``, and ``duplicate_detection`` JSON columns
+    into separate flat columns when they contain valid JSON objects.
 
     Returns:
         (expanded_rows, ordered_fieldnames)
     """
-    # First expand input columns
     row_payload, input_col_names = _expand_input_columns(row_payload)
 
+    json_expand_cols = {"output", "input_data"} | set(_PREFILTER_JSON_COLUMNS)
     base_fields = [
         field
         for field in AssessmentExportRow.model_fields.keys()
-        if field not in ("output", "input_data")
+        if field not in json_expand_cols
     ]
 
-    parsed_outputs: list[dict[str, Any] | None] = []
-    output_keys: list[str] = []
-    seen_keys: dict[str, None] = {}  # ordered set
+    # prefilter columns are prefixed with their parent name to avoid key collisions
+    parsed_cols: dict[str, list[dict[str, Any] | None]] = {
+        col: [] for col in ["output"] + _PREFILTER_JSON_COLUMNS
+    }
+    col_keys: dict[str, list[str]] = {
+        col: [] for col in ["output"] + _PREFILTER_JSON_COLUMNS
+    }
+    col_seen: dict[str, dict[str, None]] = {
+        col: {} for col in ["output"] + _PREFILTER_JSON_COLUMNS
+    }
     has_unparsed_output = False
 
     for row in row_payload:
-        raw = row.get("output")
-        if raw is None:
-            parsed_outputs.append(None)
-            continue
+        for col in ["output"] + _PREFILTER_JSON_COLUMNS:
+            parsed = _parse_json_col(row.get(col))
+            if parsed is None and col == "output" and row.get(col) is not None:
+                has_unparsed_output = True
+            parsed_cols[col].append(parsed)
+            if parsed:
+                for k in parsed:
+                    prefixed = f"{col}_{k}" if col in _PREFILTER_JSON_COLUMNS else k
+                    if prefixed not in col_seen[col]:
+                        col_seen[col][prefixed] = None
+                        col_keys[col].append(prefixed)
 
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                parsed = None
-        elif isinstance(raw, dict):
-            parsed = raw
-        else:
-            parsed = None
-
-        if not isinstance(parsed, dict):
-            has_unparsed_output = True
-            parsed_outputs.append(None)
-            continue
-
-        parsed_outputs.append(parsed)
-        for output_key in parsed:
-            if output_key not in seen_keys:
-                seen_keys[output_key] = None
-                output_keys.append(output_key)
-
-    if not output_keys:
-        # Keep original layout with output as a single column
-        fieldnames = input_col_names + list(AssessmentExportRow.model_fields.keys())
-        fieldnames = [field for field in fieldnames if field != "input_data"]
-        return row_payload, fieldnames
+    def _get_prefixed(parsed: dict[str, Any] | None, col: str) -> dict[str, Any]:
+        if not parsed:
+            return {}
+        if col in _PREFILTER_JSON_COLUMNS:
+            return {f"{col}_{k}": v for k, v in parsed.items()}
+        return parsed
 
     # Build expanded rows
     expanded: list[dict[str, Any]] = []
-    for row, parsed in zip(row_payload, parsed_outputs, strict=True):
-        new_row = {col: val for col, val in row.items() if col != "output"}
-        if parsed:
-            for output_key in output_keys:
-                new_row[output_key] = parsed.get(output_key)
-        else:
-            for output_key in output_keys:
-                new_row[output_key] = None
-            if row.get("output") is not None:
-                new_row["output_raw"] = row.get("output")
+    for i, row in enumerate(row_payload):
+        new_row = {k: v for k, v in row.items() if k not in json_expand_cols}
+        for col in ["output"] + _PREFILTER_JSON_COLUMNS:
+            parsed = parsed_cols[col][i]
+            keys = col_keys[col]
+            prefixed_vals = _get_prefixed(parsed, col)
+            if prefixed_vals:
+                for k in keys:
+                    new_row[k] = prefixed_vals.get(k)
+            else:
+                for k in keys:
+                    new_row[k] = None
+                if col == "output" and row.get("output") is not None:
+                    new_row["output_raw"] = row.get("output")
         expanded.append(new_row)
 
-    # Build fieldnames: input columns + base fields + output columns
-    output_idx = base_fields.index("result_status") + 1  # after result_status
-    fieldnames = (
-        input_col_names
-        + base_fields[:output_idx]
-        + output_keys
-        + base_fields[output_idx:]
-    )
+    prefilter_keys = col_keys["topic_relevance"] + col_keys["duplicate_detection"]
+    output_keys = col_keys["output"]
+
+    all_output_keys = prefilter_keys + output_keys
+    if not all_output_keys:
+        fieldnames = input_col_names + list(AssessmentExportRow.model_fields.keys())
+        fieldnames = [f for f in fieldnames if f != "input_data"]
+        return row_payload, fieldnames, input_col_names, [], []
+
+    fieldnames = input_col_names + prefilter_keys + output_keys + base_fields
     if has_unparsed_output:
         fieldnames.insert(
-            len(input_col_names) + output_idx + len(output_keys), "output_raw"
+            len(input_col_names) + len(prefilter_keys) + len(output_keys), "output_raw"
         )
 
-    return expanded, fieldnames
+    return expanded, fieldnames, input_col_names, prefilter_keys, output_keys
 
 
 def serialize_export_rows(
     export_rows: list[AssessmentExportRow],
     export_format: Literal["json", "csv", "xlsx"],
+    post_processing_config: dict[str, Any] | None = None,
 ) -> tuple[bytes, str]:
     """Serialize export rows into the requested file format."""
     row_payload = [row.model_dump(mode="json") for row in export_rows]
 
     if export_format == "json":
-        expanded, _ = _expand_output_columns(row_payload)
+        expanded, *_ = _expand_output_columns(row_payload)
+        expanded = apply_post_processing(expanded, post_processing_config)
         return (
             json.dumps(expanded, ensure_ascii=False, indent=2).encode("utf-8"),
             "application/json",
         )
 
-    # For CSV/XLSX, expand output keys into separate columns
-    expanded, fieldnames = _expand_output_columns(row_payload)
+    (
+        expanded,
+        fieldnames,
+        input_col_names,
+        prefilter_keys,
+        output_keys,
+    ) = _expand_output_columns(row_payload)
+    expanded = apply_post_processing(expanded, post_processing_config)
+
+    # Add any new computed columns to fieldnames so they appear in output
+    existing = set(fieldnames)
+    computed_names = [
+        c["name"]
+        for c in (post_processing_config or {}).get("computed_columns") or []
+        if c.get("name") and c["name"] not in existing
+    ]
+    if computed_names:
+        fieldnames = fieldnames + computed_names
 
     if export_format == "csv":
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(expanded)
         return output.getvalue().encode("utf-8"), "text/csv"
@@ -230,18 +330,17 @@ def serialize_export_rows(
             detail="XLSX export requires pandas/openpyxl support in the backend runtime",
         ) from exc
 
-    # XLSX shows input columns + output columns only (no metadata fields).
-    metadata_fields = {
-        field
-        for field in AssessmentExportRow.model_fields.keys()
-        if field not in ("output", "input_data")
-    }
-    excel_fields = [field for field in fieldnames if field not in metadata_fields]
+    # Explicit ordering: inputs → prefilter → L2 → computed columns
+    excel_fields = input_col_names + prefilter_keys + output_keys + computed_names
     if not excel_fields:
-        excel_fields = ["output"]
+        excel_fields = output_keys or ["output"]
 
-    # Drop columns where every row is null/empty
     expanded, excel_fields = _drop_empty_columns(expanded, excel_fields)
+
+    def _clean(value: Any) -> Any:
+        return _XLSX_ILLEGAL_RE.sub("", value) if isinstance(value, str) else value
+
+    expanded = [{k: _clean(v) for k, v in row.items()} for row in expanded]
 
     buf = io.BytesIO()
     data_frame = pd.DataFrame(expanded, columns=excel_fields)
@@ -258,17 +357,20 @@ def build_json_export_rows(
 ) -> list[dict[str, Any]]:
     """Return JSON rows with structured output expanded into top-level keys."""
     row_payload = [row.model_dump(mode="json") for row in export_rows]
-    expanded, _ = _expand_output_columns(row_payload)
-    return expanded
+    expanded, fieldnames, *_ = _expand_output_columns(row_payload)
+    return [{k: row.get(k) for k in fieldnames if k in row} for row in expanded]
 
 
 def build_export_response(
     export_rows: list[AssessmentExportRow],
     export_format: Literal["json", "csv", "xlsx"],
     base_name: str,
+    post_processing_config: dict[str, Any] | None = None,
 ) -> StreamingResponse:
     """Return a file download response for assessment exports."""
-    payload, media_type = serialize_export_rows(export_rows, export_format)
+    payload, media_type = serialize_export_rows(
+        export_rows, export_format, post_processing_config
+    )
     filename = generate_timestamped_filename(
         _safe_filename_part(base_name),
         extension=export_format,
@@ -320,9 +422,6 @@ def _load_parsed_results_for_run(
     # 2. Fallback: download directly from batch provider
     if batch_job.provider_output_file_id:
         try:
-            from app.core.batch import download_batch_results
-            from app.crud.assessment.processing import _get_batch_provider
-
             provider = _get_batch_provider(
                 session=session,
                 provider_name=batch_job.provider,
@@ -376,26 +475,114 @@ def _load_dataset_rows_for_run(
         return []
 
 
+def _extract_prefilter_json_columns(
+    prefilter_item: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return topic_relevance and duplicate_detection as JSON strings for export expansion."""
+    if not prefilter_item:
+        return {"topic_relevance": None, "duplicate_detection": None}
+
+    tr = prefilter_item.get("topic_relevance")
+    dup = prefilter_item.get("duplicate_detection")
+
+    tr_flat: dict[str, Any] | None = None
+    if tr:
+        tr_flat = {}
+        for col, val in (tr.get("column_relevance") or {}).items():
+            tr_flat[col] = val
+        tr_flat["decision"] = tr.get("decision")
+        tr_flat["reasoning"] = tr.get("reasoning")
+
+    dup_flat: dict[str, Any] | None = None
+    if dup:
+        dup_flat = {k: v for k, v in dup.items() if k != "row_id"}
+
+    return {
+        "topic_relevance": json.dumps(tr_flat, ensure_ascii=False) if tr_flat else None,
+        "duplicate_detection": json.dumps(dup_flat, ensure_ascii=False)
+        if dup_flat
+        else None,
+    }
+
+
+def _load_parsed_results_for_batch_job(
+    session: Session,
+    batch_job: BatchJob,
+    assessment: Assessment,
+) -> list[dict[str, Any]] | None:
+    """Parse one chunk batch's stored results (object store first, provider fallback)."""
+    if batch_job.raw_output_url:
+        try:
+            storage = get_cloud_storage(session, project_id=assessment.project_id)
+            raw = parse_stored_results(
+                storage.stream(batch_job.raw_output_url).read().decode("utf-8")
+            )
+            if raw:
+                return parse_assessment_output(raw, batch_job.provider)
+        except Exception as exc:
+            logger.warning(
+                "[_load_parsed_results_for_batch_job] S3 read failed for batch %s: %s",
+                batch_job.id,
+                exc,
+            )
+
+    if batch_job.provider_output_file_id:
+        try:
+            provider = _get_batch_provider(
+                session=session,
+                provider_name=batch_job.provider,
+                organization_id=assessment.organization_id,
+                project_id=assessment.project_id,
+            )
+            raw = download_batch_results(provider=provider, batch_job=batch_job)
+            return parse_assessment_output(raw, batch_job.provider)
+        except Exception as exc:
+            logger.error(
+                "[_load_parsed_results_for_batch_job] Provider download failed for "
+                "batch %s: %s",
+                batch_job.id,
+                exc,
+                exc_info=True,
+            )
+    return None
+
+
+def _load_l2_results_for_run(
+    session: Session,
+    run: AssessmentRun,
+    assessment: Assessment,
+) -> dict[str, dict[str, Any]]:
+    """L2 results keyed by row_id, from the run's L2 stage batch ({} if not done)."""
+    merged: dict[str, dict[str, Any]] = {}
+    batch_job = _stage_batch_job(session, run, Stage.L2_ASSESSMENT)
+    if batch_job:
+        for item in (
+            _load_parsed_results_for_batch_job(session, batch_job, assessment) or []
+        ):
+            if "row_id" in item:
+                merged[str(item["row_id"])] = item
+    return merged
+
+
+def _row_result_status(
+    prefilter_passed: bool,
+    l2_item: dict[str, Any] | None,
+    run_status: str,
+) -> str:
+    """Per-row status: rejected, failed, passed, or processing (batch not done)."""
+    if not prefilter_passed:
+        return "prefilter_rejected"
+    if l2_item is None:
+        return "failed" if run_status == "failed" else "processing"
+    return "failed" if l2_item.get("error") else "passed"
+
+
 def load_export_rows_for_run(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment | None = None,
 ) -> list[AssessmentExportRow]:
-    """Load flattened export rows for a single child assessment run."""
-    if not run.batch_job_id:
-        logger.warning(
-            "[load_export_rows_for_run] No batch_job_id for run id=%s", run.id
-        )
-        return []
-
-    batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
-    if not batch_job:
-        logger.warning(
-            "[load_export_rows_for_run] Missing batch job for run id=%s",
-            run.id,
-        )
-        return []
-
+    """Flatten one run's rows, merging prefilter annotations + L2 results by row_id."""
     if assessment is None:
         assessment = session.get(Assessment, run.assessment_id)
     if assessment is None:
@@ -405,64 +592,91 @@ def load_export_rows_for_run(
         )
         return []
 
-    parsed_results = _load_parsed_results_for_run(
-        session=session,
-        run=run,
-        batch_job=batch_job,
-    )
-    if parsed_results is None:
-        return []
-
-    if not parsed_results:
-        logger.warning(
-            "[load_export_rows_for_run] Parsed results empty for run id=%s", run.id
-        )
-        return []
-
-    dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
     dataset = session.get(EvaluationDataset, assessment.dataset_id)
     dataset_name = dataset.name if dataset else None
+    dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
 
-    export_rows: list[AssessmentExportRow] = []
-    for item in parsed_results:
-        input_tokens, output_tokens, total_tokens = usage_totals(item.get("usage"))
+    prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
+    l2_by_row_id = _load_l2_results_for_run(session, run, assessment)
+    has_prefilter = bool(prefilter_by_row_id)
 
-        # Correlate with original input row via row_id (format: "row_{idx}")
-        input_data: dict[str, str] | None = None
-        row_id_str = str(item.get("row_id", ""))
-        if dataset_rows and row_id_str.startswith("row_"):
-            try:
-                row_idx = int(row_id_str.split("_", 1)[1])
-                if 0 <= row_idx < len(dataset_rows):
-                    input_data = dataset_rows[row_idx]
-            except (ValueError, IndexError):
-                pass
-
-        export_rows.append(
-            AssessmentExportRow(
-                assessment_id=run.assessment_id,
-                experiment_name=assessment.experiment_name,
-                dataset_id=assessment.dataset_id,
+    if dataset_rows:
+        rows = [
+            _build_export_row(
+                run=run,
+                assessment=assessment,
                 dataset_name=dataset_name,
-                run_id=run.id,
-                run_name=assessment.experiment_name,
-                run_status=run.status,
-                config_id=run.config_id,
-                config_version=run.config_version,
-                row_id=row_id_str,
-                result_status="failed" if item.get("error") else "passed",
+                row_id=f"row_{row_idx}",
                 input_data=input_data,
-                output=item.get("output"),
-                error=item.get("error"),
-                response_id=item.get("response_id"),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                updated_at=run.updated_at,
+                prefilter_item=prefilter_by_row_id.get(f"row_{row_idx}"),
+                l2_item=l2_by_row_id.get(f"row_{row_idx}"),
+                has_prefilter=has_prefilter,
             )
-        )
+            for row_idx, input_data in enumerate(dataset_rows)
+        ]
+        return rows
 
-    return export_rows
+    # Dataset unavailable — emit whatever results we have, indexed by row_id.
+    all_row_ids = sorted(
+        {str(rid) for rid in l2_by_row_id} | {str(rid) for rid in prefilter_by_row_id}
+    )
+    return [
+        _build_export_row(
+            run=run,
+            assessment=assessment,
+            dataset_name=dataset_name,
+            row_id=row_id,
+            input_data=None,
+            prefilter_item=prefilter_by_row_id.get(row_id),
+            l2_item=l2_by_row_id.get(row_id),
+            has_prefilter=has_prefilter,
+        )
+        for row_id in all_row_ids
+    ]
+
+
+def _build_export_row(
+    run: AssessmentRun,
+    assessment: Assessment,
+    dataset_name: str | None,
+    row_id: str,
+    input_data: dict[str, str] | None,
+    prefilter_item: dict[str, Any] | None,
+    l2_item: dict[str, Any] | None,
+    has_prefilter: bool,
+) -> AssessmentExportRow:
+    prefilter_cols = (
+        _extract_prefilter_json_columns(prefilter_item)
+        if has_prefilter
+        else {"topic_relevance": None, "duplicate_detection": None}
+    )
+    prefilter_passed = (prefilter_item or {}).get("prefilter_passed", True)
+    input_tokens, output_tokens, total_tokens = usage_totals(
+        l2_item.get("usage") if l2_item else None
+    )
+    return AssessmentExportRow(
+        assessment_id=run.assessment_id,
+        experiment_name=assessment.experiment_name,
+        dataset_id=assessment.dataset_id,
+        dataset_name=dataset_name,
+        run_id=run.id,
+        run_name=assessment.experiment_name,
+        run_status=run.status,
+        config_id=run.config_id,
+        config_version=run.config_version,
+        row_id=row_id,
+        result_status=_row_result_status(prefilter_passed, l2_item, run.status),
+        input_data=input_data,
+        topic_relevance=prefilter_cols.get("topic_relevance"),
+        duplicate_detection=prefilter_cols.get("duplicate_detection"),
+        output=l2_item.get("output") if l2_item else None,
+        error=l2_item.get("error") if l2_item else None,
+        response_id=l2_item.get("response_id") if l2_item else None,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        updated_at=run.updated_at,
+    )
 
 
 def sort_export_rows(
