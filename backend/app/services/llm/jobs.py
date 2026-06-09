@@ -68,7 +68,6 @@ from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
-    cleanup_temp_file,
     download_audio_bytes,
     get_webhook_secret,
     resolve_input,
@@ -305,22 +304,14 @@ def handle_job_error(
 def resolved_input_context(
     query_input: TextInput | AudioInput | ImageInput | PDFInput | list,
 ):
-    """Context manager for resolving and cleaning up input resources.
-
-    Ensures temporary files (e.g., downloaded audio) are cleaned up
-    even if errors occur during LLM execution.
+    """Resolve query input. Audio inputs return AudioRef (in-memory);
+    providers materialize a temp file via ``audio_ref.to_path()`` only if
+    their SDK needs one, and clean it up themselves.
     """
     resolved_input, error = resolve_input(query_input)
-
     if error:
         raise ValueError(error)
-
-    try:
-        yield resolved_input
-    finally:
-        # Clean up temp files for audio inputs
-        if resolved_input and isinstance(query_input, AudioInput):
-            cleanup_temp_file(resolved_input)
+    yield resolved_input
 
 
 def resolve_config_blob(
@@ -440,6 +431,7 @@ def apply_output_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
+    input_text: str | None = None,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
@@ -466,14 +458,15 @@ def apply_output_guardrails(
     if not output_guardrails:
         return result, None
 
-    output_text = result.response.response.output.content.value
+    llm_output = result.response.response.output.content.value
     safe = run_guardrails_validation(
-        output_text,
+        input_text or "",
         output_guardrails,
         job_id,
         project_id,
         organization_id,
         suppress_pass_logs=True,
+        output_text=llm_output,
     )
 
     logger.info(
@@ -978,6 +971,7 @@ def execute_llm_call(
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
+                    input_text=original_input_value,
                 )
                 if output_error:
                     out_guard_span.set_status(

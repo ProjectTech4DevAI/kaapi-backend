@@ -7,14 +7,17 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud.evaluations import (
+    EvaluationScore,
     create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
+    merge_scores_step_forward,
     resolve_evaluation_config,
     save_score,
     start_evaluation_batch,
 )
+from app.crud.evaluations.score import TraceData
 from app.models.evaluation import EvaluationRun
 from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
@@ -176,6 +179,51 @@ def start_evaluation(
         return eval_run
 
 
+def _load_cached_traces(
+    session: Session,
+    project_id: int,
+    eval_run: EvaluationRun,
+) -> tuple[list[TraceData], bool]:
+    """
+    Load previously cached traces for an evaluation run.
+
+    Traces are cached in S3 (pointed to by ``score_trace_url``) with a DB fallback
+    (``score["traces"]``). This returns whatever is cached so a resync can merge
+    against it instead of overwriting it.
+
+    Returns:
+        Tuple of (traces, load_failed). ``load_failed`` is True only when a cache
+        pointer exists but could not be read — the caller must then avoid
+        overwriting the cache, otherwise it would lose data. A genuinely empty
+        cache (first sync) returns ([], False).
+    """
+    if eval_run.score_trace_url:
+        try:
+            storage = get_cloud_storage(session=session, project_id=project_id)
+            traces = load_json_from_object_store(
+                storage=storage, url=eval_run.score_trace_url
+            )
+            if traces is not None:
+                return traces, False
+            logger.warning(
+                f"[_load_cached_traces] Cached traces URL returned no data | "
+                f"evaluation_id={eval_run.id} | url={eval_run.score_trace_url}"
+            )
+            return [], True
+        except Exception as e:
+            logger.warning(
+                f"[_load_cached_traces] Error loading traces from S3: {e} | "
+                f"evaluation_id={eval_run.id}",
+                exc_info=True,
+            )
+            return [], True
+
+    if eval_run.score is not None and "traces" in eval_run.score:
+        return eval_run.score.get("traces", []) or [], False
+
+    return [], False
+
+
 def get_evaluation_with_scores(
     session: Session,
     evaluation_id: int,
@@ -230,75 +278,64 @@ def get_evaluation_with_scores(
             )
         return eval_run, None
 
-    # Check if we already have cached summary_scores
-    has_summary_scores = (
-        eval_run.score is not None and "summary_scores" in eval_run.score
-    )
-
     # If not requesting trace info, return existing score (with summary_scores)
     if not get_trace_info:
         return eval_run, None
 
-    # Caching strategy: On the first request, trace scores are fetched from Langfuse
-    # and a copy is stored in S3. Subsequent requests serve from
-    # S3 instead of Langfuse, which is significantly faster. Use resync_score=true
-    # to bypass the cache and re-fetch from Langfuse and store to S3 again.
-    has_cached_traces_s3 = eval_run.score_trace_url is not None
-    has_cached_traces_db = eval_run.score is not None and "traces" in eval_run.score
-    if not resync_score:
-        if has_cached_traces_s3:
-            try:
-                storage = get_cloud_storage(session=session, project_id=project_id)
-                traces = load_json_from_object_store(
-                    storage=storage, url=eval_run.score_trace_url
-                )
-                if traces is not None:
-                    eval_run.score = {
-                        "summary_scores": (eval_run.score or {}).get(
-                            "summary_scores", []
-                        ),
-                        "traces": traces,
-                    }
-                    logger.info(
-                        f"[get_evaluation_with_scores] Loaded traces from S3 | "
-                        f"evaluation_id={evaluation_id} | "
-                        f"traces_count={len(traces)}"
-                    )
-                    return eval_run, None
-            except Exception as e:
-                logger.warning(
-                    f"[get_evaluation_with_scores] Error loading traces from S3: {e} | "
-                    f"evaluation_id={evaluation_id}",
-                    exc_info=True,
-                )
+    # Caching strategy: trace scores are fetched from Langfuse once, then cached
+    # (traces in S3, summary in the DB). Normal reads serve from that cache, which is
+    # much faster than hitting Langfuse. resync_score=true bypasses the cache.
+    #
+    # A resync re-fetches from Langfuse and MERGES the result with the cached traces
+    # step-forward (union by trace_id), so the cached pair count can only grow. This
+    # prevents a transient Langfuse fetch failure from making the count go *down*
+    # (e.g. 29/30 -> 27/30): a partial sync at worst contributes nothing new, and a
+    # later resync can backfill the missing traces (15/30 -> 24/30 -> 30/30).
+    cached_traces, cache_load_failed = _load_cached_traces(
+        session=session, project_id=project_id, eval_run=eval_run
+    )
 
-        if has_cached_traces_db:
-            logger.info(
-                f"[get_evaluation_with_scores] Returning traces from DB | "
-                f"evaluation_id={evaluation_id}"
-            )
-            return eval_run, None
+    if not resync_score and cached_traces:
+        eval_run.score = {
+            "summary_scores": (eval_run.score or {}).get("summary_scores", []),
+            "traces": cached_traces,
+        }
+        logger.info(
+            f"[get_evaluation_with_scores] Served traces from cache | "
+            f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
+        )
+        return eval_run, None
 
-    # Resync requested — fetch fresh scores from Langfuse
+    # On resync, if a cache pointer exists but we could not read it, do NOT overwrite
+    # it with a fresh-only fetch (that could regress the cached pair count). Surface
+    # the error and leave the existing cache untouched.
+    if resync_score and cache_load_failed:
+        logger.warning(
+            f"[get_evaluation_with_scores] Skipping resync to avoid data loss | "
+            f"evaluation_id={evaluation_id} | reason=could_not_read_cached_traces"
+        )
+        return eval_run, (
+            "Could not read existing cached traces; skipping resync to avoid "
+            "losing data. Please try again."
+        )
+
+    # Fetch fresh scores from Langfuse (first sync, or resync).
     langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
         project_id=project_id,
     )
 
-    # Capture data needed for Langfuse fetch and DB update
     dataset_name = eval_run.dataset_name
     run_name = eval_run.run_name
     eval_run_id = eval_run.id
-    existing_summary_scores = (
-        eval_run.score.get("summary_scores", []) if has_summary_scores else []
-    )
 
     try:
         langfuse_score = fetch_trace_scores_from_langfuse(
             langfuse=langfuse,
             dataset_name=dataset_name,
             run_name=run_name,
+            project_id=project_id,
         )
     except ValueError as e:
         logger.warning(
@@ -314,31 +351,33 @@ def get_evaluation_with_scores(
         )
         return eval_run, f"Failed to fetch trace info from Langfuse: {str(e)}"
 
-    # Merge summary_scores: existing scores + new scores from Langfuse
-    # Create a map of existing scores by name
-    existing_scores_map = {s["name"]: s for s in existing_summary_scores}
-    langfuse_summary_scores = langfuse_score.get("summary_scores", [])
-
-    # Merge: Langfuse scores take precedence (more up-to-date)
-    for langfuse_summary in langfuse_summary_scores:
-        existing_scores_map[langfuse_summary["name"]] = langfuse_summary
-
-    merged_summary_scores = list(existing_scores_map.values())
-
-    # Build final score and persist to S3/DB for future cached reads
-    score = {
-        "summary_scores": merged_summary_scores,
-        "traces": langfuse_score.get("traces", []),
+    # Step-forward merge: combine the freshly fetched score with the cached one so the
+    # result never shrinks, then recompute summaries from the merged union.
+    existing_score: EvaluationScore = {
+        "summary_scores": (eval_run.score or {}).get("summary_scores", []),
+        "traces": cached_traces,
     }
+    merged_score, merge_stats = merge_scores_step_forward(
+        existing_score=existing_score,
+        fresh_score=langfuse_score,
+    )
+
+    logger.info(
+        f"[get_evaluation_with_scores] Merged traces step-forward | "
+        f"evaluation_id={evaluation_id} | cached={len(cached_traces)} | "
+        f"fetched={len(langfuse_score.get('traces', []))} | "
+        f"merged={len(merged_score['traces'])} | reused={merge_stats['reused']} | "
+        f"updated={merge_stats['updated']} | added={merge_stats['added']}"
+    )
 
     eval_run = save_score(
         eval_run_id=eval_run_id,
         organization_id=organization_id,
         project_id=project_id,
-        score=score,
+        score=merged_score,
     )
 
     if eval_run:
-        eval_run.score = score
+        eval_run.score = merged_score
 
     return eval_run, None

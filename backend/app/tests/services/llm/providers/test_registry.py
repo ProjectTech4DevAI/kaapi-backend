@@ -104,3 +104,49 @@ class TestGetLLMProvider:
                 )
 
             assert "not configured for this project" in str(exc_info.value)
+
+    def test_google_vertex_falls_back_to_platform_settings(self, db: Session):
+        """No credential row for google-vertex → create_client synthesizes the
+        platform defaults from settings (api_key/project/location/bucket) and
+        parses the inline SA JSON from GCP_SA_KEY."""
+        import json as _json
+
+        from app.services.llm.providers.gai_vertex import (
+            GoogleVertexAIProvider,
+            VertexClient,
+        )
+
+        project = get_project(db)
+        sa_info = {
+            "type": "service_account",
+            "project_id": "platform-project",
+            "client_email": "sa@platform-project.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
+        }
+
+        with patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds, patch(
+            "app.services.llm.providers.gai_vertex.settings"
+        ) as mock_settings:
+            mock_get_creds.return_value = None
+            mock_settings.GCP_VERTEX_API_KEY = "platform-key"
+            mock_settings.GCP_PROJECT_ID = "platform-project"
+            mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+            mock_settings.GCP_SA_KEY = _json.dumps(sa_info)
+            mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google-vertex-native",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+        assert isinstance(provider, GoogleVertexAIProvider)
+        assert isinstance(provider.client, VertexClient)
+        assert provider.client.api_key == "platform-key"
+        assert provider.client.project_id == "platform-project"
+        assert provider.client.location == "us-central1"
+        assert provider.client.sa_info == sa_info
+        assert provider.client.gcs_bucket == "platform-bucket"
