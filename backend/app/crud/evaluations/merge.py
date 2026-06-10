@@ -9,6 +9,7 @@ result monotonic, so the pair count can only grow across resyncs (never 29 -> 27
 import itertools
 import logging
 from collections import Counter
+from typing import Any
 
 import numpy as np
 
@@ -80,7 +81,7 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
     for fresh_score in fresh.get("scores", []):
         merged_scores_by_name[fresh_score["name"]] = fresh_score
 
-    return {
+    merged: dict[str, Any] = {
         "trace_id": fresh.get("trace_id") or existing.get("trace_id", ""),
         "question": fresh.get("question") or existing.get("question", ""),
         "llm_answer": fresh.get("llm_answer") or existing.get("llm_answer", ""),
@@ -88,11 +89,15 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
             fresh.get("ground_truth_answer") or existing.get("ground_truth_answer", "")
         ),
         "question_id": fresh.get("question_id") or existing.get("question_id"),
-        "category": (
-            fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
-        ),
         "scores": list(merged_scores_by_name.values()),
     }
+
+    if "category" in existing or "category" in fresh:
+        merged["category"] = (
+            fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
+        )
+
+    return merged
 
 
 def _reconcile_trace(

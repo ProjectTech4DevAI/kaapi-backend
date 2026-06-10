@@ -12,10 +12,12 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import Integer, cast
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.cloud.storage import CloudStorage
+from app.core.config import settings
 from app.core.storage_utils import (
     generate_timestamped_filename,
     upload_to_object_store,
@@ -179,6 +181,7 @@ def list_datasets(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
+    eligible_for_fast: bool = False,
 ) -> list[EvaluationDataset]:
     """
     List all evaluation datasets for an organization and project with pagination.
@@ -189,6 +192,11 @@ def list_datasets(
         project_id: Project ID
         limit: Maximum number of datasets to return (default 50)
         offset: Number of datasets to skip (for pagination)
+        eligible_for_fast: When True, restrict to datasets whose unique-row count
+            (dataset_metadata.original_items_count) is at or below
+            settings.EVAL_FAST_MAX_UNIQUE_ROWS. Applied in SQL so pagination
+            counts only eligible rows. Datasets missing the metadata key are
+            excluded (NULL fails the comparison).
 
     Returns:
         List of EvaluationDataset objects, ordered by most recent first
@@ -198,7 +206,19 @@ def list_datasets(
         .where(EvaluationDataset.organization_id == organization_id)
         .where(EvaluationDataset.project_id == project_id)
         .where(EvaluationDataset.type == EvaluationType.TEXT.value)
-        .order_by(EvaluationDataset.inserted_at.desc())
+    )
+
+    if eligible_for_fast:
+        original_items_count = cast(
+            EvaluationDataset.dataset_metadata["original_items_count"].astext,
+            Integer,
+        )
+        statement = statement.where(
+            original_items_count <= settings.EVAL_FAST_MAX_UNIQUE_ROWS
+        )
+
+    statement = (
+        statement.order_by(EvaluationDataset.inserted_at.desc())
         .limit(limit)
         .offset(offset)
     )
