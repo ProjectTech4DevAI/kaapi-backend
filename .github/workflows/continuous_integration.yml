@@ -2,9 +2,9 @@ name: Kaapi CI
 
 on:
   push:
-    branches: [main]
+    branches: [feat/evals-id-optional]
   pull_request:
-    branches: [main]
+    branches: [feat/evals-id-optional]
 
 jobs:
   checks:
