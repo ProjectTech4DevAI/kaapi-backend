@@ -9,7 +9,6 @@ class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
     PROXY = "proxy"
-    GOOGLE_AISTUDIO = "google-aistudio"
 
 
 class CompletionType(StrEnum):
