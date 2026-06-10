@@ -1,6 +1,7 @@
 """Evaluation run orchestration service."""
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -20,7 +21,7 @@ from app.crud.evaluations import (
     save_score,
     start_evaluation_batch,
 )
-from app.crud.evaluations.score import TraceData
+from app.crud.evaluations.score import CategoryMetrics, TraceData
 from app.models.evaluation import EvaluationRun, RunModeEnum
 from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
@@ -106,6 +107,75 @@ def create_evaluation_run_or_409(
                 "run_name or fetch the existing run via GET /evaluations."
             ),
         )
+
+
+def _compute_category_metrics(
+    traces: list[dict[str, Any]],
+) -> list[CategoryMetrics]:
+    """Aggregate cosine + correctness scores per category across the trace list.
+
+    Returns one entry per distinct category with `total_evals` and the mean
+    cosine / correctness scores (or `None` for either if no trace in that
+    category had the score). Categories sorted alphabetically; "Other"
+    always appears last so the default bucket doesn't dominate the UI.
+
+    Backwards-compatible: traces produced before this feature don't carry a
+    `category` field and land in "Other".
+    """
+    buckets: dict[str, dict[str, list[float]]] = {}
+    for trace in traces:
+        raw_category = trace.get("category") or ""
+        category = raw_category.title() if raw_category else "Other"
+        cosine_vals: list[float] = []
+        correctness_vals: list[float] = []
+        # Match by substring so we tolerate provider-specific score naming
+        # (e.g. "cosine_similarity", "correctness", "correctness_score").
+        for score in trace.get("scores") or []:
+            name = (score.get("name") or "").lower()
+            value = score.get("value")
+            if not isinstance(value, (int, float)):
+                continue
+            if "cosine" in name:
+                cosine_vals.append(float(value))
+            elif "correctness" in name:
+                correctness_vals.append(float(value))
+        slot = buckets.setdefault(category, {"cosine": [], "correctness": [], "count": 0})  # type: ignore[arg-type]
+        slot["cosine"].extend(cosine_vals)
+        slot["correctness"].extend(correctness_vals)
+        slot["count"] = int(slot.get("count", 0)) + 1  # type: ignore[arg-type]
+
+    def _mean(values: list[float]) -> float | None:
+        return round(sum(values) / len(values), 4) if values else None
+
+    metrics: list[CategoryMetrics] = []
+    for category, slot in buckets.items():
+        metrics.append(
+            CategoryMetrics(
+                category=category,
+                total_evals=int(slot["count"]),  # type: ignore[arg-type]
+                avg_cosine=_mean(slot["cosine"]),  # type: ignore[arg-type]
+                avg_correctness=_mean(slot["correctness"]),  # type: ignore[arg-type]
+            )
+        )
+
+    metrics.sort(key=lambda m: (m["category"] == "Other", m["category"]))
+    return metrics
+
+
+def _attach_category_metrics(score: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Idempotently add `category_metrics` to a score dict in place.
+
+    No-op when `score` is None or has no `traces`. Safe to call multiple
+    times — recomputes from the current `traces` so cached scores that
+    predate this feature get backfilled on read.
+    """
+    if not score or not isinstance(score, dict):
+        return score
+    traces = score.get("traces")
+    if not isinstance(traces, list):
+        return score
+    score["category_metrics"] = _compute_category_metrics(traces)
+    return score
 
 
 def validate_and_start_batch_evaluation(
@@ -377,10 +447,15 @@ def get_evaluation_with_scores(
     )
 
     if not resync_score and cached_traces:
-        eval_run.score = {
-            "summary_scores": (eval_run.score or {}).get("summary_scores", []),
-            "traces": cached_traces,
-        }
+        # Wrap in _attach_category_metrics so cache-served responses also carry
+        # `category_metrics`. Backfills the field on read for runs whose cached
+        # score was written before the category feature shipped.
+        eval_run.score = _attach_category_metrics(
+            {
+                "summary_scores": (eval_run.score or {}).get("summary_scores", []),
+                "traces": cached_traces,
+            }
+        )
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -442,6 +517,11 @@ def get_evaluation_with_scores(
         existing_score=existing_score,
         fresh_score=langfuse_score,
     )
+
+    # Recompute `category_metrics` from the merged trace set so the per-category
+    # rollup stays in sync with the new traces, not just the cached ones.
+    # `_attach_category_metrics` mutates in place and is idempotent.
+    _attach_category_metrics(merged_score)
 
     logger.info(
         f"[get_evaluation_with_scores] Merged traces step-forward | "
