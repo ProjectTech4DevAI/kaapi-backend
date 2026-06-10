@@ -1,7 +1,7 @@
 """add batch tracking to collection_jobs and rename collection knowledge base columns
 
-Revision ID: 065
-Revises: 064
+Revision ID: 066
+Revises: 065
 Create Date: 2026-04-13
 
 """
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision = "065"
-down_revision = "064"
+revision = "066"
+down_revision = "065"
 branch_labels = None
 depends_on = None
 
