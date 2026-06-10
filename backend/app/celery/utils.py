@@ -216,6 +216,22 @@ def start_tts_result_processing(
     return task_id
 
 
+def start_fast_evaluation(eval_run_id: int, trace_id: str = "N/A") -> str:
+    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun."""
+    from app.celery.tasks.evaluation_fast import run_evaluation_fast
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_fast,
+        eval_run_id=eval_run_id,
+        trace_id=trace_id,
+    )
+    logger.info(
+        f"[start_fast_evaluation] Enqueued fast eval | "
+        f"eval_run_id={eval_run_id} | task_id={task_id}"
+    )
+    return task_id
+
+
 def get_task_status(task_id: str) -> Dict[str, Any]:
     result = AsyncResult(task_id)
     return {

@@ -5,8 +5,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
     EvaluationScore,
     create_evaluation_run,
@@ -19,14 +22,91 @@ from app.crud.evaluations import (
     start_evaluation_batch,
 )
 from app.crud.evaluations.score import CategoryMetrics, TraceData
-from app.models.evaluation import EvaluationRun
-from app.models.llm.request import TextLLMParams, STTLLMParams, TTSLLMParams
+from app.models.evaluation import EvaluationRun, RunModeEnum
+from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
-from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import load_json_from_object_store
 
 logger = logging.getLogger(__name__)
+
+# Error code surfaced in HTTPException.detail when a run_name collides with the
+# (organization_id, project_id, run_name) unique constraint. Shared by the batch
+# and fast paths so both return an identical 409 contract.
+ERR_RUN_NAME_ALREADY_EXISTS = "run_name_already_exists"
+
+# Name of the (organization_id, project_id, run_name) unique constraint on
+# evaluation_run. Used to distinguish a run_name collision (-> 409) from any
+# other IntegrityError (e.g. FK violations), which must not be masked.
+_RUN_NAME_UNIQUE_CONSTRAINT = "uq_evaluation_run_org_project_run_name"
+
+
+def _is_run_name_conflict(error: IntegrityError) -> bool:
+    """True only when the IntegrityError is the run_name uniqueness violation."""
+    constraint_name = getattr(
+        getattr(error.orig, "diag", None), "constraint_name", None
+    )
+    if constraint_name:
+        return constraint_name == _RUN_NAME_UNIQUE_CONSTRAINT
+    # Fall back to matching the constraint name in the raw error text for
+    # drivers/dialects that don't expose structured diagnostics.
+    return _RUN_NAME_UNIQUE_CONSTRAINT in str(error.orig or error)
+
+
+def create_evaluation_run_or_409(
+    *,
+    session: Session,
+    run_name: str,
+    dataset_name: str,
+    dataset_id: int,
+    config_id: UUID,
+    config_version: int,
+    organization_id: int,
+    project_id: int,
+    run_mode: RunModeEnum = RunModeEnum.BATCH,
+    log_context: str,
+) -> EvaluationRun:
+    """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
+
+    The (organization_id, project_id, run_name) unique constraint guards against
+    double-click / client-retry races; on collision we roll back and raise a 409
+    instead of leaking the IntegrityError.
+    """
+    try:
+        return create_evaluation_run(
+            session=session,
+            run_name=run_name,
+            dataset_name=dataset_name,
+            dataset_id=dataset_id,
+            config_id=config_id,
+            config_version=config_version,
+            organization_id=organization_id,
+            project_id=project_id,
+            run_mode=run_mode,
+        )
+    except IntegrityError as exc:
+        session.rollback()
+        # Only a run_name collision becomes a 409; any other IntegrityError
+        # (e.g. a dataset/config FK violation) is a real failure and must not be
+        # masked as a duplicate-name error.
+        if not _is_run_name_conflict(exc):
+            logger.error(
+                f"[{log_context}] IntegrityError creating run | run_name={run_name} | "
+                f"org_id={organization_id} | project_id={project_id} | error={exc}",
+                exc_info=True,
+            )
+            raise
+        logger.warning(
+            f"[{log_context}] Duplicate run_name | run_name={run_name} | "
+            f"org_id={organization_id} | project_id={project_id}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{ERR_RUN_NAME_ALREADY_EXISTS}: a run with name '{run_name}' "
+                "already exists for this organization and project. Pick a new "
+                "run_name or fetch the existing run via GET /evaluations."
+            ),
+        )
 
 
 def _compute_category_metrics(
@@ -98,7 +178,7 @@ def _attach_category_metrics(score: dict[str, Any] | None) -> dict[str, Any] | N
     return score
 
 
-def start_evaluation(
+def validate_and_start_batch_evaluation(
     session: Session,
     dataset_id: int,
     experiment_name: str,
@@ -132,7 +212,7 @@ def start_evaluation(
         HTTPException: If dataset not found, config invalid, or evaluation fails to start
     """
     logger.info(
-        f"[start_evaluation] Starting evaluation | experiment_name={experiment_name} | "
+        f"[validate_and_start_batch_evaluation] Starting evaluation | experiment_name={experiment_name} | "
         f"dataset_id={dataset_id} | "
         f"org_id={organization_id} | "
         f"config_id={config_id} | "
@@ -155,7 +235,7 @@ def start_evaluation(
         )
 
     logger.info(
-        f"[start_evaluation] Found dataset | id={dataset.id} | name={dataset.name} | "
+        f"[validate_and_start_batch_evaluation] Found dataset | id={dataset.id} | name={dataset.name} | "
         f"object_store_url={'present' if dataset.object_store_url else 'None'} | "
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
@@ -186,7 +266,7 @@ def start_evaluation(
         )
 
     logger.info(
-        "[start_evaluation] Successfully resolved config from config management"
+        "[validate_and_start_batch_evaluation] Successfully resolved config from config management"
     )
 
     # Get API clients
@@ -202,7 +282,7 @@ def start_evaluation(
     )
 
     # Step 3: Create EvaluationRun record with config references
-    eval_run = create_evaluation_run(
+    eval_run = create_evaluation_run_or_409(
         session=session,
         run_name=experiment_name,
         dataset_name=dataset.name,
@@ -211,6 +291,7 @@ def start_evaluation(
         config_version=config_version,
         organization_id=organization_id,
         project_id=project_id,
+        log_context="validate_and_start_batch_evaluation",
     )
 
     # Step 4: Start the batch evaluation
@@ -233,7 +314,7 @@ def start_evaluation(
         )
 
         logger.info(
-            f"[start_evaluation] Evaluation started successfully | "
+            f"[validate_and_start_batch_evaluation] Evaluation started successfully | "
             f"batch_job_id={eval_run.batch_job_id} | total_items={eval_run.total_items}"
         )
 
@@ -241,7 +322,7 @@ def start_evaluation(
 
     except Exception as e:
         logger.error(
-            f"[start_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
+            f"[validate_and_start_batch_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
             exc_info=True,
         )
         # Error is already handled in start_evaluation_batch
