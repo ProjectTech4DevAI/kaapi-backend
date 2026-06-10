@@ -164,6 +164,7 @@ celery_app = Celery(
     include=[
         "app.celery.tasks.job_execution",
         "app.celery.tasks.notifications",
+        "app.celery.tasks.evaluation_fast",
     ],
 )
 
@@ -185,6 +186,12 @@ celery_app.conf.update(
             exchange=default_exchange,
             routing_key="low",
             queue_arguments={"x-max-priority": 1},
+        ),
+        Queue(
+            "evaluations",
+            exchange=default_exchange,
+            routing_key="evaluations",
+            queue_arguments={"x-max-priority": 6},
         ),
         Queue("cron", exchange=default_exchange, routing_key="cron"),
         Queue("default", exchange=default_exchange, routing_key="default"),
