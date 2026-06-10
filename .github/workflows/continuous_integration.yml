@@ -71,6 +71,13 @@ jobs:
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
 
+      - name: Import Codecov GPG key
+        run: |
+          echo "${{ secrets.CODECOV_GPG_KEY }}" | \
+            gpg --no-default-keyring \
+                --keyring trustedkeys.gpg \
+                --import
+
       - name: Upload coverage reports to codecov
         uses: codecov/codecov-action@v5.4.3
         with:
