@@ -18,6 +18,7 @@ class ModelConfigBase(SQLModel):
         "anthropic",
         "google-aistudio",
         "proxy",
+        "google-aistudio",
     ] = Field(
         default="openai",
         sa_column=sa.Column(
@@ -29,6 +30,7 @@ class ModelConfigBase(SQLModel):
                 "anthropic",
                 "google-aistudio",
                 "proxy",
+                "google-aistudio",
                 name="provider_enum",
                 schema="global",
                 create_type=False,

@@ -1,22 +1,21 @@
+import logging
 from datetime import datetime
 from typing import Any, Literal, get_args
-import logging
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-logger = logging.getLogger(__name__)
-
 from app.models import ModelConfig
-from app.models.llm.constants import CompletionType, Provider
+from app.models.llm.constants import CompletionType
 from app.models.llm.request import ConfigBlob
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
     ModelConfigUpdate,
 )
-from app.models.model_config import CompletionType
+
+logger = logging.getLogger(__name__)
 
 Provider = Literal[
     "openai",
@@ -84,13 +83,17 @@ def list_all_active_model_configs(
 
 
 def get_model_config(
-    session: Session, provider: Provider, model_name: str
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    include_inactive: bool = False,
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
-        ModelConfig.is_active,
     )
+    if not include_inactive:
+        statement = statement.where(ModelConfig.is_active)
     return session.exec(statement).first()
 
 
@@ -206,7 +209,12 @@ def bulk_create_model_configs(
 def update_model_config(
     session: Session, provider: str, model_name: str, data: ModelConfigUpdate
 ) -> ModelConfig:
-    model = get_model_config(session=session, provider=provider, model_name=model_name)  # type: ignore[arg-type]
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
     update_data = data.model_dump(exclude_unset=True)
@@ -225,7 +233,12 @@ def bulk_update_model_configs(
     keys = [(item.provider, item.model_name) for item in items]
     existing: dict[tuple, ModelConfig] = {}
     for provider, model_name in keys:
-        m = get_model_config(session=session, provider=provider, model_name=model_name)
+        m = get_model_config(
+            session=session,
+            provider=provider,
+            model_name=model_name,
+            include_inactive=True,
+        )
         if m is None:
             raise HTTPException(
                 status_code=404,
@@ -250,7 +263,12 @@ def bulk_update_model_configs(
 
 
 def delete_model_config(session: Session, provider: str, model_name: str) -> None:
-    model = get_model_config(session=session, provider=provider, model_name=model_name)  # type: ignore[arg-type]
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")
     session.delete(model)
