@@ -360,6 +360,84 @@ class TestCreateLangfuseDatasetRun:
         trace_call = mock_langfuse.trace.call_args
         assert "question_id" not in trace_call.kwargs["metadata"]
 
+    def test_create_langfuse_dataset_run_copies_external_id_from_item(self) -> None:
+        """`external_id` (user-provided CSV `id`) must propagate from the
+        dataset item's metadata onto the trace's metadata so the response
+        sort can find it later. Without this copy every trace defaults to
+        question_id-only ordering."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+
+        mock_item1 = MagicMock()
+        mock_item1.id = "item_1"
+        mock_item1.metadata = {"category": "Health", "external_id": "7"}
+        mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
+
+        mock_dataset.items = [mock_item1]
+        mock_langfuse.get_dataset.return_value = mock_dataset
+
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "Q",
+                "generated_output": "A",
+                "ground_truth": "G",
+                "response_id": "resp_1",
+                "usage": None,
+                "question_id": 1,
+            },
+        ]
+
+        create_langfuse_dataset_run(
+            langfuse=mock_langfuse,
+            dataset_name="ds",
+            run_name="run",
+            results=results,
+        )
+
+        trace_metadata = mock_langfuse.trace.call_args.kwargs["metadata"]
+        assert trace_metadata["external_id"] == "7"
+        assert trace_metadata["category"] == "Health"
+
+    def test_create_langfuse_dataset_run_skips_external_id_when_item_lacks_it(
+        self,
+    ) -> None:
+        """Legacy items without `external_id` in metadata get no
+        external_id on the trace — the field is purely optional."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+
+        mock_item1 = MagicMock()
+        mock_item1.id = "item_1"
+        # Item has no external_id in its metadata.
+        mock_item1.metadata = {"category": "Other"}
+        mock_item1.observe.return_value.__enter__.return_value = "trace_id_1"
+
+        mock_dataset.items = [mock_item1]
+        mock_langfuse.get_dataset.return_value = mock_dataset
+
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "Q",
+                "generated_output": "A",
+                "ground_truth": "G",
+                "response_id": None,
+                "usage": None,
+                "question_id": 1,
+            },
+        ]
+
+        create_langfuse_dataset_run(
+            langfuse=mock_langfuse,
+            dataset_name="ds",
+            run_name="run",
+            results=results,
+        )
+
+        trace_metadata = mock_langfuse.trace.call_args.kwargs["metadata"]
+        assert "external_id" not in trace_metadata
+
 
 class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""

@@ -81,6 +81,37 @@ class TestMergeTraceData:
         assert stats["reused"] == 1
         assert stats["updated"] == 0
 
+    def test_category_and_external_id_preserved_across_resync(self):
+        def _real(trace_id, value=0.5, category="Health", external_id="1"):
+            return {
+                **_trace(trace_id, value=value),
+                "category": category,
+                "external_id": external_id,
+            }
+
+        # Both sides have the keys → merged carries them.
+        existing = [_real("1", value=0.5, category="Health", external_id="1")]
+        fresh = [_real("1", value=0.9, category="Health", external_id="1")]
+        merged, stats = merge_trace_data(existing, fresh)
+        assert merged[0]["category"] == "Health"
+        assert merged[0]["external_id"] == "1"
+        assert merged[0]["scores"][0]["value"] == 0.9
+        assert stats["updated"] == 1
+
+        # Existing has them, fresh missing the keys → fall back to existing.
+        existing2 = [_real("2", category="Education", external_id="5")]
+        fresh2 = [_trace("2", value=1.0)]  # legacy-shape trace
+        merged2, _ = merge_trace_data(existing2, fresh2)
+        assert merged2[0]["category"] == "Education"
+        assert merged2[0]["external_id"] == "5"
+
+        # Fresh has them, existing missing the keys → take from fresh.
+        existing3 = [_trace("3")]  # legacy-shape trace
+        fresh3 = [_real("3", category="Sports", external_id="7")]
+        merged3, _ = merge_trace_data(existing3, fresh3)
+        assert merged3[0]["category"] == "Sports"
+        assert merged3[0]["external_id"] == "7"
+
 
 class TestComputeSummaryScores:
     def test_numeric_summary(self):
