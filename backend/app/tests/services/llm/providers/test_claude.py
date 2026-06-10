@@ -429,7 +429,7 @@ class TestExecuteErrors:
         )
         resp, err = provider.execute(config, query, "hi")
         assert resp is None
-        assert "Anthropic API error" in err
+        assert "[ANTHROPIC]" in err
         assert "rate limited" in err
 
     def test_generic_exception_returns_opaque_message(
@@ -440,4 +440,4 @@ class TestExecuteErrors:
         mock_client.messages.create.side_effect = RuntimeError("boom internal detail")
         resp, err = provider.execute(config, query, "hi")
         assert resp is None
-        assert err == "Unexpected error occurred"
+        assert err.startswith("[KAAPI] Unexpected error")

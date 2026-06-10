@@ -15,7 +15,12 @@ from typing import Any
 from langfuse import Langfuse
 
 from app.crud.evaluations.merge import compute_summary_scores
-from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
+from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
+    EvaluationScore,
+    TraceData,
+    TraceScore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,12 @@ def create_langfuse_dataset_run(
                         metadata["response_id"] = response_id
                     if question_id:
                         metadata["question_id"] = question_id
+
+                    item_metadata = getattr(dataset_item, "metadata", None)
+                    if isinstance(item_metadata, dict):
+                        item_category = item_metadata.get("category")
+                        if item_category:
+                            metadata["category"] = item_category
 
                     # Create trace with basic info
                     langfuse.trace(
@@ -255,6 +266,7 @@ def upload_dataset_to_langfuse(
 
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
+            category = item.get("category") or DEFAULT_CATEGORY
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
@@ -264,6 +276,7 @@ def upload_dataset_to_langfuse(
                     "duplicate_number": duplicate_num + 1,
                     "duplication_factor": duplication_factor,
                     "question_id": question_id,
+                    "category": category,
                 },
             )
             return True
@@ -431,6 +444,7 @@ def fetch_trace_scores_from_langfuse(
                 "llm_answer": "",
                 "ground_truth_answer": "",
                 "question_id": "",
+                "category": DEFAULT_CATEGORY,
                 "scores": [],
             }
 
@@ -448,12 +462,18 @@ def fetch_trace_scores_from_langfuse(
                 elif isinstance(trace.output, str):
                     trace_data["llm_answer"] = trace.output
 
-            # Get ground truth and question_id from metadata
+            # Get ground truth, question_id, and category from metadata.
+            # `category` is absent on traces produced before the feature
+            # existed, so default to "Other" for backwards compatibility.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
                 )
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
+                raw_category = trace.metadata.get("category") or ""
+                trace_data["category"] = (
+                    raw_category.title() if raw_category else DEFAULT_CATEGORY
+                )
 
             # Add scores from this trace
             if trace.scores:
