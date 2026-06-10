@@ -1,12 +1,12 @@
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Index, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field as SQLField
-from sqlmodel import Relationship, SQLModel
+from sqlalchemy import Column, Index, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ENUM, JSONB
+from sqlmodel import Field as SQLField, Relationship, SQLModel
 
 from app.core.util import now
 
@@ -14,6 +14,19 @@ if TYPE_CHECKING:
     from .batch_job import BatchJob
     from .organization import Organization
     from .project import Project
+
+
+class RunModeEnum(str, Enum):
+    BATCH = "batch"
+    FAST = "fast"
+
+
+_RUN_MODE_PG_ENUM = ENUM(
+    RunModeEnum,
+    name="run_mode_enum",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
 
 
 class DatasetItem(BaseModel):
@@ -46,6 +59,15 @@ class DatasetUploadResponse(BaseModel):
     )
     signed_url: str | None = Field(
         None, description="A signed URL for downloading the dataset"
+    )
+    eligible_for_fast: bool = Field(
+        False,
+        description=(
+            "Size predicate only: True if the dataset's unique-row count is at or "
+            "below the fast-mode threshold (settings.EVAL_FAST_MAX_UNIQUE_ROWS). "
+            "Other fast-mode prerequisites (e.g. a Langfuse dataset id, a text "
+            "OpenAI config) are not reflected here."
+        ),
     )
 
 
@@ -192,6 +214,12 @@ class EvaluationRun(SQLModel, table=True):
     __table_args__ = (
         Index("idx_eval_run_status_org", "status", "organization_id"),
         Index("idx_eval_run_status_project", "status", "project_id"),
+        UniqueConstraint(
+            "organization_id",
+            "project_id",
+            "run_name",
+            name="uq_evaluation_run_org_project_run_name",
+        ),
     )
 
     id: int = SQLField(
@@ -283,6 +311,15 @@ class EvaluationRun(SQLModel, table=True):
         sa_column_kwargs={
             "comment": "Evaluation status (pending, processing, completed, failed)"
         },
+    )
+    run_mode: RunModeEnum = SQLField(
+        default=RunModeEnum.BATCH,
+        sa_column=Column(
+            _RUN_MODE_PG_ENUM,
+            nullable=False,
+            server_default=text("'batch'::run_mode_enum"),
+            comment="Execution mode: batch or fast",
+        ),
     )
     object_store_url: str | None = SQLField(
         default=None,
@@ -421,6 +458,7 @@ class EvaluationRunPublic(SQLModel):
     batch_job_id: int | None
     embedding_batch_job_id: int | None
     status: str
+    run_mode: RunModeEnum
     object_store_url: str | None
     score_trace_url: str | None
     total_items: int

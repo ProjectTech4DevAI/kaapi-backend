@@ -11,8 +11,9 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import EvaluationScore
+from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
@@ -62,6 +63,7 @@ def create_evaluation_run(
     config_version: int,
     organization_id: int,
     project_id: int,
+    run_mode: RunModeEnum = RunModeEnum.BATCH,
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -75,6 +77,7 @@ def create_evaluation_run(
         config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
+        run_mode: Execution mode (RunModeEnum.BATCH default, or RunModeEnum.FAST)
 
     Returns:
         The created EvaluationRun instance
@@ -87,6 +90,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
+        run_mode=run_mode,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
@@ -449,6 +453,7 @@ def group_traces_by_question_id(
                 "question_id": 1,
                 "question": "What is Python?",
                 "ground_truth_answer": "...",
+                "category": "health",
                 "llm_answers": ["Answer 1", "Answer 2"],
                 "trace_ids": ["trace-1", "trace-2"],
                 "scores": [[...], [...]]
@@ -479,6 +484,7 @@ def group_traces_by_question_id(
                 "question_id": question_id,
                 "question": first.get("question", ""),
                 "ground_truth_answer": first.get("ground_truth_answer", ""),
+                "category": first.get("category") or DEFAULT_CATEGORY,
                 "llm_answers": [t.get("llm_answer", "") for t in group_traces],
                 "trace_ids": [t.get("trace_id", "") for t in group_traces],
                 "scores": [t.get("scores", []) for t in group_traces],
