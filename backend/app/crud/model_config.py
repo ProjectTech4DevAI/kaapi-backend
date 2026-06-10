@@ -1,25 +1,31 @@
+import logging
 from datetime import datetime
 from typing import Any, Literal, get_args
-import logging
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-logger = logging.getLogger(__name__)
-
 from app.models import ModelConfig
-from app.models.llm.constants import CompletionType, Provider
+from app.models.llm.constants import CompletionType
 from app.models.llm.request import ConfigBlob
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
     ModelConfigUpdate,
 )
-from app.models.model_config import CompletionType
+
+logger = logging.getLogger(__name__)
 
 Provider = Literal[
-    "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex", "proxy"
+    "openai",
+    "google",
+    "sarvamai",
+    "elevenlabs",
+    "anthropic",
+    "google-vertex",
+    "proxy",
+    "google-aistudio",
 ]
 
 # Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`

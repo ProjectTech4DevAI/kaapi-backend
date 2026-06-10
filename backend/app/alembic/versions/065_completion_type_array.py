@@ -40,6 +40,9 @@ def upgrade():
             "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-vertex'"
         )
         op.execute("ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'proxy'")
+        op.execute(
+            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-aistudio'"
+        )
 
 
 def downgrade():
