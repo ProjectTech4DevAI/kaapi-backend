@@ -126,7 +126,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     if raw_provider is None:
         return
 
-    if raw_provider.endswith("-native"):
+    if raw_provider.endswith(NATIVE_PROVIDER_SUFFIX):
         return
 
     provider = _normalize_provider(raw_provider)
