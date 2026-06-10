@@ -13,6 +13,7 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, trace_sort_key
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
@@ -62,6 +63,7 @@ def create_evaluation_run(
     config_version: int,
     organization_id: int,
     project_id: int,
+    run_mode: RunModeEnum = RunModeEnum.BATCH,
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -75,6 +77,7 @@ def create_evaluation_run(
         config_version: Version number of the config
         organization_id: Organization ID
         project_id: Project ID
+        run_mode: Execution mode (RunModeEnum.BATCH default, or RunModeEnum.FAST)
 
     Returns:
         The created EvaluationRun instance
@@ -87,6 +90,7 @@ def create_evaluation_run(
         config_id=config_id,
         config_version=config_version,
         status="pending",
+        run_mode=run_mode,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
