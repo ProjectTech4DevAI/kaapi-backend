@@ -24,6 +24,26 @@ from app.crud.evaluations.score import (
 logger = logging.getLogger(__name__)
 
 
+def sort_traces_by_question_id(traces: list[TraceData]) -> list[TraceData]:
+    """
+    Return ``traces`` ordered by the 1-based ``question_id`` assigned at Langfuse
+    upload time (effectively the CSV row index). Without this, traces come back in
+    ThreadPoolExecutor completion order, so the API response sequence is a race
+    rather than the CSV's natural order. Traces missing or with non-numeric
+    question_id are pushed to the end so the sort is total even for legacy traces.
+    """
+
+    def _key(trace: TraceData) -> tuple[int, int]:
+        qid = trace.get("question_id")
+        if isinstance(qid, int):
+            return (0, qid)
+        if isinstance(qid, str) and qid.strip().isdigit():
+            return (0, int(qid))
+        return (1, 0)
+
+    return sorted(traces, key=_key)
+
+
 def compute_summary_scores(traces: list[TraceData]) -> list[SummaryScore]:
     """
     Aggregate per-trace scores by name: numeric scores get avg/std, categorical
@@ -159,6 +179,7 @@ def merge_scores_step_forward(
     fresh_traces = fresh_score.get("traces", []) or []
 
     merged_traces, stats = merge_trace_data(existing_traces, fresh_traces)
+    merged_traces = sort_traces_by_question_id(merged_traces)
     recomputed_summary = compute_summary_scores(merged_traces)
 
     # Recomputed summaries take precedence; summary-only scores survive.

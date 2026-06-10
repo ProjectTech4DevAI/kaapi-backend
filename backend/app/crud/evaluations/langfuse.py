@@ -266,18 +266,19 @@ def upload_dataset_to_langfuse(
 
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
-            category = item.get("category") or DEFAULT_CATEGORY
+            metadata = {
+                "original_question": item["question"],
+                "duplicate_number": duplicate_num + 1,
+                "duplication_factor": duplication_factor,
+                "question_id": question_id,
+            }
+            if "category" in item:
+                metadata["category"] = item["category"] or DEFAULT_CATEGORY
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
                 expected_output={"answer": item["answer"]},
-                metadata={
-                    "original_question": item["question"],
-                    "duplicate_number": duplicate_num + 1,
-                    "duplication_factor": duplication_factor,
-                    "question_id": question_id,
-                    "category": category,
-                },
+                metadata=metadata,
             )
             return True
         except Exception as e:
@@ -444,7 +445,6 @@ def fetch_trace_scores_from_langfuse(
                 "llm_answer": "",
                 "ground_truth_answer": "",
                 "question_id": "",
-                "category": DEFAULT_CATEGORY,
                 "scores": [],
             }
 
@@ -463,17 +463,17 @@ def fetch_trace_scores_from_langfuse(
                     trace_data["llm_answer"] = trace.output
 
             # Get ground truth, question_id, and category from metadata.
-            # `category` is absent on traces produced before the feature
-            # existed, so default to "Other" for backwards compatibility.
+            # `category` is intentionally omitted from the trace when the metadata
+            # has none — datasets uploaded without a `category` CSV column should
+            # not surface a category dimension in the API response.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
                 )
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
                 raw_category = trace.metadata.get("category") or ""
-                trace_data["category"] = (
-                    raw_category.title() if raw_category else DEFAULT_CATEGORY
-                )
+                if raw_category:
+                    trace_data["category"] = raw_category.title()
 
             # Add scores from this trace
             if trace.scores:
