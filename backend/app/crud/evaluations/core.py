@@ -442,11 +442,6 @@ def group_traces_by_question_id(
     """
     Group evaluation traces by question_id for horizontal comparison.
 
-    Output rows are sorted by user-provided `external_id` (CSV `id` column)
-    when available, falling back to `question_id` for legacy datasets. The
-    sort key matches the row-format sort so both export formats produce
-    the same ordering.
-
     Returns:
         List of grouped traces:
         [
