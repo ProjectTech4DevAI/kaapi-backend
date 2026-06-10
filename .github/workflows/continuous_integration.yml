@@ -2,9 +2,9 @@ name: Kaapi CI
 
 on:
   push:
-    branches: [feat/evals-id-optional]
+    branches: [main]
   pull_request:
-    branches: [feat/evals-id-optional]
+    branches: [main]
 
 jobs:
   checks:
@@ -70,20 +70,6 @@ jobs:
       - name: Run tests
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
-
-      - name: Debug GPG import
-        env:
-          CODECOV_GPG_KEY: ${{ secrets.CODECOV_GPG_KEY }}
-        run: |
-          echo "Key length: ${#CODECOV_GPG_KEY}"
-          echo "$CODECOV_GPG_KEY" | head -1
-
-      - name: Import Codecov GPG key
-        run: |
-          echo "${{ secrets.CODECOV_GPG_KEY }}" | \
-            gpg --no-default-keyring \
-                --keyring trustedkeys.gpg \
-                --import
 
       - name: Upload coverage reports to codecov
         uses: codecov/codecov-action@v7

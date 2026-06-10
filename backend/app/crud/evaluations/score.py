@@ -27,10 +27,6 @@ class TraceData(TypedDict):
     question: str
     llm_answer: str
     question_id: int | None
-    # User-provided value from the optional `id` CSV column. Used as the
-    # primary sort key in the response — when present it determines the
-    # order traces appear in. None for rows that didn't supply an id (or
-    # for traces from datasets uploaded before this feature existed).
     external_id: str | None
     ground_truth_answer: str
     category: str

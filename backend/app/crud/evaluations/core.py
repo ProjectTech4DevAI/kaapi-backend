@@ -477,10 +477,6 @@ def group_traces_by_question_id(
             groups[question_id] = []
         groups[question_id].append(trace)
 
-    # Build the grouped rows first, then sort by the same key used for the
-    # row format. All duplicates of one question share the same external_id
-    # (they came from the same dataset item), so picking the first trace's
-    # value gives a deterministic group-level sort.
     grouped_rows: list[dict[str, Any]] = []
     for question_id, group_traces in groups.items():
         first = group_traces[0]

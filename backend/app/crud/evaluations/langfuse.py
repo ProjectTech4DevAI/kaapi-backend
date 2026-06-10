@@ -273,9 +273,7 @@ def upload_dataset_to_langfuse(
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
             category = item.get("category") or DEFAULT_CATEGORY
-            # `external_id` is the user-provided value from the optional `id`
-            # CSV column. None for rows that didn't provide one — the trace
-            # will fall back to `question_id` at sort time.
+            # `external_id` is the user-provided value from the optional `id` CSV column.
             external_id = item.get("external_id")
             metadata: dict[str, Any] = {
                 "original_question": item["question"],
@@ -477,10 +475,9 @@ def fetch_trace_scores_from_langfuse(
                 elif isinstance(trace.output, str):
                     trace_data["llm_answer"] = trace.output
 
-            # Get ground truth, question_id, category, and external_id from
-            # metadata. `category` and `external_id` are absent on traces
-            # produced before those features existed — default gracefully so
-            # old runs still render.
+            # Get ground truth, question_id, category and external_id from metadata.
+            # `category` and `external_id` is absent on traces produced before the feature
+            # existed, default gracefully so old runs still render.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
@@ -581,10 +578,6 @@ def fetch_trace_scores_from_langfuse(
             )
 
         # 4. Sort traces by user-provided `external_id` (CSV `id` column).
-        # Traces without an external_id fall back to `question_id` order,
-        # which preserves the legacy behaviour for datasets uploaded before
-        # this feature. Sort is applied here (before caching) so cache reads
-        # and resyncs all return traces in the same order.
         traces.sort(key=trace_sort_key)
 
         # 5. Calculate summary scores from the fetched traces.

@@ -164,16 +164,10 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
         question_col = clean_headers["question"]
         answer_col = clean_headers["answer"]
         category_col = clean_headers.get("category")
-        # `id` is case-insensitive (`id` / `Id` / `iD` / `ID` all map here).
-        # When the column exists, the per-row value controls the order of
-        # the response traces — see fetch_trace_scores_from_langfuse for the
-        # sort logic.
         id_col = clean_headers.get("id")
 
         items = []
         seen_external_ids: set[str] = set()
-        # `row_num` reflects the CSV row number as a user would see it in
-        # their spreadsheet — row 1 is the header, data starts at row 2.
         for row_num, row in enumerate(csv_reader, start=2):
             question = row.get(question_col, "").strip()
             answer = row.get(answer_col, "").strip()
@@ -184,13 +178,6 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
             )
             category = raw_category.title() if raw_category else DEFAULT_CATEGORY
 
-            # `external_id`: user-provided ordering key. When the `id` column
-            # exists, every row MUST have a valid integer value — otherwise
-            # the entire upload is rejected with a clear 422 below. This
-            # keeps response ordering deterministic and matches the spec
-            # that IDs are simple numerics (1, 2, 3, ...). When the column
-            # is absent, traces fall back to `question_id` order — the
-            # legacy behaviour for datasets uploaded before this feature.
             external_id: str | None = None
             if id_col is not None:
                 raw_external_id = (row.get(id_col, "") or "").strip()
