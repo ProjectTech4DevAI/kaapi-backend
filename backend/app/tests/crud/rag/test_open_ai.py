@@ -1,7 +1,7 @@
 """
 Tests for OpenAIVectorStoreCrud.update — focused on the failure-path error
-enrichment added in this PR (per-file reasons + category-prefixed messages
-for each specific OpenAI exception type).
+enrichment (per-file reasons + category-prefixed messages for each specific
+OpenAI exception type).
 """
 
 from unittest.mock import MagicMock
@@ -22,33 +22,25 @@ def crud(mock_client):
     return OpenAIVectorStoreCrud(client=mock_client)
 
 
-@pytest.fixture
-def mock_storage():
-    storage = MagicMock()
-    storage.get.return_value = b"file content"
-    return storage
+def _make_doc(file_id: str, fname: str) -> MagicMock:
+    doc = MagicMock()
+    doc.file_id = {"openai": file_id}
+    doc.fname = fname
+    return doc
 
 
 @pytest.fixture
-def docs_batch():
-    """One batch with two documents. update() loops `for docs in documents`."""
-    doc1 = MagicMock(object_store_url="s3://bucket/file1.pdf", fname="file1.pdf")
-    doc2 = MagicMock(object_store_url="s3://bucket/file2.pdf", fname="file2.pdf")
-    return [[doc1, doc2]]
+def docs():
+    return [
+        _make_doc("file-1", "file1.pdf"),
+        _make_doc("file-2", "file2.pdf"),
+    ]
 
 
-def _batch_result(*, completed: int, total: int, batch_id: str = "batch_abc"):
+def _batch_result(*, completed: int, failed: int, batch_id: str = "batch_abc"):
     """Mock the return of vector_stores.file_batches.upload_and_poll."""
-    counts = MagicMock(completed=completed, total=total)
+    counts = MagicMock(completed=completed, failed=failed)
     return MagicMock(id=batch_id, file_counts=counts)
-
-
-def _failed_file_page(files, has_more: bool = False):
-    """Mock the iterable returned by list_files(filter='failed')."""
-    page = MagicMock()
-    page.__iter__ = MagicMock(return_value=iter(files))
-    page.has_more = has_more
-    return page
 
 
 def _failed_file(file_id: str, error_message: str | None):
@@ -60,135 +52,85 @@ def _failed_file(file_id: str, error_message: str | None):
 
 
 class TestOpenAIVectorStoreCrudUpdateSuccess:
-    def test_yields_docs_when_all_files_complete(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
+    def test_completes_when_all_files_complete(self, crud, mock_client, docs):
         mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=2, total=2)
+            _batch_result(completed=2, failed=0)
         )
 
-        yielded = list(crud.update("vs_1", mock_storage, docs_batch))
+        crud.update("vs_1", docs)
 
-        # update yields from the inner docs list on success
-        assert len(yielded) == 2
+        _, kwargs = mock_client.vector_stores.file_batches.upload_and_poll.call_args
+        assert kwargs["vector_store_id"] == "vs_1"
+        assert kwargs["file_ids"] == ["file-1", "file-2"]
         # list_files should not have been called on the happy path
         mock_client.vector_stores.file_batches.list_files.assert_not_called()
 
+    def test_skips_upload_when_no_docs(self, crud, mock_client):
+        crud.update("vs_1", [])
+        mock_client.vector_stores.file_batches.upload_and_poll.assert_not_called()
+
 
 class TestOpenAIVectorStoreCrudUpdatePartialFailure:
-    """Partial completion -> InterruptedError with enriched per-file reasons."""
+    """Failed files -> RuntimeError with per-file reasons labelled by fname."""
 
-    def test_includes_failed_file_ids_and_messages(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
+    def test_includes_failed_fnames_and_messages(self, crud, mock_client, docs):
         mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=1, total=3)
+            _batch_result(completed=1, failed=1)
         )
-        mock_client.vector_stores.file_batches.list_files.return_value = (
-            _failed_file_page(
-                [
-                    _failed_file("file-abc", "Unsupported file type"),
-                    _failed_file("file-xyz", "File too large"),
-                ]
-            )
-        )
+        mock_client.vector_stores.file_batches.list_files.return_value = [
+            _failed_file("file-1", "Unsupported file type"),
+            _failed_file("file-2", "File too large"),
+        ]
 
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+        with pytest.raises(RuntimeError) as exc_info:
+            crud.update("vs_1", docs)
 
         msg = str(exc_info.value)
-        assert "OpenAI document processing error" in msg
-        assert "1/3 files completed" in msg
-        assert "Failed files:" in msg
-        assert "file-abc (Unsupported file type)" in msg
-        assert "file-xyz (File too large)" in msg
+        assert "file1.pdf: Unsupported file type" in msg
+        assert "file2.pdf: File too large" in msg
 
-    def test_reports_unknown_error_when_last_error_missing(
-        self, crud, mock_client, mock_storage, docs_batch
+    def test_reports_no_error_detail_when_last_error_missing(
+        self, crud, mock_client, docs
     ):
         """A failed file with no `last_error` shouldn't drop out of the
-        summary — it gets 'Unknown error' so the user sees that something
+        summary — it gets 'no error detail' so the user sees that something
         was wrong with that file even if OpenAI didn't tell us what."""
         mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=0, total=1)
+            _batch_result(completed=1, failed=1)
         )
-        mock_client.vector_stores.file_batches.list_files.return_value = (
-            _failed_file_page([_failed_file("file-noerr", None)])
-        )
+        mock_client.vector_stores.file_batches.list_files.return_value = [
+            _failed_file("file-1", None)
+        ]
 
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+        with pytest.raises(RuntimeError, match="file1.pdf: no error detail"):
+            crud.update("vs_1", docs)
 
-        assert "file-noerr (Unknown error)" in str(exc_info.value)
-
-    def test_appends_ellipsis_when_has_more_results(
-        self, crud, mock_client, mock_storage, docs_batch
+    def test_falls_back_to_file_id_label_for_unknown_file(
+        self, crud, mock_client, docs
     ):
-        """When OpenAI returns has_more=True we cap at the first 10 entries
-        and signal truncation with a trailing ', ...' so callers know more
-        failures exist beyond what's shown."""
+        """A failed file ID not matching any doc is labelled by its file ID."""
         mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=0, total=100)
+            _batch_result(completed=1, failed=1)
         )
-        mock_client.vector_stores.file_batches.list_files.return_value = (
-            _failed_file_page(
-                [_failed_file(f"file-{i}", "err") for i in range(10)],
-                has_more=True,
-            )
-        )
+        mock_client.vector_stores.file_batches.list_files.return_value = [
+            _failed_file("file-unknown", "parse error")
+        ]
 
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+        with pytest.raises(RuntimeError, match="file-unknown: parse error"):
+            crud.update("vs_1", docs)
 
-        assert str(exc_info.value).endswith(", ...")
-
-    def test_truncates_summary_when_over_600_chars(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
-        """Long error blobs are truncated at 597 chars + '...' so callback
-        payloads stay bounded regardless of what OpenAI returns."""
+    def test_reraises_when_list_files_errors(self, crud, mock_client, docs):
+        """If the follow-up list_files lookup itself raises, the OpenAI error
+        propagates instead of masking the real upload problem."""
         mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=0, total=10)
-        )
-        # Inflate per-file strings to push the joined summary past 600 chars.
-        mock_client.vector_stores.file_batches.list_files.return_value = (
-            _failed_file_page(
-                [
-                    _failed_file(f"file-{'x' * 80}-{i}", "long error " * 10)
-                    for i in range(10)
-                ]
-            )
-        )
-
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
-
-        msg = str(exc_info.value)
-        marker = "Failed files: "
-        summary = msg[msg.index(marker) + len(marker) :]
-        assert len(summary) == 600
-        assert summary.endswith("...")
-
-    def test_falls_back_to_count_only_when_list_files_errors(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
-        """If the follow-up list_files lookup itself raises, the update
-        still raises InterruptedError but with the original count-only
-        message — no 'Failed files:' suffix, no transient list_files crash
-        masking the real upload problem."""
-        mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-            _batch_result(completed=0, total=3)
+            _batch_result(completed=0, failed=2)
         )
         mock_client.vector_stores.file_batches.list_files.side_effect = (
             openai.OpenAIError("list failed")
         )
 
-        with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
-
-        msg = str(exc_info.value)
-        assert "0/3 files completed" in msg
-        assert "Failed files:" not in msg
+        with pytest.raises(openai.OpenAIError, match="list failed"):
+            crud.update("vs_1", docs)
 
 
 class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
@@ -282,8 +224,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         self,
         crud,
         mock_client,
-        mock_storage,
-        docs_batch,
+        docs,
         exception_factory,
         expected_prefix,
         expected_status,
@@ -294,25 +235,23 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         )
 
         with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+            crud.update("vs_1", docs)
         msg = str(exc_info.value)
         assert msg.startswith(expected_prefix), msg
         assert f"code: {expected_status}" in msg, msg
         assert original_message in msg, msg
 
-    def test_api_timeout_error(self, crud, mock_client, mock_storage, docs_batch):
+    def test_api_timeout_error(self, crud, mock_client, docs):
         """APITimeoutError doesn't expose .message — handler interpolates str(e)."""
         mock_client.vector_stores.file_batches.upload_and_poll.side_effect = (
             openai.APITimeoutError(request=MagicMock())
         )
 
         with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+            crud.update("vs_1", docs)
         assert str(exc_info.value).startswith("[KAAPI] OpenAI request timed out")
 
-    def test_generic_openai_error_falls_through(
-        self, crud, mock_client, mock_storage, docs_batch
-    ):
+    def test_generic_openai_error_falls_through(self, crud, mock_client, docs):
         """Any OpenAIError subclass without a dedicated handler lands in the
         bottom-most `except openai.OpenAIError` block — prefixed with the
         generic "OpenAI error" tag but still carrying the original message.
@@ -322,7 +261,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         )
 
         with pytest.raises(InterruptedError) as exc_info:
-            list(crud.update("vs_1", mock_storage, docs_batch))
+            crud.update("vs_1", docs)
         msg = str(exc_info.value)
         assert msg.startswith("[OPENAI] SDK error:"), msg
         assert "something else" in msg, msg

@@ -99,8 +99,8 @@ def test_collection_info_include_docs_false_returns_no_docs(
     payload = data["data"]
 
     assert payload["id"] == str(collection.id)
-    assert payload["knowledge_base_provider"] == collection.llm_service_name
-    assert payload["knowledge_base_id"] == collection.llm_service_id
+    assert payload["knowledge_base_provider"] == collection.knowledge_base_provider
+    assert payload["knowledge_base_id"] == collection.knowledge_base_id
     assert payload["documents"] is None
 
 
@@ -164,12 +164,8 @@ def test_collection_info_vector_store_collection(
     payload = data["data"]
 
     assert payload["id"] == str(collection.id)
-    # Vector store collection should have knowledge_base fields, not llm_service fields
     assert payload["knowledge_base_provider"] == get_service_name("openai")
-    assert payload["knowledge_base_id"] == collection.llm_service_id
-    # LLM service fields should not be present in the response
-    assert "llm_service_name" not in payload
-    assert "llm_service_id" not in payload
+    assert payload["knowledge_base_id"] == collection.knowledge_base_id
 
     docs = payload.get("documents", [])
     assert len(docs) >= 1

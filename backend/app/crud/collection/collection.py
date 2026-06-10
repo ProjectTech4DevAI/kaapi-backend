@@ -41,8 +41,8 @@ class CollectionCrud:
     def _exists(self, collection: Collection) -> bool:
         stmt = select(Collection.id).where(
             (Collection.project_id == self.project_id)
-            & (Collection.llm_service_id == collection.llm_service_id)
-            & (Collection.llm_service_name == collection.llm_service_name)
+            & (Collection.knowledge_base_id == collection.knowledge_base_id)
+            & (Collection.knowledge_base_provider == collection.knowledge_base_provider)
         )
         present = self.session.exec(stmt).scalar_one_or_none() is not None
 
@@ -186,7 +186,7 @@ class CollectionCrud:
                 f"[CollectionCrud.delete] Collection already deleted | {{'collection_id': '{model.id}'}}"
             )
             return model
-        remote.delete(model.llm_service_id)
+        remote.delete(model.knowledge_base_id)
         model.deleted_at = now()
         collection = self._update(model)
         logger.info(

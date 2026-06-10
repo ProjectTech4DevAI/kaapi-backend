@@ -21,6 +21,7 @@ from app.crud.rag import OpenAIFileCrud, OpenAIVectorStoreCrud
 from app.models import (
     Document,
     DocumentPublic,
+    ProviderType,
     TransformedDocumentPublic,
     DocumentUploadResponse,
     Message,
@@ -204,8 +205,9 @@ def remove_doc(
     document = d_crud.read_one(doc_id)
 
     c_crud.delete(document, v_crud)
-    if document.openai_file_id:
-        f_crud.delete(document.openai_file_id)
+    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
+    if openai_file_id:
+        f_crud.delete(openai_file_id)
     d_crud.delete(doc_id)
 
     return APIResponse.success_response(
@@ -236,8 +238,9 @@ def permanent_delete_doc(
     document = d_crud.read_one(doc_id)
 
     c_crud.delete(document, v_crud)
-    if document.openai_file_id:
-        f_crud.delete(document.openai_file_id)
+    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
+    if openai_file_id:
+        f_crud.delete(openai_file_id)
     storage.delete(document.object_store_url)
     d_crud.delete(doc_id)
 

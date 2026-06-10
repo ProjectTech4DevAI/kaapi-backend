@@ -44,17 +44,17 @@ class Collection(SQLModel, table=True):
         description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
         sa_column_kwargs={"comment": "LLM provider used for this collection"},
     )
-    llm_service_id: str = Field(
+    knowledge_base_id: str = Field(
         nullable=False,
-        description="External LLM service identifier (e.g., OpenAI vector store ID)",
+        description="Provider knowledge base ID (e.g., OpenAI vector store ID)",
         sa_column_kwargs={
-            "comment": "External LLM service identifier (e.g., OpenAI vector store ID)"
+            "comment": "Provider knowledge base ID (e.g. OpenAI vector store ID)"
         },
     )
-    llm_service_name: str = Field(
+    knowledge_base_provider: str = Field(
         nullable=False,
-        description="Name of the LLM service",
-        sa_column_kwargs={"comment": "Name of the LLM service"},
+        description="Name of the knowledge base provider service",
+        sa_column_kwargs={"comment": "Name of the knowledge base provider service"},
     )
     name: str | None = Field(
         nullable=True,

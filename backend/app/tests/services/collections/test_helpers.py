@@ -228,8 +228,8 @@ def test_to_collection_public_vector_store() -> None:
         id=uuid4(),
         project_id=1,
         provider=ProviderType.openai,
-        llm_service_id="vs_123",
-        llm_service_name="openai vector store",  # Matches get_service_name("openai")
+        knowledge_base_id="vs_123",
+        knowledge_base_provider="openai vector store",  # Matches get_service_name("openai")
         name="Test Collection",
         description="Test description",
         inserted_at=now(),
@@ -255,8 +255,8 @@ def test_to_collection_public_with_deleted_at() -> None:
         id=uuid4(),
         project_id=3,
         provider=ProviderType.openai,
-        llm_service_id="vs_789",
-        llm_service_name="openai vector store",
+        knowledge_base_id="vs_789",
+        knowledge_base_provider="openai vector store",
         name="Deleted Collection",
         description="Deleted",
         inserted_at=now(),

@@ -28,6 +28,7 @@ from app.models import (
 from app.services.collections.helpers import (
     batch_documents,
     extract_error_message,
+    get_service_name,
     to_collection_public,
 )
 from app.services.collections.providers.registry import get_llm_provider
@@ -167,11 +168,13 @@ def execute_setup_job(
     task_instance,
 ) -> None:
     """
-    Phase 1: Fetch documents, create the vector store, split into batches,
+    Phase 1: Fetch documents, split into batches, create the vector store,
     update job state to PROCESSING, then queue the first batch task.
     """
     collection_job = None
     creation_request = None
+    provider = None
+    result = None
 
     with log_context(
         tag="collection",
@@ -206,6 +209,13 @@ def execute_setup_job(
                 )
 
                 for doc in flat_docs:
+                    if doc.file_size_kb is None:
+                        doc.file_size_kb = storage.get_file_size_kb(
+                            doc.object_store_url
+                        )
+                        document_crud.update(doc)
+
+                for doc in flat_docs:
                     session.expunge(doc)
 
                 collection_job_crud = CollectionJobCrud(session, project_id)
@@ -217,21 +227,18 @@ def execute_setup_job(
                     ),
                 )
 
-            provider.upload_files(storage, flat_docs, project_id)
-
-            logger.info(
-                "[create_collection.execute_setup_job] All file uploads complete | "
-                "job_id=%s, total=%d",
-                job_id,
-                len(flat_docs),
-            )
-
             total_size_kb = sum(doc.file_size_kb for doc in flat_docs)
             total_size_mb = round(total_size_kb / 1024, 2)
 
             docs_batches = batch_documents(flat_docs)
             total_batches = len(docs_batches)
             batch_doc_ids = [[str(doc.id) for doc in batch] for batch in docs_batches]
+
+            vector_store_id = provider.create_vector_store()
+            result = Collection(
+                knowledge_base_id=vector_store_id,
+                knowledge_base_provider=get_service_name(creation_request.provider),
+            )
 
             with Session(engine) as session:
                 collection_job_crud = CollectionJobCrud(session, project_id)
@@ -242,6 +249,7 @@ def execute_setup_job(
                         current_batch_number=0,
                         total_batches=total_batches,
                         documents_uploaded=[],
+                        knowledge_base_id=vector_store_id,
                     ),
                 )
 
@@ -253,7 +261,7 @@ def execute_setup_job(
                 batch_doc_ids=batch_doc_ids[0],
                 remaining_batches=batch_doc_ids[1:],
                 request=request,
-                vector_store_id=None,
+                vector_store_id=vector_store_id,
                 organization_id=organization_id,
             )
 
@@ -277,6 +285,8 @@ def execute_setup_job(
                 timeout_err,
                 collection_job,
                 creation_request,
+                provider,
+                result,
             )
             raise
 
@@ -295,6 +305,8 @@ def execute_setup_job(
                 err,
                 collection_job,
                 creation_request,
+                provider,
+                result,
             )
             raise
 
@@ -306,14 +318,14 @@ def execute_batch_job(
     task_id: str,
     job_id: str,
     task_instance,
-    vector_store_id: str | None,
+    vector_store_id: str,
     batch_number: int,
     batch_doc_ids: list[str],
     remaining_batches: list[list[str]],
 ) -> None:
     """
-    Phase 2: Upload one batch of documents to the vector store.
-    - Uploads the batch via provider.create(); raises immediately on failure
+    Phase 2: Upload one batch of documents and attach them to the vector store.
+    - Uploads batch files to the provider, then attaches them via provider.create()
     - Checkpoints progress to the DB
     - If more batches remain, queues the next batch task
     - If this is the last batch, finalizes: creates Collection, links docs, marks job SUCCESSFUL
@@ -370,15 +382,17 @@ def execute_batch_job(
                     if all_doc_ids_this_batch
                     else []
                 )
+                storage = get_cloud_storage(session=session, project_id=project_id)
                 for doc in batch_docs:
                     session.expunge(doc)
+
+            provider.upload_files(storage, batch_docs, project_id)
 
             collection_result = provider.create(
                 batch_docs,
                 vector_store_id=vector_store_id,
             )
             result = collection_result
-            resolved_vector_store_id = collection_result.llm_service_id
 
             with Session(engine) as session:
                 collection_job_crud = CollectionJobCrud(session, project_id)
@@ -409,7 +423,7 @@ def execute_batch_job(
                     project_id=project_id,
                     job_id=job_id,
                     trace_id=trace_id,
-                    vector_store_id=resolved_vector_store_id,
+                    vector_store_id=vector_store_id,
                     batch_number=batch_number + 1,
                     batch_doc_ids=remaining_batches[0],
                     remaining_batches=remaining_batches[1:],
@@ -445,8 +459,8 @@ def execute_batch_job(
                 collection = Collection(
                     id=collection_id,
                     project_id=project_id,
-                    llm_service_id=collection_result.llm_service_id,
-                    llm_service_name=collection_result.llm_service_name,
+                    knowledge_base_id=collection_result.knowledge_base_id,
+                    knowledge_base_provider=collection_result.knowledge_base_provider,
                     provider=creation_request.provider,
                     name=creation_request.name,
                     description=creation_request.description,

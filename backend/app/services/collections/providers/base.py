@@ -37,13 +37,18 @@ class BaseProvider(ABC):
         raise NotImplementedError("Providers must implement upload_files method")
 
     @abstractmethod
+    def create_vector_store(self) -> str:
+        """Create an empty vector store and return its ID."""
+        raise NotImplementedError("Providers must implement create_vector_store method")
+
+    @abstractmethod
     def create(
         self,
         docs: list[Document],
-        vector_store_id: str | None = None,
+        vector_store_id: str,
     ) -> Collection:
-        """Upload docs batch to vector store (creating it if vector_store_id is None).
-        Returns Collection with llm_service_id set to the vector store ID."""
+        """Attach docs batch to an existing vector store.
+        Returns Collection with knowledge_base_id set to the vector store ID."""
         raise NotImplementedError("Providers must implement create method")
 
     @abstractmethod

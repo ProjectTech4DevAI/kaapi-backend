@@ -7,9 +7,11 @@ import openai
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
-from app.models import Document
+from app.models import Document, ProviderType
 
 logger = logging.getLogger(__name__)
+
+OPENAI_PROVIDER = ProviderType.openai.value
 
 
 def vs_ls(client: OpenAI, vector_store_id: str):
@@ -117,7 +119,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             batch = self.client.vector_stores.file_batches.upload_and_poll(
                 vector_store_id=vector_store_id,
                 files=[],
-                file_ids=[doc.openai_file_id for doc in docs],
+                file_ids=[doc.file_id[OPENAI_PROVIDER] for doc in docs],
             )
         except openai.RateLimitError as e:
             error_message = (
@@ -204,9 +206,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             )
             raise InterruptedError(error_message)
         except openai.OpenAIError as e:
-            error_message = (
-                f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
-            )
+            error_message = f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
             logger.warning(
                 f"[OpenAIVectorStoreCrud.update] {error_message} | "
                 f"vector_store_id={vector_store_id}",
@@ -226,7 +226,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     batch_id=batch.id,
                     filter="failed",
                 )
-                doc_by_file_id = {d.openai_file_id: d for d in docs}
+                doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
                 parts = []
                 for f in failed_files:
                     d = doc_by_file_id.get(f.id)

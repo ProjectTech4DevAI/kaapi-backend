@@ -1,3 +1,4 @@
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -15,6 +16,33 @@ from app.tests.utils.llm_provider import (
 )
 
 
+def test_create_vector_store_returns_id() -> None:
+    client = get_mock_openai_client_with_vector_store()
+    provider = OpenAIProvider(client=client)
+    vector_store_id = generate_openai_id("vs_")
+
+    with patch(
+        "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
+    ) as vector_store_crud_cls:
+        vector_store_crud_cls.return_value.create.return_value = MagicMock(
+            id=vector_store_id
+        )
+
+        assert provider.create_vector_store() == vector_store_id
+
+
+def test_create_vector_store_propagates_exception() -> None:
+    provider = OpenAIProvider(client=MagicMock())
+
+    with patch(
+        "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
+    ) as vector_store_crud_cls:
+        vector_store_crud_cls.return_value.create.side_effect = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            provider.create_vector_store()
+
+
 def test_create_openai_vector_store() -> None:
     client = get_mock_openai_client_with_vector_store()
     provider = OpenAIProvider(client=client)
@@ -29,14 +57,14 @@ def test_create_openai_vector_store() -> None:
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls:
         vector_store_crud = vector_store_crud_cls.return_value
-        vector_store_crud.create.return_value = MagicMock(id=vector_store_id)
         vector_store_crud.update.return_value = None
 
-        collection = provider.create(documents)
+        collection = provider.create(documents, vector_store_id=vector_store_id)
 
+    vector_store_crud.update.assert_called_once_with(vector_store_id, documents)
     assert isinstance(collection, Collection)
-    assert collection.llm_service_id == vector_store_id
-    assert collection.llm_service_name == get_service_name("openai")
+    assert collection.knowledge_base_id == vector_store_id
+    assert collection.knowledge_base_provider == get_service_name("openai")
 
 
 def test_delete_openai_vector_store() -> None:
@@ -44,8 +72,8 @@ def test_delete_openai_vector_store() -> None:
     provider = OpenAIProvider(client=client)
 
     collection = Collection(
-        llm_service_id=generate_openai_id("vs_"),
-        llm_service_name=get_service_name("openai"),
+        knowledge_base_id=generate_openai_id("vs_"),
+        knowledge_base_provider=get_service_name("openai"),
     )
 
     with patch(
@@ -54,7 +82,7 @@ def test_delete_openai_vector_store() -> None:
         vector_store_crud = vector_store_crud_cls.return_value
         provider.delete(collection)
 
-    vector_store_crud.delete.assert_called_once_with(collection.llm_service_id)
+    vector_store_crud.delete.assert_called_once_with(collection.knowledge_base_id)
 
 
 # ---------------------------------------------------------------------------
@@ -62,14 +90,20 @@ def test_delete_openai_vector_store() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_doc(*, openai_file_id=None, file_size_kb=None):
+def _make_doc(*, file_id=None, file_size_kb=None):
     return SimpleNamespace(
         id=uuid4(),
         fname="test.md",
         object_store_url="s3://bucket/test.md",
-        openai_file_id=openai_file_id,
+        file_id=file_id,
         file_size_kb=file_size_kb,
     )
+
+
+def _make_storage(content: bytes = b"content") -> MagicMock:
+    storage = MagicMock()
+    storage.stream.return_value = BytesIO(content)
+    return storage
 
 
 def _patch_session_and_crud():
@@ -82,25 +116,23 @@ def _patch_session_and_crud():
 def test_upload_files_skips_doc_with_existing_openai_file_id() -> None:
     client = MagicMock()
     provider = OpenAIProvider(client=client)
-    storage = MagicMock()
-    doc = _make_doc(openai_file_id="file-already-exists", file_size_kb=10.0)
+    storage = _make_storage()
+    doc = _make_doc(file_id={"openai": "file-already-exists"}, file_size_kb=10.0)
 
     session_p, crud_p = _patch_session_and_crud()
     with session_p, crud_p:
         provider.upload_files(storage, [doc], project_id=1)
 
-    storage.get.assert_not_called()
+    storage.stream.assert_not_called()
     client.files.create.assert_not_called()
 
 
-def test_upload_files_uploads_doc_and_sets_openai_file_id() -> None:
+def test_upload_files_uploads_doc_and_sets_file_id() -> None:
     client = MagicMock()
     client.files.create.return_value = MagicMock(id="file-new-abc")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"file content"
-
+    storage = _make_storage(b"file content")
     doc = _make_doc(file_size_kb=10.0)
 
     mock_crud = MagicMock()
@@ -112,7 +144,7 @@ def test_upload_files_uploads_doc_and_sets_openai_file_id() -> None:
 
         provider.upload_files(storage, [doc], project_id=1)
 
-    assert doc.openai_file_id == "file-new-abc"
+    assert doc.file_id == {"openai": "file-new-abc"}
     client.files.create.assert_called_once()
     _, kwargs = client.files.create.call_args
     assert kwargs.get("purpose") == "assistants"
@@ -126,9 +158,7 @@ def test_upload_files_sets_file_size_kb_when_none() -> None:
     provider = OpenAIProvider(client=client)
 
     content = b"x" * 2048  # 2 KB
-    storage = MagicMock()
-    storage.get.return_value = content
-
+    storage = _make_storage(content)
     doc = _make_doc(file_size_kb=None)
 
     session_p, crud_p = _patch_session_and_crud()
@@ -147,9 +177,7 @@ def test_upload_files_preserves_existing_file_size_kb() -> None:
     client.files.create.return_value = MagicMock(id="file-xyz")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"x" * 4096
-
+    storage = _make_storage(b"x" * 4096)
     doc = _make_doc(file_size_kb=99.0)
 
     session_p, crud_p = _patch_session_and_crud()
@@ -167,9 +195,7 @@ def test_upload_files_updates_db_with_file_id_and_size() -> None:
     client.files.create.return_value = MagicMock(id="file-db-check")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
+    storage = _make_storage()
     doc = _make_doc(file_size_kb=5.0)
     mock_db_doc = MagicMock()
     mock_crud = MagicMock()
@@ -187,7 +213,7 @@ def test_upload_files_updates_db_with_file_id_and_size() -> None:
         MockSession.return_value.__enter__.return_value, 42
     )
     mock_crud.read_one.assert_called_once_with(doc.id)
-    assert mock_db_doc.openai_file_id == "file-db-check"
+    assert mock_db_doc.file_id == {"openai": "file-db-check"}
     assert mock_db_doc.file_size_kb == 5.0
     mock_crud.update.assert_called_once_with(mock_db_doc)
 
@@ -197,7 +223,7 @@ def test_upload_files_raises_on_storage_failure() -> None:
     provider = OpenAIProvider(client=client)
 
     storage = MagicMock()
-    storage.get.side_effect = RuntimeError("S3 error")
+    storage.stream.side_effect = RuntimeError("S3 error")
 
     doc = _make_doc()
 
@@ -214,9 +240,7 @@ def test_upload_files_raises_on_openai_failure() -> None:
     client.files.create.side_effect = RuntimeError("OpenAI error")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
+    storage = _make_storage()
     doc = _make_doc()
 
     session_p, crud_p = _patch_session_and_crud()
@@ -226,15 +250,13 @@ def test_upload_files_raises_on_openai_failure() -> None:
 
 
 def test_upload_files_mixed_skips_uploaded_uploads_new() -> None:
-    """Docs with openai_file_id are skipped; others are uploaded."""
+    """Docs with an existing openai file ID are skipped; others are uploaded."""
     client = MagicMock()
     client.files.create.return_value = MagicMock(id="file-new")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
-    already_uploaded = _make_doc(openai_file_id="file-exists", file_size_kb=5.0)
+    storage = _make_storage()
+    already_uploaded = _make_doc(file_id={"openai": "file-exists"}, file_size_kb=5.0)
     new_doc = _make_doc(file_size_kb=5.0)
 
     session_p, crud_p = _patch_session_and_crud()
@@ -244,10 +266,10 @@ def test_upload_files_mixed_skips_uploaded_uploads_new() -> None:
 
         provider.upload_files(storage, [already_uploaded, new_doc], project_id=1)
 
-    assert already_uploaded.openai_file_id == "file-exists"
-    assert new_doc.openai_file_id == "file-new"
+    assert already_uploaded.file_id == {"openai": "file-exists"}
+    assert new_doc.file_id == {"openai": "file-new"}
     client.files.create.assert_called_once()
-    storage.get.assert_called_once_with(new_doc.object_store_url)
+    storage.stream.assert_called_once_with(new_doc.object_store_url)
 
 
 def test_upload_files_empty_docs_is_noop() -> None:
@@ -259,21 +281,17 @@ def test_upload_files_empty_docs_is_noop() -> None:
     with session_p, crud_p:
         provider.upload_files(storage, [], project_id=1)
 
-    storage.get.assert_not_called()
+    storage.stream.assert_not_called()
     client.files.create.assert_not_called()
 
 
-def test_upload_files_file_object_name_matches_doc_fname() -> None:
-    """The BytesIO passed to OpenAI must carry the original filename."""
-    from io import BytesIO
-
+def test_upload_files_file_name_matches_doc_fname() -> None:
+    """The file tuple passed to OpenAI must carry the original filename."""
     client = MagicMock()
     client.files.create.return_value = MagicMock(id="file-abc")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"data"
-
+    storage = _make_storage(b"data")
     doc = _make_doc(file_size_kb=1.0)
     doc.fname = "report.pdf"
 
@@ -284,9 +302,8 @@ def test_upload_files_file_object_name_matches_doc_fname() -> None:
         provider.upload_files(storage, [doc], project_id=1)
 
     _, kwargs = client.files.create.call_args
-    f_obj = kwargs["file"]
-    assert isinstance(f_obj, BytesIO)
-    assert f_obj.name == "report.pdf"
+    fname, _ = kwargs["file"]
+    assert fname == "report.pdf"
 
 
 def test_upload_files_raises_on_db_update_failure() -> None:
@@ -294,9 +311,7 @@ def test_upload_files_raises_on_db_update_failure() -> None:
     client.files.create.return_value = MagicMock(id="file-ok")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
+    storage = _make_storage()
     doc = _make_doc(file_size_kb=1.0)
     mock_crud = MagicMock()
     mock_crud.read_one.return_value = MagicMock()
@@ -312,7 +327,7 @@ def test_upload_files_raises_on_db_update_failure() -> None:
             provider.upload_files(storage, [doc], project_id=1)
 
     client.files.delete.assert_called_once_with("file-ok")
-    assert doc.openai_file_id is None
+    assert "openai" not in doc.file_id
 
 
 def test_upload_files_db_failure_rollback_delete_error_still_raises_original() -> None:
@@ -322,9 +337,7 @@ def test_upload_files_db_failure_rollback_delete_error_still_raises_original() -
     client.files.delete.side_effect = RuntimeError("delete failed")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
+    storage = _make_storage()
     doc = _make_doc(file_size_kb=1.0)
     mock_crud = MagicMock()
     mock_crud.read_one.return_value = MagicMock()
@@ -340,7 +353,7 @@ def test_upload_files_db_failure_rollback_delete_error_still_raises_original() -
             provider.upload_files(storage, [doc], project_id=1)
 
     client.files.delete.assert_called_once_with("file-ok")
-    assert doc.openai_file_id is None
+    assert "openai" not in doc.file_id
 
 
 def test_upload_files_first_failure_stops_remaining_docs() -> None:
@@ -349,9 +362,7 @@ def test_upload_files_first_failure_stops_remaining_docs() -> None:
     client.files.create.side_effect = RuntimeError("quota exceeded")
     provider = OpenAIProvider(client=client)
 
-    storage = MagicMock()
-    storage.get.return_value = b"content"
-
+    storage = _make_storage()
     doc1 = _make_doc(file_size_kb=1.0)
     doc2 = _make_doc(file_size_kb=1.0)
 
@@ -361,7 +372,7 @@ def test_upload_files_first_failure_stops_remaining_docs() -> None:
             provider.upload_files(storage, [doc1, doc2], project_id=1)
 
     client.files.create.assert_called_once()
-    assert storage.get.call_count == 1
+    assert storage.stream.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +389,7 @@ def _make_batch(completed: int, failed: int) -> MagicMock:
 
 def _make_openai_doc(file_id: str = "file-abc", fname: str = "doc.pdf") -> MagicMock:
     doc = MagicMock()
-    doc.openai_file_id = file_id
+    doc.file_id = {"openai": file_id}
     doc.fname = fname
     return doc
 
@@ -407,7 +418,7 @@ def test_vector_store_update_raises_on_openai_error() -> None:
     )
     crud = OpenAIVectorStoreCrud(client)
 
-    with pytest.raises(OpenAIError, match="rate limit"):
+    with pytest.raises(InterruptedError, match="rate limit"):
         crud.update("vs_123", [_make_openai_doc()])
 
 
@@ -472,7 +483,7 @@ def test_create_propagates_exception() -> None:
     with patch(
         "app.services.collections.providers.openai.OpenAIVectorStoreCrud"
     ) as vector_store_crud_cls:
-        vector_store_crud_cls.return_value.create.side_effect = RuntimeError("boom")
+        vector_store_crud_cls.return_value.update.side_effect = RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
-            provider.create([SimpleNamespace(file_size_kb=10)])
+            provider.create([SimpleNamespace(file_size_kb=10)], vector_store_id="vs_x")

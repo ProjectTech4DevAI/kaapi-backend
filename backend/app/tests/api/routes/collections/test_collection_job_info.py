@@ -61,8 +61,8 @@ def test_collection_info_create_successful(
     assert data["collection"] is not None
     col = data["collection"]
     assert col["id"] == str(collection.id)
-    assert col["knowledge_base_id"] == collection.llm_service_id
-    assert col["knowledge_base_provider"] == collection.llm_service_name
+    assert col["knowledge_base_id"] == collection.knowledge_base_id
+    assert col["knowledge_base_provider"] == collection.knowledge_base_provider
 
 
 def test_collection_info_create_failed(

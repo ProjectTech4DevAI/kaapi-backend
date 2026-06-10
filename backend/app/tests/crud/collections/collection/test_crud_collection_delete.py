@@ -13,8 +13,8 @@ def get_vector_store_collection(client: OpenAI, project_id: int) -> Collection:
     vector_store = client.vector_stores.create()
     return Collection(
         project_id=project_id,
-        llm_service_id=vector_store.id,
-        llm_service_name="openai vector store",
+        knowledge_base_id=vector_store.id,
+        knowledge_base_provider="openai vector store",
         provider=ProviderType.openai,
     )
 

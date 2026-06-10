@@ -34,16 +34,11 @@ def aws_credentials() -> Any:
     os.environ["AWS_DEFAULT_REGION"] = settings.AWS_DEFAULT_REGION
 
 
-def _mock_provider_with_size(llm_service_id: str, llm_service_name: str):
-    """Returns a mock provider whose upload_files sets file_size_kb=10.0 on each doc."""
-    mock_provider = get_mock_provider(llm_service_id, llm_service_name)
-
-    def _set_file_size(storage, docs, project_id):
-        for doc in docs:
-            doc.file_size_kb = 10.0
-
-    mock_provider.upload_files.side_effect = _set_file_size
-    return mock_provider
+def _mock_storage() -> MagicMock:
+    """Storage mock returning a fixed file size for documents missing one."""
+    storage = MagicMock()
+    storage.get_file_size_kb.return_value = 10.0
+    return storage
 
 
 def _patch_session(db: Session):
@@ -118,9 +113,9 @@ def test_execute_setup_job_marks_processing_and_queues_first_batch(
     store = DocumentStore(db=db, project_id=project.id)
     doc = store.put()
 
-    mock_get_provider.return_value = _mock_provider_with_size(
-        "vs_123", "openai vector store"
-    )
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_get_provider.return_value = mock_provider
+    mock_get_storage.return_value = _mock_storage()
 
     job = get_collection_job(
         db,
@@ -147,11 +142,13 @@ def test_execute_setup_job_marks_processing_and_queues_first_batch(
     updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
     assert updated_job.status == CollectionJobStatus.PROCESSING
     assert updated_job.task_id == task_id
+    assert updated_job.knowledge_base_id == "vs_123"
 
+    mock_provider.upload_files.assert_not_called()
     mock_queue_batch.assert_called_once()
     kw = mock_queue_batch.call_args.kwargs
     assert kw["batch_number"] == 1
-    assert kw["vector_store_id"] is None
+    assert kw["vector_store_id"] == "vs_123"
     assert str(doc.id) in kw["batch_doc_ids"]
     assert kw["remaining_batches"] == []
 
@@ -169,9 +166,12 @@ def test_execute_setup_job_failure_marks_job_failed_and_raises(
     store = DocumentStore(db=db, project_id=project.id)
     doc = store.put()
 
-    mock_provider = _mock_provider_with_size("vs_123", "openai vector store")
-    mock_provider.upload_files.side_effect = RuntimeError("S3 upload failed")
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_provider.create_vector_store.side_effect = RuntimeError(
+        "vector store create failed"
+    )
     mock_get_provider.return_value = mock_provider
+    mock_get_storage.return_value = _mock_storage()
 
     job = get_collection_job(
         db,
@@ -183,7 +183,7 @@ def test_execute_setup_job_failure_marks_job_failed_and_raises(
 
     patcher = _patch_session(db)
     try:
-        with pytest.raises(RuntimeError, match="S3 upload failed"):
+        with pytest.raises(RuntimeError, match="vector store create failed"):
             execute_setup_job(
                 request=request.model_dump(mode="json"),
                 project_id=project.id,
@@ -197,7 +197,7 @@ def test_execute_setup_job_failure_marks_job_failed_and_raises(
 
     updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
     assert updated_job.status == CollectionJobStatus.FAILED
-    assert "S3 upload failed" in (updated_job.error_message or "")
+    assert "vector store create failed" in (updated_job.error_message or "")
     mock_queue_batch.assert_not_called()
 
 
@@ -216,9 +216,10 @@ def test_execute_setup_job_failure_sends_callback(
     store = DocumentStore(db=db, project_id=project.id)
     doc = store.put()
 
-    mock_provider = _mock_provider_with_size("vs_123", "openai vector store")
-    mock_provider.upload_files.side_effect = RuntimeError("upload error")
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_provider.create_vector_store.side_effect = RuntimeError("create error")
     mock_get_provider.return_value = mock_provider
+    mock_get_storage.return_value = _mock_storage()
 
     callback_url = "https://example.com/callback"
     job = get_collection_job(
@@ -265,9 +266,10 @@ def test_execute_setup_job_timeout_marks_failed_and_reraises(
     store = DocumentStore(db=db, project_id=project.id)
     doc = store.put()
 
-    mock_provider = _mock_provider_with_size("vs_123", "openai vector store")
-    mock_provider.upload_files.side_effect = Timeout(300)
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_provider.create_vector_store.side_effect = Timeout(300)
     mock_get_provider.return_value = mock_provider
+    mock_get_storage.return_value = _mock_storage()
 
     job = get_collection_job(
         db,
@@ -309,9 +311,10 @@ def test_execute_setup_job_soft_time_limit_marks_failed_and_reraises(
     store = DocumentStore(db=db, project_id=project.id)
     doc = store.put()
 
-    mock_provider = _mock_provider_with_size("vs_123", "openai vector store")
-    mock_provider.upload_files.side_effect = SoftTimeLimitExceeded()
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_provider.create_vector_store.side_effect = SoftTimeLimitExceeded()
     mock_get_provider.return_value = mock_provider
+    mock_get_storage.return_value = _mock_storage()
 
     job = get_collection_job(
         db,
@@ -345,11 +348,13 @@ def test_execute_setup_job_soft_time_limit_marks_failed_and_reraises(
 # ---------------------------------------------------------------------------
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.start_collection_batch_job")
 def test_execute_batch_job_non_final_queues_next_batch(
     mock_queue_batch: MagicMock,
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -357,7 +362,8 @@ def test_execute_batch_job_non_final_queues_next_batch(
     doc1 = store.put()
     doc2 = store.put()
 
-    mock_get_provider.return_value = get_mock_provider("vs_123", "openai vector store")
+    mock_provider = get_mock_provider("vs_123", "openai vector store")
+    mock_get_provider.return_value = mock_provider
 
     job = get_collection_job(
         db,
@@ -387,6 +393,7 @@ def test_execute_batch_job_non_final_queues_next_batch(
     finally:
         patcher.stop()
 
+    mock_provider.upload_files.assert_called_once()
     mock_queue_batch.assert_called_once()
     kw = mock_queue_batch.call_args.kwargs
     assert kw["batch_number"] == 2
@@ -399,11 +406,13 @@ def test_execute_batch_job_non_final_queues_next_batch(
     assert str(doc1.id) in (updated_job.documents_uploaded or [])
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.start_collection_batch_job")
 def test_execute_batch_job_final_batch_creates_collection_and_marks_successful(
     mock_queue_batch: MagicMock,
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -431,7 +440,7 @@ def test_execute_batch_job_final_batch_creates_collection_and_marks_successful(
             task_id=str(uuid4()),
             job_id=str(job.id),
             task_instance=None,
-            vector_store_id=None,
+            vector_store_id="vs_final",
             batch_number=1,
             batch_doc_ids=[str(doc.id)],
             remaining_batches=[],
@@ -444,7 +453,7 @@ def test_execute_batch_job_final_batch_creates_collection_and_marks_successful(
     assert updated_job.collection_id is not None
 
     collection = CollectionCrud(db, project.id).read_one(updated_job.collection_id)
-    assert collection.llm_service_id == "vs_final"
+    assert collection.knowledge_base_id == "vs_final"
 
     linked_docs = DocumentCollectionCrud(db).read(collection, skip=0, limit=10)
     assert len(linked_docs) == 1
@@ -453,6 +462,7 @@ def test_execute_batch_job_final_batch_creates_collection_and_marks_successful(
     mock_queue_batch.assert_not_called()
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.send_callback")
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.start_collection_batch_job")
@@ -460,6 +470,7 @@ def test_execute_batch_job_final_batch_sends_success_callback(
     mock_queue_batch: MagicMock,
     mock_get_provider: MagicMock,
     mock_send_callback: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -490,7 +501,7 @@ def test_execute_batch_job_final_batch_sends_success_callback(
             task_id=str(uuid4()),
             job_id=str(job.id),
             task_instance=None,
-            vector_store_id=None,
+            vector_store_id="vs_final",
             batch_number=1,
             batch_doc_ids=[str(doc.id)],
             remaining_batches=[],
@@ -506,9 +517,11 @@ def test_execute_batch_job_final_batch_sends_success_callback(
     assert payload["data"]["collection"] is not None
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_batch_job_provider_failure_marks_failed_and_raises(
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -537,7 +550,7 @@ def test_execute_batch_job_provider_failure_marks_failed_and_raises(
                 task_id=str(uuid4()),
                 job_id=str(job.id),
                 task_instance=None,
-                vector_store_id=None,
+                vector_store_id="vs_123",
                 batch_number=1,
                 batch_doc_ids=[str(doc.id)],
                 remaining_batches=[],
@@ -550,11 +563,13 @@ def test_execute_batch_job_provider_failure_marks_failed_and_raises(
     assert "vector store error" in (updated_job.error_message or "")
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 @patch("app.services.collections.create_collection.CollectionCrud")
 def test_execute_batch_job_cleanup_called_when_provider_create_succeeds_but_db_fails(
     MockCollectionCrud: MagicMock,
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     """provider.delete should be called if create() succeeded but finalization fails."""
@@ -585,7 +600,7 @@ def test_execute_batch_job_cleanup_called_when_provider_create_succeeds_but_db_f
                 task_id=str(uuid4()),
                 job_id=str(job.id),
                 task_instance=None,
-                vector_store_id=None,
+                vector_store_id="vs_123",
                 batch_number=1,
                 batch_doc_ids=[str(doc.id)],
                 remaining_batches=[],
@@ -596,9 +611,11 @@ def test_execute_batch_job_cleanup_called_when_provider_create_succeeds_but_db_f
     mock_provider.delete.assert_called_once()
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_batch_job_timeout_marks_failed_and_reraises(
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -627,7 +644,7 @@ def test_execute_batch_job_timeout_marks_failed_and_reraises(
                 task_id=str(uuid4()),
                 job_id=str(job.id),
                 task_instance=None,
-                vector_store_id=None,
+                vector_store_id="vs_123",
                 batch_number=1,
                 batch_doc_ids=[str(doc.id)],
                 remaining_batches=[],
@@ -640,9 +657,11 @@ def test_execute_batch_job_timeout_marks_failed_and_reraises(
     assert "soft time limit" in (updated_job.error_message or "")
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_batch_job_soft_time_limit_marks_failed_and_reraises(
     mock_get_provider: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -671,7 +690,7 @@ def test_execute_batch_job_soft_time_limit_marks_failed_and_reraises(
                 task_id=str(uuid4()),
                 job_id=str(job.id),
                 task_instance=None,
-                vector_store_id=None,
+                vector_store_id="vs_123",
                 batch_number=1,
                 batch_doc_ids=[str(doc.id)],
                 remaining_batches=[],
@@ -684,11 +703,13 @@ def test_execute_batch_job_soft_time_limit_marks_failed_and_reraises(
     assert "soft time limit" in (updated_job.error_message or "")
 
 
+@patch("app.services.collections.create_collection.get_cloud_storage")
 @patch("app.services.collections.create_collection.send_callback")
 @patch("app.services.collections.create_collection.get_llm_provider")
 def test_execute_batch_job_failure_sends_callback(
     mock_get_provider: MagicMock,
     mock_send_callback: MagicMock,
+    mock_get_storage: MagicMock,
     db: Session,
 ) -> None:
     project = get_project(db)
@@ -720,7 +741,7 @@ def test_execute_batch_job_failure_sends_callback(
                 task_id=str(uuid4()),
                 job_id=str(job.id),
                 task_instance=None,
-                vector_store_id=None,
+                vector_store_id="vs_123",
                 batch_number=1,
                 batch_doc_ids=[str(doc.id)],
                 remaining_batches=[],
