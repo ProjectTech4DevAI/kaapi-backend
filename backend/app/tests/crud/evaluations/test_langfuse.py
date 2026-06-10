@@ -649,6 +649,41 @@ class TestUploadDatasetToLangfuse:
             all_unique_ids.update(qid_set)
         assert all_unique_ids == {1, 2, 3}  # 3 unique questions = IDs 1, 2, 3
 
+    def test_upload_dataset_to_langfuse_writes_external_id_to_metadata(self) -> None:
+        """Items with `external_id` (from the optional CSV `id` column)
+        must have it written into Langfuse item metadata so the trace can
+        pick it up later. Items without external_id must NOT get a key
+        with `None` — the absence is meaningful for legacy datasets."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+        mock_dataset.id = "ds_id_xyz"
+        mock_langfuse.create_dataset.return_value = mock_dataset
+
+        items = [
+            {"question": "Q1", "answer": "A1", "external_id": "1"},
+            {"question": "Q2", "answer": "A2", "external_id": "2"},
+            {"question": "Q3", "answer": "A3"},  # legacy item, no external_id
+        ]
+
+        upload_dataset_to_langfuse(
+            langfuse=mock_langfuse,
+            items=items,
+            dataset_name="ds_with_ids",
+            duplication_factor=1,
+        )
+
+        calls = mock_langfuse.create_dataset_item.call_args_list
+        assert len(calls) == 3
+
+        # Map question -> metadata for assertion clarity
+        by_question = {
+            c.kwargs["input"]["question"]: c.kwargs["metadata"] for c in calls
+        }
+        assert by_question["Q1"]["external_id"] == "1"
+        assert by_question["Q2"]["external_id"] == "2"
+        # The legacy item must NOT have an external_id key at all.
+        assert "external_id" not in by_question["Q3"]
+
     def test_upload_dataset_to_langfuse_empty_items(self) -> None:
         """Test with empty items list."""
         mock_langfuse = MagicMock()
