@@ -1,15 +1,15 @@
 """completion_type scalar to array; add providers to provider_enum
 
-Revision ID: 065
-Revises: 064
+Revision ID: 066
+Revises: 065
 Create Date: 2026-05-26 00:00:00.000000
 
 """
 
 from alembic import op
 
-revision = "065"
-down_revision = "064"
+revision = "066"
+down_revision = "065"
 branch_labels = None
 depends_on = None
 
