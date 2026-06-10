@@ -7,7 +7,7 @@ class Provider(StrEnum):
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
-    GOOGLE_VERTEX = "google-vertex"
+    GOOGLE_AISTUDIO = "google-aistudio"
     PROXY = "proxy"
 
 

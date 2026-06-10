@@ -37,7 +37,7 @@ def upgrade():
             "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'anthropic'"
         )
         op.execute(
-            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-vertex'"
+            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-aistudio'"
         )
         op.execute("ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'proxy'")
 

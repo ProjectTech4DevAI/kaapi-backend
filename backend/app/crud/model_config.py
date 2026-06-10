@@ -19,7 +19,13 @@ from app.models.model_config import (
 from app.models.model_config import CompletionType
 
 Provider = Literal[
-    "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex", "proxy"
+    "openai",
+    "google",
+    "sarvamai",
+    "elevenlabs",
+    "anthropic",
+    "google-aistudio",
+    "proxy",
 ]
 
 # Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`

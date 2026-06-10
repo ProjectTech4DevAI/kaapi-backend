@@ -105,13 +105,13 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_PREFIX: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
-    # its own google-vertex credential row (BYOK is all-or-nothing — see the
-    # Provider.GOOGLE_VERTEX comment in app/core/providers.py).
+    # its own ``google`` credential row (BYOK is all-or-nothing — see the
+    # Provider.GOOGLE comment in app/core/providers.py).
     GCP_VERTEX_API_KEY: str = ""
     GCP_VERTEX_LOCATION: str = ""
     GCP_PROJECT_ID: str = ""
     # Filesystem path to the platform-default GCP service-account JSON.
-    # Used by the registry fallback when a project has no google-vertex row.
+    # Used by the registry fallback when a project has no ``google`` row.
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 

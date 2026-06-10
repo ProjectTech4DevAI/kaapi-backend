@@ -240,7 +240,7 @@ class NativeCompletionConfig(SQLModel):
         "sarvamai-native",
         "elevenlabs-native",
         "anthropic-native",
-        "google-vertex-native",
+        "google-aistudio-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -268,13 +268,15 @@ class KaapiCompletionConfig(SQLModel):
             "sarvamai",
             "elevenlabs",
             "anthropic",
-            "google-vertex",
+            "google-aistudio",
         ]
         | None
     ) = Field(
         None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
+            "google-aistudio). 'google' routes via Google Vertex AI; "
+            "'google-aistudio' uses Google AI Studio."
         ),
     )
 
@@ -296,8 +298,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        if self.type in ("stt", "tts") and self.provider is None:
-            self.provider = "google"
+        if (
+            self.type in (CompletionType.STT, CompletionType.TTS)
+            and self.provider is None
+        ):
+            self.provider = Provider.GOOGLE
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
