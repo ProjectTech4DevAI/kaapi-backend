@@ -13,8 +13,10 @@ from app.crud.evaluations import (
 )
 from app.models.evaluation import EvaluationDataset
 from app.services.evaluations.validators import (
+    items_to_csv_bytes,
     parse_csv_items,
     sanitize_dataset_name,
+    sort_items_by_external_id,
 )
 from app.utils import get_langfuse_client
 
@@ -75,6 +77,16 @@ def upload_dataset(
 
     # Step 2: Parse CSV and extract items
     original_items = parse_csv_items(csv_content)
+
+    had_id_column = any(i.get("external_id") is not None for i in original_items)
+    if had_id_column:
+        sort_items_by_external_id(original_items)
+        csv_content = items_to_csv_bytes(original_items)
+        logger.info(
+            f"[upload_dataset] Sorted items by 'id' column "
+            f"and rewrote CSV bytes | items={len(original_items)}"
+        )
+
     original_items_count = len(original_items)
     total_items_count = original_items_count * duplication_factor
 

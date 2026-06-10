@@ -5,6 +5,7 @@ import io
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, UploadFile
 
@@ -245,3 +246,39 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
     except Exception as e:
         logger.warning(f"[parse_csv_items] Failed to parse CSV | {e}")
         raise HTTPException(status_code=422, detail=f"Invalid CSV file: {e}")
+
+
+def sort_items_by_external_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort items in place by user-provided integer id (CSV `id` column)."""
+    if not any(i.get("external_id") is not None for i in items):
+        return items
+    items.sort(key=lambda i: int(i["external_id"]))
+    return items
+
+
+def items_to_csv_bytes(items: list[dict[str, Any]]) -> bytes:
+    """Re-serialize parsed items back to CSV bytes."""
+    if not items:
+        return b""
+
+    has_id = any(i.get("external_id") is not None for i in items)
+    has_category = any("category" in i for i in items)
+
+    headers: list[str] = []
+    if has_id:
+        headers.append("id")
+    if has_category:
+        headers.append("category")
+    headers.extend(["question", "answer"])
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=headers, lineterminator="\n")
+    writer.writeheader()
+    for item in items:
+        row = {"question": item["question"], "answer": item["answer"]}
+        if has_id:
+            row["id"] = item.get("external_id") or ""
+        if has_category:
+            row["category"] = item.get("category", "")
+        writer.writerow(row)
+    return buf.getvalue().encode("utf-8")
