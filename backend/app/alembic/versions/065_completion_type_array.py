@@ -1,4 +1,4 @@
-"""completion_type scalar to array
+"""completion_type scalar to array; add providers to provider_enum
 
 Revision ID: 065
 Revises: 064
@@ -31,6 +31,15 @@ def upgrade():
     op.execute(
         "CREATE INDEX ix_model_config_completion_type ON global.model_config USING gin (completion_type)"
     )
+
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'anthropic'"
+        )
+        op.execute(
+            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-vertex'"
+        )
+        op.execute("ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'proxy'")
 
 
 def downgrade():

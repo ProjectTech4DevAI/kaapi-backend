@@ -11,7 +11,13 @@ from app.models.llm.constants import CompletionType, Modality, Provider
 
 class ModelConfigBase(SQLModel):
     provider: Literal[
-        "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+        "openai",
+        "google",
+        "sarvamai",
+        "elevenlabs",
+        "anthropic",
+        "google-vertex",
+        "proxy",
     ] = Field(
         default="openai",
         sa_column=sa.Column(
@@ -22,12 +28,13 @@ class ModelConfigBase(SQLModel):
                 "elevenlabs",
                 "anthropic",
                 "google-vertex",
+                "proxy",
                 name="provider_enum",
                 schema="global",
                 create_type=False,
             ),
             nullable=False,
-            comment="provider name (e.g. openai, google, sarvamai, elevenlabs, anthropic, google-vertex)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs, anthropic, google-vertex, proxy)",
         ),
     )
 

@@ -6,6 +6,9 @@ class Provider(StrEnum):
     GOOGLE = "google"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
+    ANTHROPIC = "anthropic"
+    GOOGLE_VERTEX = "google-vertex"
+    PROXY = "proxy"
 
 
 class CompletionType(StrEnum):
