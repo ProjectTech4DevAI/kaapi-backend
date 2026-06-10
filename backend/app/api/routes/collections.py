@@ -8,6 +8,7 @@ from fastapi import Path as FastPath
 from app.api.deps import SessionDep, AuthContextDep
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
+from app.core.rate_monitor import monitor_rate
 from app.crud import (
     CollectionCrud,
     CollectionJobCrud,
@@ -85,7 +86,10 @@ def list_collections(
     description=load_description("collections/create.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("collections")),
+    ],
 )
 def create_collection(
     session: SessionDep,

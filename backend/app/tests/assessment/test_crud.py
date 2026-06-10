@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -25,7 +25,9 @@ from app.crud.assessment import (
     list_assessments,
     recompute_assessment_status,
     update_assessment_run_status,
+    update_run_post_processing_config,
 )
+from app.crud.assessment.core import update_assessment_run_prefilter_stats
 from app.models.stt_evaluation import EvaluationType
 
 
@@ -232,12 +234,18 @@ class TestDerivedAggregates:
                 total_items=2,
                 error_message=None,
                 updated_at=datetime(2024, 1, 1),
+                prefilter_total_rows=None,
+                prefilter_total_passed=None,
+                prefilter_total_rejected=None,
+                stage="COMPLETED",
+                stage_status="COMPLETED",
             ),
         ]
         stats = build_run_stats(runs)
         assert len(stats) == 1
         assert stats[0].run_id == 1
         assert stats[0].status == "completed"
+        assert stats[0].stage == "COMPLETED"
 
     def test_derive_aggregate_error(self) -> None:
         assert derive_aggregate_error(_counts(total=2, completed=2)) is None
@@ -296,4 +304,80 @@ class TestRecomputeAssessmentStatus:
         session.commit.side_effect = RuntimeError("db error")
         with pytest.raises(RuntimeError):
             recompute_assessment_status(session=session, assessment_id=1)
+        session.rollback.assert_called_once()
+
+
+class TestUpdateRunPostProcessingConfig:
+    def test_sets_config_in_input_blob(self) -> None:
+        session = MagicMock()
+        run = SimpleNamespace(id=5, input={"text_columns": ["q"]})
+        cfg = {"computed_columns": [{"name": "T", "formula": "@a"}]}
+        with patch("app.crud.assessment.core.flag_modified") as flag:
+            out = update_run_post_processing_config(
+                session=session, run=run, config=cfg
+            )
+        assert out.input["post_processing_config"] == cfg
+        assert out.input["text_columns"] == ["q"]
+        flag.assert_called_once_with(run, "input")
+        session.commit.assert_called_once()
+
+    def test_none_input_handled(self) -> None:
+        session = MagicMock()
+        run = SimpleNamespace(id=6, input=None)
+        with patch("app.crud.assessment.core.flag_modified"):
+            out = update_run_post_processing_config(
+                session=session, run=run, config=None
+            )
+        assert out.input == {"post_processing_config": None}
+
+    def test_commit_failure_rolls_back(self) -> None:
+        session = MagicMock()
+        session.commit.side_effect = RuntimeError("db error")
+        run = SimpleNamespace(id=7, input={})
+        with patch("app.crud.assessment.core.flag_modified"):
+            with pytest.raises(RuntimeError):
+                update_run_post_processing_config(session=session, run=run, config={})
+        session.rollback.assert_called_once()
+
+
+class TestUpdateAssessmentRunL1Stats:
+    def test_sets_stats_fields(self) -> None:
+        session = MagicMock()
+        run = SimpleNamespace(
+            id=8,
+            updated_at=None,
+            prefilter_object_store_url=None,
+            prefilter_total_rows=None,
+            prefilter_total_passed=None,
+            prefilter_total_rejected=None,
+        )
+        out = update_assessment_run_prefilter_stats(
+            session=session,
+            run=run,
+            prefilter_object_store_url="s3://x",
+            prefilter_total_rows=10,
+            prefilter_total_passed=7,
+            prefilter_total_rejected=3,
+        )
+        assert out.prefilter_object_store_url == "s3://x"
+        assert out.prefilter_total_rows == 10
+        assert out.prefilter_total_passed == 7
+        assert out.prefilter_total_rejected == 3
+        session.commit.assert_called_once()
+
+    def test_commit_failure_rolls_back(self) -> None:
+        session = MagicMock()
+        session.commit.side_effect = RuntimeError("db error")
+        run = SimpleNamespace(
+            id=9,
+            updated_at=None,
+            prefilter_object_store_url=None,
+            prefilter_total_rows=None,
+            prefilter_total_passed=None,
+            prefilter_total_rejected=None,
+        )
+        with pytest.raises(RuntimeError):
+            update_assessment_run_prefilter_stats(
+                session=session, run=run, prefilter_total_rows=1
+            )
         session.rollback.assert_called_once()

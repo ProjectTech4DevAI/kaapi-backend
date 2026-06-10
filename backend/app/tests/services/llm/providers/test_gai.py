@@ -198,7 +198,7 @@ class TestGoogleAIProviderSTT:
 
         assert result is None
         assert error is not None
-        assert "Unexpected error occurred" in error
+        assert "[KAAPI] Unexpected error" in error
 
     def test_stt_with_invalid_input_type(
         self, provider, mock_client, stt_config, query_params
@@ -211,7 +211,7 @@ class TestGoogleAIProviderSTT:
 
         assert result is None
         assert error is not None
-        assert "STT requires AudioRef input" in error
+        assert "STT requires an AudioRef" in error
 
     def test_stt_with_valid_audio_ref(
         self, provider, mock_client, stt_config, query_params, audio_ref
@@ -357,7 +357,7 @@ class TestGoogleAIProviderTTS:
             result, error = provider.execute(tts_config, query_params, "Hello world")
 
         assert result is None
-        assert "Failed to convert audio to MP3" in error
+        assert "unable to convert Gemini PCM audio to MP3" in error
         assert "ffmpeg not found" in error
 
     def test_tts_ogg_conversion_failure(
@@ -375,14 +375,14 @@ class TestGoogleAIProviderTTS:
             result, error = provider.execute(tts_config, query_params, "Hello world")
 
         assert result is None
-        assert "Failed to convert audio to OGG" in error
+        assert "unable to convert Gemini PCM audio to OGG" in error
 
     def test_tts_empty_input(self, provider, mock_client, tts_config, query_params):
         """Test error when text input is empty."""
         result, error = provider.execute(tts_config, query_params, "   ")
 
         assert result is None
-        assert error == "Text input cannot be empty"
+        assert "text input is empty" in error
         mock_client.models.generate_content.assert_not_called()
 
     def test_tts_non_string_input(
@@ -392,7 +392,7 @@ class TestGoogleAIProviderTTS:
         result, error = provider.execute(tts_config, query_params, {"invalid": "data"})
 
         assert result is None
-        assert "TTS requires text string as input" in error
+        assert "TTS requires a text string" in error
 
     def test_tts_no_usage_metadata(
         self, provider, mock_client, tts_config, query_params
@@ -497,7 +497,7 @@ class TestGoogleAIProviderTTS:
         result, error = provider.execute(tts_config, query_params, "Hello")
 
         assert result is None
-        assert error == "Unexpected error occurred"
+        assert "[KAAPI] Unexpected error" in error
 
     def test_tts_type_error(self, provider, mock_client, tts_config, query_params):
         """Test handling of TypeError (invalid parameters)."""

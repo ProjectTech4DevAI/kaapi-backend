@@ -3,6 +3,7 @@ import logging
 import functools as ft
 import time
 
+import openai
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
@@ -107,19 +108,111 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         if not docs:
             return
 
+        logger.info(
+            f"[OpenAIVectorStoreCrud.update] Uploading files to vector store | "
+            f"{{'vector_store_id': '{vector_store_id}', 'file_count': {len(docs)}}}"
+        )
+
         try:
             batch = self.client.vector_stores.file_batches.upload_and_poll(
                 vector_store_id=vector_store_id,
                 files=[],
                 file_ids=[doc.openai_file_id for doc in docs],
             )
-        except OpenAIError as err:
-            logger.error(
-                f"[OpenAIVectorStoreCrud.update] Batch attach failed | "
-                f"{{'vector_store_id': '{vector_store_id}', 'error': '{str(err)}'}}",
+        except openai.RateLimitError as e:
+            error_message = (
+                f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "
+                f"{e.message}. Try again in 1 minute. If issue persists, "
+                f"contact Kaapi."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
                 exc_info=True,
             )
-            raise
+            raise InterruptedError(error_message)
+        except openai.AuthenticationError as e:
+            error_message = (
+                f"[OPENAI] Authentication failed (code: {e.status_code}): "
+                f"{e.message}. Check your OpenAI API key is valid and "
+                f"has not expired."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.NotFoundError as e:
+            error_message = (
+                f"[OPENAI] Resource not found (code: {e.status_code}): "
+                f"{e.message}. Verify the vector store ID exists and "
+                f"hasn't been deleted."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.BadRequestError as e:
+            error_message = (
+                f"[OPENAI] Bad request (code: {e.status_code}): "
+                f"{e.message}. Review the file payload and metadata; the "
+                f"request may be malformed."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.UnprocessableEntityError as e:
+            error_message = (
+                f"[OPENAI] Unprocessable entity (code: {e.status_code}): "
+                f"{e.message}. The uploaded files may be in an "
+                f"unsupported format or exceed size limits."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.InternalServerError as e:
+            error_message = (
+                f"[OPENAI] Server error (code: {e.status_code}): "
+                f"{e.message}. This is usually transient — retry in a "
+                f"few seconds. If issue persists, contact Kaapi."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.APITimeoutError as e:
+            error_message = (
+                f"[KAAPI] OpenAI request timed out (code: "
+                f"{type(e).__name__}): {e}. Retry the upload, or split "
+                f"the batch into smaller chunks."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.OpenAIError as e:
+            error_message = (
+                f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
 
         logger.info(
             f"[OpenAIVectorStoreCrud.update] Batch complete | "
