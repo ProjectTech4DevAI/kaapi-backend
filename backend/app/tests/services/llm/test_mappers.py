@@ -855,63 +855,16 @@ class TestMapKaapiToAnthropicParams:
         assert result["temperature"] == 0.0
 
 
-class TestTransformGoogleVertexConfig:
-    """Test cases for transform_kaapi_config_to_native with google-vertex.
-
-    google-vertex shares its STT/TTS param mapping with the google provider —
-    these tests pin the routing contract: provider tag is rewritten to
-    ``google-vertex-native`` and text completions are explicitly rejected
-    (text must go through the ``google`` provider)."""
-
-    def test_stt_routes_to_google_vertex_native(self, db: Session):
-        kaapi_config = KaapiCompletionConfig(
-            provider="google-vertex",
-            type="stt",
-            params={
-                "model": "gemini-2.5-flash",
-                "input_language": "hi-IN",
-                "instructions": "be precise",
-            },
-        )
-
-        native_config, warnings = transform_kaapi_config_to_native(
-            session=db, kaapi_config=kaapi_config
-        )
-
-        assert isinstance(native_config, NativeCompletionConfig)
-        assert native_config.provider == "google-vertex-native"
-        assert native_config.type == "stt"
-        assert native_config.params["model"] == "gemini-2.5-flash"
-        assert native_config.params["input_language"] == "hi-IN"
-        assert native_config.params["instructions"] == "be precise"
-        assert warnings == []
-
-    def test_tts_routes_to_google_vertex_native_with_defaults(self, db: Session):
-        """Real-world TTS payload: minimal params; mapper applies voice and
-        response_format defaults from the google mapper."""
-        kaapi_config = KaapiCompletionConfig(
-            provider="google-vertex",
-            type="tts",
-            params={"model": "gemini-2.5-flash-preview-tts"},
-        )
-
-        native_config, warnings = transform_kaapi_config_to_native(
-            session=db, kaapi_config=kaapi_config
-        )
-
-        assert native_config.provider == "google-vertex-native"
-        assert native_config.type == "tts"
-        assert native_config.params["model"] == "gemini-2.5-flash-preview-tts"
-        # The google mapper fills in voice + wav defaults
-        assert "voice" in native_config.params
-        assert native_config.params["response_format"] == "wav"
-        assert warnings == []
+class TestTransformGoogleVertexRouting:
+    """Routing contract for the ``google`` provider (which executes via
+    Vertex AI). Text completions are explicitly rejected — they must go
+    through the ``google-aistudio`` provider."""
 
     def test_text_completion_is_rejected(self, db: Session):
-        """google-vertex is for audio only — text completions must be routed
-        through the standard ``google`` provider, not silently accepted."""
+        """``google`` is audio-only (Vertex STT/TTS) — text completions
+        must be routed through ``google-aistudio``."""
         kaapi_config = KaapiCompletionConfig(
-            provider="google-vertex",
+            provider="google",
             type="text",
             params={"model": "gemini-2.5-pro"},
         )
@@ -920,15 +873,15 @@ class TestTransformGoogleVertexConfig:
             transform_kaapi_config_to_native(session=db, kaapi_config=kaapi_config)
 
         msg = str(exc_info.value)
-        assert "google-vertex" in msg
+        assert "google" in msg
         assert "text" in msg
-        assert "google" in msg  # hints the caller toward the right provider
+        assert "google-aistudio" in msg  # hints the caller toward the right provider
 
     def test_unsupported_language_emits_warning(self, db: Session):
         """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
         and surface a warning, rather than silently being dropped."""
         kaapi_config = KaapiCompletionConfig(
-            provider="google-vertex",
+            provider="google",
             type="tts",
             params={
                 "model": "gemini-2.5-flash-preview-tts",
@@ -940,7 +893,7 @@ class TestTransformGoogleVertexConfig:
             session=db, kaapi_config=kaapi_config
         )
 
-        assert native_config.provider == "google-vertex-native"
+        assert native_config.provider == "google-native"
         assert "language" not in native_config.params  # dropped
         assert len(warnings) == 1
         assert "xx-YY" in warnings[0]
@@ -1103,9 +1056,9 @@ class TestTransformKaapiConfigToNative:
         assert warnings == []
 
     def test_transform_google_text_completion(self, db: Session):
-        """Test transformation of Google text completion."""
+        """Text completions route through ``google-aistudio`` (AI Studio)."""
         kaapi_config = KaapiCompletionConfig(
-            provider="google",
+            provider="google-aistudio",
             type="text",
             params={
                 "model": "gemini-2.5-pro",
@@ -1119,7 +1072,7 @@ class TestTransformKaapiConfigToNative:
         )
 
         assert isinstance(result, NativeCompletionConfig)
-        assert result.provider == "google-native"
+        assert result.provider == "google-aistudio-native"
         assert result.type == "text"
         assert result.params["model"] == "gemini-2.5-pro"
         assert result.params["temperature"] == 0.7

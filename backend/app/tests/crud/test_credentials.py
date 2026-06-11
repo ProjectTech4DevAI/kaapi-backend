@@ -86,8 +86,8 @@ def test_get_creds_by_org(db: Session) -> None:
     assert {cred.provider for cred in retrieved_creds} == {"openai", "langfuse"}
 
 
-def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
-    """google-vertex sa_key is stored directly in the credentials table
+def test_set_credentials_for_google_with_sa_key(db: Session) -> None:
+    """``google`` (Vertex) sa_key is stored directly in the credentials table
     (encrypted by the same Fernet key as every other credential field)."""
     project = create_test_project(db)
 
@@ -100,7 +100,7 @@ def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
     payload = CredsCreate(
         is_active=True,
         credential={
-            "google-vertex": {
+            "google": {
                 "api_key": "vkey",
                 "project_id": "starlit-lotus-492004-k0",
                 "location": "us-central1",
@@ -121,7 +121,7 @@ def test_set_credentials_for_google_vertex_with_sa_key(db: Session) -> None:
     stored = get_provider_credential(
         session=db,
         org_id=project.organization_id,
-        provider="google-vertex",
+        provider="google",
         project_id=project.id,
     )
     assert stored is not None

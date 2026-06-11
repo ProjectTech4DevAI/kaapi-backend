@@ -6,13 +6,18 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.util import now
-
-CompletionType = Literal["text", "stt", "tts"]
+from app.models.llm.constants import CompletionType, Modality, Provider
 
 
 class ModelConfigBase(SQLModel):
     provider: Literal[
-        "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+        "openai",
+        "google",
+        "sarvamai",
+        "elevenlabs",
+        "anthropic",
+        "proxy",
+        "google-aistudio",
     ] = Field(
         default="openai",
         sa_column=sa.Column(
@@ -22,12 +27,14 @@ class ModelConfigBase(SQLModel):
                 "sarvamai",
                 "elevenlabs",
                 "anthropic",
-                "google-vertex",
+                "proxy",
+                "google-aistudio",
                 name="provider_enum",
                 schema="global",
+                create_type=False,
             ),
             nullable=False,
-            comment="provider name (e.g. openai, google, sarvamai, elevenlabs, anthropic, google-vertex)",
+            comment="provider name (e.g. openai, google, sarvamai, elevenlabs, anthropic, google-aistudio, proxy)",
         ),
     )
 
@@ -40,12 +47,21 @@ class ModelConfigBase(SQLModel):
         ),
     )
 
-    completion_type: CompletionType = Field(
+    completion_type: list[CompletionType] = Field(
         ...,
         sa_column=sa.Column(
-            sa.Enum("text", "stt", "tts", name="completion_type_enum", schema="global"),
+            ARRAY(
+                sa.Enum(
+                    "text",
+                    "stt",
+                    "tts",
+                    name="completion_type_enum",
+                    schema="global",
+                    create_type=False,
+                )
+            ),
             nullable=False,
-            comment="text | stt | tts — drives routing and validation",
+            comment="supported completion types: text, stt, tts",
         ),
     )
 
@@ -54,7 +70,7 @@ class ModelConfigBase(SQLModel):
         sa_column=sa.Column(JSONB, nullable=False, comment="model adhoc configuration"),
     )
 
-    input_modalities: list[str] = Field(
+    input_modalities: list[Modality] = Field(
         default_factory=list,
         sa_column=sa.Column(
             ARRAY(sa.String),
@@ -64,7 +80,7 @@ class ModelConfigBase(SQLModel):
         ),
     )
 
-    output_modalities: list[str] = Field(
+    output_modalities: list[Modality] = Field(
         default_factory=list,
         sa_column=sa.Column(
             ARRAY(sa.String),
@@ -105,10 +121,9 @@ class ModelConfig(ModelConfigBase, table=True):
         sa.UniqueConstraint("provider", "model_name"),
         sa.Index("ix_model_config_provider_active", "provider", "is_active"),
         sa.Index(
-            "ix_model_config_provider_type_active",
-            "provider",
+            "ix_model_config_completion_type",
             "completion_type",
-            "is_active",
+            postgresql_using="gin",
         ),
         sa.Index(
             "ix_model_config_input_modalities",
@@ -152,6 +167,49 @@ class ModelConfig(ModelConfigBase, table=True):
             comment="timestamp when model configuration was updated",
         ),
     )
+
+
+class ModelConfigCreate(ModelConfigBase):
+    pass
+
+
+class ModelConfigUpdate(SQLModel):
+    completion_type: list[CompletionType] | None = None
+    config: dict[str, Any] | None = None
+    input_modalities: list[Modality] | None = None
+    output_modalities: list[Modality] | None = None
+    pricing: dict[str, Any] | None = None
+    is_active: bool | None = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "completion_type": ["text", "stt"],
+                "config": {
+                    "temperature": {
+                        "type": "float",
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 2.0,
+                        "description": "Controls randomness.",
+                    }
+                },
+                "input_modalities": ["TEXT", "AUDIO"],
+                "output_modalities": ["TEXT"],
+                "pricing": {
+                    "response": {"input_token_cost": 0.5, "output_token_cost": 2.0},
+                    "batch": {"input_token_cost": 0.25, "output_token_cost": 1.0},
+                    "audio": {"input_token_cost": 1.0, "output_token_cost": 2.0},
+                },
+                "is_active": True,
+            }
+        }
+    }
+
+
+class ModelConfigBulkUpdateItem(ModelConfigUpdate):
+    provider: Provider
+    model_name: str
 
 
 class ModelConfigPublic(ModelConfigBase):

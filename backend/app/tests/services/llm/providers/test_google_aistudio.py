@@ -12,7 +12,8 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
-from app.services.llm.providers.gai import GoogleAIProvider
+from app.models.llm.constants import CompletionType
+from app.services.llm.providers.google_aistudio import GoogleAIProvider
 
 
 def mock_google_response(
@@ -70,8 +71,8 @@ class TestGoogleAIProviderSTT:
     def stt_config(self):
         """Create a basic STT completion config."""
         return NativeCompletionConfig(
-            provider="google-native",
-            type="stt",
+            provider="google-aistudio-native",
+            type=CompletionType.STT,
             params={
                 "model": "gemini-2.5-pro",
             },
@@ -101,7 +102,7 @@ class TestGoogleAIProviderSTT:
         assert result is not None
         assert result.response.output.content.value == "Hello world"
         assert result.response.model == "gemini-2.5-pro"
-        assert result.response.provider == "google-native"
+        assert result.response.provider == "google-aistudio-native"
         assert result.usage.input_tokens == 50
         assert result.usage.output_tokens == 100
         assert result.usage.total_tokens == 150
@@ -284,8 +285,8 @@ class TestGoogleAIProviderTTS:
     def tts_config(self):
         """Create a basic TTS completion config."""
         return NativeCompletionConfig(
-            provider="google-native",
-            type="tts",
+            provider="google-aistudio-native",
+            type=CompletionType.TTS,
             params={
                 "model": "gemini-2.5-pro-preview-tts",
                 "voice": "Kore",
@@ -308,7 +309,7 @@ class TestGoogleAIProviderTTS:
 
         fake_mp3_bytes = b"fake-mp3-content"
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_mp3",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_mp3",
             return_value=(fake_mp3_bytes, None),
         ) as mock_convert:
             result, error = provider.execute(tts_config, query_params, "Hello world")
@@ -330,7 +331,7 @@ class TestGoogleAIProviderTTS:
 
         fake_ogg_bytes = b"fake-ogg-content"
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_ogg",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_ogg",
             return_value=(fake_ogg_bytes, None),
         ) as mock_convert:
             result, error = provider.execute(tts_config, query_params, "Hello world")
@@ -351,7 +352,7 @@ class TestGoogleAIProviderTTS:
         mock_client.models.generate_content.return_value = mock_response
 
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_mp3",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_mp3",
             return_value=(None, "ffmpeg not found"),
         ):
             result, error = provider.execute(tts_config, query_params, "Hello world")
@@ -369,7 +370,7 @@ class TestGoogleAIProviderTTS:
         mock_client.models.generate_content.return_value = mock_response
 
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_ogg",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_ogg",
             return_value=(None, "codec error"),
         ):
             result, error = provider.execute(tts_config, query_params, "Hello world")

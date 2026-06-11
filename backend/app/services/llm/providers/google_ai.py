@@ -29,6 +29,7 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
 )
 from app.models.llm.response import AudioContent, AudioOutput
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
@@ -358,10 +359,10 @@ class GoogleVertexAIProvider(BaseProvider):
         # the 20 MB inline cap.
         if not self.client.sa_info:
             error_message = (
-                "[KAAPI] Vertex STT staging failed: google-vertex sa_key is "
+                "[KAAPI] Vertex STT staging failed: ``google`` sa_key is "
                 "not configured on this project's credentials, so audio "
                 "cannot be uploaded to GCS for transcription. Add the "
-                "service-account key to the project's Vertex credentials."
+                "service-account key to the project's ``google`` credentials."
             )
             logger.warning(
                 f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
@@ -668,13 +669,13 @@ class GoogleVertexAIProvider(BaseProvider):
         provider = completion_config.provider
         completion_type = completion_config.type
         try:
-            if completion_type == "stt":
+            if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
-            if completion_type == "tts":
+            if completion_type == CompletionType.TTS:
                 return self._execute_tts(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
@@ -682,8 +683,8 @@ class GoogleVertexAIProvider(BaseProvider):
                 )
             error_message = (
                 f"[KAAPI] Unsupported completion type '{completion_type}' for "
-                f"google-vertex provider. Vertex supports 'stt' and 'tts' "
-                f"only; use the 'google' provider for text completions."
+                f"google provider. Vertex supports 'stt' and 'tts' only; "
+                f"use the 'google-aistudio' provider for text completions."
             )
             logger.warning(
                 f"[GoogleVertexAIProvider.execute] {error_message} | provider={provider}"

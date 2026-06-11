@@ -13,6 +13,8 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
+    Provider,
 )
 
 
@@ -252,16 +254,14 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: (
-        Literal[
-            "openai-native",
-            "google-native",
-            "sarvamai-native",
-            "elevenlabs-native",
-            "anthropic-native",
-            "google-vertex-native",
-        ]
-    ) = Field(
+    provider: Literal[
+        "openai-native",
+        "google-native",
+        "sarvamai-native",
+        "elevenlabs-native",
+        "anthropic-native",
+        "google-aistudio-native",
+    ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -269,7 +269,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -288,17 +288,19 @@ class KaapiCompletionConfig(SQLModel):
             "sarvamai",
             "elevenlabs",
             "anthropic",
-            "google-vertex",
+            "google-aistudio",
         ]
         | None
     ) = Field(
         None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
+            "google-aistudio). 'google' routes via Google Vertex AI; "
+            "'google-aistudio' uses Google AI Studio."
         ),
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -316,8 +318,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        if self.type in ("stt", "tts") and self.provider is None:
-            self.provider = "google"
+        if (
+            self.type in (CompletionType.STT, CompletionType.TTS)
+            and self.provider is None
+        ):
+            self.provider = Provider.GOOGLE
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)

@@ -9,11 +9,12 @@ import requests
 
 from app.core.audio_utils import AudioRef
 from app.models.llm import NativeCompletionConfig, QueryParams
-from app.services.llm.providers.gai_vertex import (
+from app.services.llm.providers.google_ai import (
     GoogleVertexAIProvider,
     VertexClient,
     _load_platform_sa_info,
 )
+from app.models.llm.constants import CompletionType
 
 
 def _stt_response(text: str = "hello world") -> dict:
@@ -73,7 +74,7 @@ def _mock_http_err(status: int = 400, body: str = "bad request") -> MagicMock:
 def _mock_gcs(monkeypatch):
     """Stub out GCS upload so STT tests don't touch external services."""
     monkeypatch.setattr(
-        "app.services.llm.providers.gai_vertex.upload_audio_to_gcs",
+        "app.services.llm.providers.google_ai.upload_audio_to_gcs",
         lambda *, audio_bytes, bucket_name, sa_info, **kw: f"gs://{bucket_name}/audio/test.wav",
     )
 
@@ -104,16 +105,16 @@ class TestGoogleVertexAIProvider:
     @pytest.fixture
     def stt_config(self) -> NativeCompletionConfig:
         return NativeCompletionConfig(
-            provider="google-vertex-native",
-            type="stt",
+            provider="google-native",
+            type=CompletionType.STT,
             params={"model": "gemini-2.5-flash", "input_language": "auto"},
         )
 
     @pytest.fixture
     def tts_config(self) -> NativeCompletionConfig:
         return NativeCompletionConfig(
-            provider="google-vertex-native",
-            type="tts",
+            provider="google-native",
+            type=CompletionType.TTS,
             params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
         )
 
@@ -133,7 +134,7 @@ class TestGoogleVertexAIProvider:
     # ── STT ──────────────────────────────────────────────────────────────────
     def test_stt_happy_path(self, provider, stt_config, query, audio_ref):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok(_stt_response("hi there")),
         ) as mock_post:
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -166,7 +167,7 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref, monkeypatch
     ):
         monkeypatch.setattr(
-            "app.services.llm.providers.gai_vertex.upload_audio_to_gcs",
+            "app.services.llm.providers.google_ai.upload_audio_to_gcs",
             MagicMock(side_effect=RuntimeError("bucket denied")),
         )
         resp, err = provider.execute(stt_config, query, audio_ref)
@@ -178,7 +179,7 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_err(403, "permission denied"),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -191,7 +192,7 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             side_effect=requests.ConnectionError("dns boom"),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -202,7 +203,7 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok({"candidates": []}),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -211,8 +212,8 @@ class TestGoogleVertexAIProvider:
 
     def test_stt_input_language_overrides_prompt(self, provider, query, audio_ref):
         config = NativeCompletionConfig(
-            provider="google-vertex-native",
-            type="stt",
+            provider="google-native",
+            type=CompletionType.STT,
             params={
                 "model": "gemini-2.5-flash",
                 "input_language": "hi-IN",
@@ -221,7 +222,7 @@ class TestGoogleVertexAIProvider:
             },
         )
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok(_stt_response()),
         ) as mock_post:
             provider.execute(config, query, audio_ref)
@@ -234,7 +235,7 @@ class TestGoogleVertexAIProvider:
     # ── TTS ──────────────────────────────────────────────────────────────────
     def test_tts_happy_path_wav(self, provider, tts_config, query):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok(_tts_response()),
         ) as mock_post:
             resp, err = provider.execute(tts_config, query, "hello")
@@ -266,7 +267,7 @@ class TestGoogleVertexAIProvider:
 
     def test_tts_missing_audio_returns_error(self, provider, tts_config, query):
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok({"candidates": [{"content": {"parts": []}}]}),
         ):
             resp, err = provider.execute(tts_config, query, "hello")
@@ -275,12 +276,12 @@ class TestGoogleVertexAIProvider:
 
     def test_tts_language_is_forwarded(self, provider, query):
         config = NativeCompletionConfig(
-            provider="google-vertex-native",
-            type="tts",
+            provider="google-native",
+            type=CompletionType.TTS,
             params={"model": "gemini-2.5-flash-preview-tts", "language": "en-US"},
         )
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok(_tts_response()),
         ) as mock_post:
             provider.execute(config, query, "hi")
@@ -290,8 +291,8 @@ class TestGoogleVertexAIProvider:
     # ── execute dispatcher ───────────────────────────────────────────────────
     def test_text_completion_is_rejected(self, provider, query):
         config = NativeCompletionConfig(
-            provider="google-vertex-native",
-            type="text",
+            provider="google-native",
+            type=CompletionType.TEXT,
             params={"model": "gemini-2.5-flash"},
         )
         resp, err = provider.execute(config, query, "hello")
@@ -303,7 +304,7 @@ class TestGoogleVertexAIProvider:
     ):
         raw = _stt_response()
         with patch(
-            "app.services.llm.providers.gai_vertex.requests.post",
+            "app.services.llm.providers.google_ai.requests.post",
             return_value=_mock_http_ok(raw),
         ):
             resp, _ = provider.execute(
@@ -360,32 +361,32 @@ class TestLoadPlatformSaInfo:
             "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
         }
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_returns_none_when_unset(self, mock_settings):
         mock_settings.GCP_SA_KEY = ""
         assert _load_platform_sa_info() is None
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_parses_raw_json_string(self, mock_settings):
         sa = self._sample_sa()
         mock_settings.GCP_SA_KEY = json.dumps(sa)
         assert _load_platform_sa_info() == sa
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_strips_surrounding_whitespace(self, mock_settings):
         """env-var injection often leaves trailing newlines — must still parse."""
         sa = self._sample_sa()
         mock_settings.GCP_SA_KEY = "\n  " + json.dumps(sa) + "  \n"
         assert _load_platform_sa_info() == sa
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_returns_none_on_malformed_json(self, mock_settings):
         """A JSON-looking but invalid value must not raise — it returns None
         and lets create_client raise the missing-fields ValueError later."""
         mock_settings.GCP_SA_KEY = "{not valid json"
         assert _load_platform_sa_info() is None
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_non_json_string_returns_none(self, mock_settings):
         """Anything not starting with '{' is treated as non-JSON and ignored —
         this guards against accidentally interpreting a path or sentinel as a key."""
@@ -397,7 +398,7 @@ class TestLoadPlatformSaInfo:
 # create_client — credential precedence (BYOK overrides platform settings)
 # ---------------------------------------------------------------------------
 class TestCreateClientFallback:
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_byok_overrides_platform_settings(self, mock_settings):
         mock_settings.GCP_VERTEX_API_KEY = "platform-key"
         mock_settings.GCP_PROJECT_ID = "platform-proj"
@@ -418,7 +419,7 @@ class TestCreateClientFallback:
         assert c.location == "europe-west4"
         assert c.gcs_bucket == "byok-bucket"
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_partial_byok_fills_from_platform(self, mock_settings):
         """When BYOK only supplies api_key, project/location come from settings."""
         mock_settings.GCP_VERTEX_API_KEY = "platform-key"
@@ -432,7 +433,7 @@ class TestCreateClientFallback:
         assert c.project_id == "platform-proj"
         assert c.location == "us-central1"
 
-    @patch("app.services.llm.providers.gai_vertex.settings")
+    @patch("app.services.llm.providers.google_ai.settings")
     def test_missing_everything_raises_value_error(self, mock_settings):
         mock_settings.GCP_VERTEX_API_KEY = ""
         mock_settings.GCP_PROJECT_ID = ""
