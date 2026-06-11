@@ -21,6 +21,7 @@ from app.models.llm import (
 from app.models.llm.constants import (
     DEFAULT_SARVAM_STT_MODEL,
     DEFAULT_SARVAM_TTS_MODEL,
+    CompletionType,
 )
 from app.models.llm.response import AudioOutput
 from app.models.llm.request import AudioContent
@@ -49,12 +50,12 @@ class SarvamAIProvider(BaseProvider):
     def _parse_input(
         self, query_input: Any, completion_type: str, provider: str
     ) -> str:
-        if completion_type == "stt":
+        if completion_type == CompletionType.STT:
             if isinstance(query_input, str) and os.path.exists(query_input):
                 return query_input
             else:
                 raise ValueError(f"{provider} STT requires a valid file path as input")
-        elif completion_type == "tts":
+        elif completion_type == CompletionType.TTS:
             if isinstance(query_input, str):
                 return query_input
             else:
@@ -206,7 +207,7 @@ class SarvamAIProvider(BaseProvider):
         # _parse_input may raise ValueError — let it bubble to execute()
         parsed_text = self._parse_input(
             query_input=resolved_input,
-            completion_type="tts",
+            completion_type=CompletionType.TTS,
             provider=provider_name,
         )
 
@@ -290,13 +291,13 @@ class SarvamAIProvider(BaseProvider):
         provider_name = completion_config.provider
         completion_type = completion_config.type
         try:
-            if completion_type == "stt":
+            if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
-            elif completion_type == "tts":
+            elif completion_type == CompletionType.TTS:
                 return self._execute_tts(
                     completion_config=completion_config,
                     resolved_input=resolved_input,

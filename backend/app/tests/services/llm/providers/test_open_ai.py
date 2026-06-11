@@ -11,9 +11,10 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
+from app.models.llm.constants import CompletionType
 from app.models.llm.request import ConversationConfig
 
-from app.services.llm.providers.oai import OpenAIProvider
+from app.services.llm.providers.open_ai import OpenAIProvider
 from app.tests.utils.openai import mock_openai_response
 
 
@@ -35,7 +36,7 @@ class TestOpenAIProvider:
         """Create a basic completion config."""
         return NativeCompletionConfig(
             provider="openai-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model": "gpt-4"},
         )
 
@@ -363,7 +364,7 @@ class TestOpenAIProvider:
         # Create a config with conversation in params (should be removed)
         completion_config = NativeCompletionConfig(
             provider="openai-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model": "gpt-4", "conversation": {"id": "old_conv"}},
         )
 

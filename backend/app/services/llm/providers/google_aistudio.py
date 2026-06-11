@@ -28,6 +28,7 @@ from app.models.llm.constants import (
     DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
 )
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
@@ -605,20 +606,20 @@ class GoogleAIProvider(BaseProvider):
     ) -> tuple[LLMCallResponse | None, str | None]:
         try:
             completion_type = completion_config.type
-            if completion_type == "stt":
+            if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
-            elif completion_type == "tts":
+            elif completion_type == CompletionType.TTS:
                 return self._execute_tts(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
 
-            elif completion_type == "text":
+            elif completion_type == CompletionType.TEXT:
                 return self._execute_text(
                     completion_config=completion_config,
                     resolved_input=resolved_input,

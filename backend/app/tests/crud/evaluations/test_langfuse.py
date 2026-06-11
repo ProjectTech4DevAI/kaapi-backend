@@ -631,6 +631,37 @@ class TestUploadDatasetToLangfuse:
         assert total_items == 2
         assert mock_langfuse.create_dataset_item.call_count == 3
 
+    def test_upload_dataset_writes_category_only_when_item_has_it(self) -> None:
+        """`category` is optional: items without it must not produce a Langfuse
+        metadata `category` field, while items that have it must.
+
+        This is what keeps the no-category-column upload path clean end-to-end.
+        """
+        items = [
+            {"question": "q1", "answer": "a1"},  # no category
+            {"question": "q2", "answer": "a2", "category": "Health"},
+        ]
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+        mock_dataset.id = "dataset_123"
+        mock_langfuse.create_dataset.return_value = mock_dataset
+
+        upload_dataset_to_langfuse(
+            langfuse=mock_langfuse,
+            items=items,
+            dataset_name="test_dataset",
+            duplication_factor=1,
+        )
+
+        calls = mock_langfuse.create_dataset_item.call_args_list
+        assert len(calls) == 2
+
+        metadatas_by_question = {
+            call.kwargs["input"]["question"]: call.kwargs["metadata"] for call in calls
+        }
+        assert "category" not in metadatas_by_question["q1"]
+        assert metadatas_by_question["q2"]["category"] == "Health"
+
 
 class TestFetchTraceScoresFromLangfuse:
     """Test fetching trace scores from Langfuse."""
@@ -741,6 +772,54 @@ class TestFetchTraceScoresFromLangfuse:
         assert trace["question_id"] == ""
         assert trace["trace_id"] == "trace_1"
         assert trace["question"] == "What is 2+2?"
+        # No category in metadata → no category on trace (omitted, not "Other")
+        assert "category" not in trace
+
+    def test_fetch_trace_scores_category_set_only_when_metadata_has_one(self) -> None:
+        """`category` on the returned trace is omitted when the Langfuse metadata
+        carries none, and title-cased when it does.
+
+        This covers both branches of the conditional in ``_fetch_single_trace``
+        and pins down the no-default-Other behaviour for datasets uploaded
+        without a category column.
+        """
+        mock_langfuse = MagicMock()
+
+        mock_run_item_a = MagicMock()
+        mock_run_item_a.trace_id = "trace_with_cat"
+        mock_run_item_b = MagicMock()
+        mock_run_item_b.trace_id = "trace_no_cat"
+        mock_dataset_run = MagicMock()
+        mock_dataset_run.dataset_run_items = [mock_run_item_a, mock_run_item_b]
+        mock_langfuse.api.datasets.get_run.return_value = mock_dataset_run
+
+        mock_trace_a = MagicMock()
+        mock_trace_a.input = {"question": "q1"}
+        mock_trace_a.output = {"answer": "a1"}
+        mock_trace_a.metadata = {
+            "ground_truth": "a1",
+            "question_id": 1,
+            "category": "health",
+        }
+        mock_trace_a.scores = []
+
+        mock_trace_b = MagicMock()
+        mock_trace_b.input = {"question": "q2"}
+        mock_trace_b.output = {"answer": "a2"}
+        mock_trace_b.metadata = {"ground_truth": "a2", "question_id": 2}
+        mock_trace_b.scores = []
+
+        mock_langfuse.api.trace.get.side_effect = [mock_trace_a, mock_trace_b]
+
+        result = fetch_trace_scores_from_langfuse(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+
+        traces_by_id = {t["trace_id"]: t for t in result["traces"]}
+        assert traces_by_id["trace_with_cat"]["category"] == "Health"
+        assert "category" not in traces_by_id["trace_no_cat"]
 
     def test_fetch_trace_scores_with_categorical_scores(self) -> None:
         """Test fetching traces with categorical scores."""

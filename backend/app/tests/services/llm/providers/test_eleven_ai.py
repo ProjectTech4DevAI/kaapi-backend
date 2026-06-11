@@ -11,7 +11,8 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
-from app.services.llm.providers.eai import ElevenlabsAIProvider
+from app.models.llm.constants import CompletionType
+from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 
 
 def mock_elevenlabs_stt_response(
@@ -57,7 +58,7 @@ class TestElevenlabsProviderSTT:
         """Create a basic STT completion config."""
         return NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "model_id": "scribe_v1",
                 "language_code": "hin",
@@ -101,7 +102,7 @@ class TestElevenlabsProviderSTT:
         """Test STT without language_code lets ElevenLabs auto-detect."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="stt",
+            type=CompletionType.STT,
             params={"model_id": "scribe_v1"},
         )
         mock_response = mock_elevenlabs_stt_response(text="Detected text")
@@ -120,7 +121,7 @@ class TestElevenlabsProviderSTT:
         """Test STT passes temperature to the API."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "model_id": "scribe_v1",
                 "language_code": "eng",
@@ -142,7 +143,7 @@ class TestElevenlabsProviderSTT:
         """Test STT uses default model (scribe_v2) when model_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="stt",
+            type=CompletionType.STT,
             params={"language_code": "eng"},
         )
         mock_response = mock_elevenlabs_stt_response(text="Default model test")
@@ -223,7 +224,7 @@ class TestElevenlabsProviderTTS:
         """Create a basic TTS completion config."""
         return NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -273,7 +274,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS with WAV output format sets correct mime type."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -293,7 +294,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS with Opus output format sets correct mime type."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -311,7 +312,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS defaults to wav_24000 when output_format is not specified."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -345,7 +346,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS does not pass language_code when not in params."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model_id": "eleven_v3",
                 "voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -364,7 +365,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS uses default model (eleven_turbo_v2) when model_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={"voice_id": "JBFqnCBsd6RMkjVDRZzb"},
         )
         mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
@@ -383,7 +384,7 @@ class TestElevenlabsProviderTTS:
         """Test TTS uses default voice (Sarah) when voice_id is not provided."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={"model_id": "eleven_v3"},
         )
         mock_client.text_to_speech.convert.return_value = iter([b"audio data"])
@@ -459,7 +460,7 @@ class TestElevenlabsProviderClientCreation:
         credentials = {"api_key": "test_api_key_123"}
 
         with patch(
-            "app.services.llm.providers.eai.ElevenLabs"
+            "app.services.llm.providers.eleven_ai.ElevenLabs"
         ) as mock_elevenlabs_class:
             client = ElevenlabsAIProvider.create_client(credentials)
 
@@ -506,7 +507,7 @@ class TestElevenlabsProviderExecute:
         """Test execute with unsupported completion type returns error."""
         config = NativeCompletionConfig(
             provider="elevenlabs-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model_id": "test-model"},
         )
 

@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_BATCH_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.OPENAI_NATIVE,
-    LLMProvider.GOOGLE,
-    LLMProvider.GOOGLE_NATIVE,
+    LLMProvider.GOOGLE_AISTUDIO,
+    LLMProvider.GOOGLE_AISTUDIO_NATIVE,
 }
 
 
