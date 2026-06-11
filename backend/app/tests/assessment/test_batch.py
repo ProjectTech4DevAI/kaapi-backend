@@ -170,7 +170,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
-                provider="google-native",
+                provider="google-aistudio-native",
                 params={"instructions": "config system"},
             )
         )
@@ -221,7 +221,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         assert result.id == 2
         assert map_params.call_args.args[0]["instructions"] == "request system"
-        assert start_batch.call_args.kwargs["provider_name"] == "google"
+        assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
 
 
 class TestBatchDatasetParsing:

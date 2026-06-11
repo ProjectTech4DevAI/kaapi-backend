@@ -146,7 +146,9 @@ class TestStartAssessment:
         assessment.id = 21
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
+            completion=SimpleNamespace(
+                provider="google-aistudio", params={"model": "gemini"}
+            )
         )
 
         with (

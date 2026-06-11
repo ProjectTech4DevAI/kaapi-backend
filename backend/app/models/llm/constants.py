@@ -1,3 +1,29 @@
+from enum import StrEnum
+
+
+class Provider(StrEnum):
+    OPENAI = "openai"
+    GOOGLE = "google"
+    SARVAMAI = "sarvamai"
+    ELEVENLABS = "elevenlabs"
+    ANTHROPIC = "anthropic"
+    GOOGLE_AISTUDIO = "google-aistudio"
+    PROXY = "proxy"
+
+
+class CompletionType(StrEnum):
+    TEXT = "text"
+    STT = "stt"
+    TTS = "tts"
+
+
+class Modality(StrEnum):
+    TEXT = "TEXT"
+    AUDIO = "AUDIO"
+    IMAGE = "IMAGE"
+    FILES = "FILES"
+
+
 DEFAULT_STT_MODEL = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"

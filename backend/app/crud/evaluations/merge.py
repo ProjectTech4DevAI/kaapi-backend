@@ -133,7 +133,8 @@ def _reconcile_trace(
     if fresh is None:
         return existing, "reused"
     merged = _merge_single_trace(existing, fresh)
-    return merged, "reused" if merged == existing else "updated"
+    canonical_existing = _merge_single_trace(existing, existing)
+    return merged, "reused" if merged == canonical_existing else "updated"
 
 
 def merge_trace_data(

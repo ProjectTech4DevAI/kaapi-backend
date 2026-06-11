@@ -17,8 +17,8 @@ from app.services.llm.providers.base import (
     ContentPart,
     MultiModalInput,
 )
-from app.services.llm.providers.oai import OpenAIProvider
-from app.services.llm.providers.gai import GoogleAIProvider
+from app.services.llm.providers.open_ai import OpenAIProvider
+from app.services.llm.providers.google_aistudio import GoogleAIProvider
 from app.utils import (
     resolve_input,
     resolve_image_content,
@@ -448,7 +448,7 @@ class TestGoogleAIExecuteTextRouting:
         params = {"model": "gemini-2.0-flash"}
         params.update(extra_params)
         return NativeCompletionConfig(
-            provider="google-native", type="text", params=params
+            provider="google-aistudio-native", type="text", params=params
         )
 
     def _make_query(self):
@@ -499,7 +499,7 @@ class TestGoogleAIExecuteTextRouting:
         """No model in params → provider uses DEFAULT_TEXT_MODELS['google']."""
         provider, mock_client = self._make_provider()
         config = NativeCompletionConfig(
-            provider="google-native", type="text", params={}
+            provider="google-aistudio-native", type="text", params={}
         )
         response, error = provider.execute(
             completion_config=config,

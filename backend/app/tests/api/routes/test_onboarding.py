@@ -514,7 +514,7 @@ def test_onboard_project_credentials_empty_list(
 def test_onboard_project_with_google_credentials(
     client: TestClient, superuser_token_headers: dict[str, str], db: Session
 ) -> None:
-    """Test onboarding with Google credentials."""
+    """Test onboarding with Google AI Studio credentials."""
     org_name = "TestOrgOnboard"
     project_name = "TestProjectOnboard"
     google_api_key = f"AIza{random_lower_string()}"
@@ -522,7 +522,7 @@ def test_onboard_project_with_google_credentials(
     onboard_data = {
         "organization_name": org_name,
         "project_name": project_name,
-        "credentials": [{"google": {"api_key": google_api_key}}],
+        "credentials": [{"google-aistudio": {"api_key": google_api_key}}],
     }
 
     response = client.post(
@@ -617,7 +617,7 @@ def test_onboard_project_with_all_supported_providers(
                     "host": "https://cloud.langfuse.com",
                 }
             },
-            {"google": {"api_key": f"AIza{random_lower_string()}"}},
+            {"google-aistudio": {"api_key": f"AIza{random_lower_string()}"}},
             {"sarvamai": {"api_key": f"sarvam-{random_lower_string()}"}},
             {"elevenlabs": {"api_key": f"el-{random_lower_string()}"}},
         ],
@@ -641,14 +641,14 @@ def test_onboard_project_with_all_supported_providers(
 def test_onboard_project_google_missing_api_key(
     client: TestClient, superuser_token_headers: dict[str, str], db: Session
 ) -> None:
-    """Test onboarding fails when Google credential is missing api_key."""
+    """Test onboarding fails when Google AI Studio credential is missing api_key."""
     org_name = "TestOrgOnboard"
     project_name = "TestProjectOnboard"
 
     onboard_data = {
         "organization_name": org_name,
         "project_name": project_name,
-        "credentials": [{"google": {}}],  # missing api_key
+        "credentials": [{"google-aistudio": {}}],  # missing api_key
     }
 
     response = client.post(
@@ -661,7 +661,7 @@ def test_onboard_project_google_missing_api_key(
     error_response = response.json()
     assert error_response["errors"]
     assert any(
-        "Missing required fields for google" in e["message"]
+        "Missing required fields for google-aistudio" in e["message"]
         for e in error_response["errors"]
     )
 
