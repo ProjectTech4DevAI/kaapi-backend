@@ -19,6 +19,7 @@ from app.crud.evaluations import (
     merge_scores_step_forward,
     resolve_evaluation_config,
     save_score,
+    sort_traces_by_question_id,
     start_evaluation_batch,
 )
 from app.crud.evaluations.score import CategoryMetrics, TraceData
@@ -121,7 +122,14 @@ def _compute_category_metrics(
 
     Backwards-compatible: traces produced before this feature don't carry a
     `category` field and land in "Other".
+
+    Datasets uploaded without a `category` CSV column have no `category` key on
+    any trace — in that case we return `[]` so the response omits the category
+    dimension entirely rather than reporting a synthetic "Other" bucket.
     """
+    if not any("category" in trace for trace in traces):
+        return []
+
     buckets: dict[str, dict[str, list[float]]] = {}
     for trace in traces:
         raw_category = trace.get("category") or ""
@@ -450,10 +458,12 @@ def get_evaluation_with_scores(
         # Wrap in _attach_category_metrics so cache-served responses also carry
         # `category_metrics`. Backfills the field on read for runs whose cached
         # score was written before the category feature shipped.
+        # Sort by question_id so caches persisted before the sort fix still come
+        # back in CSV order without needing a resync.
         eval_run.score = _attach_category_metrics(
             {
                 "summary_scores": (eval_run.score or {}).get("summary_scores", []),
-                "traces": cached_traces,
+                "traces": sort_traces_by_question_id(cached_traces),
             }
         )
         logger.info(

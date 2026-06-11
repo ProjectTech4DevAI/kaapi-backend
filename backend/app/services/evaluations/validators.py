@@ -120,8 +120,10 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
 
     Required columns: `question`, `answer` (case-insensitive).
     Optional column: `category` (case-insensitive) — free-text label used for
-    per-category analytics. Missing/blank values default to `"Other"` so old
-    CSVs that predate this column continue to work.
+    per-category analytics. When the column is present, blank cells default to
+    `"Other"`. When the column is absent entirely, no `category` field is added
+    to items at all, so downstream traces and the API response stay clean of a
+    category dimension the user didn't opt into.
 
     Raises:
         HTTPException: If CSV is invalid or empty
@@ -168,11 +170,13 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
             answer = row.get(answer_col, "").strip()
             if not (question and answer):
                 continue
-            raw_category = (
-                (row.get(category_col, "") or "").strip() if category_col else ""
-            )
-            category = raw_category.title() if raw_category else DEFAULT_CATEGORY
-            items.append({"question": question, "answer": answer, "category": category})
+            item: dict[str, str] = {"question": question, "answer": answer}
+            if category_col is not None:
+                raw_category = (row.get(category_col, "") or "").strip()
+                item["category"] = (
+                    raw_category.title() if raw_category else DEFAULT_CATEGORY
+                )
+            items.append(item)
 
         if not items:
             raise HTTPException(
