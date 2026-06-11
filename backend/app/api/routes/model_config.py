@@ -1,9 +1,10 @@
 import logging
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import SessionDep
+from app.api.permissions import Permission, require_permission
 from app.models.llm.constants import Provider
 from app.crud.model_config import (
     bulk_create_model_configs,
@@ -103,6 +104,7 @@ def get_model(
     response_model=APIResponse[list[ModelConfigPublic]],
     description=load_description("model_config/create_models.md"),
     status_code=201,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def create_models(
     session: SessionDep, data: ModelConfigCreate | list[ModelConfigCreate]
@@ -116,6 +118,7 @@ def create_models(
     "/{provider}/{model_name}",
     response_model=APIResponse[ModelConfigPublic],
     description=load_description("model_config/update_model.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def update_model(
     session: SessionDep, provider: Provider, model_name: str, data: ModelConfigUpdate
@@ -131,6 +134,7 @@ def update_model(
     response_model=APIResponse[list[ModelConfigPublic]],
     description=load_description("model_config/update_models.md"),
     summary="Update Models",
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def bulk_update_models(
     session: SessionDep, items: list[ModelConfigBulkUpdateItem]
@@ -143,6 +147,7 @@ def bulk_update_models(
     "/{provider}/{model_name}",
     response_model=APIResponse[None],
     description=load_description("model_config/delete_model.md"),
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def delete_model(
     session: SessionDep, provider: Provider, model_name: str

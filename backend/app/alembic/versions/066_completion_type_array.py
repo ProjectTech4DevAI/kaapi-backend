@@ -74,6 +74,24 @@ def upgrade():
         """
     )
 
+    # After the flip, 'google' means Vertex, which serves stt/tts only. Text
+    # support for these models lives on under the 'google-aistudio' copies made
+    # above, so strip 'text' from the remaining 'google' rows and drop rows
+    # that supported nothing else.
+    op.execute(
+        """
+        UPDATE global.model_config
+        SET completion_type = array_remove(completion_type, 'text'::global.completion_type_enum)
+        WHERE provider = 'google'
+          AND 'text'::global.completion_type_enum = ANY(completion_type)
+        """
+    )
+    op.execute(
+        "DELETE FROM global.model_config WHERE provider = 'google' AND completion_type = '{}'"
+    )
+
+    # Remap persisted completion configs. Order matters: 'google' must move to
+    # 'google-aistudio' before 'google-vertex' is renamed to 'google'.
     op.execute(
         """
         UPDATE config_version
@@ -88,6 +106,20 @@ def upgrade():
         WHERE config_blob->'completion'->>'provider' = 'google-native'
         """
     )
+    op.execute(
+        """
+        UPDATE config_version
+        SET config_blob = jsonb_set(config_blob, '{completion,provider}', '"google"')
+        WHERE config_blob->'completion'->>'provider' = 'google-vertex'
+        """
+    )
+    op.execute(
+        """
+        UPDATE config_version
+        SET config_blob = jsonb_set(config_blob, '{completion,provider}', '"google-native"')
+        WHERE config_blob->'completion'->>'provider' = 'google-vertex-native'
+        """
+    )
 
     op.execute(
         "UPDATE batch_job SET provider = 'google-aistudio' WHERE provider = 'google'"
@@ -97,6 +129,22 @@ def upgrade():
 def downgrade():
     op.execute(
         "UPDATE batch_job SET provider = 'google' WHERE provider = 'google-aistudio'"
+    )
+    # Reverse the provider remaps in strict reverse order: 'google' goes back
+    # to 'google-vertex' before 'google-aistudio' reclaims the 'google' name.
+    op.execute(
+        """
+        UPDATE config_version
+        SET config_blob = jsonb_set(config_blob, '{completion,provider}', '"google-vertex-native"')
+        WHERE config_blob->'completion'->>'provider' = 'google-native'
+        """
+    )
+    op.execute(
+        """
+        UPDATE config_version
+        SET config_blob = jsonb_set(config_blob, '{completion,provider}', '"google-vertex"')
+        WHERE config_blob->'completion'->>'provider' = 'google'
+        """
     )
     op.execute(
         """
@@ -110,6 +158,23 @@ def downgrade():
         UPDATE config_version
         SET config_blob = jsonb_set(config_blob, '{completion,provider}', '"google"')
         WHERE config_blob->'completion'->>'provider' = 'google-aistudio'
+        """
+    )
+
+    # Restore 'google' rows that upgrade() text-stripped or deleted. The
+    # 'google-aistudio' rows are verbatim copies of the pre-upgrade 'google'
+    # rows, so re-syncing completion_type from them undoes the strip.
+    op.execute(
+        """
+        INSERT INTO global.model_config
+            (provider, model_name, completion_type, config, input_modalities,
+             output_modalities, pricing, is_active, inserted_at, updated_at)
+        SELECT 'google', model_name, completion_type, config, input_modalities,
+               output_modalities, pricing, is_active, NOW(), NOW()
+        FROM global.model_config
+        WHERE provider = 'google-aistudio'
+        ON CONFLICT (provider, model_name) DO UPDATE
+            SET completion_type = EXCLUDED.completion_type
         """
     )
     op.execute("DELETE FROM global.model_config WHERE provider = 'google-aistudio'")

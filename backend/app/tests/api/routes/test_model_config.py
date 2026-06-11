@@ -582,3 +582,56 @@ def test_create_with_multiple_completion_types_and_query(
     assert set(fetched.json()["data"]["completion_type"]) == {"text", "stt"}
 
     _delete(client, superuser_token_headers, payload["provider"], payload["model_name"])
+
+
+def test_write_endpoints_require_auth(client: TestClient) -> None:
+    payload = _payload()
+    response = client.post(f"{settings.API_V1_STR}/models", json=payload)
+    assert response.status_code == 401
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/models/google/some-model",
+        json={"is_active": False},
+    )
+    assert response.status_code == 401
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/models",
+        json=[{"provider": "google", "model_name": "some-model", "is_active": False}],
+    )
+    assert response.status_code == 401
+
+    response = client.delete(f"{settings.API_V1_STR}/models/google/some-model")
+    assert response.status_code == 401
+
+
+def test_write_endpoints_require_superuser(
+    client: TestClient, normal_user_token_headers: dict[str, str]
+) -> None:
+    payload = _payload()
+    response = client.post(
+        f"{settings.API_V1_STR}/models",
+        headers=normal_user_token_headers,
+        json=payload,
+    )
+    assert response.status_code == 403
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/models/google/some-model",
+        headers=normal_user_token_headers,
+        json={"is_active": False},
+    )
+    assert response.status_code == 403
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/models",
+        headers=normal_user_token_headers,
+        json=[{"provider": "google", "model_name": "some-model", "is_active": False}],
+    )
+    assert response.status_code == 403
+
+    response = client.delete(
+        f"{settings.API_V1_STR}/models/google/some-model",
+        headers=normal_user_token_headers,
+    )
+    assert response.status_code == 403
