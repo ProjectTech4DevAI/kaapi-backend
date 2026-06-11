@@ -19,12 +19,12 @@ class LLMProvider:
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
+    GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
     OPENAI_NATIVE = "openai-native"
     GOOGLE_NATIVE = "google-native"
     SARVAMAI_NATIVE = "sarvamai-native"
     ELEVENLABS_NATIVE = "elevenlabs-native"
     ANTHROPIC_NATIVE = "anthropic-native"
-    GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
@@ -33,12 +33,12 @@ class LLMProvider:
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
         GOOGLE_AISTUDIO: GoogleAIProvider,
+        GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
         GOOGLE_NATIVE: GoogleVertexAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
         ELEVENLABS_NATIVE: ElevenlabsAIProvider,
         ANTHROPIC_NATIVE: ClaudeProvider,
-        GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
     }
 
     @classmethod

@@ -96,7 +96,7 @@ def parse_assessment_output(
 
     Args:
         raw_results: Raw results from batch provider
-        provider_name: Provider name ('openai' or 'google')
+        provider_name: Provider name ('openai' or 'google-aistudio')
 
     Returns:
         List of parsed results with row_id, output text, usage, etc.
@@ -187,7 +187,10 @@ def parse_assessment_output(
                 }
             )
 
-        elif provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
+        elif provider_name in (
+            LLMProvider.GOOGLE_AISTUDIO,
+            LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+        ):
             response = result.get("response")
             error = result.get("error")
 

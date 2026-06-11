@@ -180,14 +180,6 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
             )
 
 
-def create_model_config(session: Session, data: ModelConfigCreate) -> ModelConfig:
-    model = ModelConfig.model_validate(data)
-    session.add(model)
-    session.commit()
-    session.refresh(model)
-    return model
-
-
 def bulk_create_model_configs(
     session: Session, items: list[ModelConfigCreate]
 ) -> list[ModelConfig]:

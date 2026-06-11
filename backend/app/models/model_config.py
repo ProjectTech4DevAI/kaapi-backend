@@ -16,7 +16,6 @@ class ModelConfigBase(SQLModel):
         "sarvamai",
         "elevenlabs",
         "anthropic",
-        "google-aistudio",
         "proxy",
         "google-aistudio",
     ] = Field(
@@ -28,7 +27,6 @@ class ModelConfigBase(SQLModel):
                 "sarvamai",
                 "elevenlabs",
                 "anthropic",
-                "google-aistudio",
                 "proxy",
                 "google-aistudio",
                 name="provider_enum",
