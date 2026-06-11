@@ -17,6 +17,7 @@ from sqlmodel import Session
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
+from app.core.providers import Provider
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
     set_gen_ai_request_attributes,
@@ -612,7 +613,7 @@ def execute_llm_call(
                     )
                     return BlockResult(error=input_error)
             # proxy branch, bypass execution of API CAll
-            if config_blob.completion.type == "proxy":
+            if config_blob.completion.type == Provider.PROXY.value:
                 if not isinstance(query.input, TextInput):
                     return BlockResult(
                         error="Proxy completion only supports text input"
@@ -643,46 +644,45 @@ def execute_llm_call(
                             error=f"[KAAPI] Proxy URL rejected: {str(e)}"
                         )
 
-                with Session(engine) as session:
-                    creds = get_provider_credential(
-                        session=session,
-                        org_id=organization_id,
-                        project_id=project_id,
-                        provider="proxy",
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider=Provider.PROXY.value,
+                )
+                if not creds or not creds.get("api_key"):
+                    return BlockResult(
+                        error="Proxy credentials not registered for project"
                     )
-                    if not creds or not creds.get("api_key"):
-                        return BlockResult(
-                            error="Proxy credentials not registered for project"
-                        )
 
-                    try:
-                        llm_call_request = LLMCallRequest(
-                            query=query,
-                            config=config,
-                            request_metadata=request_metadata,
-                        )
-                        llm_call = create_llm_call(
-                            session,
-                            request=llm_call_request,
-                            job_id=job_id,
-                            project_id=project_id,
-                            organization_id=organization_id,
-                            resolved_config=config_blob,
-                            original_provider="proxy",
-                            chain_id=chain_id,
-                        )
-                        llm_call_id = llm_call.id
-                    except Exception as e:
-                        logger.error(
-                            f"[execute_llm_call] Failed to create proxy LLM call record: {e} | job_id={job_id}",
-                            exc_info=True,
-                        )
-                        return BlockResult(
-                            error=f"Failed to create LLM call record: {str(e)}"
-                        )
+                try:
+                    llm_call_request = LLMCallRequest(
+                        query=query,
+                        config=config,
+                        request_metadata=request_metadata,
+                    )
+                    llm_call = create_llm_call(
+                        session,
+                        request=llm_call_request,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        resolved_config=config_blob,
+                        original_provider=Provider.PROXY.value,
+                        chain_id=chain_id,
+                    )
+                    llm_call_id = llm_call.id
+                except Exception as e:
+                    logger.error(
+                        f"[execute_llm_call] Failed to create proxy LLM call record: {e} | job_id={job_id}",
+                        exc_info=True,
+                    )
+                    return BlockResult(
+                        error=f"Failed to create LLM call record: {str(e)}"
+                    )
 
                 record_llm_call_started(
-                    provider="proxy",
+                    provider=Provider.PROXY.value,
                     model="",
                     operation="chat",
                     organization_id=organization_id,
@@ -701,7 +701,7 @@ def execute_llm_call(
                         project_id=project_id,
                         organization_id=organization_id,
                     )
-                    proxy_span.set_attribute("llm.provider", "proxy")
+                    proxy_span.set_attribute("llm.provider", Provider.PROXY.value)
                     proxy_span.set_attribute("llm.proxy.url", client_llm_url)
 
                     try:
@@ -724,7 +724,7 @@ def execute_llm_call(
                             trace.Status(trace.StatusCode.ERROR, str(e))
                         )
                         record_llm_call_finished(
-                            provider="proxy",
+                            provider=Provider.PROXY.value,
                             model="",
                             operation="chat",
                             duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
@@ -741,7 +741,17 @@ def execute_llm_call(
                             llm_call_id=llm_call_id,
                         )
 
-                proxy_output_text = proxy_data["output"][0]["content"][0]["text"]
+                try:
+                    proxy_output_text = proxy_data["output"][0]["content"][0]["text"]
+                except (KeyError, IndexError, TypeError) as e:
+                    logger.error(
+                        f"[execute_llm_call] Malformed proxy response: {e} | job_id={job_id}",
+                        exc_info=True,
+                    )
+                    return BlockResult(
+                        error="Proxy returned an unexpected response structure",
+                        llm_call_id=llm_call_id,
+                    )
                 proxy_model = str(proxy_data.get("model") or "")
                 provider_response_id = str(proxy_data.get("id") or job_id)
                 raw_usage = proxy_data.get("usage") or {}
@@ -754,31 +764,30 @@ def execute_llm_call(
                 proxy_response = LLMCallResponse(
                     response=LLMResponse(
                         provider_response_id=provider_response_id,
-                        provider="proxy",
+                        provider=Provider.PROXY.value,
                         model=proxy_model,
                         output=TextOutput(content=TextContent(value=proxy_output_text)),
                     ),
                     usage=proxy_usage,
                 )
 
-                with Session(engine) as session:
-                    try:
-                        update_llm_call_response(
-                            session,
-                            llm_call_id=llm_call_id,
-                            provider_response_id=provider_response_id,
-                            content=proxy_response.response.output.model_dump(),
-                            usage=proxy_usage.model_dump(),
-                            conversation_id=None,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
-                            exc_info=True,
-                        )
+                try:
+                    update_llm_call_response(
+                        session,
+                        llm_call_id=llm_call_id,
+                        provider_response_id=provider_response_id,
+                        content=proxy_response.response.output.model_dump(),
+                        usage=proxy_usage.model_dump(),
+                        conversation_id=None,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
 
                 record_llm_call_finished(
-                    provider="proxy",
+                    provider=Provider.PROXY.value,
                     model=proxy_model,
                     operation="chat",
                     duration_ms=(time.perf_counter() - proxy_started_at) * 1000,

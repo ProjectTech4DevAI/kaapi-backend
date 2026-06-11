@@ -609,6 +609,48 @@ class TestExecuteJob:
         assert not result["success"]
         assert "Proxy call failed" in result["error"]
 
+    def test_proxy_config_malformed_response_fails(
+        self, db, job_env, job_for_execution
+    ):
+        """Proxy returns unexpected JSON structure — missing output key."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {"unexpected": "structure"}
+
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert "unexpected response structure" in result["error"]
+
     def test_metadata_in_callback_response(
         self, db, job_env, job_for_execution, request_data
     ):

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -108,7 +108,7 @@ class ProxyLLMParams(SQLModel):
     )
 
     @model_validator(mode="after")
-    def _require_https(self):
+    def _require_https(self) -> Self:
         if self.client_llm_url.scheme != "https":
             raise ValueError(
                 f"client_llm_url must be HTTPS, got scheme: {self.client_llm_url.scheme}"
@@ -350,7 +350,7 @@ class ProxyCompletionConfig(SQLModel):
     )
 
     @model_validator(mode="after")
-    def validate_params(self):
+    def validate_params(self) -> Self:
         validated = ProxyLLMParams.model_validate(self.params)
         # mode="json" coerces HttpUrl → plain str so downstream consumers
         # (httpx.post, urlparse) get the type they expect from params dict.
