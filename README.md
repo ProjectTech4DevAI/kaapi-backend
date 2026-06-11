@@ -76,6 +76,24 @@ This is also necessary when:
 - You modify Dockerfile configurations
 - Changes aren't being reflected in the running containers
 
+## Dev Scripts
+
+### show-pr-comments
+
+Displays PR review comments in the terminal, grouped by reviewer, with clickable file:line links that open the file locally in VS Code.
+
+```bash
+ln -s "$(pwd)/scripts/show-pr-comments" ~/.local/bin/show-pr-comments
+```
+
+Then run from any directory:
+
+```bash
+show-pr-comments 921
+```
+
+Requires the `gh` CLI (authenticated). Override the editor with `SHOW_PR_EDITOR=cursor` (or `subl`).
+
 ## Backend Development
 
 Backend docs: [backend/README.md](./backend/README.md).

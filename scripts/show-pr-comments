@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""
+show-pr-comments <PR-number>
+
+Fetch and display all review comments on a GitHub PR, grouped by reviewer.
+Requires: gh CLI (authenticated).
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import textwrap
+from collections import defaultdict
+
+# ── ANSI colours (no-op when not a TTY) ────────────────────────────────────
+IS_TTY = sys.stdout.isatty()
+
+
+def _c(*codes: int) -> str:
+    return f"\033[{';'.join(str(c) for c in codes)}m" if IS_TTY else ""
+
+
+RESET = _c(0)
+BOLD = _c(1)
+DIM = _c(2)
+RED = _c(31)
+GREEN = _c(32)
+YELLOW = _c(33)
+CYAN = _c(36)
+WHITE = _c(97)
+BG_RED = _c(41)
+BG_GREEN = _c(42)
+BG_DARK = _c(100)  # dark-grey background for hunk context
+
+STATE_COLOUR = {
+    "CHANGES_REQUESTED": _c(1, 31),  # bold red
+    "APPROVED": _c(1, 32),  # bold green
+    "COMMENTED": _c(1, 36),  # bold cyan
+    "PENDING": _c(2),  # dim
+}
+
+BADGES = {
+    "APPROVED": "✅ approved",
+    "CHANGES_REQUESTED": "🔴 changes requested",
+    "COMMENTED": "💬 commented",
+    "PENDING": "⏳ pending",
+}
+STATE_RANK = {"CHANGES_REQUESTED": 3, "APPROVED": 2, "COMMENTED": 1, "PENDING": 0}
+
+
+# ── GitHub API helpers ──────────────────────────────────────────────────────
+
+
+def gh(path: str) -> list | dict:
+    result = subprocess.run(
+        ["gh", "api", path], capture_output=True, text=True, check=True
+    )
+    return json.loads(result.stdout)
+
+
+def repo_slug() -> str:
+    result = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def git_root() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def editor_scheme() -> str:
+    """Return the URL scheme for the local editor.
+    Override with SHOW_PR_EDITOR=cursor|vscode|subl."""
+    editor = (os.environ.get("SHOW_PR_EDITOR") or "").lower()
+    if editor == "cursor":
+        return "cursor"
+    if editor == "subl":
+        return "subl"
+    return "vscode"
+
+
+def local_file_url(root: str, path: str, line: int | str, scheme: str) -> str:
+    abs_path = f"{root}/{path}"
+    if scheme == "subl":
+        return f"subl://open?url=file://{abs_path}&line={line}"
+    # vscode and cursor use the same scheme pattern
+    return f"{scheme}://file/{abs_path}:{line}"
+
+
+def pr_number_from_branch() -> int:
+    result = subprocess.run(
+        ["gh", "pr", "view", "--json", "number", "-q", ".number"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        sys.exit("No open PR for the current branch. Pass a PR number explicitly.")
+    return int(result.stdout.strip())
+
+
+# ── text helpers ────────────────────────────────────────────────────────────
+
+
+def clean_body(body: str) -> str:
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    while re.search(r"<details>", body, re.DOTALL):
+        new = re.sub(r"<details>.*?</details>", "", body, flags=re.DOTALL)
+        if new == body:
+            break
+        body = new
+    body = re.sub(r"<[^>]+>", "", body)
+    body = re.sub(r"(_[^\n_]+_\s*\|?\s*)+\n?", "", body)
+    body = re.sub(r"^\s*\|\s*\|?\s*", "", body, flags=re.MULTILINE)
+    body = re.sub(r"\*\*(.*?)\*\*", r"\1", body)
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body.strip()
+
+
+def colour_hunk_line(line: str) -> str:
+    """Colour a diff hunk line: green for additions, red for deletions, dim for context."""
+    if line.startswith("+"):
+        return f"{GREEN}{line[:90]}{RESET}"
+    if line.startswith("-"):
+        return f"{RED}{line[:90]}{RESET}"
+    return f"{DIM}{line[:90]}{RESET}"
+
+
+def render_comment(
+    c: dict, replies: dict, indent: str = "  ", root: str = "", scheme: str = "vscode"
+) -> str:
+    path = c["path"]
+    line = c.get("line") or c.get("original_line") or "?"
+    body = clean_body(c["body"])
+
+    hunk_lines = [
+        ln
+        for ln in (c.get("diff_hunk") or "").splitlines()
+        if not ln.startswith("@@") and ln.strip() and ln.strip() not in ("+", "-", " ")
+    ][
+        -3:
+    ]  # show up to 3 lines of context
+
+    # OSC 8 hyperlink → opens file at line in local editor
+    link_text = f"{path}:{line}"
+    local_url = local_file_url(root, path, line, scheme) if root else ""
+    link = (
+        f"\033]8;;{local_url}\033\\{BOLD}{CYAN}{link_text}{RESET}\033]8;;\033\\"
+        if IS_TTY and local_url
+        else f"{BOLD}{CYAN}{link_text}{RESET}"
+    )
+    out = f"{indent}📄 {link}\n"
+
+    for h in hunk_lines:
+        out += f"{indent}{DIM}┆{RESET} {colour_hunk_line(h)}\n"
+
+    wrapped = textwrap.fill(
+        body,
+        width=76,
+        initial_indent=indent + "└ ",
+        subsequent_indent=indent + "  ",
+    )
+    out += wrapped + "\n"
+
+    for r in replies.get(c["id"], []):
+        rb = clean_body(r["body"])
+        if rb:
+            out += (
+                textwrap.fill(
+                    rb,
+                    width=72,
+                    initial_indent=f"{indent}    {DIM}↪{RESET} ",
+                    subsequent_indent=indent + "      ",
+                )
+                + "\n"
+            )
+    return out
+
+
+def dominant_state(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    best: dict[str, str] = {}
+    for user, state in pairs:
+        if STATE_RANK.get(state, 0) >= STATE_RANK.get(best.get(user, ""), 0):
+            best[user] = state
+    return best
+
+
+# ── main ────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    pr_num = int(sys.argv[1]) if len(sys.argv) > 1 else pr_number_from_branch()
+    slug = repo_slug()
+    base = f"repos/{slug}/pulls/{pr_num}"
+
+    root = git_root()
+    scheme = editor_scheme()
+
+    pr_meta = gh(base)
+    reviews_raw = gh(f"{base}/reviews")
+    inline_raw = gh(f"{base}/comments")
+
+    states = dominant_state([(r["user"]["login"], r["state"]) for r in reviews_raw])
+
+    replies: dict[int, list] = defaultdict(list)
+    top: dict[str, list] = defaultdict(list)
+    for c in inline_raw:
+        if c.get("in_reply_to_id"):
+            replies[c["in_reply_to_id"]].append(c)
+        else:
+            top[c["user"]["login"]].append(c)
+
+    # ── header box ─────────────────────────────────────────────────────────
+    title = pr_meta.get("title", "")
+    author = pr_meta.get("user", {}).get("login", "")
+    base_branch = pr_meta.get("base", {}).get("ref", "")
+    additions = pr_meta.get("additions", "?")
+    deletions = pr_meta.get("deletions", "?")
+
+    W = 74
+    inner = f" PR #{pr_num} · {title} "
+    pad = "─" * max(0, W - len(inner) - 2)
+    print(f"{BOLD}╭─{inner}{pad}╮{RESET}")
+    meta = f" {author} → {base_branch}  ·  {GREEN}{additions}+{RESET} / {RED}{deletions}-{RESET}"
+    # pad without colour codes skewing width
+    plain_meta = f" {author} → {base_branch}  ·  {additions}+ / {deletions}-"
+    padding = " " * max(0, W - len(plain_meta))
+    print(f"{BOLD}│{RESET}{meta}{padding}{BOLD}│{RESET}")
+    print(f"{BOLD}╰{'─' * W}╯{RESET}")
+
+    # ── reviewer sections ───────────────────────────────────────────────────
+    humans = sorted(u for u in set(list(top) + list(states)) if not u.endswith("[bot]"))
+    bots = sorted(u for u in set(list(top) + list(states)) if u.endswith("[bot]"))
+
+    for user in humans + bots:
+        cmts = top.get(user, [])
+        review_body = (
+            ""
+            if user.endswith("[bot]")
+            else next(
+                (
+                    clean_body(r["body"])
+                    for r in reviews_raw
+                    if r["user"]["login"] == user and r["body"].strip()
+                ),
+                "",
+            )
+        )
+        if not cmts and not review_body:
+            continue
+        if user.endswith("[bot]") and not cmts:
+            continue
+
+        state = states.get(user, "COMMENTED")
+        badge = BADGES.get(state, "💬 commented")
+        colour = STATE_COLOUR.get(state, BOLD)
+        bar = f"{DIM}{'─' * max(0, W - len(user) - len(badge) - 4)}{RESET}"
+        print(f"\n{colour}── {user}  {badge} {RESET}{bar}")
+
+        if review_body:
+            print()
+            print(
+                textwrap.fill(
+                    review_body,
+                    width=76,
+                    initial_indent=f"  {DIM}",
+                    subsequent_indent=f"  {DIM}",
+                )
+                + RESET
+            )
+
+        cmts.sort(
+            key=lambda c: (c["path"], c.get("line") or c.get("original_line") or 0)
+        )
+        for c in cmts:
+            print()
+            print(render_comment(c, replies, root=root, scheme=scheme), end="")
+
+
+if __name__ == "__main__":
+    main()
