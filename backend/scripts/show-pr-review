@@ -4,6 +4,21 @@ show-pr-comments <PR-number>
 
 Fetch and display all review comments on a GitHub PR, grouped by reviewer.
 Requires: gh CLI (authenticated).
+
+Displays PR review comments in the terminal, grouped by reviewer, with clickable file:line links that open the file locally in VS Code.
+
+```bash
+ln -s "$(pwd)/scripts/show-pr-comments" ~/.local/bin/show-pr-comments
+```
+
+Then run from any directory:
+
+```bash
+show-pr-comments 921
+```
+
+Requires the `gh` CLI (authenticated). Override the editor with `SHOW_PR_EDITOR=cursor` (or `subl`).
+
 """
 
 import json
