@@ -3,7 +3,7 @@ Tests for the OpenAI provider.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import openai
 
@@ -11,9 +11,10 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
+from app.models.llm.constants import CompletionType
 from app.models.llm.request import ConversationConfig
 
-from app.services.llm.providers.oai import OpenAIProvider
+from app.services.llm.providers.open_ai import OpenAIProvider
 from app.tests.utils.openai import mock_openai_response
 
 
@@ -35,7 +36,7 @@ class TestOpenAIProvider:
         """Create a basic completion config."""
         return NativeCompletionConfig(
             provider="openai-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model": "gpt-4"},
         )
 
@@ -170,36 +171,152 @@ class TestOpenAIProvider:
     def test_execute_with_openai_api_error(
         self, provider, mock_client, completion_config, query_params
     ):
-        """Test handling of OpenAI API errors."""
+        """Generic `openai.APIError` (no specific subclass) falls through to the
+        `except openai.OpenAIError` block, which prefixes with "OpenAI error:"
+        and uses the raw exception string. No wrapper helper is invoked."""
         mock_client.responses.create.side_effect = openai.APIError(
             message="API request failed",
             request=MagicMock(),
             body=None,
         )
 
-        with patch("app.utils.handle_openai_error") as mock_handler:
-            mock_handler.return_value = "API request failed: rate limit exceeded"
+        result, error = provider.execute(completion_config, query_params, "Test query")
 
-            result, error = provider.execute(
-                completion_config, query_params, "Test query"
-            )
-
-            assert result is None
-            assert error is not None
-            assert "API request failed" in error
-            mock_handler.assert_called_once()
+        assert result is None
+        assert error is not None
+        assert error.startswith("OpenAI error:")
+        assert "API request failed" in error
 
     def test_execute_with_generic_exception(
         self, provider, mock_client, completion_config, query_params
     ):
-        """Test handling of unexpected exceptions."""
+        """Non-OpenAI exceptions land in the `except Exception` catch-all,
+        prefixed with "Unexpected error:" and carrying the exception text."""
         mock_client.responses.create.side_effect = Exception("Timeout occurred")
 
         result, error = provider.execute(completion_config, query_params, "Test query")
 
         assert result is None
         assert error is not None
-        assert "Unexpected error occurred" in error
+        assert error.startswith("Unexpected error:")
+        assert "Timeout occurred" in error
+
+    @pytest.mark.parametrize(
+        "exception_factory, expected_prefix, expected_status, original_message",
+        [
+            (
+                lambda: openai.RateLimitError(
+                    message="quota exceeded",
+                    response=MagicMock(
+                        status_code=429, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI rate limit exceeded",
+                429,
+                "quota exceeded",
+            ),
+            (
+                lambda: openai.AuthenticationError(
+                    message="bad api key",
+                    response=MagicMock(
+                        status_code=401, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI authentication failed",
+                401,
+                "bad api key",
+            ),
+            (
+                lambda: openai.NotFoundError(
+                    message="model not found",
+                    response=MagicMock(
+                        status_code=404, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI resource not found",
+                404,
+                "model not found",
+            ),
+            (
+                lambda: openai.BadRequestError(
+                    message="invalid model param",
+                    response=MagicMock(
+                        status_code=400, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI bad request",
+                400,
+                "invalid model param",
+            ),
+            (
+                lambda: openai.UnprocessableEntityError(
+                    message="cannot process",
+                    response=MagicMock(
+                        status_code=422, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI unprocessable entity",
+                422,
+                "cannot process",
+            ),
+            (
+                lambda: openai.InternalServerError(
+                    message="upstream boom",
+                    response=MagicMock(
+                        status_code=500, request=MagicMock(), headers={}
+                    ),
+                    body=None,
+                ),
+                "OpenAI server error",
+                500,
+                "upstream boom",
+            ),
+        ],
+    )
+    def test_execute_specific_openai_exceptions_use_category_prefix(
+        self,
+        provider,
+        mock_client,
+        completion_config,
+        query_params,
+        exception_factory,
+        expected_prefix,
+        expected_status,
+        original_message,
+    ):
+        """Each specific OpenAI exception with a dedicated handler emits a
+        category-prefixed message including the upstream status code and the
+        original error text. Structural assertions only — the remediation
+        suffix can evolve without breaking the suite.
+        """
+        mock_client.responses.create.side_effect = exception_factory()
+
+        result, error = provider.execute(completion_config, query_params, "Test query")
+
+        assert result is None
+        assert error is not None
+        assert error.startswith(expected_prefix), error
+        assert f"code: {expected_status}" in error, error
+        assert original_message in error, error
+
+    def test_execute_with_api_timeout_error(
+        self, provider, mock_client, completion_config, query_params
+    ):
+        """APITimeoutError doesn't expose .message — handler interpolates str(e)."""
+        mock_client.responses.create.side_effect = openai.APITimeoutError(
+            request=MagicMock()
+        )
+
+        result, error = provider.execute(completion_config, query_params, "Test query")
+
+        assert result is None
+        assert error is not None
+        assert error.startswith("OpenAI request timed out:")
 
     def test_execute_with_conversation_config_without_id_or_auto_create(
         self, provider, mock_client, completion_config, query_params
@@ -247,7 +364,7 @@ class TestOpenAIProvider:
         # Create a config with conversation in params (should be removed)
         completion_config = NativeCompletionConfig(
             provider="openai-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model": "gpt-4", "conversation": {"id": "old_conv"}},
         )
 

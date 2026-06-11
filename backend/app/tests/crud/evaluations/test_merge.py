@@ -4,6 +4,7 @@ from app.crud.evaluations.merge import (
     compute_summary_scores,
     merge_scores_step_forward,
     merge_trace_data,
+    sort_traces_by_question_id,
 )
 
 
@@ -80,6 +81,88 @@ class TestMergeTraceData:
         merged, stats = merge_trace_data(existing, fresh)
         assert stats["reused"] == 1
         assert stats["updated"] == 0
+
+    def test_category_and_external_id_preserved_across_resync(self):
+        def _real(trace_id, value=0.5, category="Health"):
+            return {
+                **_trace(trace_id, value=value),
+                "category": category,
+            }
+
+        # Both sides have the keys → merged carries them.
+        existing = [_real("1", value=0.5, category="Health")]
+        fresh = [_real("1", value=0.9, category="Health")]
+        merged, stats = merge_trace_data(existing, fresh)
+        assert merged[0]["category"] == "Health"
+        assert merged[0]["scores"][0]["value"] == 0.9
+        assert stats["updated"] == 1
+
+        # Existing has them, fresh missing the keys → fall back to existing.
+        existing2 = [_real("2", category="Education")]
+        fresh2 = [_trace("2", value=1.0)]  # legacy-shape trace
+        merged2, _ = merge_trace_data(existing2, fresh2)
+        assert merged2[0]["category"] == "Education"
+
+        # Fresh has them, existing missing the keys → take from fresh.
+        existing3 = [_trace("3")]  # legacy-shape trace
+        fresh3 = [_real("3", category="Sports")]
+        merged3, _ = merge_trace_data(existing3, fresh3)
+        assert merged3[0]["category"] == "Sports"
+
+
+class TestSortTracesByQuestionId:
+    """Sort traces by the upload-time question_id so the API response follows the
+    CSV's natural order instead of ThreadPoolExecutor completion order."""
+
+    def test_sorts_int_question_ids_ascending(self):
+        traces = [
+            {"trace_id": "a", "question_id": 3},
+            {"trace_id": "b", "question_id": 1},
+            {"trace_id": "c", "question_id": 2},
+        ]
+        sorted_traces = sort_traces_by_question_id(traces)
+        assert [t["question_id"] for t in sorted_traces] == [1, 2, 3]
+
+    def test_sorts_string_digit_question_ids_numerically(self):
+        """Numeric strings sort like integers, not lexicographically: '10' > '2'."""
+        traces = [
+            {"trace_id": "a", "question_id": "10"},
+            {"trace_id": "b", "question_id": "2"},
+            {"trace_id": "c", "question_id": "1"},
+        ]
+        sorted_traces = sort_traces_by_question_id(traces)
+        assert [t["question_id"] for t in sorted_traces] == ["1", "2", "10"]
+
+    def test_missing_or_non_numeric_question_id_pushed_to_end(self):
+        """Legacy traces without question_id sort after the numbered ones so the
+        sort stays total — exercises the fallback branch in the sort key.
+        """
+        traces = [
+            {"trace_id": "a", "question_id": 2},
+            {"trace_id": "b"},  # missing
+            {"trace_id": "c", "question_id": ""},  # empty string
+            {"trace_id": "d", "question_id": "abc"},  # non-numeric
+            {"trace_id": "e", "question_id": 1},
+        ]
+        sorted_traces = sort_traces_by_question_id(traces)
+        assert [t["trace_id"] for t in sorted_traces[:2]] == ["e", "a"]
+        # Order among the missing/non-numeric tail is stable but not specified.
+        assert {t["trace_id"] for t in sorted_traces[2:]} == {"b", "c", "d"}
+
+    def test_merge_scores_step_forward_returns_sorted_traces(self):
+        """The merge result is the chokepoint that gets persisted, so it must
+        come back ordered by question_id regardless of input order.
+        """
+        cached = {
+            "summary_scores": [],
+            "traces": [_trace(str(i)) for i in (2, 0, 1)],
+        }
+        fresh = {
+            "summary_scores": [],
+            "traces": [_trace(str(i)) for i in (4, 3)],
+        }
+        merged, _ = merge_scores_step_forward(cached, fresh)
+        assert [t["question_id"] for t in merged["traces"]] == [0, 1, 2, 3, 4]
 
 
 class TestComputeSummaryScores:

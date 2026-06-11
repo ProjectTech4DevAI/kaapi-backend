@@ -1,8 +1,8 @@
 import logging
 import base64
 from typing import Any
-
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai.types import (
     GenerateContentResponse,
     GenerateContentConfig,
@@ -28,6 +28,7 @@ from app.models.llm.constants import (
     DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
 )
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
@@ -130,7 +131,15 @@ class GoogleAIProvider(BaseProvider):
         generation_params = completion_config.params
 
         if not isinstance(resolved_input, AudioRef):
-            return None, f"{provider} STT requires AudioRef input"
+            error_message = (
+                f"[KAAPI] STT validation failed: {provider} STT requires an "
+                f"AudioRef input, but received {type(resolved_input).__name__}. "
+                f"Ensure the audio is uploaded and resolved before invoking STT."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] {error_message} | provider={provider}"
+            )
+            return None, error_message
 
         model = generation_params.get("model") or DEFAULT_STT_MODEL
         instructions = generation_params.get("instructions", "")
@@ -185,10 +194,28 @@ class GoogleAIProvider(BaseProvider):
 
         # Validate response has required fields
         if not response.response_id:
-            return None, "Google AI response missing response_id"
+            error_message = (
+                "[GEMINI] STT response is missing a response_id. This indicates "
+                "an unexpected upstream payload from Gemini. Retry the request; "
+                "if the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] {error_message} | provider={provider}, model={model}"
+            )
+            return None, error_message
 
         if not response.text:
-            return None, "Google AI response missing text content"
+            error_message = (
+                "[GEMINI] STT response is missing transcribed text. Gemini "
+                "returned an empty result — verify the audio is audible and in "
+                "a supported format, then retry. If the issue persists, "
+                "contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_stt] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response.response_id}"
+            )
+            return None, error_message
 
         # Extract usage metadata with null checks
         if response.usage_metadata:
@@ -252,10 +279,25 @@ class GoogleAIProvider(BaseProvider):
 
         # Validate input is a text string
         if not isinstance(resolved_input, str):
-            return None, f"{provider} TTS requires text string as input"
+            error_message = (
+                f"[KAAPI] TTS validation failed: {provider} TTS requires a text "
+                f"string as input, but received {type(resolved_input).__name__}. "
+                f"Provide the text to synthesize as a plain string."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_tts] {error_message} | provider={provider}"
+            )
+            return None, error_message
 
         if not resolved_input.strip():
-            return None, "Text input cannot be empty"
+            error_message = (
+                "[KAAPI] TTS validation failed: text input is empty or "
+                "whitespace-only. Provide non-empty text to synthesize."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_tts] {error_message} | provider={provider}"
+            )
+            return None, error_message
 
         # Extract params with defaults (language is optional — Gemini auto-detects from script)
         model = generation_params.get("model") or DEFAULT_TTS_MODEL
@@ -292,15 +334,44 @@ class GoogleAIProvider(BaseProvider):
             model=model, contents=resolved_input, config=config
         )
         if not response.response_id:
-            return None, "Google AI response missing response_id"
+            error_message = (
+                "[GEMINI] TTS response is missing a response_id. This indicates "
+                "an unexpected upstream payload from Gemini. Retry the request; "
+                "if the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_tts] {error_message} | provider={provider}, model={model}"
+            )
+            return None, error_message
         try:
             raw_audio_bytes = response.candidates[0].content.parts[0].inline_data.data
 
         except (IndexError, AttributeError) as e:
-            return None, f"Failed to extract audio from response: {str(e)}"
+            error_message = (
+                "[GEMINI] Failed to extract audio bytes from TTS response: "
+                "Gemini was unable to generate audio from the provided input. "
+                "Ensure the input text is properly formatted and does not "
+                "contain escape characters or unsupported control sequences. "
+                "If the issue persists after input normalization, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_tts] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response.response_id}, cause={type(e).__name__}",
+                exc_info=True,
+            )
+            return None, error_message
 
         if not raw_audio_bytes:
-            return None, "Google AI response missing audio data"
+            error_message = (
+                "[GEMINI] TTS response is missing generated audio data. This is "
+                "typically a Gemini server-side error. Wait a minute and retry; "
+                "if the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_tts] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response.response_id}"
+            )
+            return None, error_message
 
         # Post-process audio format conversion if needed
         # Gemini TTS natively outputs 24kHz 16-bit raw PCM — wrap in WAV container
@@ -317,7 +388,16 @@ class GoogleAIProvider(BaseProvider):
             if response_format == "mp3":
                 converted_bytes, convert_error = convert_pcm_to_mp3(raw_audio_bytes)
                 if convert_error:
-                    return None, f"Failed to convert audio to MP3: {convert_error}"
+                    error_message = (
+                        f"[KAAPI] Post-processing failure: unable to convert "
+                        f"Gemini PCM audio to MP3 ({convert_error}). Falling "
+                        f"back to WAV is possible by setting response_format='wav'."
+                    )
+                    logger.error(
+                        f"[GoogleAIProvider._execute_tts] {error_message} | "
+                        f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
+                    )
+                    return None, error_message
                 encoded_content = base64.b64encode(converted_bytes or b"").decode(
                     "ascii"
                 )
@@ -326,7 +406,16 @@ class GoogleAIProvider(BaseProvider):
             elif response_format == "ogg":
                 converted_bytes, convert_error = convert_pcm_to_ogg(raw_audio_bytes)
                 if convert_error:
-                    return None, f"Failed to convert audio to OGG: {convert_error}"
+                    error_message = (
+                        f"[KAAPI] Post-processing failure: unable to convert "
+                        f"Gemini PCM audio to OGG ({convert_error}). Falling "
+                        f"back to WAV is possible by setting response_format='wav'."
+                    )
+                    logger.error(
+                        f"[GoogleAIProvider._execute_tts] {error_message} | "
+                        f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
+                    )
+                    return None, error_message
                 encoded_content = base64.b64encode(converted_bytes or b"").decode(
                     "ascii"
                 )
@@ -428,6 +517,49 @@ class GoogleAIProvider(BaseProvider):
             config=GenerateContentConfig(**generation_kwargs),
         )
 
+        provider = completion_config.provider
+
+        if not response.response_id:
+            error_message = (
+                "[GEMINI] Text response is missing a response_id. This "
+                "indicates an unexpected upstream payload from Gemini. Retry "
+                "the request; if the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_text] {error_message} | provider={provider}, model={model}"
+            )
+            return None, error_message
+
+        if not response.text:
+            # Gemini commonly returns no text when the response is blocked by
+            # safety filters or when the candidate finishes with a non-STOP
+            # reason. Surface the finish_reason / block_reason if available so
+            # the caller can act on it.
+            finish_reason = None
+            block_reason = None
+            try:
+                finish_reason = response.candidates[0].finish_reason
+            except (IndexError, AttributeError):
+                pass
+            try:
+                block_reason = response.prompt_feedback.block_reason
+            except AttributeError:
+                pass
+
+            error_message = (
+                f"[GEMINI] Text response is missing generated content "
+                f"(finish_reason={finish_reason}, block_reason={block_reason}). "
+                f"This typically means the response was blocked by Gemini's "
+                f"safety filters, truncated by token limits, or the model "
+                f"returned no candidates. Review the prompt and safety "
+                f"settings, then retry."
+            )
+            logger.warning(
+                f"[GoogleAIProvider._execute_text] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response.response_id}"
+            )
+            return None, error_message
+
         if response.usage_metadata:
             input_tokens = response.usage_metadata.prompt_token_count or 0
             output_tokens = response.usage_metadata.candidates_token_count or 0
@@ -474,20 +606,20 @@ class GoogleAIProvider(BaseProvider):
     ) -> tuple[LLMCallResponse | None, str | None]:
         try:
             completion_type = completion_config.type
-            if completion_type == "stt":
+            if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
-            elif completion_type == "tts":
+            elif completion_type == CompletionType.TTS:
                 return self._execute_tts(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
 
-            elif completion_type == "text":
+            elif completion_type == CompletionType.TEXT:
                 return self._execute_text(
                     completion_config=completion_config,
                     resolved_input=resolved_input,
@@ -496,13 +628,114 @@ class GoogleAIProvider(BaseProvider):
 
         except TypeError as e:
             # handle unexpected arguments gracefully
-            error_message = f"Invalid or unexpected parameter in Config: {str(e)}"
+            error_message = (
+                f"[KAAPI] Invalid or unexpected parameter in Config: {str(e)}. "
+                f"Review the completion config; one of the parameters does not "
+                f"match the provider's expected signature."
+            )
+            logger.warning(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except genai_errors.ClientError as e:
+            code = e.code
+            status = e.status or ""
+            msg = e.message or str(e)
+            if code == 429:
+                error_message = (
+                    f"[GEMINI] Rate limit / quota exceeded (code: 429 "
+                    f"{status}): {msg}. You have hit Gemini's per-minute or "
+                    f"per-day quota for this model. Wait at least 1 minute "
+                    f"and retry; if the issue persists, request a quota "
+                    f"increase from Google or contact Kaapi."
+                )
+            elif code == 403:
+                error_message = (
+                    f"[GEMINI] Authentication / permission denied (code: 403 "
+                    f"{status}): {msg}. Verify the Gemini API key is valid, "
+                    f"not expired, and has access to the requested model and "
+                    f"project."
+                )
+            elif code == 404:
+                error_message = (
+                    f"[GEMINI] Resource not found (code: 404 {status}): {msg}. "
+                    f"Check that the model name and any referenced IDs in "
+                    f"your config are correct and available in your region."
+                )
+            elif code == 400:
+                error_message = (
+                    f"[GEMINI] Bad request (code: 400 {status}): {msg}. "
+                    f"Review your config parameters and input payload — the "
+                    f"request shape, model, or content may be invalid for "
+                    f"this Gemini endpoint."
+                )
+            else:
+                error_message = (
+                    f"[GEMINI] Client error (code: {code} {status}): {msg}. "
+                    f"Review the request configuration; if the issue persists, "
+                    f"contact Kaapi."
+                )
+            logger.warning(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except genai_errors.ServerError as e:
+            error_message = (
+                f"[GEMINI] Server error (code: {e.code} {e.status or ''}): "
+                f"{e.message or str(e)}. This is typically transient (Gemini "
+                f"overloaded, internal error, or deadline exceeded) — retry "
+                f"in a few seconds. If the issue persists, contact Kaapi."
+            )
+            logger.error(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except genai_errors.UnknownApiResponseError as e:
+            error_message = (
+                f"[GEMINI] Returned a malformed or unparseable response: {e}. "
+                f"This indicates an unexpected payload shape from Gemini — "
+                f"retry the request. If the issue persists, contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except genai_errors.APIError as e:
+            # Catch-all for any APIError subclass not handled above
+            error_message = (
+                f"[GEMINI] API error (code: {getattr(e, 'code', 'unknown')} "
+                f"{getattr(e, 'status', '') or ''}): "
+                f"{getattr(e, 'message', None) or str(e)}. If this persists, "
+                f"contact Kaapi."
+            )
+            logger.warning(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}, type={completion_type}",
+                exc_info=True,
+            )
             return None, error_message
 
         except Exception as e:
-            error_message = "Unexpected error occurred"
+            error_message = (
+                f"[KAAPI] Unexpected error while executing Gemini "
+                f"{completion_type or 'request'}: {str(e)}. This was not "
+                f"raised by the Gemini SDK directly — likely a Kaapi-side "
+                f"failure. Contact Kaapi if the issue persists."
+            )
             logger.error(
-                f"[GoogleAIProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                f"[GoogleAIProvider.execute] {error_message} | provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message

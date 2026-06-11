@@ -138,21 +138,110 @@ class OpenAIProvider(BaseProvider):
             error_message = f"Invalid or unexpected parameter in Config: {str(e)}"
             return None, error_message
 
-        except openai.OpenAIError as e:
-            # imported here to avoid circular imports
-            from app.utils import handle_openai_error
-
-            error_message = handle_openai_error(e)
+        except openai.RateLimitError as e:
+            error_message = (
+                f"OpenAI rate limit exceeded (code: {e.status_code}): "
+                f"{e.message}. Try again in 1 minute. If issue persists, "
+                f"contact Kaapi."
+            )
             logger.warning(
-                f"[OpenAIProvider.execute] OpenAI API error: {error_message} | provider={completion_config.provider}",
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.AuthenticationError as e:
+            error_message = (
+                f"OpenAI authentication failed (code: {e.status_code}): "
+                f"{e.message}. Check your OpenAI API key is valid and has "
+                f"not expired."
+            )
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.NotFoundError as e:
+            error_message = (
+                f"OpenAI resource not found (code: {e.status_code}): "
+                f"{e.message}. Verify the model name and any referenced IDs "
+                f"in your config are correct."
+            )
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.BadRequestError as e:
+            error_message = (
+                f"OpenAI bad request (code: {e.status_code}): {e.message}. "
+                f"Review your config parameters; the request shape may be "
+                f"invalid."
+            )
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.UnprocessableEntityError as e:
+            error_message = (
+                f"OpenAI unprocessable entity (code: {e.status_code}): "
+                f"{e.message}. The model rejected the request payload; "
+                f"check input format and limits."
+            )
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.InternalServerError as e:
+            error_message = (
+                f"OpenAI server error (code: {e.status_code}): {e.message}. "
+                f"This is usually transient — retry in a few seconds. If "
+                f"issue persists, contact Kaapi."
+            )
+            logger.error(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.APITimeoutError as e:
+            error_message = (
+                f"OpenAI request timed out: {e}. Retry the request, or try "
+                f"with a smaller payload."
+            )
+            logger.error(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except openai.OpenAIError as e:
+            error_message = f"OpenAI error: {e}. If this persists, contact Kaapi."
+            logger.warning(
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message
 
         except Exception as e:
-            error_message = "Unexpected error occurred"
+            error_message = f"Unexpected error: {e}"
             logger.error(
-                f"[OpenAIProvider.execute] {error_message}: {str(e)} | provider={completion_config.provider}",
+                f"[OpenAIProvider.execute] {error_message} | "
+                f"provider={completion_config.provider}",
                 exc_info=True,
             )
             return None, error_message
