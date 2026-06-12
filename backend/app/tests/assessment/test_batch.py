@@ -18,6 +18,7 @@ from app.crud.assessment.batch import (
     submit_assessment_batch,
 )
 from app.models.assessment import AssessmentAttachment
+from app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
     attachment_type_for_row,
@@ -284,7 +285,9 @@ class TestSubmitAssessmentBatchProviderRouting:
         assert map_params.call_args.args[0]["instructions"] == "request system"
         assert start_batch.call_args.kwargs["provider_name"] == "anthropic"
         assert start_batch.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
-        assert start_batch.call_args.kwargs["config"]["max_tokens"] == 8192
+        assert start_batch.call_args.kwargs["config"]["max_tokens"] == (
+            DEFAULT_ANTHROPIC_MAX_TOKENS
+        )
 
 
 class TestBatchDatasetParsing:

@@ -11,7 +11,6 @@ from typing import Any
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
-from backend.app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from sqlmodel import Session
 
 from app.core.batch import (
@@ -30,6 +29,7 @@ from app.models.assessment import (
 )
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
+from app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
     map_kaapi_to_anthropic_params,
