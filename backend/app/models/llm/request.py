@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -71,6 +71,8 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
     input_language: str | None = "auto"
@@ -88,17 +90,35 @@ class STTLLMParams(SQLModel):
 
 
 class TTSLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-KaapiLLMParams = Union[
-    TextLLMParams,
-    STTLLMParams,
-    TTSLLMParams,
-]
+class ProxyLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
+    client_llm_url: HttpUrl = Field(
+        ...,
+        description=(
+            "HTTPS URL of the client's own LLM endpoint. Kaapi forwards the "
+            "(guardrail-sanitised) input here and applies output guardrails to the response."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_https(self) -> Self:
+        if self.client_llm_url.scheme != "https":
+            raise ValueError(
+                f"client_llm_url must be HTTPS, got scheme: {self.client_llm_url.scheme}"
+            )
+        return self
+
+
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ProxyLLMParams]
 
 
 # Input type models for discriminated union
@@ -313,9 +333,39 @@ class KaapiCompletionConfig(SQLModel):
         return self
 
 
+class ProxyCompletionConfig(SQLModel):
+    """
+    Proxy completion: Kaapi forwards the (guardrail-sanitised) input to the
+    client's own LLM endpoint and applies output guardrails to the response.
+    No upstream provider is dispatched — `provider` is fixed to "proxy" so
+    the discriminated union can route cleanly.
+    """
+
+    provider: Literal["proxy"] = Field(
+        "proxy",
+        description=(
+            "Discriminator value for the proxy variant. Auto-injected when "
+            "type=proxy; clients may omit it."
+        ),
+    )
+    type: Literal["proxy"] = Field(..., description="Must be 'proxy'.")
+    params: dict[str, Any] = Field(
+        ...,
+        description="Proxy params (client_llm_url, ...)",
+    )
+
+    @model_validator(mode="after")
+    def validate_params(self) -> Self:
+        validated = ProxyLLMParams.model_validate(self.params)
+        # mode="json" coerces HttpUrl → plain str so downstream consumers
+        # (httpx.post, urlparse) get the type they expect from params dict.
+        self.params = validated.model_dump(mode="json", exclude_none=True)
+        return self
+
+
 # Discriminated union for completion configs based on provider field
 CompletionConfig = Annotated[
-    Union[NativeCompletionConfig, KaapiCompletionConfig],
+    Union[NativeCompletionConfig, KaapiCompletionConfig, ProxyCompletionConfig],
     Field(discriminator="provider"),
 ]
 
@@ -332,6 +382,24 @@ class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_proxy_provider(cls, data: Any) -> Any:
+        """For `type=proxy`, provider is meaningless to the caller.
+        Inject provider="proxy" so the CompletionConfig discriminator routes
+        to ProxyCompletionConfig without forcing the client to set it."""
+        if not isinstance(data, dict):
+            return data
+        completion = data.get("completion")
+        if (
+            isinstance(completion, dict)
+            and completion.get("type") == Provider.PROXY.value
+        ):
+            existing = completion.get("provider")
+            if existing in (None, Provider.PROXY.value):
+                completion["provider"] = Provider.PROXY.value
+        return data
 
     # used for llm-chain to provide prompt interpolation
     prompt_template: PromptTemplate | None = Field(

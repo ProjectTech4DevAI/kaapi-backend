@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
-from app.models.llm.constants import CompletionType
+from app.models.llm.constants import CompletionType, Provider as ProviderEnum
 from app.models.llm.request import ConfigBlob
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
@@ -137,6 +137,12 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     completion = blob.completion
     raw_provider = completion.provider
     completion_type = completion.type
+
+    # Proxy forwards the request to the client's own LLM endpoint — no model
+    # lookup, no provider mapping.
+    if completion_type == ProviderEnum.PROXY.value:
+        return
+
     if raw_provider is None:
         return
 
@@ -145,7 +151,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model")
+    model_name = (completion.params or {}).get("model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
