@@ -111,7 +111,7 @@ class TestStartAssessment:
     def test_rejects_unsupported_provider(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="anthropic"))
+        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="sarvamai"))
 
         with (
             patch(

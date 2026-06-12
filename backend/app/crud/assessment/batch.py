@@ -11,9 +11,15 @@ from typing import Any
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
+from backend.app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from sqlmodel import Session
 
-from app.core.batch import BATCH_KEY, GeminiBatchProvider, start_batch_job
+from app.core.batch import (
+    BATCH_KEY,
+    AnthropicBatchProvider,
+    GeminiBatchProvider,
+    start_batch_job,
+)
 from app.core.batch.client import GeminiClient
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
@@ -26,17 +32,19 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
+    map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
     normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
+    build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_openai_client
+from app.utils import get_anthropic_client, get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +308,60 @@ def build_google_jsonl(
     return jsonl_data
 
 
+def build_anthropic_jsonl(
+    rows: list[dict[str, str]],
+    text_columns: list[str],
+    attachments: list[AssessmentAttachment],
+    prompt_template: str | None,
+    anthropic_params: dict,
+    row_indices: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Build Anthropic batch request data from dataset rows.
+
+    Each line follows the Anthropic Message Batches format:
+    {
+        "custom_id": "row_0",
+        "params": { model, max_tokens, system, messages: [{role, content: [...]}] }
+    }
+    """
+    jsonl_data = []
+
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
+        content: list[dict[str, Any]] = []
+
+        text_prompt = _build_text_prompt(row, text_columns, prompt_template)
+        if text_prompt.strip():
+            content.append({"type": "text", "text": text_prompt})
+
+        # Attachments (Anthropic uses url-source image/document blocks)
+        for att in attachments:
+            cell_value = row.get(att.column, "")
+            content.extend(
+                build_anthropic_attachment_parts(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
+                )
+            )
+
+        if not content:
+            logger.warning("[build_anthropic_jsonl] Skipping empty row | idx=%s", idx)
+            continue
+
+        params = dict(anthropic_params)
+        params["messages"] = [{"role": "user", "content": content}]
+
+        jsonl_data.append(
+            {
+                BATCH_KEY: f"row_{idx}",
+                "params": params,
+            }
+        )
+
+    return jsonl_data
+
+
 def submit_assessment_batch(
     session: Session,
     run: AssessmentRun,
@@ -437,6 +499,44 @@ def submit_assessment_batch(
             session=session,
             provider=provider,
             provider_name="google-aistudio",
+            job_type=BatchJobType.ASSESSMENT,
+            organization_id=organization_id,
+            project_id=project_id,
+            jsonl_data=jsonl_data,
+            config=batch_config,
+        )
+
+    elif base_provider == LLMProvider.ANTHROPIC:
+        mapped_params, warnings = map_kaapi_to_anthropic_params(params)
+        if warnings:
+            logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
+
+        jsonl_data = build_anthropic_jsonl(
+            rows=rows,
+            text_columns=text_columns,
+            attachments=attachments,
+            prompt_template=prompt_template,
+            anthropic_params=mapped_params,
+            row_indices=row_indices,
+        )
+
+        anthropic_client = get_anthropic_client(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
+        provider = AnthropicBatchProvider(client=anthropic_client)
+
+        batch_config = {
+            "model": mapped_params.get("model"),
+            "max_tokens": mapped_params.get("max_tokens")
+            or DEFAULT_ANTHROPIC_MAX_TOKENS,
+        }
+
+        batch_job = start_batch_job(
+            session=session,
+            provider=provider,
+            provider_name=LLMProvider.ANTHROPIC,
             job_type=BatchJobType.ASSESSMENT,
             organization_id=organization_id,
             project_id=project_id,
