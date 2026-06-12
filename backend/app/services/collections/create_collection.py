@@ -46,7 +46,7 @@ def start_job(
     project_id: int,
     collection_job_id: UUID,
     organization_id: int,
-) -> str:
+) -> UUID:
     trace_id = correlation_id.get() or "N/A"
 
     job_crud = CollectionJobCrud(db, project_id)
@@ -352,6 +352,11 @@ def execute_batch_job(
             batch_start_time = time.time()
             creation_request = CreationRequest(**request)
             span.set_attribute("collection.provider", str(creation_request.provider))
+
+            result = Collection(
+                knowledge_base_id=vector_store_id,
+                knowledge_base_provider=get_service_name(creation_request.provider),
+            )
 
             job_uuid = UUID(job_id)
             trace_id = correlation_id.get() or "N/A"

@@ -1,7 +1,6 @@
 import json
 import logging
 import functools as ft
-import time
 
 import openai
 from openai import OpenAI, OpenAIError

@@ -105,7 +105,8 @@ class CollectionOptions(SQLModel):
         description="Description of the collection",
     )
     documents: list[UUID] = Field(
-        description="List of document IDs",
+        min_length=1,
+        description="List of document IDs (at least one required)",
     )
 
     def model_post_init(self, __context: Any):
