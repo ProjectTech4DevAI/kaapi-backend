@@ -392,10 +392,13 @@ class ConfigBlob(SQLModel):
         if not isinstance(data, dict):
             return data
         completion = data.get("completion")
-        if isinstance(completion, dict) and completion.get("type") == "proxy":
+        if (
+            isinstance(completion, dict)
+            and completion.get("type") == Provider.PROXY.value
+        ):
             existing = completion.get("provider")
-            if existing in (None, "proxy"):
-                completion["provider"] = "proxy"
+            if existing in (None, Provider.PROXY.value):
+                completion["provider"] = Provider.PROXY.value
         return data
 
     # used for llm-chain to provide prompt interpolation

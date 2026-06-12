@@ -722,7 +722,9 @@ class TestExecuteJob:
                     "completion": {
                         "type": "proxy",
                         "provider": None,
-                        "params": {"client_llm_url": "http://127.0.0.1/v1/predictions"},
+                        "params": {
+                            "client_llm_url": "https://internal.example/v1/predictions"
+                        },
                     }
                 }
             },
