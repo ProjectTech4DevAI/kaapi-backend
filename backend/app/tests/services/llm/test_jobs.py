@@ -651,6 +651,262 @@ class TestExecuteJob:
         assert not result["success"]
         assert "unexpected response structure" in result["error"]
 
+    def test_proxy_ssrf_dns_failure_allows_request(
+        self, db, job_env, job_for_execution
+    ):
+        """SSRF guard: DNS resolution failure is logged but request proceeds (jobs.py:634)."""
+        import socket
+
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        ssrf_err = ValueError("DNS lookup failed")
+        ssrf_err.__cause__ = socket.gaierror(-2, "Name or service not known")
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "id": "resp_abc",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.validate_callback_url", side_effect=ssrf_err
+            ) as mock_validate,
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        mock_validate.assert_called_once()
+        fake_client.post.assert_called_once()
+        assert result["success"]
+
+    def test_proxy_ssrf_non_dns_failure_rejects_request(
+        self, db, job_env, job_for_execution
+    ):
+        """SSRF guard: non-DNS ValueError from validate_callback_url rejects the request (jobs.py:639-645)."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {"client_llm_url": "http://127.0.0.1/v1/predictions"},
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        with (
+            patch(
+                "app.services.llm.jobs.validate_callback_url",
+                side_effect=ValueError("private IP not allowed"),
+            ),
+            patch("app.services.llm.jobs.httpx.Client") as mock_httpx,
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        mock_httpx.assert_not_called()
+        assert not result["success"]
+        assert "Proxy URL rejected" in result["error"]
+
+    def test_proxy_create_llm_call_record_failure(self, db, job_env, job_for_execution):
+        """create_llm_call failure in proxy branch returns error (jobs.py:675-682)."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch(
+                "app.services.llm.jobs.create_llm_call",
+                side_effect=Exception("DB insert failed"),
+            ),
+            patch("app.services.llm.jobs.httpx.Client") as mock_httpx,
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        mock_httpx.assert_not_called()
+        assert not result["success"]
+        assert "Failed to create LLM call record" in result["error"]
+        assert "DB insert failed" in result["error"]
+
+    def test_proxy_update_llm_call_record_failure_is_swallowed(
+        self, db, job_env, job_for_execution
+    ):
+        """update_llm_call_response failure in proxy branch is logged but call still succeeds (jobs.py:783-787)."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    }
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "id": "resp_abc",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Safe answer."}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+            patch(
+                "app.services.llm.jobs.update_llm_call_response",
+                side_effect=Exception("DB update failed"),
+            ) as mock_update,
+        ):
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        mock_update.assert_called_once()
+        # Failure is swallowed — proxy call still returns success.
+        assert result["success"]
+        assert (
+            result["data"]["response"]["output"]["content"]["value"] == "Safe answer."
+        )
+
+    def test_proxy_output_guardrails_failure_returns_error(
+        self, db, job_env, job_for_execution
+    ):
+        """Output guardrails failure in proxy branch surfaces as BlockResult.error (jobs.py:829-833)."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    },
+                    "input_guardrails": [],
+                    "output_guardrails": [
+                        {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                    ],
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "id": "resp_abc",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "Unsafe leaked output."}
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+        ):
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+            mock_guardrails.return_value = {
+                "success": False,
+                "bypassed": False,
+                "error": "Output blocked by guardrails",
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert "Output blocked by guardrails" in result["error"]
+
     def test_metadata_in_callback_response(
         self, db, job_env, job_for_execution, request_data
     ):
