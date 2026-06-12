@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 
 
 class Provider(StrEnum):
@@ -9,6 +10,44 @@ class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
     PROXY = "proxy"
+
+
+# Provider Literals reused across request models. Reference Provider enum
+# members directly so a rename in the enum surfaces at every call site
+# instead of leaving behind stale magic strings.
+STTProvider = Literal[
+    Provider.GOOGLE,
+    Provider.SARVAMAI,
+    Provider.ELEVENLABS,
+    Provider.GOOGLE_AISTUDIO,
+]
+TTSProvider = Literal[
+    Provider.GOOGLE,
+    Provider.SARVAMAI,
+    Provider.ELEVENLABS,
+    Provider.GOOGLE_AISTUDIO,
+]
+RAGProvider = Literal[Provider.OPENAI]
+
+KaapiProvider = Literal[
+    Provider.OPENAI,
+    Provider.GOOGLE,
+    Provider.SARVAMAI,
+    Provider.ELEVENLABS,
+    Provider.ANTHROPIC,
+    Provider.GOOGLE_AISTUDIO,
+]
+
+# Native provider names are the Kaapi providers with a "-native" suffix.
+# Kept as explicit strings since there's no corresponding enum member.
+NativeProvider = Literal[
+    "openai-native",
+    "google-native",
+    "sarvamai-native",
+    "elevenlabs-native",
+    "anthropic-native",
+    "google-aistudio-native",
+]
 
 
 class CompletionType(StrEnum):

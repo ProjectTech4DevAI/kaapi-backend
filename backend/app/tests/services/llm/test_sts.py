@@ -1,15 +1,18 @@
 """Tests for the /llm/chain/sts endpoint.
 
-Covers:
-- Default block construction (models, voices, formats)
-- Language resolution (auto, pinned, cross-language, BCP-47 normalisation)
-- Provider combos (google/sarvamai/elevenlabs for STT/TTS, openai for RAG)
-- Inline param overrides on each block
-- Stored config references on each block (and mixed)
-- Intermediate callback flags
-- Metadata construction (defaults, inline overrides, stored-ref labels)
-- Error paths: bad language codes, "unknown"/"auto" as output, XOR violations,
-  missing required fields
+Covers, at the chain-construction layer (start_chain_job mocked):
+
+- Default block construction (models, voices, formats, KB injection, intermediate flags)
+- Language resolution (auto, pinned, cross-language, BCP-47 normalisation, route-owns)
+- Provider matrix (independent set per block, default RAG provider, Google STT path)
+- Inline overrides for the RAG block (richest case) and KB-id preservation under override
+- Stored-config references (all-stored + mixed-stored/inline)
+- Metadata construction (speech_to_speech flag, language fields, caller-merge, key-precedence)
+- Error paths: bad/forbidden language codes, XOR violations, missing fields, URL audio input
+- S2S-specific edge cases: multi-KB forwarding, large KB list, payload structure
+
+The deeper edge cases ({{detected}} substitution fallback, STT failure halting RAG/TTS) are
+covered in test_chain.py against the chain primitives.
 """
 
 from unittest.mock import patch
@@ -94,42 +97,27 @@ class TestDefaults:
         assert response.status_code == 200
         assert len(_chain_request(mock).blocks) == 3
 
-    def test_default_stt_model(self, client, user_api_key_header, audio_input, kb_ids):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
-            )
-        stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
-        assert stt_params["model"] == DEFAULT_STT_MODEL
-
-    def test_default_rag_model_and_temperature(
+    def test_default_models_voice_format_and_temperature(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
+        """One canonical defaults test — covers STT model, RAG model+temp, TTS model/voice/format."""
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
             _post(
                 client,
                 user_api_key_header,
                 SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
             )
-        rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["model"] == DEFAULT_RAG_MODEL
-        assert rag_params["temperature"] == 0.1
+        blocks = _chain_request(mock).blocks
+        stt = blocks[0].config.blob.completion.params
+        rag = blocks[1].config.blob.completion.params
+        tts = blocks[2].config.blob.completion.params
 
-    def test_default_tts_model_voice_format(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
-            )
-        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["model"] == DEFAULT_TTS_MODEL
-        assert tts_params["voice"] == DEFAULT_TTS_VOICE
-        assert tts_params["response_format"] == "ogg"
+        assert stt["model"] == DEFAULT_STT_MODEL
+        assert rag["model"] == DEFAULT_RAG_MODEL
+        assert rag["temperature"] == 0.1
+        assert tts["model"] == DEFAULT_TTS_MODEL
+        assert tts["voice"] == DEFAULT_TTS_VOICE
+        assert tts["response_format"] == "ogg"
 
     def test_rag_block_always_has_knowledge_base_ids(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -207,6 +195,40 @@ class TestLanguageResolution:
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
         assert tts_params["language"] == "ta-IN"
 
+    def test_auto_input_without_output_yields_detected_marker(
+        self, client, user_api_key_header, audio_input, kb_ids
+    ):
+        """input='auto' + no output must produce the '{{detected}}' marker so
+        jobs.py substitutes the STT-detected language into the TTS config at
+        execution time. Returning 'auto' would forward 'auto' to TTS providers,
+        which 400 on Sarvam (default per docs)."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
+            )
+        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
+        assert tts_params["language"] == "{{detected}}"
+
+    def test_unknown_input_without_output_also_yields_detected_marker(
+        self, client, user_api_key_header, audio_input, kb_ids
+    ):
+        """'unknown' as input has the same semantics as 'auto' for TTS resolution:
+        the user wants STT to figure the language out."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(
+                    query=audio_input,
+                    knowledge_base_ids=kb_ids,
+                    input_language="unknown",
+                ),
+            )
+        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
+        assert tts_params["language"] == "{{detected}}"
+
     def test_auto_input_with_pinned_output(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
@@ -225,26 +247,16 @@ class TestLanguageResolution:
         assert stt_params["input_language"] == "auto"
         assert tts_params["language"] == "kn-IN"
 
-    def test_bcp47_normalisation_lowercase_region(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        """'hi-in' should be normalised to 'hi-IN' before validation."""
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            response = _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    input_language="hi-in",
-                ),
-            )
-        assert response.status_code == 200
-        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "hi-IN"
-
-    def test_bcp47_normalisation_uppercase_language(
-        self, client, user_api_key_header, audio_input, kb_ids
+    @pytest.mark.parametrize(
+        "raw,normalised",
+        [
+            ("hi-in", "hi-IN"),
+            ("HI-IN", "hi-IN"),
+            ("Hi-In", "hi-IN"),
+        ],
+    )
+    def test_bcp47_normalisation(
+        self, client, user_api_key_header, audio_input, kb_ids, raw, normalised
     ):
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
             response = _post(
@@ -253,12 +265,12 @@ class TestLanguageResolution:
                 SpeechToSpeechRequest(
                     query=audio_input,
                     knowledge_base_ids=kb_ids,
-                    input_language="HI-IN",
+                    input_language=raw,
                 ),
             )
         assert response.status_code == 200
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "hi-IN"
+        assert tts_params["language"] == normalised
 
     def test_route_always_owns_stt_input_language(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -305,54 +317,6 @@ class TestLanguageResolution:
 
 
 class TestProviders:
-    def test_stt_sarvamai_provider(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt_provider="sarvamai",
-                ),
-            )
-        stt_completion = _chain_request(mock).blocks[0].config.blob.completion
-        assert stt_completion.provider == "sarvamai"
-
-    def test_tts_sarvamai_provider(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    tts_provider="sarvamai",
-                ),
-            )
-        tts_completion = _chain_request(mock).blocks[2].config.blob.completion
-        assert tts_completion.provider == "sarvamai"
-
-    def test_tts_elevenlabs_provider(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    tts_provider="elevenlabs",
-                ),
-            )
-        tts_completion = _chain_request(mock).blocks[2].config.blob.completion
-        assert tts_completion.provider == "elevenlabs"
-
     def test_rag_provider_defaults_to_openai(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
@@ -365,27 +329,10 @@ class TestProviders:
         rag_completion = _chain_request(mock).blocks[1].config.blob.completion
         assert rag_completion.provider == "openai"
 
-    def test_sarvamai_stt_with_saaras_model(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt_provider="sarvamai",
-                    stt=STTBlockSpec(params=STTLLMParams(model="saaras:v3")),
-                ),
-            )
-        stt_completion = _chain_request(mock).blocks[0].config.blob.completion
-        assert stt_completion.provider == "sarvamai"
-        assert stt_completion.params["model"] == "saaras:v3"
-
     def test_google_stt_with_gemini_model(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
+        """Non-Sarvam STT path — the only one not covered by the matrix test below."""
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
             _post(
                 client,
@@ -426,21 +373,7 @@ class TestProviders:
 
 
 class TestInlineOverrides:
-    def test_stt_model_override(self, client, user_api_key_header, audio_input, kb_ids):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt=STTBlockSpec(params=STTLLMParams(model="saaras:v3")),
-                ),
-            )
-        stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
-        assert stt_params["model"] == "saaras:v3"
-
-    def test_rag_model_and_instructions_override(
+    def test_rag_model_instructions_and_temperature_override(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
@@ -481,92 +414,11 @@ class TestInlineOverrides:
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
         assert rag_params["knowledge_base_ids"] == kb_ids
 
-    def test_tts_voice_override(self, client, user_api_key_header, audio_input, kb_ids):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    tts=TTSBlockSpec(params=TTSLLMParams(voice="Orus")),
-                ),
-            )
-        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["voice"] == "Orus"
-
-    def test_tts_format_override(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    tts=TTSBlockSpec(params=TTSLLMParams(response_format="mp3")),
-                ),
-            )
-        tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["response_format"] == "mp3"
-
 
 # ---------- Stored config references ----------
 
 
 class TestStoredConfigRefs:
-    def test_stored_stt_block(self, client, user_api_key_header, audio_input, kb_ids):
-        config_id = uuid4()
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt=STTBlockSpec(config_id=config_id, config_version=2),
-                ),
-            )
-        stt_config = _chain_request(mock).blocks[0].config
-        assert stt_config.id == config_id
-        assert stt_config.version == 2
-        assert stt_config.blob is None
-
-    def test_stored_rag_block(self, client, user_api_key_header, audio_input, kb_ids):
-        config_id = uuid4()
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    rag=RAGBlockSpec(config_id=config_id, config_version=1),
-                ),
-            )
-        rag_config = _chain_request(mock).blocks[1].config
-        assert rag_config.id == config_id
-        assert rag_config.version == 1
-        assert rag_config.blob is None
-
-    def test_stored_tts_block(self, client, user_api_key_header, audio_input, kb_ids):
-        config_id = uuid4()
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    tts=TTSBlockSpec(config_id=config_id, config_version=3),
-                ),
-            )
-        tts_config = _chain_request(mock).blocks[2].config
-        assert tts_config.id == config_id
-        assert tts_config.version == 3
-        assert tts_config.blob is None
-
     def test_all_blocks_stored(self, client, user_api_key_header, audio_input, kb_ids):
         stt_id, rag_id, tts_id = uuid4(), uuid4(), uuid4()
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
@@ -585,6 +437,7 @@ class TestStoredConfigRefs:
         assert blocks[0].config.id == stt_id
         assert blocks[1].config.id == rag_id
         assert blocks[2].config.id == tts_id
+        assert all(b.config.blob is None for b in blocks)
 
     def test_mixed_stored_and_inline(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -613,19 +466,7 @@ class TestStoredConfigRefs:
 
 
 class TestMetadata:
-    def test_metadata_has_speech_to_speech_flag(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
-            )
-        meta = _chain_request(mock).request_metadata
-        assert meta["speech_to_speech"] is True
-
-    def test_metadata_reflects_resolved_languages(
+    def test_metadata_has_speech_to_speech_flag_and_languages(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
         with patch("app.api.routes.llm_sts.start_chain_job") as mock:
@@ -640,61 +481,9 @@ class TestMetadata:
                 ),
             )
         meta = _chain_request(mock).request_metadata
+        assert meta["speech_to_speech"] is True
         assert meta["input_language"] == "mr-IN"
         assert meta["output_language"] == "ta-IN"
-
-    def test_metadata_default_model_labels(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
-            )
-        meta = _chain_request(mock).request_metadata
-        assert meta["stt_model"] == DEFAULT_STT_MODEL
-        assert meta["llm_model"] == DEFAULT_RAG_MODEL
-        assert meta["tts_model"] == DEFAULT_TTS_MODEL
-
-    def test_metadata_inline_model_labels(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt=STTBlockSpec(params=STTLLMParams(model="saaras:v3")),
-                    rag=RAGBlockSpec(params=TextLLMParams(model="gpt-4o-mini")),
-                    tts=TTSBlockSpec(
-                        params=TTSLLMParams(model="gemini-2.5-flash-preview-tts")
-                    ),
-                ),
-            )
-        meta = _chain_request(mock).request_metadata
-        assert meta["stt_model"] == "saaras:v3"
-        assert meta["llm_model"] == "gpt-4o-mini"
-        assert meta["tts_model"] == "gemini-2.5-flash-preview-tts"
-
-    def test_metadata_stored_ref_label_format(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        config_id = uuid4()
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            _post(
-                client,
-                user_api_key_header,
-                SpeechToSpeechRequest(
-                    query=audio_input,
-                    knowledge_base_ids=kb_ids,
-                    stt=STTBlockSpec(config_id=config_id, config_version=4),
-                ),
-            )
-        meta = _chain_request(mock).request_metadata
-        assert meta["stt_model"] == f"stored:{config_id}@v4"
 
     def test_caller_metadata_is_preserved(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -779,32 +568,18 @@ class TestErrorPaths:
         assert response.status_code == 422
         assert "output language" in response.json()["error"].lower()
 
-    def test_unknown_as_output_language_returns_422(
-        self, client, user_api_key_header, audio_input, kb_ids
+    @pytest.mark.parametrize("forbidden", ["unknown", "auto"])
+    def test_detection_sentinels_rejected_as_output_language(
+        self, client, user_api_key_header, audio_input, kb_ids, forbidden
     ):
-        """'unknown' is a detection sentinel, not a valid TTS target."""
+        """'unknown' / 'auto' are STT-only sentinels; TTS needs a concrete language."""
         response = _post(
             client,
             user_api_key_header,
             SpeechToSpeechRequest(
                 query=audio_input,
                 knowledge_base_ids=kb_ids,
-                output_language="unknown",
-            ),
-        )
-        assert response.status_code == 422
-
-    def test_auto_as_output_language_returns_422(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        """'auto' cannot be pinned as TTS output — TTS needs a concrete language."""
-        response = _post(
-            client,
-            user_api_key_header,
-            SpeechToSpeechRequest(
-                query=audio_input,
-                knowledge_base_ids=kb_ids,
-                output_language="auto",
+                output_language=forbidden,
             ),
         )
         assert response.status_code == 422
@@ -823,24 +598,6 @@ class TestErrorPaths:
                 ),
             )
         assert response.status_code == 200
-
-    def test_explicit_null_input_language_defaults_to_auto(
-        self, client, user_api_key_header, audio_input, kb_ids
-    ):
-        """Sending input_language=null in JSON should still result in STT getting 'auto'."""
-        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
-            response = client.post(
-                URL,
-                json={
-                    "query": audio_input.model_dump(mode="json"),
-                    "knowledge_base_ids": kb_ids,
-                    "input_language": None,
-                },
-                headers=user_api_key_header,
-            )
-        assert response.status_code == 200
-        stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
-        assert stt_params["input_language"] == "auto"
 
     def test_empty_knowledge_base_ids_rejected(self, audio_input):
         with pytest.raises(ValidationError):
@@ -878,3 +635,44 @@ class TestErrorPaths:
                 SpeechToSpeechRequest(query=audio_url_input, knowledge_base_ids=kb_ids),
             )
         assert response.status_code == 200
+
+
+# ---------- S2S-specific edge cases ----------
+
+
+class TestEdgeCases:
+    def test_multiple_knowledge_base_ids_forwarded_to_rag(
+        self, client, user_api_key_header, audio_input
+    ):
+        """All KB IDs passed in the request must reach the RAG block, in order."""
+        many_kbs = ["kb-a", "kb-b", "kb-c", "kb-d", "kb-e"]
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=many_kbs),
+            )
+        rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
+        assert rag_params["knowledge_base_ids"] == many_kbs
+
+    def test_kb_ids_overwrite_user_supplied_kb_ids_in_rag_params(
+        self, client, user_api_key_header, audio_input, kb_ids
+    ):
+        """Top-level knowledge_base_ids is the source of truth; user-supplied params.knowledge_base_ids must be overwritten."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(
+                    query=audio_input,
+                    knowledge_base_ids=kb_ids,
+                    rag=RAGBlockSpec(
+                        params=TextLLMParams(
+                            model="gpt-4o",
+                            knowledge_base_ids=["smuggled-kb"],
+                        )
+                    ),
+                ),
+            )
+        rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
+        assert rag_params["knowledge_base_ids"] == kb_ids

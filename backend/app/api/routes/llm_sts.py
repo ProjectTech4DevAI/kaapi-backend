@@ -48,16 +48,26 @@ DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 BlockType = Literal["stt", "text", "tts"]
 
 
+DETECTED_LANGUAGE_MARKER = "{{detected}}"
+
+
 def _resolve_languages(request: SpeechToSpeechRequest) -> tuple[str, str]:
     """Pick effective input/output language codes.
 
-    If input is "auto" and output isn't pinned, output also becomes "auto"
-    so the TTS mapper falls back to provider auto-detection.
+    When the caller pins `output_language`, that wins.
+    When `input_language` is a concrete BCP-47 code and output is omitted, the
+    output mirrors the input.
+    When the caller wants STT-driven detection (input is "auto" or "unknown")
+    and hasn't pinned the output, we set the output to `{{detected}}` so
+    `_substitute_detected_language_marker` (jobs.py) swaps in the language STT
+    actually detected — or falls back to en-IN if STT couldn't detect one.
     """
     input_lang = request.input_language or "auto"
     if request.output_language:
         return input_lang, request.output_language
-    return input_lang, ("auto" if input_lang == "auto" else input_lang)
+    if input_lang in ("auto", "unknown"):
+        return input_lang, DETECTED_LANGUAGE_MARKER
+    return input_lang, input_lang
 
 
 def _merge_stt(user: STTLLMParams | None, input_lang: str) -> STTLLMParams:
@@ -200,13 +210,13 @@ def _build_metadata(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def speech_to_speech(
-    _current_user: AuthContextDep,
+    current_user: AuthContextDep,
     session: SessionDep,
     request: SpeechToSpeechRequest,
 ) -> APIResponse[Message]:
     """Run the STT → RAG → TTS chain for a single voice input."""
-    project_id = _current_user.project_.id
-    organization_id = _current_user.organization_.id
+    project_id = current_user.project_.id
+    organization_id = current_user.organization_.id
 
     if request.callback_url:
         validate_callback_url(str(request.callback_url))

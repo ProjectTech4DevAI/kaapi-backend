@@ -4,13 +4,13 @@ Execute a complete speech-to-speech workflow with knowledge base retrieval.
 
 ## Endpoint
 
-```
-POST /llm/sts
+```http
+POST /llm/chain/sts
 ```
 
 ## Flow
 
-```
+```text
 Voice Input → STT (auto language) → RAG (Knowledge Base) → TTS → Voice Output
 ```
 
@@ -58,8 +58,16 @@ Each callback includes:
 **Note:** Sarvam STT uses automatic language detection. No need to specify input language.
 
 ### LLM (RAG)
+
+Any OpenAI Responses-API model that supports `file_search` can be used for the RAG block by passing it inline via `rag.params.model`. Common choices:
+
 - `gpt-4o` - OpenAI GPT-4o (**default**, best quality)
 - `gpt-4o-mini` - OpenAI GPT-4o Mini (faster, lower cost)
+- `gpt-4.1`, `gpt-4.1-mini`
+- `gpt-5`, `gpt-5-mini`
+- `o3`, `o4-mini` (reasoning models)
+
+The endpoint does not restrict the model list; provider-side validation gates unsupported choices.
 
 ### TTS (Text-to-Speech)
 - `bulbul:v3` - Sarvam Bulbul V3 (**default**, natural Indian voices, MP3 output)
@@ -94,7 +102,7 @@ Each block has independent error handling:
 ## Example Request
 
 ```bash
-curl -X POST https://api.kaapi.ai/llm/sts \
+curl -X POST https://api.kaapi.ai/llm/chain/sts \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d @- <<EOF

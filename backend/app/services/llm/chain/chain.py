@@ -68,8 +68,10 @@ def result_to_query(
             else None
         )
 
-        # Store detected language in context for TTS to use
-        if context and language_code:
+        # Store detected language in context for TTS to use.
+        # Skip "unknown" — that's Sarvam's no-detection sentinel; forwarding it
+        # to TTS would defeat the en-IN fallback in execute_llm_call.
+        if context and language_code and language_code != "unknown":
             context.detected_language = language_code
             logger.info(f"[result_to_query] Detected language: {language_code}")
 

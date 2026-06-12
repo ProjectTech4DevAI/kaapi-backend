@@ -14,7 +14,12 @@ from app.models.llm.constants import (
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     CompletionType,
+    KaapiProvider,
+    NativeProvider,
     Provider,
+    RAGProvider,
+    STTProvider,
+    TTSProvider,
 )
 
 
@@ -237,14 +242,7 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal[
-        "openai-native",
-        "google-native",
-        "sarvamai-native",
-        "elevenlabs-native",
-        "anthropic-native",
-        "google-aistudio-native",
-    ] = Field(
+    provider: NativeProvider = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -264,17 +262,7 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: (
-        Literal[
-            "openai",
-            "google",
-            "sarvamai",
-            "elevenlabs",
-            "anthropic",
-            "google-aistudio",
-        ]
-        | None
-    ) = Field(
+    provider: KaapiProvider | None = Field(
         None,
         description=(
             "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
@@ -915,7 +903,7 @@ class SpeechToSpeechRequest(SQLModel):
     )
 
     # Optional language config (BCP-47 codes)
-    input_language: str | None = Field(
+    input_language: str = Field(
         "auto",
         description=(
             "BCP-47 language code for STT input (auto-detect by default). "
@@ -959,9 +947,9 @@ class SpeechToSpeechRequest(SQLModel):
 
     # Provider hints. Optional — KaapiCompletionConfig auto-defaults to
     # "google" for stt/tts when omitted.
-    stt_provider: Literal["google", "sarvamai", "elevenlabs"] | None = None
-    tts_provider: Literal["google", "sarvamai", "elevenlabs"] | None = None
-    rag_provider: Literal["openai"] | None = None
+    stt_provider: STTProvider | None = None
+    tts_provider: TTSProvider | None = None
+    rag_provider: RAGProvider | None = None
 
     # Callback and metadata
     callback_url: HttpUrl | None = Field(
