@@ -25,11 +25,20 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
     start_embedding_batch,
 )
+from app.crud.evaluations.fast import (
+    JOB_TYPE_EMBEDDING_FAST,
+    JOB_TYPE_EVALUATION_FAST,
+    run_fast_evaluation,
+)
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     fetch_trace_scores_from_langfuse,
     update_traces_with_cosine_scores,
     upload_dataset_to_langfuse,
+)
+from app.crud.evaluations.merge import (
+    merge_scores_step_forward,
+    sort_traces_by_question_id,
 )
 from app.crud.evaluations.processing import (
     check_and_process_evaluation,
@@ -65,6 +74,10 @@ __all__ = [
     "upload_csv_to_object_store",
     # Batch
     "start_evaluation_batch",
+    # Fast eval
+    "JOB_TYPE_EMBEDDING_FAST",
+    "JOB_TYPE_EVALUATION_FAST",
+    "run_fast_evaluation",
     # Processing
     "check_and_process_evaluation",
     "poll_all_pending_evaluations",
@@ -79,6 +92,9 @@ __all__ = [
     "fetch_trace_scores_from_langfuse",
     "update_traces_with_cosine_scores",
     "upload_dataset_to_langfuse",
+    # Merge (step-forward resync)
+    "merge_scores_step_forward",
+    "sort_traces_by_question_id",
     # Score types
     "CategoricalSummaryScore",
     "EvaluationScore",

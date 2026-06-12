@@ -1,17 +1,20 @@
 """Tests for assessment/processing.py pure functions."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.crud.assessment import processing as processing_mod
 from app.crud.assessment.processing import (
     _get_batch_provider,
+    _record_gate_stats,
     _sanitize_json_output,
-    check_and_process_assessment,
     parse_assessment_output,
-    poll_all_pending_assessments,
+    process_run_batches,
 )
+from app.models.assessment import Stage, StageStatus
 
 
 class TestSanitizeJsonOutput:
@@ -169,7 +172,7 @@ class TestParseAssessmentOutputGoogle:
             raw = [
                 {"key": "row_0", "response": {"text": "gemini output"}, "error": None}
             ]
-            results = parse_assessment_output(raw, "google")
+            results = parse_assessment_output(raw, "google-aistudio")
 
         assert results[0]["row_id"] == "row_0"
         assert results[0]["output"] == "gemini output"
@@ -177,13 +180,13 @@ class TestParseAssessmentOutputGoogle:
 
     def test_google_error_result(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": "quota exceeded"}]
-        results = parse_assessment_output(raw, "google")
+        results = parse_assessment_output(raw, "google-aistudio")
         assert results[0]["error"] == "quota exceeded"
         assert results[0]["output"] is None
 
     def test_google_empty_response(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": None}]
-        results = parse_assessment_output(raw, "google")
+        results = parse_assessment_output(raw, "google-aistudio")
         assert results[0]["error"] == "Empty response"
 
     def test_google_empty_text_from_response(self) -> None:
@@ -194,7 +197,7 @@ class TestParseAssessmentOutputGoogle:
             return_value="",
         ):
             raw = [{"key": "row_0", "response": {"candidates": []}, "error": None}]
-            results = parse_assessment_output(raw, "google")
+            results = parse_assessment_output(raw, "google-aistudio")
         assert results[0]["output"] is None
         assert results[0]["error"] == "Empty response output"
 
@@ -206,14 +209,55 @@ class TestParseAssessmentOutputGoogle:
             return_value="out",
         ):
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
-            results = parse_assessment_output(raw, "google-native")
+            results = parse_assessment_output(raw, "google-aistudio-native")
         assert results[0]["output"] == "out"
+
+
+class TestRecordGateStats:
+    def _patches(self, parsed):
+        return [
+            patch.object(processing_mod, "load_raw_batch_results", return_value=[]),
+            patch.object(processing_mod, "parse_assessment_output", return_value=[]),
+            patch.dict(
+                processing_mod.STAGE_PARSERS,
+                {Stage.PRE_FILTER_TOPIC_RELEVANCE: lambda _outputs: parsed},
+            ),
+            patch.object(processing_mod, "update_assessment_run_prefilter_stats"),
+            patch.object(processing_mod, "flag_modified"),
+        ]
+
+    def test_persists_accepted_indices_to_pipeline(self) -> None:
+        run = SimpleNamespace(id=1, assessment_id=2, pipeline={"stages": []})
+        parsed = {
+            0: {"verdict": True},
+            1: {"verdict": False},
+            2: {"verdict": True},
+        }
+        p = self._patches(parsed)
+        with p[0], p[1], p[2], p[3], p[4]:
+            _record_gate_stats(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
+            )
+        assert run.pipeline["accepted_indices"] == [0, 2]
+
+    def test_intersects_with_prior_gate(self) -> None:
+        run = SimpleNamespace(
+            id=1, assessment_id=2, pipeline={"accepted_indices": [2, 3]}
+        )
+        parsed = {2: {"verdict": True}, 3: {"verdict": False}, 4: {"verdict": True}}
+        p = self._patches(parsed)
+        with p[0], p[1], p[2], p[3], p[4]:
+            _record_gate_stats(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
+            )
+        # 2 passes this gate and was in the prior accepted set; 4 wasn't; 3 rejected.
+        assert run.pipeline["accepted_indices"] == [2]
 
 
 class TestGetBatchProvider:
     def test_unsupported_provider_raises(self) -> None:
         session = MagicMock()
-        with pytest.raises(ValueError, match="Unsupported provider"):
+        with pytest.raises(ValueError, match="Unsupported batch provider"):
             _get_batch_provider(
                 session=session,
                 provider_name="anthropic",
@@ -225,8 +269,8 @@ class TestGetBatchProvider:
         session = MagicMock()
         mock_client = MagicMock()
         with patch(
-            "app.crud.assessment.processing.get_openai_client", return_value=mock_client
-        ), patch("app.crud.assessment.processing.OpenAIBatchProvider") as mock_cls:
+            "app.services.assessment.stages.get_openai_client", return_value=mock_client
+        ), patch("app.services.assessment.stages.OpenAIBatchProvider") as mock_cls:
             _get_batch_provider(
                 session=session,
                 provider_name="openai",
@@ -238,199 +282,172 @@ class TestGetBatchProvider:
     def test_google_provider_returned(self) -> None:
         session = MagicMock()
         mock_gemini = MagicMock()
-        with patch("app.crud.assessment.processing.GeminiClient") as mock_cls, patch(
-            "app.crud.assessment.processing.GeminiBatchProvider"
+        with patch("app.services.assessment.stages.GeminiClient") as mock_cls, patch(
+            "app.services.assessment.stages.GeminiBatchProvider"
         ) as mock_batch_cls:
             mock_cls.from_credentials.return_value = mock_gemini
             _get_batch_provider(
                 session=session,
-                provider_name="google",
+                provider_name="google-aistudio",
                 organization_id=1,
                 project_id=1,
             )
         mock_batch_cls.assert_called_once_with(client=mock_gemini.client)
 
 
-class TestPollAllPendingAssessments:
-    @pytest.mark.asyncio
-    async def test_delegates_to_cron(self) -> None:
-        session = MagicMock()
-        expected = {"processed": 2, "failed": 0}
-        with patch(
-            "app.crud.assessment.cron.poll_all_pending_assessment_evaluations",
-            new=AsyncMock(return_value=expected),
-        ):
-            result = await poll_all_pending_assessments(session=session)
-        assert result == expected
+class TestProcessRunBatches:
+    def _parent(self):
+        return SimpleNamespace(organization_id=1, project_id=1, experiment_name="exp")
 
-
-class TestCheckAndProcessAssessment:
-    def _make_run(self) -> MagicMock:
-        run = MagicMock()
-        run.id = 1
-        run.batch_job_id = 99
-        run.status = "processing"
-        run.assessment_id = 10
-        run.organization_id = 1
-        run.project_id = 1
-        run.run_name = "exp"
-        return run
+    def _run(self):
+        return SimpleNamespace(
+            id=1,
+            assessment_id=10,
+            status="processing",
+            stage=Stage.L2_ASSESSMENT,
+            stage_status=StageStatus.PROCESSING,
+            stage_batches={Stage.L2_ASSESSMENT: 5},
+        )
 
     @pytest.mark.asyncio
-    async def test_completed_with_no_output_file_and_failed_counts(self) -> None:
+    async def test_completes_stage_and_finalizes(self) -> None:
         session = MagicMock()
-        run = self._make_run()
-        batch_job = MagicMock()
-        batch_job.provider = "openai"
-        batch_job.provider_status = "completed"
-        batch_job.provider_output_file_id = None
-        batch_job.id = 99
+        session.get.return_value = self._parent()
+        run = self._run()
 
         with patch(
-            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=MagicMock()
         ), patch(
             "app.crud.assessment.processing._get_batch_provider",
             return_value=MagicMock(),
         ), patch(
-            "app.crud.assessment.processing.poll_batch_status",
-            return_value={
-                "request_counts": {"failed": 3, "completed": 0, "total": 3},
-                "error_file_id": "err-1",
-            },
+            "app.crud.assessment.processing._poll_stage_outcome",
+            return_value="completed",
         ), patch(
-            "app.crud.assessment.processing.update_assessment_run_status"
-        ), patch(
+            "app.crud.assessment.processing.advance_or_finalize", return_value=None
+        ) as advance, patch(
             "app.crud.assessment.processing.recompute_assessment_status"
         ):
-            result = await check_and_process_assessment(run=run, session=session)
+            result = await process_run_batches(run=run, session=session)
 
-        assert result["action"] == "failed"
-        assert result["current_status"] == "failed"
+        advance.assert_called_once()
+        assert result["action"] == "processed"
+        assert run.stage_status == StageStatus.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_completed_with_no_output_file_not_ready(self) -> None:
+    async def test_advances_and_dispatches_next_stage(self) -> None:
         session = MagicMock()
-        run = self._make_run()
-        batch_job = MagicMock()
-        batch_job.provider = "openai"
-        batch_job.provider_status = "completed"
-        batch_job.provider_output_file_id = None
-        batch_job.id = 99
+        session.get.return_value = self._parent()
+        run = self._run()
+        run.stage = Stage.PRE_FILTER_TOPIC_RELEVANCE
+        run.stage_batches = {Stage.PRE_FILTER_TOPIC_RELEVANCE: 5}
 
         with patch(
-            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=MagicMock()
         ), patch(
             "app.crud.assessment.processing._get_batch_provider",
             return_value=MagicMock(),
         ), patch(
-            "app.crud.assessment.processing.poll_batch_status",
-            return_value={"request_counts": {"failed": 0, "completed": 1, "total": 1}},
-        ):
-            result = await check_and_process_assessment(run=run, session=session)
-
-        assert result["action"] == "no_change"
-
-    @pytest.mark.asyncio
-    async def test_completed_with_output_file_processes_results(self) -> None:
-        session = MagicMock()
-        run = self._make_run()
-        batch_job = MagicMock()
-        batch_job.provider = "openai"
-        batch_job.provider_status = "completed"
-        batch_job.provider_output_file_id = "file-1"
-        batch_job.id = 99
-
-        with patch(
-            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing._poll_stage_outcome",
+            return_value="completed",
         ), patch(
-            "app.crud.assessment.processing._get_batch_provider",
-            return_value=MagicMock(),
-        ), patch(
-            "app.crud.assessment.processing.poll_batch_status",
-            return_value={},
-        ), patch(
-            "app.crud.assessment.processing.download_batch_results",
-            return_value=[{"custom_id": "row_0"}],
-        ), patch(
-            "app.crud.assessment.processing.upload_batch_results_to_object_store",
-            return_value="s3://results",
-        ), patch(
-            "app.crud.assessment.processing.parse_assessment_output",
-            return_value=[{"row_id": "row_0", "error": None}],
-        ), patch(
-            "app.crud.assessment.processing.update_assessment_run_status"
+            "app.crud.assessment.processing._record_gate_stats"
+        ) as gate_stats, patch(
+            "app.crud.assessment.processing.advance_or_finalize",
+            return_value=Stage.L2_ASSESSMENT,
         ), patch(
             "app.crud.assessment.processing.recompute_assessment_status"
-        ):
-            result = await check_and_process_assessment(run=run, session=session)
+        ), patch(
+            "app.crud.assessment.processing.run_assessment_pipeline"
+        ) as dispatch:
+            result = await process_run_batches(run=run, session=session)
 
+        gate_stats.assert_called_once()  # TR is a gate stage
+        dispatch.delay.assert_called_once()
         assert result["action"] == "processed"
 
     @pytest.mark.asyncio
-    async def test_terminal_provider_status_marks_failed(self) -> None:
+    async def test_no_change_while_in_progress(self) -> None:
         session = MagicMock()
-        run = self._make_run()
-        batch_job = MagicMock()
-        batch_job.provider = "openai"
-        batch_job.provider_status = "failed"
-        batch_job.error_message = "provider failed"
+        session.get.return_value = self._parent()
+        run = self._run()
 
         with patch(
-            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
+            "app.crud.assessment.processing.get_batch_job", return_value=MagicMock()
         ), patch(
             "app.crud.assessment.processing._get_batch_provider",
             return_value=MagicMock(),
         ), patch(
-            "app.crud.assessment.processing.poll_batch_status", return_value={}
-        ), patch(
-            "app.crud.assessment.processing.update_assessment_run_status"
-        ), patch(
-            "app.crud.assessment.processing.recompute_assessment_status"
+            "app.crud.assessment.processing._poll_stage_outcome",
+            return_value="no_change",
         ):
-            result = await check_and_process_assessment(run=run, session=session)
-
-        assert result["action"] == "failed"
-        assert result["provider_status"] == "failed"
-
-    @pytest.mark.asyncio
-    async def test_still_processing_returns_no_change(self) -> None:
-        session = MagicMock()
-        run = self._make_run()
-        batch_job = MagicMock()
-        batch_job.provider = "openai"
-        batch_job.provider_status = "in_progress"
-
-        with patch(
-            "app.crud.assessment.processing.get_batch_job", return_value=batch_job
-        ), patch(
-            "app.crud.assessment.processing._get_batch_provider",
-            return_value=MagicMock(),
-        ), patch(
-            "app.crud.assessment.processing.poll_batch_status", return_value={}
-        ):
-            result = await check_and_process_assessment(run=run, session=session)
+            result = await process_run_batches(run=run, session=session)
 
         assert result["action"] == "no_change"
 
     @pytest.mark.asyncio
-    async def test_exception_path_marks_failed(self) -> None:
+    async def test_failed_stage_fails_run(self) -> None:
         session = MagicMock()
-        run = self._make_run()
-        run.batch_job_id = None
+        session.get.return_value = self._parent()
+        run = self._run()
 
         with patch(
+            "app.crud.assessment.processing.get_batch_job",
+            return_value=MagicMock(error_message="boom"),
+        ), patch(
+            "app.crud.assessment.processing._get_batch_provider",
+            return_value=MagicMock(),
+        ), patch(
+            "app.crud.assessment.processing._poll_stage_outcome", return_value="failed"
+        ), patch(
             "app.crud.assessment.processing.update_assessment_run_status"
-        ) as update_run, patch(
+        ), patch(
             "app.crud.assessment.processing.recompute_assessment_status"
         ):
-            result = await check_and_process_assessment(run=run, session=session)
+            result = await process_run_batches(run=run, session=session)
 
         assert result["action"] == "failed"
-        assert result["provider_status"] == "unknown"
-        assert result["error"] == "Assessment run 1 has no batch_job_id"
-        update_run.assert_called_once_with(
-            session=session,
-            run=run,
-            status="failed",
-            error_message="Assessment run 1 has no batch_job_id",
-        )
+        # Failed stage preserved (so a resume knows where to restart); only status flips.
+        assert run.stage == Stage.L2_ASSESSMENT
+        assert run.stage_status == StageStatus.FAILED
+
+
+class TestPollStageOutcome:
+    def _job(self, **kw):
+        base = dict(provider_status="completed", provider_output_file_id=None)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_all_failed_no_output_is_failed(self) -> None:
+        from app.crud.assessment.processing import _poll_stage_outcome
+
+        with patch(
+            "app.crud.assessment.processing.poll_batch_status",
+            return_value={
+                "request_counts": {"completed": 0, "failed": 3},
+                "error_file_id": "err",
+            },
+        ):
+            outcome = _poll_stage_outcome(MagicMock(), MagicMock(), self._job())
+        assert outcome == "failed"
+
+    def test_no_output_not_ready_is_no_change(self) -> None:
+        from app.crud.assessment.processing import _poll_stage_outcome
+
+        with patch(
+            "app.crud.assessment.processing.poll_batch_status",
+            return_value={"request_counts": {"completed": 0, "failed": 0}},
+        ):
+            outcome = _poll_stage_outcome(MagicMock(), MagicMock(), self._job())
+        assert outcome == "no_change"
+
+    def test_output_ready_is_completed(self) -> None:
+        from app.crud.assessment.processing import _poll_stage_outcome
+
+        with patch(
+            "app.crud.assessment.processing.poll_batch_status", return_value={}
+        ), patch("app.crud.assessment.processing.process_completed_batch"):
+            outcome = _poll_stage_outcome(
+                MagicMock(), MagicMock(), self._job(provider_output_file_id="file_1")
+            )
+        assert outcome == "completed"

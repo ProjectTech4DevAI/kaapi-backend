@@ -2,21 +2,127 @@
 
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.models.assessment import AssessmentExportRow
+from app.services.assessment.utils import export as export_mod
 from app.services.assessment.utils.export import (
+    _build_export_row,
     _drop_empty_columns,
     _expand_input_columns,
     _expand_output_columns,
     _load_dataset_rows_for_run,
+    _load_l2_results_for_run,
+    _load_parsed_results_for_batch_job,
     _load_parsed_results_for_run,
+    _load_prefilter_results,
     _safe_filename_part,
+    _stage_batch_job,
     build_json_export_rows,
     load_export_rows_for_run,
     serialize_export_rows,
     sort_export_rows,
 )
+from app.models.assessment import Stage
+
+
+def _run_ns(status: str = "processing") -> SimpleNamespace:
+    return SimpleNamespace(
+        id=5,
+        assessment_id=9,
+        status=status,
+        config_id="00000000-0000-0000-0000-000000000001",
+        config_version=1,
+        updated_at=datetime(2026, 1, 1),
+    )
+
+
+def _assessment_ns() -> SimpleNamespace:
+    return SimpleNamespace(experiment_name="exp", dataset_id=3)
+
+
+class TestBuildExportRow:
+    def test_prefilter_rejected_with_annotations(self) -> None:
+        prefilter_item = {
+            "prefilter_passed": False,
+            "topic_relevance": {
+                "decision": "REJECT",
+                "reasoning": "off-topic",
+                "column_relevance": {"Problem": False},
+            },
+            "duplicate_detection": {"row_id": "dup_0", "verdict": "UNIQUE"},
+        }
+        row = _build_export_row(
+            run=_run_ns(),
+            assessment=_assessment_ns(),
+            dataset_name="ds",
+            row_id="row_0",
+            input_data={"Problem": "p"},
+            prefilter_item=prefilter_item,
+            l2_item=None,
+            has_prefilter=True,
+        )
+        assert row.result_status == "prefilter_rejected"
+        assert json.loads(row.topic_relevance)["decision"] == "REJECT"
+        assert json.loads(row.duplicate_detection)["verdict"] == "UNIQUE"
+
+    def test_passed_with_l2_output(self) -> None:
+        row = _build_export_row(
+            run=_run_ns(),
+            assessment=_assessment_ns(),
+            dataset_name=None,
+            row_id="row_1",
+            input_data=None,
+            prefilter_item={"prefilter_passed": True},
+            l2_item={"output": "{}", "error": None},
+            has_prefilter=True,
+        )
+        assert row.result_status == "passed"
+
+    def test_l2_error_is_failed_and_no_prefilter_cols(self) -> None:
+        row = _build_export_row(
+            run=_run_ns(),
+            assessment=_assessment_ns(),
+            dataset_name=None,
+            row_id="row_2",
+            input_data=None,
+            prefilter_item=None,
+            l2_item={"output": None, "error": "boom"},
+            has_prefilter=False,
+        )
+        assert row.result_status == "failed"
+        assert row.topic_relevance is None
+
+    def test_no_l2_processing_vs_failed(self) -> None:
+        processing = _build_export_row(
+            run=_run_ns(status="processing"),
+            assessment=_assessment_ns(),
+            dataset_name=None,
+            row_id="row_3",
+            input_data=None,
+            prefilter_item=None,
+            l2_item=None,
+            has_prefilter=False,
+        )
+        failed = _build_export_row(
+            run=_run_ns(status="failed"),
+            assessment=_assessment_ns(),
+            dataset_name=None,
+            row_id="row_4",
+            input_data=None,
+            prefilter_item=None,
+            l2_item=None,
+            has_prefilter=False,
+        )
+        assert processing.result_status == "processing"
+        assert failed.result_status == "failed"
+
+
+def _named_dataset() -> MagicMock:
+    ds = MagicMock()
+    ds.name = "ds"
+    return ds
 
 
 def _make_row(
@@ -144,14 +250,14 @@ class TestDropEmptyColumns:
 class TestExpandOutputColumns:
     def test_plain_string_output_not_expanded(self) -> None:
         rows = [{"output": "plain text", "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "output" in fieldnames
 
     def test_json_dict_output_expanded(self) -> None:
         rows = [
             {"output": json.dumps({"score": 5, "reason": "good"}), "input_data": None}
         ]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "score" in fieldnames
         assert "reason" in fieldnames
         assert expanded[0]["score"] == 5
@@ -161,14 +267,14 @@ class TestExpandOutputColumns:
             {"output": json.dumps({"score": 3}), "input_data": None},
             {"output": "not json", "input_data": None},
         ]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "output_raw" in fieldnames
         # Second row that didn't parse should get output_raw
         assert expanded[1].get("output_raw") == "not json"
 
     def test_none_output_handled(self) -> None:
         rows = [{"output": None, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert expanded[0].get("output") is None
 
 
@@ -253,13 +359,13 @@ class TestExpandOutputColumnsDictOutput:
     def test_dict_output_expanded_directly(self) -> None:
         # raw output is already a dict (not a JSON string)
         rows = [{"output": {"score": 9, "label": "good"}, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "score" in fieldnames
         assert expanded[0]["score"] == 9
 
     def test_non_dict_non_string_output_treated_as_unparsed(self) -> None:
         rows = [{"output": 42, "input_data": None}]
-        expanded, fieldnames = _expand_output_columns(rows)
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
         # 42 is not a dict/string, treated as unparsed → output stays as-is
         assert "output" in fieldnames
 
@@ -415,10 +521,11 @@ class TestLoadParsedResultsForRun:
             "app.services.assessment.utils.export.get_cloud_storage",
             side_effect=Exception("S3 down"),
         ), patch(
-            "app.crud.assessment.processing._get_batch_provider",
+            "app.services.assessment.utils.export._get_batch_provider",
             return_value=MagicMock(),
         ), patch(
-            "app.core.batch.download_batch_results", return_value=raw
+            "app.services.assessment.utils.export.download_batch_results",
+            return_value=raw,
         ):
             result = _load_parsed_results_for_run(
                 session=session, run=run, batch_job=batch_job
@@ -523,64 +630,48 @@ class TestLoadExportRowsForRun:
         assessment.dataset_id = 2
         return assessment
 
-    def test_no_batch_job_id_returns_empty(self) -> None:
-        session = MagicMock()
-        run = self._make_run()
-        run.batch_job_id = None
-        result = load_export_rows_for_run(session=session, run=run)
-        assert result == []
+    def _patches(self, *, l2, prefilter=None, dataset_rows=None):
+        return [
+            patch(
+                "app.services.assessment.utils.export._load_l2_results_for_run",
+                return_value=l2,
+            ),
+            patch(
+                "app.services.assessment.utils.export._load_prefilter_results",
+                return_value=prefilter or {},
+            ),
+            patch(
+                "app.services.assessment.utils.export._load_dataset_rows_for_run",
+                return_value=dataset_rows if dataset_rows is not None else [],
+            ),
+        ]
 
-    def test_batch_job_not_found_returns_empty(self) -> None:
+    def test_no_results_no_dataset_returns_empty(self) -> None:
         session = MagicMock()
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job", return_value=None
-        ):
+        p1, p2, p3 = self._patches(l2={})
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
         assert result == []
 
-    def test_no_parsed_results_returns_empty(self) -> None:
+    def test_merged_results_build_export_rows(self) -> None:
         session = MagicMock()
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=None,
-        ):
-            result = load_export_rows_for_run(
-                session=session, run=run, assessment=self._make_assessment()
-            )
-        assert result == []
-
-    def test_parsed_results_build_export_rows(self) -> None:
-        session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
-        run = self._make_run()
-        parsed = [
-            {
+        l2 = {
+            "row_0": {
                 "row_id": "row_0",
                 "output": '{"score": 5}',
                 "error": None,
                 "usage": None,
                 "response_id": "r1",
             }
-        ]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=[],
-        ):
+        }
+        p1, p2, p3 = self._patches(l2=l2)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
@@ -590,61 +681,175 @@ class TestLoadExportRowsForRun:
 
     def test_error_result_sets_failed_status(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        parsed = [
-            {
+        l2 = {
+            "row_0": {
                 "row_id": "row_0",
                 "output": None,
                 "error": "timeout",
                 "usage": None,
                 "response_id": None,
             }
-        ]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=[],
-        ):
+        }
+        p1, p2, p3 = self._patches(l2=l2)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
         assert result[0].result_status == "failed"
 
-    def test_input_data_correlated_via_row_id(self) -> None:
+    def test_dataset_rows_include_pending_and_correlate_input(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.name = "ds"
-        session.get.return_value = dataset
+        session.get.return_value = _named_dataset()
         run = self._make_run()
-        parsed = [
-            {
+        run.status = "l2_processing"
+        l2 = {
+            "row_1": {
                 "row_id": "row_1",
                 "output": "x",
                 "error": None,
                 "usage": None,
                 "response_id": None,
             }
-        ]
+        }
         dataset_rows = [{"q": "first"}, {"q": "second"}]
-        with patch(
-            "app.services.assessment.utils.export.get_batch_job",
-            return_value=MagicMock(),
-        ), patch(
-            "app.services.assessment.utils.export._load_parsed_results_for_run",
-            return_value=parsed,
-        ), patch(
-            "app.services.assessment.utils.export._load_dataset_rows_for_run",
-            return_value=dataset_rows,
-        ):
+        p1, p2, p3 = self._patches(l2=l2, dataset_rows=dataset_rows)
+        with p1, p2, p3:
             result = load_export_rows_for_run(
                 session=session, run=run, assessment=self._make_assessment()
             )
-        assert result[0].input_data == {"q": "second"}
+        assert len(result) == 2
+        assert result[0].result_status == "processing"  # row_0 not done yet
+        assert result[1].input_data == {"q": "second"}
+        assert result[1].result_status == "passed"
+
+
+class TestStageBatchJob:
+    def test_returns_job_for_stage(self) -> None:
+        run = SimpleNamespace(stage_batches={Stage.L2_ASSESSMENT: 7})
+        with patch.object(export_mod, "get_batch_job", return_value="JOB") as g:
+            assert _stage_batch_job(MagicMock(), run, Stage.L2_ASSESSMENT) == "JOB"
+        assert g.call_args.kwargs["batch_job_id"] == 7
+
+    def test_none_when_no_batch(self) -> None:
+        run = SimpleNamespace(stage_batches=None)
+        assert _stage_batch_job(MagicMock(), run, Stage.L2_ASSESSMENT) is None
+
+
+class TestLoadPrefilterResults:
+    def test_merges_tr_and_dup_annotations(self) -> None:
+        run = SimpleNamespace(id=5)
+        assessment = SimpleNamespace(project_id=1)
+        with patch.object(
+            export_mod,
+            "_stage_batch_job",
+            return_value=SimpleNamespace(provider="openai"),
+        ), patch.object(
+            export_mod, "load_raw_batch_results", return_value=[]
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[]
+        ), patch.object(
+            export_mod,
+            "parse_topic_relevance_results",
+            return_value={
+                0: {
+                    "verdict": True,
+                    "decision": "ACCEPT",
+                    "reasoning": "ok",
+                    "column_relevance": {"a": True},
+                }
+            },
+        ), patch.object(
+            export_mod,
+            "parse_duplicate_detection_results",
+            return_value={0: {"verdict": "UNIQUE"}},
+        ):
+            out = _load_prefilter_results(MagicMock(), run, assessment)
+        assert out["row_0"]["prefilter_passed"] is True
+        assert out["row_0"]["topic_relevance"]["decision"] == "ACCEPT"
+        assert out["row_0"]["duplicate_detection"]["verdict"] == "UNIQUE"
+
+    def test_tr_load_failure_is_swallowed(self) -> None:
+        run = SimpleNamespace(id=5)
+        assessment = SimpleNamespace(project_id=1)
+        with patch.object(
+            export_mod,
+            "_stage_batch_job",
+            return_value=SimpleNamespace(provider="openai"),
+        ), patch.object(
+            export_mod, "load_raw_batch_results", side_effect=RuntimeError("s3 down")
+        ):
+            out = _load_prefilter_results(MagicMock(), run, assessment)
+        assert out == {}
+
+
+class TestLoadParsedResultsForBatchJob:
+    def test_object_store_path(self) -> None:
+        job = SimpleNamespace(
+            id=1,
+            provider="openai",
+            raw_output_url="s3://x",
+            provider_output_file_id=None,
+        )
+        assessment = SimpleNamespace(project_id=1, organization_id=1)
+        storage = MagicMock()
+        storage.stream.return_value.read.return_value.decode.return_value = "raw"
+        with patch.object(
+            export_mod, "get_cloud_storage", return_value=storage
+        ), patch.object(
+            export_mod, "parse_stored_results", return_value=[{"k": 1}]
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[{"row_id": "row_0"}]
+        ) as parse:
+            result = _load_parsed_results_for_batch_job(MagicMock(), job, assessment)
+        assert result == [{"row_id": "row_0"}]
+        parse.assert_called_once()
+
+    def test_provider_fallback_path(self) -> None:
+        job = SimpleNamespace(
+            id=1,
+            provider="openai",
+            raw_output_url=None,
+            provider_output_file_id="f1",
+            organization_id=1,
+        )
+        assessment = SimpleNamespace(project_id=1, organization_id=1)
+        with patch.object(
+            export_mod, "_get_batch_provider", return_value=MagicMock()
+        ), patch.object(
+            export_mod, "download_batch_results", return_value=[{"k": 1}]
+        ), patch.object(
+            export_mod, "parse_assessment_output", return_value=[{"row_id": "row_1"}]
+        ):
+            result = _load_parsed_results_for_batch_job(MagicMock(), job, assessment)
+        assert result == [{"row_id": "row_1"}]
+
+    def test_returns_none_without_outputs(self) -> None:
+        job = SimpleNamespace(
+            id=1, provider="openai", raw_output_url=None, provider_output_file_id=None
+        )
+        assessment = SimpleNamespace(project_id=1, organization_id=1)
+        assert _load_parsed_results_for_batch_job(MagicMock(), job, assessment) is None
+
+
+class TestLoadL2ResultsForRun:
+    def test_keys_by_row_id(self) -> None:
+        run = SimpleNamespace()
+        assessment = SimpleNamespace()
+        with patch.object(
+            export_mod, "_stage_batch_job", return_value=SimpleNamespace()
+        ), patch.object(
+            export_mod,
+            "_load_parsed_results_for_batch_job",
+            return_value=[{"row_id": "row_0", "output": "x"}, {"no_row": 1}],
+        ):
+            merged = _load_l2_results_for_run(MagicMock(), run, assessment)
+        assert set(merged) == {"row_0"}
+
+    def test_empty_when_no_batch(self) -> None:
+        with patch.object(export_mod, "_stage_batch_job", return_value=None):
+            merged = _load_l2_results_for_run(
+                MagicMock(), SimpleNamespace(), SimpleNamespace()
+            )
+        assert merged == {}

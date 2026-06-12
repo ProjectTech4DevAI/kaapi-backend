@@ -12,7 +12,8 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
-from app.services.llm.providers.sai import SarvamAIProvider
+from app.models.llm.constants import CompletionType
+from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 
 
 def mock_sarvam_stt_response(
@@ -70,7 +71,7 @@ class TestSarvamAIProviderSTT:
         """Create a basic STT completion config."""
         return NativeCompletionConfig(
             provider="sarvamai-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "model": "saarika:v1",
                 "language_code": "hi-IN",
@@ -84,11 +85,11 @@ class TestSarvamAIProviderSTT:
         return QueryParams(input="Test audio input")
 
     @pytest.fixture
-    def temp_audio_file(self, tmp_path):
-        """Create a temporary audio file for testing."""
-        audio_file = tmp_path / "test_audio.wav"
-        audio_file.write_bytes(b"fake audio data")
-        return str(audio_file)
+    def temp_audio_file(self):
+        """Resolved STT input handle for tests (provider materializes temp file internally)."""
+        from app.core.audio_utils import AudioRef
+
+        return AudioRef(bytes_=b"fake audio data", mime_type="audio/wav")
 
     def test_stt_success_basic_transcription(
         self, provider, mock_client, stt_config, query_params, temp_audio_file
@@ -113,7 +114,7 @@ class TestSarvamAIProviderSTT:
         """Test STT with translate mode."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "model": "saarika:v1",
                 "language_code": "hi-IN",
@@ -138,7 +139,7 @@ class TestSarvamAIProviderSTT:
         """Test STT with unknown/auto language detection."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "model": "saarika:v1",
                 "language_code": "unknown",
@@ -161,7 +162,7 @@ class TestSarvamAIProviderSTT:
         """Test STT uses default model (saaras:v3) when model parameter is missing."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="stt",
+            type=CompletionType.STT,
             params={
                 "language_code": "hi-IN",
                 "mode": "transcribe",
@@ -178,16 +179,17 @@ class TestSarvamAIProviderSTT:
         call_kwargs = mock_client.speech_to_text.transcribe.call_args.kwargs
         assert call_kwargs["model"] == "saaras:v3"
 
-    def test_stt_invalid_file_path(
+    def test_stt_rejects_non_audioref_input(
         self, provider, mock_client, stt_config, query_params
     ):
-        """Test STT with non-existent file path."""
+        """STT requires AudioRef; string paths are no longer accepted."""
         result, error = provider.execute(
             stt_config, query_params, "/nonexistent/path/audio.wav"
         )
 
         assert result is None
         assert error is not None
+        assert "AudioRef input" in error
 
     def test_stt_api_exception(
         self, provider, mock_client, stt_config, query_params, temp_audio_file
@@ -244,7 +246,7 @@ class TestSarvamAIProviderTTS:
         """Create a basic TTS completion config."""
         return NativeCompletionConfig(
             provider="sarvamai-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model": "bulbul:v1",
                 "target_language_code": "hi-IN",
@@ -280,7 +282,7 @@ class TestSarvamAIProviderTTS:
         """Test TTS with MP3 codec."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model": "bulbul:v1",
                 "target_language_code": "en-IN",
@@ -304,7 +306,7 @@ class TestSarvamAIProviderTTS:
         """Test TTS with OGG codec."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model": "bulbul:v1",
                 "target_language_code": "hi-IN",
@@ -328,7 +330,7 @@ class TestSarvamAIProviderTTS:
         """Test TTS uses default model (bulbul:v3) when model parameter is missing."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "target_language_code": "hi-IN",
                 "speaker": "simran",
@@ -355,7 +357,7 @@ class TestSarvamAIProviderTTS:
         """Test TTS with missing target_language_code."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="tts",
+            type=CompletionType.TTS,
             params={
                 "model": "bulbul:v1",
                 "speaker": "meera",
@@ -441,7 +443,9 @@ class TestSarvamAIProviderClientCreation:
         """Test client creation with valid API key."""
         credentials = {"api_key": "test_api_key_123"}
 
-        with patch("app.services.llm.providers.sai.SarvamAI") as mock_sarvam_class:
+        with patch(
+            "app.services.llm.providers.sarvam_ai.SarvamAI"
+        ) as mock_sarvam_class:
             client = SarvamAIProvider.create_client(credentials)
 
             mock_sarvam_class.assert_called_once_with(
@@ -537,7 +541,7 @@ class TestSarvamAIProviderExecute:
         """Test execute with unsupported completion type."""
         config = NativeCompletionConfig(
             provider="sarvamai-native",
-            type="text",  # Unsupported for SarvamAI
+            type=CompletionType.TEXT,  # Unsupported for SarvamAI
             params={"model": "test-model"},
         )
 

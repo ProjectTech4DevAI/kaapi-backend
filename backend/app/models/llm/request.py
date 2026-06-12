@@ -13,11 +13,19 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
+    Provider,
 )
 
 
 class TextLLMParams(SQLModel):
-    model: str
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Provider model to use. If omitted, the Kaapi mapper falls back to "
+            "DEFAULT_TEXT_MODELS for the selected provider."
+        ),
+    )
     instructions: str | None = Field(
         default=None,
     )
@@ -230,7 +238,12 @@ class NativeCompletionConfig(SQLModel):
     """
 
     provider: Literal[
-        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+        "openai-native",
+        "google-native",
+        "sarvamai-native",
+        "elevenlabs-native",
+        "anthropic-native",
+        "google-aistudio-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -239,7 +252,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -251,11 +264,26 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
-        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
+    provider: (
+        Literal[
+            "openai",
+            "google",
+            "sarvamai",
+            "elevenlabs",
+            "anthropic",
+            "google-aistudio",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
+            "google-aistudio). 'google' routes via Google Vertex AI; "
+            "'google-aistudio' uses Google AI Studio."
+        ),
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -273,8 +301,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        if self.type in ("stt", "tts") and self.provider is None:
-            self.provider = "google"
+        if (
+            self.type in (CompletionType.STT, CompletionType.TTS)
+            and self.provider is None
+        ):
+            self.provider = Provider.GOOGLE
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
