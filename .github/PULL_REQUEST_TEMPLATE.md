@@ -1,3 +1,7 @@
+## Type
+type: <-- Add the type of the PR -->
+<!-- Options: feat | fix | chore | docs | refactor -->
+
 ## Summary
 
 Target issue is #_PLEASE_TYPE_ISSUE_NUMBER_

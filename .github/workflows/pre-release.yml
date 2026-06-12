@@ -1,0 +1,64 @@
+name: Pre-release Tag
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  pre-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR type from description
+        id: pr-type
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const typeMatch = body.match(/type:\s*(feat|fix|chore|docs|refactor)/i);
+
+            if (!typeMatch) {
+              core.setOutput('type', 'fix');
+              return;
+            }
+
+            const type = typeMatch[1].toLowerCase();
+            core.setOutput('type', type);
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install semantic-release
+        run: |
+          npm install -g \
+            semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/github
+
+      - name: Create conventional commit
+        env:
+          COMMIT_TYPE: ${{ steps.pr-type.outputs.type }}
+        run: |
+          git config user.email "ci@github.com"
+          git config user.name "GitHub CI"
+          ORIGINAL_MSG=$(git log -1 --pretty=%s)
+          git commit --allow-empty -m "${COMMIT_TYPE}: ${ORIGINAL_MSG}"
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
