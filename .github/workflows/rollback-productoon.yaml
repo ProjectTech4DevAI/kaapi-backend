@@ -1,0 +1,177 @@
+name: Rollback production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch-versions:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      versions: ${{ steps.get-versions.outputs.versions }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::024209611402:role/github-action-role
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get available versions from ECR
+        id: get-versions
+        env:
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-repo
+        run: |
+          VERSIONS=$(aws ecr list-images \
+            --repository-name $REPOSITORY \
+            --query 'imageIds[*].imageTag' \
+            --output json | jq '[.[] | select(startswith("v") and (contains("-") | not))] | sort | reverse')
+          echo "versions=${VERSIONS}" >> "$GITHUB_OUTPUT"
+          echo "Available versions:"
+          echo $VERSIONS | jq -r '.[]'
+
+  rollback:
+    needs: [fetch-versions]
+    runs-on: ubuntu-latest
+    environment:
+      name: PRODUCTION_ROLLBACK # Workflow Approval Required when need to rollback the release
+      url: https://api.kaapi.ai
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::024209611402:role/github-action-role
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pick rollback version
+        id: pick-version
+        env:
+          VERSIONS: ${{ needs.fetch-versions.outputs.versions }}
+        run: |
+          echo "Available versions:"
+          echo $VERSIONS | jq -r '.[]' | nl
+
+          # Current latest se ek pehle wala
+          ROLLBACK_VERSION=$(echo $VERSIONS | jq -r '.[1]')
+          echo "Rolling back to: $ROLLBACK_VERSION"
+          echo "version=${ROLLBACK_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Update ECS task definition with rollback image
+        id: task-def
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-service
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-task
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-repo
+          VERSION: ${{ steps.pick-version.outputs.version }}
+        run: |
+          IMAGE="${REGISTRY}/${REPOSITORY}:${VERSION}"
+          echo "Rolling back to image: $IMAGE"
+
+          TASK_DEF_JSON=$(aws ecs describe-task-definition \
+            --task-definition $TASK_DEF \
+            --query 'taskDefinition' \
+            --output json)
+
+          CONTAINER_NAME=$(echo $TASK_DEF_JSON | jq -r '.containerDefinitions[0].name')
+
+          NEW_TASK_DEF=$(echo $TASK_DEF_JSON | jq \
+            --arg IMAGE "$IMAGE" \
+            --arg NAME "$CONTAINER_NAME" \
+            '.containerDefinitions |= map(if .name == $NAME then .image = $IMAGE else . end) |
+            {
+              family: .family,
+              containerDefinitions: .containerDefinitions,
+              networkMode: .networkMode,
+              requiresCompatibilities: .requiresCompatibilities,
+              cpu: .cpu,
+              memory: .memory,
+              executionRoleArn: .executionRoleArn,
+              taskRoleArn: .taskRoleArn
+            }')
+
+          NEW_TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "New task definition: $NEW_TASK_ARN"
+          echo "task_arn=${NEW_TASK_ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy rollback to ECS
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-service
+          TASK_ARN: ${{ steps.task-def.outputs.task_arn }}
+        run: |
+          aws ecs update-service \
+            --cluster $CLUSTER \
+            --service $SERVICE \
+            --task-definition $TASK_ARN \
+            --force-new-deployment
+
+      - name: Run database migrations
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-service
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-task
+          TASK_ARN: ${{ steps.task-def.outputs.task_arn }}
+        run: |
+          CONTAINER_NAME=$(aws ecs describe-task-definition \
+            --task-definition $TASK_ARN \
+            --query 'taskDefinition.containerDefinitions[0].name' \
+            --output text)
+
+          NETWORK_CONFIG=$(aws ecs describe-services \
+            --cluster $CLUSTER \
+            --services $SERVICE \
+            --query 'services[0].networkConfiguration' \
+            --output json | jq -c '.')
+
+          MIGRATE_TASK_ARN=$(aws ecs run-task \
+            --cluster $CLUSTER \
+            --launch-type FARGATE \
+            --task-definition $TASK_ARN \
+            --count 1 \
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migration task: $MIGRATE_TASK_ARN"
+          aws ecs wait tasks-stopped --cluster $CLUSTER --tasks "$MIGRATE_TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster $CLUSTER \
+            --tasks "$MIGRATE_TASK_ARN" \
+            --query "tasks[0].containers[?name=='$CONTAINER_NAME'].exitCode | [0]" \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "Migration completed successfully"
+
+      - name: Wait for service to stabilize
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-service
+        run: |
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $CLUSTER \
+            --services $SERVICE
+          echo "Rollback complete to ${{ steps.pick-version.outputs.version }}"
