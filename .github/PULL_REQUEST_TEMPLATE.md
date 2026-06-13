@@ -1,4 +1,5 @@
-## Issue: PLEASE_TYPE_ISSUE_NUMBER_
+## Issue
+Closes #PLEASE_TYPE_ISSUE_NUMBER
 
 ## Type
 type: <-- Add the type of the PR -->
