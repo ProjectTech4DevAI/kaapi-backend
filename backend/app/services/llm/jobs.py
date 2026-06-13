@@ -1073,13 +1073,9 @@ def execute_llm_call(
             # db_content is what gets persisted — URI-only for TTS to avoid storing
             # large base64 payloads. The in-memory response keeps base64 + uri field
             # so existing clients continue to receive base64 unchanged.
-            db_content = (
-                response.response.output.model_dump()
-                if response.response.output
-                else None
-            )
-
+            db_content = None
             tts_output = response.response.output
+
             if (
                 isinstance(tts_output, AudioOutput)
                 and tts_output.content.format == "base64"
@@ -1122,6 +1118,13 @@ def execute_llm_call(
                         f"[execute_llm_call] TTS S3 upload error, keeping base64: {e} | llm_call_id={llm_call_id}",
                         exc_info=True,
                     )
+
+            if db_content is None:
+                db_content = (
+                    response.response.output.model_dump()
+                    if response.response.output
+                    else None
+                )
 
             with Session(engine) as session:
                 if llm_call_id:
