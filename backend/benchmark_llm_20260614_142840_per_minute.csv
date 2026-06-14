@@ -1,0 +1,4 @@
+minute,requests_sent,cumulative_sent,cls_ack_ok,cls_ack_4xx,cls_ack_5xx,cls_ack_timeout,cls_ack_network,cls_ack_unknown
+1,50,50,50,0,0,0,0,0
+2,50,100,50,0,0,0,0,0
+3,13,113,13,0,0,0,0,0
