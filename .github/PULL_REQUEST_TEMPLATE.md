@@ -1,11 +1,15 @@
 ## Issue
+
 Closes #PLEASE_TYPE_ISSUE_NUMBER
 
 ## Type
+
 type: <-- Add the type of the PR -->
+
 <!-- Options: feat | fix | chore | docs | refactor -->
 
 ## Summary
+
 Explain the **motivation** for making this change. What existing problem does the pull request solve?
 
 ## Checklist
