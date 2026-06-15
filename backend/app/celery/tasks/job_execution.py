@@ -253,6 +253,29 @@ def run_tts_batch_submission(
 
 
 @celery_app.task(bind=True, queue="low_priority", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_pipeline")
+def run_assessment_pipeline(
+    self,
+    run_id: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str,
+    **kwargs,
+):
+    from app.services.assessment.tasks import execute_assessment_pipeline
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_assessment_pipeline(
+            run_id=run_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        ),
+    )
+
+
+@celery_app.task(bind=True, queue="low_priority", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs

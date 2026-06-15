@@ -2,10 +2,12 @@ import logging
 from sqlmodel import Session
 
 from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.oai import OpenAIProvider
-from app.services.llm.providers.gai import GoogleAIProvider
-from app.services.llm.providers.sai import SarvamAIProvider
-from app.services.llm.providers.eai import ElevenlabsAIProvider
+from app.services.llm.providers.open_ai import OpenAIProvider
+from app.services.llm.providers.google_aistudio import GoogleAIProvider
+from app.services.llm.providers.sarvam_ai import SarvamAIProvider
+from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
+from app.services.llm.providers.claude import ClaudeProvider
+from app.services.llm.providers.google_ai import GoogleVertexAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -15,24 +17,28 @@ class LLMProvider:
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     GOOGLE = "google"
-    # Future constants for native providers:
-    # CLAUDE_NATIVE = "claude-native"
+    ANTHROPIC = "anthropic"
+    GOOGLE_AISTUDIO = "google-aistudio"
+    GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
     OPENAI_NATIVE = "openai-native"
     GOOGLE_NATIVE = "google-native"
     SARVAMAI_NATIVE = "sarvamai-native"
     ELEVENLABS_NATIVE = "elevenlabs-native"
+    ANTHROPIC_NATIVE = "anthropic-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
-        GOOGLE: GoogleAIProvider,
+        GOOGLE: GoogleVertexAIProvider,
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
-        # Future native providers:
-        # CLAUDE_NATIVE: ClaudeProvider,
+        ANTHROPIC: ClaudeProvider,
+        GOOGLE_AISTUDIO: GoogleAIProvider,
+        GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
-        GOOGLE_NATIVE: GoogleAIProvider,
+        GOOGLE_NATIVE: GoogleVertexAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
         ELEVENLABS_NATIVE: ElevenlabsAIProvider,
+        ANTHROPIC_NATIVE: ClaudeProvider,
     }
 
     @classmethod
@@ -69,10 +75,14 @@ def get_llm_provider(
         org_id=organization_id,
     )
 
-    if not credentials:
+    # Pass through whatever the DB returned (including None/empty). Providers
+    # that support platform-default fallbacks (e.g. google) handle the
+    # empty case themselves in create_client; others raise.
+    if not credentials and credential_provider != "google":
         raise ValueError(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )
+    credentials = credentials or {}
 
     try:
         client = provider_class.create_client(credentials=credentials)

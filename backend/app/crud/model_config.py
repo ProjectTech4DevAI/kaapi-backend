@@ -1,13 +1,49 @@
-from typing import Any, Literal
+import logging
+from datetime import datetime
+from typing import Any, Literal, get_args
 
-from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.sql import sqltypes
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
+from app.models.llm.constants import CompletionType, Provider as ProviderEnum
+from app.models.llm.request import ConfigBlob
+from app.models.model_config import (
+    ModelConfigBulkUpdateItem,
+    ModelConfigCreate,
+    ModelConfigUpdate,
+)
 
-Provider = str
-CompletionType = Literal["text", "stt", "tts"]
+logger = logging.getLogger(__name__)
+
+Provider = Literal[
+    "openai",
+    "google",
+    "sarvamai",
+    "elevenlabs",
+    "anthropic",
+    "google-aistudio",
+    "proxy",
+]
+
+# Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`
+# values are needed (filter validation, cost-lookup guards) so the set stays in sync
+# with the Literal definition.
+KNOWN_PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
+
+# Suffix that distinguishes a NativeCompletionConfig provider (e.g. "openai-native")
+# from the canonical provider name stored in model_config ("openai").
+NATIVE_PROVIDER_SUFFIX = "-native"
+
+
+def _normalize_provider(raw: str) -> str:
+    """Map NativeCompletionConfig providers (e.g. 'openai-native') to model_config provider names."""
+    return (
+        raw[: -len(NATIVE_PROVIDER_SUFFIX)]
+        if raw.endswith(NATIVE_PROVIDER_SUFFIX)
+        else raw
+    )
 
 
 def list_active_model_configs(
@@ -19,10 +55,7 @@ def list_active_model_configs(
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
     if provider:
-        try:
-            statement = statement.where(ModelConfig.provider == provider)
-        except Exception:
-            return [], False
+        statement = statement.where(ModelConfig.provider == provider)
 
     statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
     statement = statement.offset(skip).limit(limit + 1)
@@ -43,57 +76,36 @@ def list_all_active_model_configs(
     statement = select(ModelConfig).where(ModelConfig.is_active)
 
     if provider:
-        try:
-            statement = statement.where(ModelConfig.provider == provider)
-        except Exception:
-            return []
+        statement = statement.where(ModelConfig.provider == provider)
 
     statement = statement.order_by(ModelConfig.provider, ModelConfig.model_name)
     return list(session.exec(statement).all())
 
 
 def get_model_config(
-    session: Session, provider: Provider, model_name: str
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    include_inactive: bool = False,
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
-        ModelConfig.is_active,
     )
+    if not include_inactive:
+        statement = statement.where(ModelConfig.is_active)
     return session.exec(statement).first()
-
-
-def _modality_filter(stmt, completion_type: CompletionType):
-    """Restrict query to models matching the completion type via modalities."""
-    str_array = ARRAY(sqltypes.String)
-    input_col = ModelConfig.input_modalities
-    output_col = ModelConfig.output_modalities
-
-    if completion_type == "stt":
-        return stmt.where(
-            input_col.cast(str_array).contains(["AUDIO"]),
-            output_col.cast(str_array).contains(["TEXT"]),
-        )
-    if completion_type == "tts":
-        return stmt.where(
-            input_col.cast(str_array).contains(["TEXT"]),
-            output_col.cast(str_array).contains(["AUDIO"]),
-        )
-    return stmt.where(
-        input_col.cast(str_array).contains(["TEXT"]),
-        output_col.cast(str_array).contains(["TEXT"]),
-    )
 
 
 def list_supported_models(
     session: Session, provider: Provider, completion_type: CompletionType
 ) -> list[str]:
-    """Return active model names for a provider+completion type."""
+    """Return active model names for a provider + completion type."""
     stmt = select(ModelConfig.model_name).where(
         ModelConfig.provider == provider,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
-    stmt = _modality_filter(stmt, completion_type)
     return list(session.exec(stmt).all())
 
 
@@ -103,14 +115,162 @@ def is_model_supported(
     completion_type: CompletionType,
     model_name: str,
 ) -> bool:
-    """Check whether (provider, model_name) is active and matches the completion type."""
+    """Check whether (provider, model_name) is active and supports the completion type."""
     stmt = select(ModelConfig.id).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
-    stmt = _modality_filter(stmt, completion_type)
     return session.exec(stmt).first() is not None
+
+
+def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
+    """Reject ConfigBlob whose completion.params.model is not in model_config.
+
+    model_config is the source of truth — all providers/types validated.
+    Native configs are exempt (they forward raw params to the provider).
+
+    # As of now - this whole validation is liberal
+    # change this if we want to be more strict about unsupported models/providers or missing model configs.
+    """
+    completion = blob.completion
+    raw_provider = completion.provider
+    completion_type = completion.type
+
+    # Proxy forwards the request to the client's own LLM endpoint — no model
+    # lookup, no provider mapping.
+    if completion_type == ProviderEnum.PROXY.value:
+        return
+
+    if raw_provider is None:
+        return
+
+    if raw_provider.endswith(NATIVE_PROVIDER_SUFFIX):
+        return
+
+    provider = _normalize_provider(raw_provider)
+
+    model_name = (completion.params or {}).get("model") or None
+    if not model_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"completion.params.model is required for provider='{raw_provider}'",
+        )
+
+    model_row = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+    )
+    if model_row is None:
+        logger.warning(
+            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
+        )
+
+    if completion_type == "tts" and model_row is not None:
+        voice = (completion.params or {}).get("voice")
+        voice_spec = (
+            model_row.config.get("voice")
+            if isinstance(model_row.config, dict)
+            else None
+        )
+        allowed_voices = (
+            voice_spec.get("options") if isinstance(voice_spec, dict) else None
+        )
+        if voice and allowed_voices and voice not in allowed_voices:
+            logger.warning(
+                f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"model='{model_name}'. Allowed: {allowed_voices}."
+            )
+
+
+def bulk_create_model_configs(
+    session: Session, items: list[ModelConfigCreate]
+) -> list[ModelConfig]:
+    models = [ModelConfig.model_validate(item) for item in items]
+    session.add_all(models)
+    try:
+        session.commit()
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate (provider, model_name) — entry already exists",
+        ) from e
+    for m in models:
+        session.refresh(m)
+    return models
+
+
+def update_model_config(
+    session: Session, provider: str, model_name: str, data: ModelConfigUpdate
+) -> ModelConfig:
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(model, field, value)
+    model.updated_at = datetime.utcnow()
+    session.add(model)
+    session.commit()
+    session.refresh(model)
+    return model
+
+
+def bulk_update_model_configs(
+    session: Session, items: list[ModelConfigBulkUpdateItem]
+) -> list[ModelConfig]:
+    keys = [(item.provider, item.model_name) for item in items]
+    existing: dict[tuple, ModelConfig] = {}
+    for provider, model_name in keys:
+        m = get_model_config(
+            session=session,
+            provider=provider,
+            model_name=model_name,
+            include_inactive=True,
+        )
+        if m is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_name}' not found for provider='{provider}'",
+            )
+        existing[(provider, model_name)] = m
+    updated = []
+    now = datetime.utcnow()
+    for item in items:
+        model = existing[(item.provider, item.model_name)]
+        for field, value in item.model_dump(
+            exclude_unset=True, exclude={"provider", "model_name"}
+        ).items():
+            setattr(model, field, value)
+        model.updated_at = now
+        session.add(model)
+        updated.append(model)
+    session.commit()
+    for m in updated:
+        session.refresh(m)
+    return updated
+
+
+def delete_model_config(session: Session, provider: str, model_name: str) -> None:
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    session.delete(model)
+    session.commit()
 
 
 def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:

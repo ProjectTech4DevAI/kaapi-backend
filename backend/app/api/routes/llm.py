@@ -1,3 +1,4 @@
+import copy
 import logging
 from uuid import UUID
 
@@ -6,7 +7,9 @@ from opentelemetry import trace
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.cloud.storage import get_cloud_storage
 from app.core.telemetry import log_context
+from app.core.rate_monitor import monitor_rate
 from app.crud.jobs import JobCrud
 from app.crud.llm import get_llm_calls_by_job_id
 from app.models import (
@@ -19,7 +22,6 @@ from app.models import (
 from app.models.llm.response import LLMResponse, Usage
 from app.services.llm.jobs import start_job
 from app.utils import APIResponse, validate_callback_url, load_description
-
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,10 @@ def llm_callback_notification(body: APIResponse[LLMCallResponse]):
     description=load_description("llm/llm_call.md"),
     response_model=APIResponse[LLMJobImmediatePublic],
     callbacks=llm_callback_router.routes,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("llm_call")),
+    ],
 )
 def llm_call(
     _current_user: AuthContextDep, session: SessionDep, request: LLMCallRequest
@@ -150,19 +155,38 @@ def get_llm_call_status(
                 # Get the first LLM call from the list which will be the only call for the job id
                 # since we initially won't be using this endpoint for llm chains
                 llm_call = llm_calls[0]
+                output_payload = copy.deepcopy(llm_call.content)
+                if (
+                    isinstance(output_payload, dict)
+                    and output_payload.get("type") == "audio"
+                    and isinstance(output_payload.get("content"), dict)
+                    and output_payload["content"].get("format") == "uri"
+                ):
+                    s3_path = output_payload["content"].get("value", "")
+                    try:
+                        storage = get_cloud_storage(session, project_id)
+                        output_payload["content"]["value"] = storage.get_signed_url(
+                            s3_path, expires_in=3600
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[get_llm_call_status] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
+                        )
+                        output_payload["content"]["value"] = ""
+                    output_payload["content"]["format"] = "url"
 
                 llm_response = LLMResponse(
                     provider_response_id=llm_call.provider_response_id or "",
                     conversation_id=llm_call.conversation_id,
                     provider=llm_call.provider,
                     model=llm_call.model,
-                    output=llm_call.content,
+                    output=output_payload,
                 )
 
                 usage_payload = llm_call.usage
                 if not usage_payload:
                     logger.warning(
-                        f"[get_llm_call] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
+                        f"[get_llm_call_status] Missing usage data for llm_call job_id={job_id}, project_id={project_id}"
                     )
                     usage_payload = {
                         "input_tokens": 0,

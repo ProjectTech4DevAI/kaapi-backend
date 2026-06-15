@@ -65,7 +65,7 @@ class GeminiClient:
             session=session,
             org_id=org_id,
             project_id=project_id,
-            provider="google",
+            provider="google-aistudio",
         )
 
         if not credentials:

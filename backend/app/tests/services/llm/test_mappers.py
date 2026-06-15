@@ -16,6 +16,7 @@ from app.models.llm.request import (
 )
 from app.services.llm.mappers import (
     bcp47_to_elevenlabs_lang,
+    map_kaapi_to_anthropic_params,
     map_kaapi_to_elevenlabs_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
@@ -23,6 +24,7 @@ from app.services.llm.mappers import (
     transform_kaapi_config_to_native,
     voice_to_id,
 )
+import pytest
 
 
 class TestMapKaapiToOpenAIParams:
@@ -484,18 +486,19 @@ class TestMapKaapiToSarvamParams:
         assert result["output_audio_codec"] == "wav"
         assert warnings == []
 
-    # Error Cases
-    def test_missing_model_returns_error(self):
-        """Test that missing model parameter returns error."""
+    # Error / fallback cases
+    def test_missing_model_falls_back_to_default(self):
+        """Missing model falls back to DEFAULT_SARVAM_TTS_MODEL without warnings."""
         kaapi_params = {"voice": "Shubh", "language": "hi-IN"}
 
         result, warnings = map_kaapi_to_sarvam_params(
             kaapi_params, completion_type="tts"
         )
 
-        assert result == {}
-        assert len(warnings) == 1
-        assert "model" in warnings[0].lower()
+        assert result["model"] == "bulbul:v3"
+        assert result["speaker"] == "Shubh"
+        assert result["target_language_code"] == "hi-IN"
+        assert warnings == []
 
     def test_unsupported_completion_type(self):
         """Test that unsupported completion types return error."""
@@ -741,18 +744,19 @@ class TestMapKaapiToElevenlabsParams:
             assert result["voice_id"] == expected_id
             assert warnings == []
 
-    # Error Cases
-    def test_missing_model_returns_error(self):
-        """Test that missing model returns error."""
+    # Error / fallback cases
+    def test_missing_model_falls_back_to_default(self):
+        """Missing model falls back to DEFAULT_ELEVENLABS_TTS_MODEL without warnings."""
         kaapi_params = {"voice": "Sarah", "language": "en-IN"}
 
         result, warnings = map_kaapi_to_elevenlabs_params(
             kaapi_params, completion_type="tts"
         )
 
-        assert result == {}
-        assert len(warnings) == 1
-        assert "model" in warnings[0].lower()
+        assert result["model_id"] == "eleven_v3"
+        assert result["voice_id"] == "EXAVITQu4vr4xnSDxMaL"
+        assert result["language_code"] == "en"
+        assert warnings == []
 
     def test_unsupported_completion_type(self):
         """Test that unsupported completion types return error."""
@@ -765,6 +769,134 @@ class TestMapKaapiToElevenlabsParams:
         assert result == {}
         assert len(warnings) == 1
         assert "Unsupported completion type" in warnings[0]
+
+
+class TestMapKaapiToAnthropicParams:
+    """Test cases for map_kaapi_to_anthropic_params."""
+
+    def test_full_text_completion_params_mapped(self):
+        """Real-world text-completion payload: every supported Kaapi field
+        maps to its Anthropic equivalent, no warnings."""
+        kaapi_params = {
+            "model": "claude-sonnet-4-6",
+            "instructions": "You are a helpful assistant.",
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "max_output_tokens": 1024,
+        }
+
+        result, warnings = map_kaapi_to_anthropic_params(kaapi_params)
+
+        assert result == {
+            "model": "claude-sonnet-4-6",
+            "system": "You are a helpful assistant.",
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "max_tokens": 1024,
+        }
+        assert warnings == []
+
+    def test_missing_model_falls_back_to_default(self):
+        """Anthropic requires model — provider falls back to the centralised
+        default when caller omits it."""
+        result, warnings = map_kaapi_to_anthropic_params({})
+
+        assert result == {"model": "claude-sonnet-4-6"}
+        assert warnings == []
+
+    def test_max_output_tokens_renamed_to_max_tokens(self):
+        """Kaapi calls it max_output_tokens; Anthropic Messages API calls it
+        max_tokens. The rename is the contract — protect against drift."""
+        result, _ = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "max_output_tokens": 256}
+        )
+        assert "max_tokens" in result
+        assert "max_output_tokens" not in result
+        assert result["max_tokens"] == 256
+
+    def test_unsupported_knowledge_base_emits_warning_and_drops_field(self):
+        """Anthropic has no managed vector store, so we drop knowledge_base_ids
+        and surface a warning the caller can show to users."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {
+                "model": "claude-sonnet-4-6",
+                "knowledge_base_ids": ["kb_1", "kb_2"],
+            }
+        )
+
+        assert "knowledge_base_ids" not in result
+        assert len(warnings) == 1
+        assert "knowledge_base_ids" in warnings[0]
+
+    def test_reasoning_effort_summary_collapsed_into_single_warning(self):
+        """Any of reasoning/effort/summary triggers the same advisory; only
+        one warning is emitted regardless of how many are supplied."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {
+                "model": "claude-sonnet-4-6",
+                "reasoning": "high",
+                "effort": "medium",
+                "summary": "concise",
+            }
+        )
+
+        assert "reasoning" not in result
+        assert "effort" not in result
+        assert "summary" not in result
+        assert len(warnings) == 1
+        assert "reasoning" in warnings[0].lower()
+
+    def test_temperature_zero_is_preserved(self):
+        """0.0 is a valid temperature — guard against truthy-check bugs that
+        would drop it as if it were None."""
+        result, _ = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "temperature": 0.0}
+        )
+        assert result["temperature"] == 0.0
+
+
+class TestTransformGoogleVertexRouting:
+    """Routing contract for the ``google`` provider (which executes via
+    Vertex AI). Text completions are explicitly rejected — they must go
+    through the ``google-aistudio`` provider."""
+
+    def test_text_completion_is_rejected(self, db: Session):
+        """``google`` is audio-only (Vertex STT/TTS) — text completions
+        must be routed through ``google-aistudio``."""
+        kaapi_config = KaapiCompletionConfig(
+            provider="google",
+            type="text",
+            params={"model": "gemini-2.5-pro"},
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            transform_kaapi_config_to_native(session=db, kaapi_config=kaapi_config)
+
+        msg = str(exc_info.value)
+        assert "google" in msg
+        assert "text" in msg
+        assert "google-aistudio" in msg  # hints the caller toward the right provider
+
+    def test_unsupported_language_emits_warning(self, db: Session):
+        """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
+        and surface a warning, rather than silently being dropped."""
+        kaapi_config = KaapiCompletionConfig(
+            provider="google",
+            type="tts",
+            params={
+                "model": "gemini-2.5-flash-preview-tts",
+                "language": "xx-YY",  # unsupported
+            },
+        )
+
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-native"
+        assert "language" not in native_config.params  # dropped
+        assert len(warnings) == 1
+        assert "xx-YY" in warnings[0]
 
 
 class TestBCP47ToElevenlabsLang:
@@ -924,9 +1056,9 @@ class TestTransformKaapiConfigToNative:
         assert warnings == []
 
     def test_transform_google_text_completion(self, db: Session):
-        """Test transformation of Google text completion."""
+        """Text completions route through ``google-aistudio`` (AI Studio)."""
         kaapi_config = KaapiCompletionConfig(
-            provider="google",
+            provider="google-aistudio",
             type="text",
             params={
                 "model": "gemini-2.5-pro",
@@ -940,7 +1072,7 @@ class TestTransformKaapiConfigToNative:
         )
 
         assert isinstance(result, NativeCompletionConfig)
-        assert result.provider == "google-native"
+        assert result.provider == "google-aistudio-native"
         assert result.type == "text"
         assert result.params["model"] == "gemini-2.5-pro"
         assert result.params["temperature"] == 0.7

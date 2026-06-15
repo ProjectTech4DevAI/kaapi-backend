@@ -1,47 +1,48 @@
+from enum import StrEnum
+
+
+class Provider(StrEnum):
+    OPENAI = "openai"
+    GOOGLE = "google"
+    SARVAMAI = "sarvamai"
+    ELEVENLABS = "elevenlabs"
+    ANTHROPIC = "anthropic"
+    GOOGLE_AISTUDIO = "google-aistudio"
+    PROXY = "proxy"
+
+
+class CompletionType(StrEnum):
+    TEXT = "text"
+    STT = "stt"
+    TTS = "tts"
+
+
+class Modality(StrEnum):
+    TEXT = "TEXT"
+    AUDIO = "AUDIO"
+    IMAGE = "IMAGE"
+    FILES = "FILES"
+
+
 DEFAULT_STT_MODEL = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"
 
-SUPPORTED_MODELS = {
-    ("google", "stt"): [
-        DEFAULT_STT_MODEL,
-        "gemini-3.1-pro-preview",
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-    ],
-    ("google", "tts"): [DEFAULT_TTS_MODEL, "gemini-2.5-pro-preview-tts"],
-    ("sarvamai", "stt"): ["saaras:v3"],
-    ("sarvamai", "tts"): ["bulbul:v3"],
-    ("elevenlabs", "stt"): ["scribe_v2"],
-    ("elevenlabs", "tts"): ["eleven_v3"],
-    ("openai", "text"): [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-5.4",
-        "gpt-5.1",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "o1",
-        "o1-preview",
-        "o1-mini",
-        "gpt-5.4-pro",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano",
-        "gpt-5",
-        "gpt-4-turbo",
-        "gpt-4",
-        "gpt-3.5-turbo",
-    ],
+# Default text-completion model per provider. Used by both the native flow
+# (provider.execute) and the Kaapi mapper so the two stay in sync.
+DEFAULT_TEXT_MODELS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-4.1-mini",
+    "google": "gemini-2.5-pro",
 }
 
-SUPPORTED_VOICES = {
-    ("google", "tts"): ["Kore", "Orus", "Leda", "Charon"],
-    ("sarvamai", "tts"): ["simran", "shubh", "roopa"],
-    ("elevenlabs", "tts"): ["Sarah", "George", "Callum", "Liam"],
-}
+DEFAULT_ANTHROPIC_MAX_TOKENS = 4096
+
+# Provider-native STT/TTS defaults (used when caller omits model).
+DEFAULT_SARVAM_STT_MODEL = "saaras:v3"
+DEFAULT_SARVAM_TTS_MODEL = "bulbul:v3"
+DEFAULT_ELEVENLABS_STT_MODEL = "scribe_v2"
+DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v3"
 
 # BCP-47 to language tag -> Gemini ISO 639-1 code (Indic + English)
 BCP47_LOCALE_TO_GEMINI_LANG: dict[str, str] = {

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -13,13 +13,19 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
-    SUPPORTED_MODELS,
-    SUPPORTED_VOICES,
+    CompletionType,
+    Provider,
 )
 
 
 class TextLLMParams(SQLModel):
-    model: str
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Provider model to use. If omitted, the Kaapi mapper falls back to "
+            "DEFAULT_TEXT_MODELS for the selected provider."
+        ),
+    )
     instructions: str | None = Field(
         default=None,
     )
@@ -65,6 +71,8 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
     input_language: str | None = "auto"
@@ -82,17 +90,35 @@ class STTLLMParams(SQLModel):
 
 
 class TTSLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-KaapiLLMParams = Union[
-    TextLLMParams,
-    STTLLMParams,
-    TTSLLMParams,
-]
+class ProxyLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
+    client_llm_url: HttpUrl = Field(
+        ...,
+        description=(
+            "HTTPS URL of the client's own LLM endpoint. Kaapi forwards the "
+            "(guardrail-sanitised) input here and applies output guardrails to the response."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_https(self) -> Self:
+        if self.client_llm_url.scheme != "https":
+            raise ValueError(
+                f"client_llm_url must be HTTPS, got scheme: {self.client_llm_url.scheme}"
+            )
+        return self
+
+
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ProxyLLMParams]
 
 
 # Input type models for discriminated union
@@ -229,7 +255,12 @@ class NativeCompletionConfig(SQLModel):
     """
 
     provider: Literal[
-        "openai-native", "google-native", "sarvamai-native", "elevenlabs-native"
+        "openai-native",
+        "google-native",
+        "sarvamai-native",
+        "elevenlabs-native",
+        "anthropic-native",
+        "google-aistudio-native",
     ] = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
@@ -238,7 +269,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -250,11 +281,26 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: Literal["openai", "google", "sarvamai", "elevenlabs"] | None = Field(
-        None, description="LLM provider (openai, google, sarvamai, elevenlabs)"
+    provider: (
+        Literal[
+            "openai",
+            "google",
+            "sarvamai",
+            "elevenlabs",
+            "anthropic",
+            "google-aistudio",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
+            "google-aistudio). 'google' routes via Google Vertex AI; "
+            "'google-aistudio' uses Google AI Studio."
+        ),
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -272,49 +318,14 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        provider = self.provider
-        provider_was_auto_assigned = False
-        if self.type in ("stt", "tts") and provider is None:
-            self.provider = "google"
-            provider = self.provider
-            provider_was_auto_assigned = True
+        if (
+            self.type in (CompletionType.STT, CompletionType.TTS)
+            and self.provider is None
+        ):
+            self.provider = Provider.GOOGLE
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
-
-        if provider is not None:
-            key = (provider, self.type)
-
-            allowed_models = SUPPORTED_MODELS.get(key)
-            if allowed_models and validated.model not in allowed_models:
-                if provider_was_auto_assigned:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported. "
-                        f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires models: {allowed_models}. "
-                        f"Either specify a supported model or explicitly set 'provider' to match your model."
-                    )
-                else:
-                    raise ValueError(
-                        f"Model '{validated.model}' is not supported for provider='{provider}' type='{self.type}'. "
-                        f"Allowed: {allowed_models}"
-                    )
-
-            if self.type == "tts":
-                # voice = self.params.get("voice")
-                voice = validated.voice
-                allowed_voices = SUPPORTED_VOICES.get(key)
-                if allowed_voices and voice and voice not in allowed_voices:
-                    if provider_was_auto_assigned:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported. "
-                            f"Provider was auto-defaulted to '{provider}' (for type='{self.type}'), which requires voices: {allowed_voices}. "
-                            f"Either specify a supported voice or explicitly set 'provider' to match your voice."
-                        )
-                    else:
-                        raise ValueError(
-                            f"Voice '{voice}' is not supported for provider='{provider}'. "
-                            f"Allowed: {allowed_voices}"
-                        )
 
         self.params = validated.model_dump(exclude_none=True)
         if not user_provided_temperature:
@@ -322,9 +333,39 @@ class KaapiCompletionConfig(SQLModel):
         return self
 
 
+class ProxyCompletionConfig(SQLModel):
+    """
+    Proxy completion: Kaapi forwards the (guardrail-sanitised) input to the
+    client's own LLM endpoint and applies output guardrails to the response.
+    No upstream provider is dispatched — `provider` is fixed to "proxy" so
+    the discriminated union can route cleanly.
+    """
+
+    provider: Literal["proxy"] = Field(
+        "proxy",
+        description=(
+            "Discriminator value for the proxy variant. Auto-injected when "
+            "type=proxy; clients may omit it."
+        ),
+    )
+    type: Literal["proxy"] = Field(..., description="Must be 'proxy'.")
+    params: dict[str, Any] = Field(
+        ...,
+        description="Proxy params (client_llm_url, ...)",
+    )
+
+    @model_validator(mode="after")
+    def validate_params(self) -> Self:
+        validated = ProxyLLMParams.model_validate(self.params)
+        # mode="json" coerces HttpUrl → plain str so downstream consumers
+        # (httpx.post, urlparse) get the type they expect from params dict.
+        self.params = validated.model_dump(mode="json", exclude_none=True)
+        return self
+
+
 # Discriminated union for completion configs based on provider field
 CompletionConfig = Annotated[
-    Union[NativeCompletionConfig, KaapiCompletionConfig],
+    Union[NativeCompletionConfig, KaapiCompletionConfig, ProxyCompletionConfig],
     Field(discriminator="provider"),
 ]
 
@@ -341,6 +382,24 @@ class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_proxy_provider(cls, data: Any) -> Any:
+        """For `type=proxy`, provider is meaningless to the caller.
+        Inject provider="proxy" so the CompletionConfig discriminator routes
+        to ProxyCompletionConfig without forcing the client to set it."""
+        if not isinstance(data, dict):
+            return data
+        completion = data.get("completion")
+        if (
+            isinstance(completion, dict)
+            and completion.get("type") == Provider.PROXY.value
+        ):
+            existing = completion.get("provider")
+            if existing in (None, Provider.PROXY.value):
+                completion["provider"] = Provider.PROXY.value
+        return data
 
     # used for llm-chain to provide prompt interpolation
     prompt_template: PromptTemplate | None = Field(

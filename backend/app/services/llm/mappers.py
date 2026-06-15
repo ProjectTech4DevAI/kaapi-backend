@@ -7,9 +7,25 @@ from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.models.llm.constants import (
     BCP47_LOCALE_TO_GEMINI_LANG,
     BCP47_TO_ELEVENLABS_LANG,
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_VOICE,
     ELEVENLABS_VOICE_TO_ID,
+    CompletionType,
+    Provider,
 )
+
+SARVAM_DEFAULTS_BY_TYPE = {
+    "stt": DEFAULT_SARVAM_STT_MODEL,
+    "tts": DEFAULT_SARVAM_TTS_MODEL,
+}
+ELEVENLABS_DEFAULTS_BY_TYPE = {
+    "stt": DEFAULT_ELEVENLABS_STT_MODEL,
+    "tts": DEFAULT_ELEVENLABS_TTS_MODEL,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +112,7 @@ def map_kaapi_to_openai_params(
         if temperature is not None:
             openai_params["temperature"] = temperature
 
-    if model:
-        openai_params["model"] = model
+    openai_params["model"] = model or DEFAULT_TEXT_MODELS["openai"]
 
     if instructions:
         openai_params["instructions"] = instructions
@@ -139,14 +154,17 @@ def map_kaapi_to_google_params(
     google_params = {}
     warnings = []
 
-    # Model is present in all param types
+    # Model is present in all param types; text falls back to the centralized
+    # default. STT/TTS require an explicit model (Gemini variant differs by mode).
     model = kaapi_params.get("model")
+    if not model and completion_type == CompletionType.TEXT:
+        model = DEFAULT_TEXT_MODELS["google"]
     if not model:
         return {}, ["Missing required 'model' parameter"]
 
     google_params["model"] = model
 
-    if completion_type == "text":
+    if completion_type == CompletionType.TEXT:
         # Text completion - instructions, temperature, reasoning, knowledge_base_ids
         instructions = kaapi_params.get("instructions")
         if instructions:
@@ -167,7 +185,7 @@ def map_kaapi_to_google_params(
                 "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
             )
 
-    elif completion_type == "tts":
+    elif completion_type == CompletionType.TTS:
         # TTS mode - voice, language, response_format
         # Apply smart defaults for voice and response_format (following ElevenLabs pattern)
         voice = kaapi_params.get("voice") or DEFAULT_TTS_VOICE
@@ -187,7 +205,7 @@ def map_kaapi_to_google_params(
             else:
                 google_params["language"] = google_lang
 
-    elif completion_type == "stt":
+    elif completion_type == CompletionType.STT:
         # STT mode - instructions, temperature, input_language, output_language, response_format
         # Apply smart default for input_language
         input_language = kaapi_params.get("input_language") or "auto"
@@ -238,13 +256,13 @@ def map_kaapi_to_sarvam_params(
     sarvam_params = {}
     warnings = []
 
-    # Model is required for all completion types
-    model = kaapi_params.get("model")
+    # Model falls back to the per-type Sarvam default.
+    model = kaapi_params.get("model") or SARVAM_DEFAULTS_BY_TYPE.get(completion_type)
     if not model:
-        return {}, ["Missing required 'model' parameter"]
+        return {}, [f"Unsupported completion type '{completion_type}' for SarvamAI"]
     sarvam_params["model"] = model
 
-    if completion_type == "tts":
+    if completion_type == CompletionType.TTS:
         # TTS mode - map TTSLLMParams
         # Required: target_language_code (API requirement)
         language = kaapi_params.get("language")
@@ -271,7 +289,7 @@ def map_kaapi_to_sarvam_params(
                 response_format, "wav"
             )
 
-    elif completion_type == "stt":
+    elif completion_type == CompletionType.STT:
         # STT mode - map STTLLMParams
         input_language = kaapi_params.get("input_language")
         output_language = kaapi_params.get("output_language")
@@ -346,12 +364,14 @@ def map_kaapi_to_elevenlabs_params(
     elevenlabs_params = {}
     warnings = []
 
-    model_id = kaapi_params.get("model")
+    model_id = kaapi_params.get("model") or ELEVENLABS_DEFAULTS_BY_TYPE.get(
+        completion_type
+    )
     if not model_id:
-        return {}, ["Missing required 'model' parameter"]
+        return {}, [f"Unsupported completion type '{completion_type}' for ElevenLabs"]
     elevenlabs_params["model_id"] = model_id
 
-    if completion_type == "tts":
+    if completion_type == CompletionType.TTS:
         # TTS Mode - map TTSLLMParams
         voice = kaapi_params.get("voice")
         if not voice:
@@ -385,7 +405,7 @@ def map_kaapi_to_elevenlabs_params(
                 response_format, "wav_24000"
             )
 
-    elif completion_type == "stt":
+    elif completion_type == CompletionType.STT:
         # STT mode - map STTLLMParams
         input_language = kaapi_params.get("input_language")
         output_language = kaapi_params.get("output_language")
@@ -428,6 +448,67 @@ def map_kaapi_to_elevenlabs_params(
     return elevenlabs_params, warnings
 
 
+def map_kaapi_to_anthropic_params(
+    kaapi_params: dict,
+) -> tuple[dict, list[str]]:
+    """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
+
+    Supported Mapping:
+        - model → model
+        - instructions → system
+        - temperature → temperature
+        - top_p → top_p
+        - max_output_tokens → max_tokens (Anthropic requires this;
+          provider defaults if absent)
+
+    Unsupported Kaapi params:
+        - knowledge_base_ids / max_num_results: Anthropic has no native
+          vector-store / file_search tool, dropped with warning.
+        - reasoning / effort / summary: Messages API does not expose a
+          reasoning-effort knob, dropped with warning.
+    """
+    anthropic_params: dict = {}
+    warnings: list[str] = []
+
+    model = kaapi_params.get("model")
+    instructions = kaapi_params.get("instructions")
+    temperature = kaapi_params.get("temperature")
+    top_p = kaapi_params.get("top_p")
+    max_output_tokens = kaapi_params.get("max_output_tokens")
+    knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
+    reasoning = kaapi_params.get("reasoning")
+    effort = kaapi_params.get("effort")
+    summary = kaapi_params.get("summary")
+
+    anthropic_params["model"] = model or DEFAULT_TEXT_MODELS["anthropic"]
+
+    if instructions:
+        anthropic_params["system"] = instructions
+
+    if temperature is not None:
+        anthropic_params["temperature"] = temperature
+
+    if top_p is not None:
+        anthropic_params["top_p"] = top_p
+
+    if max_output_tokens is not None:
+        anthropic_params["max_tokens"] = max_output_tokens
+
+    if knowledge_base_ids:
+        warnings.append(
+            "Parameter 'knowledge_base_ids' was ignored because Anthropic has no "
+            "native vector-store/file_search tool. Inline document content blocks instead."
+        )
+
+    if reasoning is not None or effort is not None or summary is not None:
+        warnings.append(
+            "Parameters 'reasoning'/'effort'/'summary' were ignored because the "
+            "Anthropic Messages API does not expose a reasoning-effort knob."
+        )
+
+    return anthropic_params, warnings
+
+
 def transform_kaapi_config_to_native(
     session: Session,
     kaapi_config: KaapiCompletionConfig,
@@ -445,8 +526,7 @@ def transform_kaapi_config_to_native(
         - NativeCompletionConfig with provider-native parameters ready for API
         - List of warnings for suppressed/ignored parameters
     """
-    # TODO change from magic string to enums
-    if kaapi_config.provider == "openai":
+    if kaapi_config.provider == Provider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(
             session=session, kaapi_params=kaapi_config.params
         )
@@ -457,18 +537,20 @@ def transform_kaapi_config_to_native(
             warnings,
         )
 
-    if kaapi_config.provider == "google":
+    if kaapi_config.provider == Provider.GOOGLE_AISTUDIO:
         mapped_params, warnings = map_kaapi_to_google_params(
             kaapi_config.params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
-                provider="google-native", params=mapped_params, type=kaapi_config.type
+                provider="google-aistudio-native",
+                params=mapped_params,
+                type=kaapi_config.type,
             ),
             warnings,
         )
 
-    if kaapi_config.provider == "sarvamai":
+    if kaapi_config.provider == Provider.SARVAMAI:
         mapped_params, warnings = map_kaapi_to_sarvam_params(
             kaapi_config.params, kaapi_config.type
         )
@@ -479,13 +561,47 @@ def transform_kaapi_config_to_native(
             warnings,
         )
 
-    if kaapi_config.provider == "elevenlabs":
+    if kaapi_config.provider == Provider.ELEVENLABS:
         mapped_params, warnings = map_kaapi_to_elevenlabs_params(
             kaapi_config.params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
                 provider="elevenlabs-native",
+                params=mapped_params,
+                type=kaapi_config.type,
+            ),
+            warnings,
+        )
+
+    if kaapi_config.provider == Provider.GOOGLE:
+        if kaapi_config.type not in (CompletionType.STT, CompletionType.TTS):
+            raise ValueError(
+                f"google provider does not support completion type '{kaapi_config.type}'. "
+                "Use the 'google-aistudio' provider for text completions."
+            )
+        # Kaapi STT/TTS param shape is identical to Google's; reuse the Google mapper.
+        mapped_params, warnings = map_kaapi_to_google_params(
+            kaapi_config.params, kaapi_config.type
+        )
+        return (
+            NativeCompletionConfig(
+                provider="google-native",
+                params=mapped_params,
+                type=kaapi_config.type,
+            ),
+            warnings,
+        )
+
+    if kaapi_config.provider == Provider.ANTHROPIC:
+        if kaapi_config.type != CompletionType.TEXT:
+            raise ValueError(
+                f"Anthropic provider does not support completion type '{kaapi_config.type}'"
+            )
+        mapped_params, warnings = map_kaapi_to_anthropic_params(kaapi_config.params)
+        return (
+            NativeCompletionConfig(
+                provider="anthropic-native",
                 params=mapped_params,
                 type=kaapi_config.type,
             ),

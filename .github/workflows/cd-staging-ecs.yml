@@ -1,9 +1,7 @@
-name: Deploy Kaapi to ECS
+name: Deploy Kaapi to ECS Staging
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build:

@@ -12,7 +12,8 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
-from app.services.llm.providers.gai import GoogleAIProvider
+from app.models.llm.constants import CompletionType
+from app.services.llm.providers.google_aistudio import GoogleAIProvider
 
 
 def mock_google_response(
@@ -70,12 +71,18 @@ class TestGoogleAIProviderSTT:
     def stt_config(self):
         """Create a basic STT completion config."""
         return NativeCompletionConfig(
-            provider="google-native",
-            type="stt",
+            provider="google-aistudio-native",
+            type=CompletionType.STT,
             params={
                 "model": "gemini-2.5-pro",
             },
         )
+
+    @pytest.fixture
+    def audio_ref(self):
+        from app.core.audio_utils import AudioRef
+
+        return AudioRef(bytes_=b"fake audio data", mime_type="audio/wav")
 
     @pytest.fixture
     def query_params(self):
@@ -83,25 +90,27 @@ class TestGoogleAIProviderSTT:
         return QueryParams(input="Test audio input")
 
     def test_stt_success_with_auto_language(
-        self, provider, mock_client, stt_config, query_params
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test successful STT execution with auto language detection."""
         mock_response = mock_google_response(text="Hello world")
         mock_client.models.generate_content.return_value = mock_response
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
         assert result is not None
         assert result.response.output.content.value == "Hello world"
         assert result.response.model == "gemini-2.5-pro"
-        assert result.response.provider == "google-native"
+        assert result.response.provider == "google-aistudio-native"
         assert result.usage.input_tokens == 50
         assert result.usage.output_tokens == 100
         assert result.usage.total_tokens == 150
 
-        # Verify file upload and content generation
-        mock_client.files.upload.assert_called_once_with(file="/path/to/audio.wav")
+        # Verify file upload was called with a materialized temp path matching the AudioRef mime.
+        mock_client.files.upload.assert_called_once()
+        uploaded_path = mock_client.files.upload.call_args.kwargs["file"]
+        assert uploaded_path.endswith(".wav")
         mock_client.models.generate_content.assert_called_once()
 
         # Verify instruction contains auto-detect
@@ -109,7 +118,7 @@ class TestGoogleAIProviderSTT:
         assert "Detect the spoken language automatically" in call_args[1]["contents"][0]
 
     def test_stt_with_specific_input_language(
-        self, provider, mock_client, stt_config, query_params
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test STT with specific input language."""
         stt_config.params["input_language"] = "English"
@@ -117,7 +126,7 @@ class TestGoogleAIProviderSTT:
         mock_response = mock_google_response(text="Transcribed English text")
         mock_client.models.generate_content.return_value = mock_response
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
         assert result is not None
@@ -127,7 +136,7 @@ class TestGoogleAIProviderSTT:
         assert "Transcribe the audio from English" in call_args[1]["contents"][0]
 
     def test_stt_with_translation(
-        self, provider, mock_client, stt_config, query_params
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test STT with translation to different output language."""
         stt_config.params["input_language"] = "Spanish"
@@ -136,7 +145,7 @@ class TestGoogleAIProviderSTT:
         mock_response = mock_google_response(text="Translated text")
         mock_client.models.generate_content.return_value = mock_response
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
         assert result is not None
@@ -148,7 +157,7 @@ class TestGoogleAIProviderSTT:
         assert "translate to English" in instruction
 
     def test_stt_with_custom_instructions(
-        self, provider, mock_client, stt_config, query_params
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test STT with custom instructions."""
         stt_config.params["instructions"] = "Include timestamps"
@@ -156,7 +165,7 @@ class TestGoogleAIProviderSTT:
         mock_response = mock_google_response(text="Transcribed with timestamps")
         mock_client.models.generate_content.return_value = mock_response
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
         assert result is not None
@@ -166,49 +175,31 @@ class TestGoogleAIProviderSTT:
         instruction = call_args[1]["contents"][0]
         assert "Include timestamps" in instruction
 
-    def test_stt_with_include_provider_raw_response(
-        self, provider, mock_client, stt_config, query_params
+    def test_stt_with_type_error(
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
-        """Test STT with include_provider_raw_response=True."""
-        mock_response = mock_google_response(text="Raw response test")
-        mock_client.models.generate_content.return_value = mock_response
-
-        result, error = provider.execute(
-            stt_config,
-            query_params,
-            "/path/to/audio.wav",
-            include_provider_raw_response=True,
-        )
-
-        assert error is None
-        assert result is not None
-        assert result.provider_raw_response is not None
-        assert isinstance(result.provider_raw_response, dict)
-        assert result.provider_raw_response["text"] == "Raw response test"
-
-    def test_stt_with_type_error(self, provider, mock_client, stt_config, query_params):
         """Test handling of TypeError (invalid parameters)."""
         mock_client.models.generate_content.side_effect = TypeError(
             "unexpected keyword argument 'invalid_param'"
         )
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert result is None
         assert error is not None
         assert "Invalid or unexpected parameter in Config" in error
 
     def test_stt_with_generic_exception(
-        self, provider, mock_client, stt_config, query_params
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test handling of unexpected exceptions."""
         mock_client.files.upload.side_effect = Exception("File upload failed")
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert result is None
         assert error is not None
-        assert "Unexpected error occurred" in error
+        assert "[KAAPI] Unexpected error" in error
 
     def test_stt_with_invalid_input_type(
         self, provider, mock_client, stt_config, query_params
@@ -221,16 +212,16 @@ class TestGoogleAIProviderSTT:
 
         assert result is None
         assert error is not None
-        assert "STT requires file path as string" in error
+        assert "STT requires an AudioRef" in error
 
-    def test_stt_with_valid_file_path(
-        self, provider, mock_client, stt_config, query_params
+    def test_stt_with_valid_audio_ref(
+        self, provider, mock_client, stt_config, query_params, audio_ref
     ):
         """Test STT execution with valid file path string."""
         mock_response = mock_google_response(text="Valid transcription")
         mock_client.models.generate_content.return_value = mock_response
 
-        result, error = provider.execute(stt_config, query_params, "/path/to/audio.wav")
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
         assert result is not None
@@ -294,8 +285,8 @@ class TestGoogleAIProviderTTS:
     def tts_config(self):
         """Create a basic TTS completion config."""
         return NativeCompletionConfig(
-            provider="google-native",
-            type="tts",
+            provider="google-aistudio-native",
+            type=CompletionType.TTS,
             params={
                 "model": "gemini-2.5-pro-preview-tts",
                 "voice": "Kore",
@@ -318,7 +309,7 @@ class TestGoogleAIProviderTTS:
 
         fake_mp3_bytes = b"fake-mp3-content"
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_mp3",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_mp3",
             return_value=(fake_mp3_bytes, None),
         ) as mock_convert:
             result, error = provider.execute(tts_config, query_params, "Hello world")
@@ -340,7 +331,7 @@ class TestGoogleAIProviderTTS:
 
         fake_ogg_bytes = b"fake-ogg-content"
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_ogg",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_ogg",
             return_value=(fake_ogg_bytes, None),
         ) as mock_convert:
             result, error = provider.execute(tts_config, query_params, "Hello world")
@@ -361,13 +352,13 @@ class TestGoogleAIProviderTTS:
         mock_client.models.generate_content.return_value = mock_response
 
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_mp3",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_mp3",
             return_value=(None, "ffmpeg not found"),
         ):
             result, error = provider.execute(tts_config, query_params, "Hello world")
 
         assert result is None
-        assert "Failed to convert audio to MP3" in error
+        assert "unable to convert Gemini PCM audio to MP3" in error
         assert "ffmpeg not found" in error
 
     def test_tts_ogg_conversion_failure(
@@ -379,20 +370,20 @@ class TestGoogleAIProviderTTS:
         mock_client.models.generate_content.return_value = mock_response
 
         with patch(
-            "app.services.llm.providers.gai.convert_pcm_to_ogg",
+            "app.services.llm.providers.google_aistudio.convert_pcm_to_ogg",
             return_value=(None, "codec error"),
         ):
             result, error = provider.execute(tts_config, query_params, "Hello world")
 
         assert result is None
-        assert "Failed to convert audio to OGG" in error
+        assert "unable to convert Gemini PCM audio to OGG" in error
 
     def test_tts_empty_input(self, provider, mock_client, tts_config, query_params):
         """Test error when text input is empty."""
         result, error = provider.execute(tts_config, query_params, "   ")
 
         assert result is None
-        assert error == "Text input cannot be empty"
+        assert "text input is empty" in error
         mock_client.models.generate_content.assert_not_called()
 
     def test_tts_non_string_input(
@@ -402,7 +393,7 @@ class TestGoogleAIProviderTTS:
         result, error = provider.execute(tts_config, query_params, {"invalid": "data"})
 
         assert result is None
-        assert "TTS requires text string as input" in error
+        assert "TTS requires a text string" in error
 
     def test_tts_no_usage_metadata(
         self, provider, mock_client, tts_config, query_params
@@ -507,7 +498,7 @@ class TestGoogleAIProviderTTS:
         result, error = provider.execute(tts_config, query_params, "Hello")
 
         assert result is None
-        assert error == "Unexpected error occurred"
+        assert "[KAAPI] Unexpected error" in error
 
     def test_tts_type_error(self, provider, mock_client, tts_config, query_params):
         """Test handling of TypeError (invalid parameters)."""

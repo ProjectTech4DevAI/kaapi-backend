@@ -1,11 +1,13 @@
 import base64
 import json
 import logging
+import socket
 import time
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
+import httpx
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from celery.exceptions import SoftTimeLimitExceeded
@@ -15,6 +17,7 @@ from sqlmodel import Session
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
+from app.core.providers import Provider
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
     set_gen_ai_request_attributes,
@@ -27,6 +30,7 @@ from app.core.telemetry import (
 )
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
+from app.crud.model_config import validate_blob_model_or_raise
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
     create_llm_call,
@@ -67,11 +71,11 @@ from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
-    cleanup_temp_file,
     download_audio_bytes,
     get_webhook_secret,
     resolve_input,
     send_callback,
+    validate_callback_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,6 +135,9 @@ def start_job(
     db: Session, request: LLMCallRequest, project_id: int, organization_id: int
 ) -> UUID:
     """Create an LLM job and schedule Celery task."""
+    if not request.config.is_stored_config and request.config.blob:
+        validate_blob_model_or_raise(db, request.config.blob)
+
     with log_context(
         tag="llm-call",
         lifecycle="llm.call.start_job",
@@ -187,6 +194,10 @@ def start_chain_job(
     db: Session, request: LLMChainRequest, project_id: int, organization_id: int
 ) -> UUID:
     """Create an LLM Chain job and schedule Celery task."""
+    for block in request.blocks:
+        if not block.config.is_stored_config and block.config.blob:
+            validate_blob_model_or_raise(db, block.config.blob)
+
     trace_id = correlation_id.get() or "N/A"
     job_crud = JobCrud(session=db)
     job = job_crud.create(
@@ -297,22 +308,14 @@ def handle_job_error(
 def resolved_input_context(
     query_input: TextInput | AudioInput | ImageInput | PDFInput | list,
 ):
-    """Context manager for resolving and cleaning up input resources.
-
-    Ensures temporary files (e.g., downloaded audio) are cleaned up
-    even if errors occur during LLM execution.
+    """Resolve query input. Audio inputs return AudioRef (in-memory);
+    providers materialize a temp file via ``audio_ref.to_path()`` only if
+    their SDK needs one, and clean it up themselves.
     """
     resolved_input, error = resolve_input(query_input)
-
     if error:
         raise ValueError(error)
-
-    try:
-        yield resolved_input
-    finally:
-        # Clean up temp files for audio inputs
-        if resolved_input and isinstance(query_input, AudioInput):
-            cleanup_temp_file(resolved_input)
+    yield resolved_input
 
 
 def resolve_config_blob(
@@ -338,7 +341,7 @@ def resolve_config_blob(
         return None, "Unexpected error occurred while retrieving stored configuration"
 
     try:
-        return ConfigBlob(**config_version.config_blob), None
+        blob = ConfigBlob(**config_version.config_blob)
     except (TypeError, ValueError) as e:
         return None, f"Stored configuration blob is invalid: {str(e)}"
     except Exception:
@@ -348,6 +351,13 @@ def resolve_config_blob(
             exc_info=True,
         )
         return None, "Unexpected error occurred while parsing stored configuration"
+
+    try:
+        validate_blob_model_or_raise(config_crud.session, blob)
+    except HTTPException as e:
+        return None, e.detail
+
+    return blob, None
 
 
 def apply_input_guardrails(
@@ -425,6 +435,7 @@ def apply_output_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
+    input_text: str | None = None,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
@@ -451,14 +462,15 @@ def apply_output_guardrails(
     if not output_guardrails:
         return result, None
 
-    output_text = result.response.response.output.content.value
+    llm_output = result.response.response.output.content.value
     safe = run_guardrails_validation(
-        output_text,
+        input_text or "",
         output_guardrails,
         job_id,
         project_id,
         organization_id,
         suppress_pass_logs=True,
+        output_text=llm_output,
     )
 
     logger.info(
@@ -523,6 +535,13 @@ def execute_llm_call(
                         return BlockResult(error=error)
                 else:
                     config_blob = config.blob
+                    try:
+                        validate_blob_model_or_raise(session, config_blob)
+                    except HTTPException as e:
+                        cfg_span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, e.detail)
+                        )
+                        return BlockResult(error=e.detail)
 
             original_input_value = (
                 query.input.content.value
@@ -593,6 +612,227 @@ def execute_llm_call(
                         trace.Status(trace.StatusCode.ERROR, input_error)
                     )
                     return BlockResult(error=input_error)
+            # proxy branch, bypass execution of API CAll
+            if config_blob.completion.type == Provider.PROXY.value:
+                if not isinstance(query.input, TextInput):
+                    return BlockResult(
+                        error="Proxy completion only supports text input"
+                    )
+                proxy_params = config_blob.completion.params or {}
+                client_llm_url = proxy_params.get("client_llm_url")
+                if not client_llm_url:
+                    return BlockResult(error="Proxy config missing client_llm_url")
+
+                # SSRF guard: block proxy URLs that resolve to private/internal IPs.
+                # DNS resolution failures are not treated as blocks — httpx will
+                # fail the request naturally if the host is genuinely unreachable.
+                try:
+                    validate_callback_url(client_llm_url)
+                except ValueError as e:
+                    if isinstance(e.__cause__, socket.gaierror):
+                        logger.warning(
+                            f"[execute_llm_call] DNS resolution failed during proxy "
+                            f"SSRF check; allowing request to proceed | "
+                            f"url={client_llm_url}, err={e}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[execute_llm_call] Proxy URL rejected by SSRF guard | "
+                            f"url={client_llm_url}, err={e}"
+                        )
+                        return BlockResult(
+                            error=f"[KAAPI] Proxy URL rejected: {str(e)}"
+                        )
+
+                creds = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    project_id=project_id,
+                    provider=Provider.PROXY.value,
+                )
+                if not creds or not creds.get("api_key"):
+                    return BlockResult(
+                        error="Proxy credentials not registered for project"
+                    )
+
+                try:
+                    llm_call_request = LLMCallRequest(
+                        query=query,
+                        config=config,
+                        request_metadata=request_metadata,
+                    )
+                    llm_call = create_llm_call(
+                        session,
+                        request=llm_call_request,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        resolved_config=config_blob,
+                        original_provider=Provider.PROXY.value,
+                        chain_id=chain_id,
+                    )
+                    llm_call_id = llm_call.id
+                except Exception as e:
+                    logger.error(
+                        f"[execute_llm_call] Failed to create proxy LLM call record: {e} | job_id={job_id}",
+                        exc_info=True,
+                    )
+                    return BlockResult(
+                        error=f"Failed to create LLM call record: {str(e)}"
+                    )
+
+                record_llm_call_started(
+                    provider=Provider.PROXY.value,
+                    model="",
+                    operation="chat",
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+                proxy_started_at = time.perf_counter()
+                proxy_data: dict | None = None
+
+                with tracer.start_as_current_span("llm.proxy.execute") as proxy_span:
+                    _set_traceability_attributes(
+                        proxy_span,
+                        job_id=job_id,
+                        llm_call_id=llm_call_id,
+                        chain_id=chain_id,
+                        trace_id=trace_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                    )
+                    proxy_span.set_attribute("llm.provider", Provider.PROXY.value)
+                    proxy_span.set_attribute("llm.proxy.url", client_llm_url)
+
+                    try:
+                        with suppress_http_instrumentation():
+                            with httpx.Client(timeout=60.0) as client:
+                                resp = client.post(
+                                    client_llm_url,
+                                    headers={
+                                        "Authorization": f"Bearer {creds['api_key']}",
+                                        "Content-Type": "application/json",
+                                        "Accept": "application/json",
+                                    },
+                                    json={"input": query.input.content.value},
+                                )
+                                resp.raise_for_status()
+                                proxy_data = resp.json()
+                    except httpx.HTTPError as e:
+                        proxy_span.record_exception(e)
+                        proxy_span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, str(e))
+                        )
+                        record_llm_call_finished(
+                            provider=Provider.PROXY.value,
+                            model="",
+                            operation="chat",
+                            duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
+                            error=True,
+                            organization_id=organization_id,
+                            project_id=project_id,
+                        )
+                        logger.error(
+                            f"[execute_llm_call] Proxy call failed: {e} | job_id={job_id}, url={client_llm_url}",
+                            exc_info=True,
+                        )
+                        return BlockResult(
+                            error=f"Proxy call failed: {str(e)}",
+                            llm_call_id=llm_call_id,
+                        )
+
+                try:
+                    proxy_output_text = proxy_data["output"][0]["content"][0]["text"]
+                except (KeyError, IndexError, TypeError) as e:
+                    logger.error(
+                        f"[execute_llm_call] Malformed proxy response: {e} | job_id={job_id}",
+                        exc_info=True,
+                    )
+                    return BlockResult(
+                        error="Proxy returned an unexpected response structure",
+                        llm_call_id=llm_call_id,
+                    )
+                proxy_model = str(proxy_data.get("model") or "")
+                provider_response_id = str(proxy_data.get("id") or job_id)
+                raw_usage = proxy_data.get("usage") or {}
+                proxy_usage = Usage(
+                    input_tokens=int(raw_usage.get("input_tokens") or 0),
+                    output_tokens=int(raw_usage.get("output_tokens") or 0),
+                    total_tokens=int(raw_usage.get("total_tokens") or 0),
+                )
+
+                proxy_response = LLMCallResponse(
+                    response=LLMResponse(
+                        provider_response_id=provider_response_id,
+                        provider=Provider.PROXY.value,
+                        model=proxy_model,
+                        output=TextOutput(content=TextContent(value=proxy_output_text)),
+                    ),
+                    usage=proxy_usage,
+                )
+
+                try:
+                    update_llm_call_response(
+                        session,
+                        llm_call_id=llm_call_id,
+                        provider_response_id=provider_response_id,
+                        content=proxy_response.response.output.model_dump(),
+                        usage=proxy_usage.model_dump(),
+                        conversation_id=None,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
+                        exc_info=True,
+                    )
+
+                record_llm_call_finished(
+                    provider=Provider.PROXY.value,
+                    model=proxy_model,
+                    operation="chat",
+                    duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
+                    input_tokens=proxy_usage.input_tokens,
+                    output_tokens=proxy_usage.output_tokens,
+                    total_tokens=proxy_usage.total_tokens,
+                    error=False,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+
+                result = BlockResult(
+                    response=proxy_response,
+                    llm_call_id=llm_call_id,
+                    usage=proxy_usage,
+                    metadata=request_metadata,
+                )
+
+                with tracer.start_as_current_span(
+                    "llm.guardrails.output"
+                ) as out_guard_span:
+                    _set_traceability_attributes(
+                        out_guard_span,
+                        job_id=job_id,
+                        llm_call_id=llm_call_id,
+                        chain_id=chain_id,
+                        trace_id=trace_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                    )
+                    result, output_error = apply_output_guardrails(
+                        config_blob=config_blob,
+                        result=result,
+                        job_id=job_id,
+                        project_id=project_id,
+                        organization_id=organization_id,
+                        input_text=original_input_value,
+                    )
+                    if output_error:
+                        out_guard_span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, output_error)
+                        )
+                        return BlockResult(error=output_error, llm_call_id=llm_call_id)
+
+                return result
 
             completion_config = config_blob.completion
             original_provider = completion_config.provider
@@ -956,6 +1196,7 @@ def execute_llm_call(
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
+                    input_text=original_input_value,
                 )
                 if output_error:
                     out_guard_span.set_status(

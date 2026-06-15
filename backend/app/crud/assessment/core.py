@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -129,6 +130,30 @@ def create_assessment_run(
     return run
 
 
+def update_run_post_processing_config(
+    session: Session,
+    run: AssessmentRun,
+    config: dict[str, Any] | None,
+) -> AssessmentRun:
+    """Set post_processing_config inside the run's input JSON blob and persist."""
+    run.input = {**(run.input or {}), "post_processing_config": config}
+    flag_modified(run, "input")
+    session.add(run)
+    try:
+        session.commit()
+        session.refresh(run)
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            f"[update_run_post_processing_config] Failed for run id={run.id}: {e}",
+            exc_info=True,
+        )
+        raise
+
+    logger.info(f"[update_run_post_processing_config] Updated run id={run.id}")
+    return run
+
+
 def get_assessment_run_by_id(
     session: Session,
     run_id: int,
@@ -223,16 +248,58 @@ def update_assessment_run_status(
     return run
 
 
+def update_assessment_run_prefilter_stats(
+    session: Session,
+    run: AssessmentRun,
+    prefilter_object_store_url: str | None = None,
+    prefilter_total_rows: int | None = None,
+    prefilter_total_passed: int | None = None,
+    prefilter_total_rejected: int | None = None,
+) -> AssessmentRun:
+    """Persist prefilter result stats (rows/passed/rejected + S3 URL) on a run."""
+    run.updated_at = now()
+
+    if prefilter_object_store_url is not None:
+        run.prefilter_object_store_url = prefilter_object_store_url
+    if prefilter_total_rows is not None:
+        run.prefilter_total_rows = prefilter_total_rows
+    if prefilter_total_passed is not None:
+        run.prefilter_total_passed = prefilter_total_passed
+    if prefilter_total_rejected is not None:
+        run.prefilter_total_rejected = prefilter_total_rejected
+
+    session.add(run)
+    try:
+        session.commit()
+        session.refresh(run)
+    except Exception as e:
+        session.rollback()
+        logger.error(
+            f"[update_assessment_run_prefilter_stats] Failed: {e}", exc_info=True
+        )
+        raise
+
+    return run
+
+
+_ACTIVE_RUN_STATUSES = {
+    "prefilter_processing",
+    "l2_processing",
+    "processing",
+    "in_progress",
+}
+_FAILED_RUN_STATUSES = {"failed", "prefilter_failed"}
+_COMPLETED_RUN_STATUSES = {"completed", "completed_with_errors"}
+
+
 def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
     """Aggregate child run statuses into counters."""
     return AssessmentRunCounts(
         total=len(runs),
         pending=sum(1 for run in runs if run.status == "pending"),
-        processing=sum(
-            1 for run in runs if run.status in {"processing", "in_progress"}
-        ),
-        completed=sum(1 for run in runs if run.status == "completed"),
-        failed=sum(1 for run in runs if run.status == "failed"),
+        processing=sum(1 for run in runs if run.status in _ACTIVE_RUN_STATUSES),
+        completed=sum(1 for run in runs if run.status in _COMPLETED_RUN_STATUSES),
+        failed=sum(1 for run in runs if run.status in _FAILED_RUN_STATUSES),
     )
 
 
@@ -267,6 +334,11 @@ def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
             total_items=run.total_items,
             error_message=run.error_message,
             updated_at=run.updated_at,
+            prefilter_total_rows=run.prefilter_total_rows,
+            prefilter_total_passed=run.prefilter_total_passed,
+            prefilter_total_rejected=run.prefilter_total_rejected,
+            stage=run.stage,
+            stage_status=run.stage_status,
         )
         for run in runs
     ]

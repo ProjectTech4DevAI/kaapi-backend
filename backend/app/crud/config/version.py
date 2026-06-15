@@ -8,6 +8,7 @@ from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
+from app.crud.model_config import is_reasoning_model, validate_blob_model_or_raise
 from app.models import (
     Config,
     ConfigVersion,
@@ -66,6 +67,8 @@ class ConfigVersionCrud:
             updates=version_create.config_blob,
         )
 
+        self._strip_unsupported_params(merged_config)
+
         # Validate that provider and type haven't been changed
         self._validate_immutable_fields(latest_version.config_blob, merged_config)
 
@@ -80,6 +83,8 @@ class ConfigVersionCrud:
                 f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"
             )
             raise HTTPException(status_code=400, detail=validation_errors)
+
+        validate_blob_model_or_raise(self.session, validated_blob)
 
         try:
             next_version = self._get_next_version(self.config_id)
@@ -150,6 +155,29 @@ class ConfigVersionCrud:
                 result[key] = value
 
         return result
+
+    def _strip_unsupported_params(self, merged_config: dict[str, Any]) -> None:
+        """Remove completion params the newly selected model doesn't accept.
+
+        Only such param today is `temperature` for reasoning models
+        (gpt-5 family — flagged by an `effort` key in `model_config.config`).
+        """
+        completion = dict(merged_config.get("completion") or {})
+        provider = completion.get("provider")
+        params = dict(completion.get("params") or {})
+        model_name = params.get("model")
+        if not provider or not model_name:
+            return
+        if str(provider).endswith("-native"):
+            return
+        if is_reasoning_model(
+            session=self.session,
+            provider=provider,  # type: ignore[arg-type]
+            model_name=model_name,
+        ):
+            params.pop("temperature", None)
+            completion["params"] = params
+            merged_config["completion"] = completion
 
     def _validate_immutable_fields(
         self, existing: dict[str, Any], merged: dict[str, Any]
