@@ -5,6 +5,10 @@ on:
     types: [closed]
     branches: [main]
 
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
 jobs:
   pre-release:
     if: github.event.pull_request.merged == true
