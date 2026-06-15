@@ -104,6 +104,7 @@ Layer-specific conventions live in `.claude/agents/*.md` and are enforced by the
   ```
 - **`uv` is the runner**, not `pip`. Examples: `uv run pytest`, `uv run alembic ...`, `uv run pre-commit run --all-files`.
 - **No magic values** in code — extract repeated literals to constants / `Enum` / settings.
+- **Comments explain *why*, not *what*.** Don't restate what the code already says (`i += 1  # increment i`), don't narrate self-evident lines, and don't pad docstrings/migration descriptions with obvious recaps of the operations. A comment earns its place only by adding non-obvious context — rationale, a gotcha, a link, a constraint. When in doubt, delete it; clear code needs fewer comments, not more.
 - **Naming:** `list_*` for plural fetch, `get_*` for singletons; snake_case funcs/vars, PascalCase classes, UPPER_SNAKE constants; `Enum` suffix on enum classes.
 - **Timestamps** are `inserted_at` / `updated_at` (not `created_at`).
 
