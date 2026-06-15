@@ -114,11 +114,29 @@ When working in a specific layer, the matching agent under `.claude/agents/` han
 
 | Agent | Layer |
 |---|---|
-| `route-writer` | `app/api/routes/` |
-| `crud-writer` | `app/crud/` |
-| `service-writer` | `app/services/` |
-| `model-writer` | `app/models/` |
+| `feature-builder` | Full feature spanning `models` → `crud` → `services` → `api/routes` (the build spine, one context) |
+| `route-writer` | `app/api/routes/` (single-layer edits) |
+| `crud-writer` | `app/crud/` (single-layer edits) |
+| `service-writer` | `app/services/` (single-layer edits) |
+| `model-writer` | `app/models/` (single-layer edits) |
 | `migration-writer` | `app/alembic/versions/` |
 | `celery-task-writer` | `app/celery/tasks/` |
 | `test-writer` | `app/tests/` |
 | `convention-reviewer` | Cross-cutting pre-commit gate (mirrors `/pr-review`) |
+
+### Build a feature as a 4-context pipeline
+
+To keep each context window lean (heavy file I/O degrades performance), **build a multi-layer feature as four sequential subagent contexts, not inline.** Launch each phase with the Agent tool — each runs in its own context and returns only a summary, so the orchestrator stays small. The phases are a dependency chain, so run them **in order**, passing only the *artifacts* forward (signatures, file paths, the next migration rev-id), never re-deriving prior reasoning:
+
+| # | Context | Agent | Consumes |
+|---|---|---|---|
+| 1 | schema + code-spine | `feature-builder` | the feature request |
+| 2 | migration | `migration-writer` | phase 1's model changes + next rev-id |
+| 3 | test | `test-writer` | phase 1's signatures (+ which HTTP boundaries to mock) |
+| 4 | review | `convention-reviewer` | the full diff |
+
+Rules of thumb:
+- **Run them sequentially**, not in parallel — phase N depends on phase N-1's output.
+- **Single-layer change?** Skip the pipeline; delegate to the one matching standalone agent (e.g. `crud-writer`) directly.
+- **No model/schema change?** Skip phase 2 (`migration-writer`).
+- `feature-builder` and the standalone layer agents share one source of truth — the convention docs in `.claude/conventions/{model,crud,service,route}.md` — so output never drifts between them.
