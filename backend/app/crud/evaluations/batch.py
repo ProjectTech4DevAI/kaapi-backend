@@ -167,7 +167,7 @@ def start_evaluation_batch(
         session: Database session
         eval_run: EvaluationRun database object
         params: Kaapi-standardized completion params (dict)
-        provider: Completion provider ("openai" or "google", with optional "-native" suffix)
+        provider: Completion provider ("openai" or "google-aistudio", with optional "-native" suffix)
 
     Returns:
         Updated EvaluationRun with batch_job_id populated
@@ -222,7 +222,7 @@ def start_evaluation_batch(
                 config=batch_config,
             )
 
-        elif base_provider == LLMProvider.GOOGLE:
+        elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
             mapped_params, warnings = map_kaapi_to_google_params(
                 kaapi_params=params, completion_type="text"
             )
@@ -255,7 +255,7 @@ def start_evaluation_batch(
             batch_job = start_batch_job(
                 session=session,
                 provider=batch_provider,
-                provider_name="google",
+                provider_name="google-aistudio",
                 job_type=BatchJobType.EVALUATION,
                 organization_id=eval_run.organization_id,
                 project_id=eval_run.project_id,

@@ -67,7 +67,10 @@ def _get_batch_provider(
         )
         return OpenAIBatchProvider(client=openai_client)
 
-    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
+    if provider_name in (
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+    ):
         gemini_client = GeminiClient.from_credentials(
             session=session,
             org_id=organization_id,
@@ -206,7 +209,10 @@ def parse_evaluation_output(
     """
     # Create lookup map for dataset items by ID
     dataset_map = {item["id"]: item for item in dataset_items}
-    is_google = provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE)
+    is_google = provider_name in (
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+    )
 
     results = []
 
