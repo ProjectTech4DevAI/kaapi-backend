@@ -9,7 +9,6 @@ from sqlmodel import Session, select
 
 from app.crud.evaluations.batch import build_openai_evaluation_jsonl
 from app.models import EvaluationDataset, EvaluationRun
-from app.models.llm.request import TextLLMParams
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
@@ -597,10 +596,18 @@ class TestBatchEvaluation:
 
 
 class TestBatchEvaluationJSONLBuilding:
-    """Test JSONL building logic for batch evaluation."""
+    """Test JSONL building logic for batch evaluation.
+
+    ``build_openai_evaluation_jsonl`` wraps an already-mapped ``openai_params``
+    dict (the output of ``map_kaapi_to_openai_params``) into Responses API batch
+    lines: ``body`` is the params dict plus the per-item ``input``. Param shaping
+    (temperature inclusion, knowledge_base_ids -> tools) is the mapper's job and
+    is covered in tests/services/llm/test_mappers.py, so these tests pass plain
+    pre-mapped dicts and assert faithful pass-through.
+    """
 
     def test_build_batch_jsonl_basic(self) -> None:
-        """Test basic JSONL building with minimal config."""
+        """Test basic JSONL building with a fully populated params dict."""
         dataset_items = [
             {
                 "id": "item1",
@@ -610,13 +617,13 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o",
-            temperature=0.2,
-            instructions="You are a helpful assistant",
-        )
+        openai_params = {
+            "model": "gpt-4o",
+            "temperature": 0.2,
+            "instructions": "You are a helpful assistant",
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert isinstance(jsonl_data[0], dict)
@@ -631,7 +638,7 @@ class TestBatchEvaluationJSONLBuilding:
         assert request["body"]["input"] == "What is 2+2?"
 
     def test_build_batch_jsonl_with_tools(self) -> None:
-        """Test JSONL building with tools configuration."""
+        """Tools present in the params dict are passed through to the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -641,13 +648,19 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o-mini",
-            instructions="Search documents",
-            knowledge_base_ids=["vs_abc123"],
-        )
+        openai_params = {
+            "model": "gpt-4o-mini",
+            "instructions": "Search documents",
+            "tools": [
+                {
+                    "type": "file_search",
+                    "vector_store_ids": ["vs_abc123"],
+                    "max_num_results": 20,
+                }
+            ],
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         request = jsonl_data[0]
@@ -655,7 +668,7 @@ class TestBatchEvaluationJSONLBuilding:
         assert "vs_abc123" in request["body"]["tools"][0]["vector_store_ids"]
 
     def test_build_batch_jsonl_minimal_config(self) -> None:
-        """Test JSONL building with minimal config (only model required)."""
+        """Test JSONL building with minimal params (only model)."""
         dataset_items = [
             {
                 "id": "item1",
@@ -665,9 +678,9 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o")  # Only model provided
+        openai_params = {"model": "gpt-4o"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         request = jsonl_data[0]
@@ -697,9 +710,9 @@ class TestBatchEvaluationJSONLBuilding:
             },
         ]
 
-        config = TextLLMParams(model="gpt-4o", instructions="Test")
+        openai_params = {"model": "gpt-4o", "instructions": "Test"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         # Should only have 1 valid item
         assert len(jsonl_data) == 1
@@ -717,12 +730,12 @@ class TestBatchEvaluationJSONLBuilding:
             for i in range(5)
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o",
-            instructions="Answer questions",
-        )
+        openai_params = {
+            "model": "gpt-4o",
+            "instructions": "Answer questions",
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 5
 
@@ -732,7 +745,7 @@ class TestBatchEvaluationJSONLBuilding:
             assert request_dict["body"]["model"] == "gpt-4o"
 
     def test_build_batch_jsonl_temperature_included_when_explicitly_set(self) -> None:
-        """When temperature is explicitly set, it should appear in the JSONL body."""
+        """A temperature present in the params dict appears in the JSONL body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -742,16 +755,16 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o", temperature=0.5)
+        openai_params = {"model": "gpt-4o", "temperature": 0.5}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" in jsonl_data[0]["body"]
         assert jsonl_data[0]["body"]["temperature"] == 0.5
 
     def test_build_batch_jsonl_temperature_excluded_when_not_set(self) -> None:
-        """When temperature is not explicitly set, it should NOT appear in the JSONL body."""
+        """A temperature absent from the params dict stays absent from the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -761,10 +774,10 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        # Only model provided — temperature not in model_fields_set
-        config = TextLLMParams(model="gpt-4o")
+        # Mapper omits temperature when it was never set, so it isn't in the dict.
+        openai_params = {"model": "gpt-4o"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" not in jsonl_data[0]["body"]
@@ -772,7 +785,7 @@ class TestBatchEvaluationJSONLBuilding:
     def test_build_batch_jsonl_temperature_zero_included_when_explicitly_set(
         self,
     ) -> None:
-        """When temperature is explicitly set to 0.0, it should still appear in the body."""
+        """A temperature of 0.0 in the params dict is preserved in the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -782,9 +795,9 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o", temperature=0.0)
+        openai_params = {"model": "gpt-4o", "temperature": 0.0}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" in jsonl_data[0]["body"]
