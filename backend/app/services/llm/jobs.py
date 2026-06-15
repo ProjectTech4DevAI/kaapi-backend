@@ -63,10 +63,7 @@ from app.models.llm.response import (
     Usage,
 )
 from app.services.llm.chain.types import BlockResult
-from app.services.llm.guardrails import (
-    list_validators_config,
-    run_guardrails_validation,
-)
+from app.services.llm.guardrails import apply_guardrails
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
@@ -370,6 +367,9 @@ def apply_input_guardrails(
 ) -> tuple[QueryParams, str | None, str | None]:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
+    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
+    ``QueryParams`` payload.
+
     Returns (query, error, guardrail_direct_response) where:
     - error is set when guardrails hard-block the request
     - guardrail_direct_response is set when rephrase_needed=True and the safe_text
@@ -386,46 +386,27 @@ def apply_input_guardrails(
         )
         return query, None, None
 
-    input_guardrails, _ = list_validators_config(
-        organization_id=organization_id,
+    outcome = apply_guardrails(
+        text=query.input.content.value,
+        validators=config_blob.input_guardrails,
+        job_id=job_id,
         project_id=project_id,
-        input_validator_configs=config_blob.input_guardrails,
-        output_validator_configs=None,
+        organization_id=organization_id,
     )
 
-    if not input_guardrails:
-        return query, None, None
+    if outcome.error is not None:
+        return query, outcome.error, None
 
-    safe = run_guardrails_validation(
-        query.input.content.value,
-        input_guardrails,
-        job_id,
-        project_id,
-        organization_id,
-        suppress_pass_logs=True,
-    )
-
-    logger.info(
-        f"[apply_input_guardrails] Validation result | success={safe['success']}, job_id={job_id}"
-    )
-
-    if safe.get("bypassed"):
+    if outcome.rephrase_needed:
         logger.info(
-            f"[apply_input_guardrails] Guardrails bypassed (service unavailable) | job_id={job_id}"
+            f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, None
+        return query, None, outcome.safe_text
 
-    if safe["success"]:
-        safe_text = safe["data"]["safe_text"]
-        if safe["data"].get("rephrase_needed"):
-            logger.info(
-                f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
-            )
-            return query, None, safe_text
-        query.input.content.value = safe_text
-        return query, None, None
-
-    return query, safe["error"], None
+    # No-op paths (no validators, bypassed) leave the query untouched.
+    if outcome.applied and outcome.safe_text is not None:
+        query.input.content.value = outcome.safe_text
+    return query, None, None
 
 
 def apply_output_guardrails(
@@ -438,6 +419,9 @@ def apply_output_guardrails(
     input_text: str | None = None,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
+
+    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
+    ``BlockResult``.
 
     Returns (modified_result, None) on success, or (result, error_string) on failure.
     """
@@ -452,42 +436,21 @@ def apply_output_guardrails(
         )
         return result, None
 
-    _, output_guardrails = list_validators_config(
-        organization_id=organization_id,
+    outcome = apply_guardrails(
+        text=input_text or "",
+        validators=config_blob.output_guardrails,
+        job_id=job_id,
         project_id=project_id,
-        input_validator_configs=None,
-        output_validator_configs=config_blob.output_guardrails,
+        organization_id=organization_id,
+        output_text=result.response.response.output.content.value,
     )
 
-    if not output_guardrails:
-        return result, None
+    if outcome.error is not None:
+        return result, outcome.error
 
-    llm_output = result.response.response.output.content.value
-    safe = run_guardrails_validation(
-        input_text or "",
-        output_guardrails,
-        job_id,
-        project_id,
-        organization_id,
-        suppress_pass_logs=True,
-        output_text=llm_output,
-    )
-
-    logger.info(
-        f"[apply_output_guardrails] Validation result | success={safe['success']}, job_id={job_id}"
-    )
-
-    if safe.get("bypassed"):
-        logger.info(
-            f"[apply_output_guardrails] Guardrails bypassed (service unavailable) | job_id={job_id}"
-        )
-        return result, None
-
-    if safe["success"]:
-        result.response.response.output.content.value = safe["data"]["safe_text"]
-        return result, None
-
-    return result, safe["error"]
+    if outcome.applied and outcome.safe_text is not None:
+        result.response.response.output.content.value = outcome.safe_text
+    return result, None
 
 
 def execute_llm_call(

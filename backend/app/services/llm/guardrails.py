@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 import logging
@@ -8,6 +9,119 @@ from app.core.config import settings
 from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GuardrailsOutcome:
+    """Result of a single guardrails service call, in domain-agnostic form.
+
+    Callers map this onto their own domain types (QueryParams, BlockResult,
+    or a raw text response for the /guardrails endpoint).
+    """
+
+    safe_text: str | None
+
+    error: str | None
+
+    bypassed: bool
+    """True when the guardrails service was unreachable and we fell back to
+    the original text. Callers should treat this as a soft pass."""
+
+    rephrase_needed: bool
+    """Input-guardrails-only signal: when True, safe_text is a canned response
+    that should be returned directly to the user without invoking the LLM."""
+
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def applied(self) -> bool:
+        return bool(self.raw) and not self.bypassed
+
+
+def apply_guardrails(
+    *,
+    text: str,
+    validators: list[Validator] | None,
+    job_id: UUID,
+    project_id: int | None,
+    organization_id: int | None,
+    output_text: str | None = None,
+) -> GuardrailsOutcome:
+    """Resolve validator configs by ID and run validation against the
+    guardrails service. Transport-only — no domain wrappers.
+
+    Used by:
+      - /llm/call and /llm/chain (via the apply_input_guardrails /
+        apply_output_guardrails adapters in app.services.llm.jobs)
+      - /guardrails (dedicated endpoint) directly
+
+    Args:
+        text: Primary text to validate. Sent as `input` to the service.
+        validators: Validator references (config IDs). When None/empty the
+            function short-circuits with a no-op outcome.
+        output_text: When provided, sent as `output` to the service for
+            output-guardrail validators that compare input/output pairs.
+            Also routes the IDs through the output-config fetch path.
+    """
+    if not validators:
+        return GuardrailsOutcome(
+            safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
+        )
+
+    is_output = output_text is not None
+    input_cfgs, output_cfgs = list_validators_config(
+        organization_id=organization_id,
+        project_id=project_id,
+        input_validator_configs=None if is_output else validators,
+        output_validator_configs=validators if is_output else None,
+    )
+    resolved = output_cfgs if is_output else input_cfgs
+    if not resolved:
+        return GuardrailsOutcome(
+            safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
+        )
+
+    safe = run_guardrails_validation(
+        text,
+        resolved,
+        job_id,
+        project_id,
+        organization_id,
+        suppress_pass_logs=True,
+        output_text=output_text,
+    )
+
+    logger.info(
+        f"[apply_guardrails] Validation result | success={safe.get('success')}, "
+        f"bypassed={safe.get('bypassed', False)}, job_id={job_id}"
+    )
+
+    if safe.get("bypassed"):
+        return GuardrailsOutcome(
+            safe_text=text,
+            error=None,
+            bypassed=True,
+            rephrase_needed=False,
+            raw=safe,
+        )
+
+    if safe.get("success"):
+        data = safe.get("data", {}) or {}
+        return GuardrailsOutcome(
+            safe_text=data.get("safe_text", text),
+            error=None,
+            bypassed=False,
+            rephrase_needed=bool(data.get("rephrase_needed")),
+            raw=safe,
+        )
+
+    return GuardrailsOutcome(
+        safe_text=None,
+        error=safe.get("error"),
+        bypassed=False,
+        rephrase_needed=False,
+        raw=safe,
+    )
 
 
 def run_guardrails_validation(
