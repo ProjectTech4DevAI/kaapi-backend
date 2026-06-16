@@ -12,14 +12,17 @@ from app.crud.assessment.batch import (
     _build_text_prompt,
     _load_dataset_rows,
     _parse_excel_rows,
+    build_anthropic_jsonl,
     build_google_jsonl,
     build_openai_jsonl,
     submit_assessment_batch,
 )
 from app.models.assessment import AssessmentAttachment
+from app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
     attachment_type_for_row,
+    build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
     resolve_item_type,
@@ -223,6 +226,69 @@ class TestSubmitAssessmentBatchProviderRouting:
         assert map_params.call_args.args[0]["instructions"] == "request system"
         assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
 
+    def test_anthropic_native_routes_to_anthropic_batch(self) -> None:
+        session = MagicMock()
+        run = _make_run()
+        dataset = _make_dataset()
+        config_blob = SimpleNamespace(
+            completion=SimpleNamespace(
+                provider="anthropic-native",
+                params={"instructions": "config system"},
+            )
+        )
+        batch_job = MagicMock()
+        batch_job.id = 4
+        batch_job.total_items = 1
+
+        with (
+            patch(
+                "app.crud.assessment.batch._load_dataset_rows",
+                return_value=[{"question": "q1"}],
+            ),
+            patch(
+                "app.crud.assessment.batch.map_kaapi_to_anthropic_params",
+                return_value=({"model": "claude-sonnet-4-6"}, []),
+            ) as map_params,
+            patch(
+                "app.crud.assessment.batch.build_anthropic_jsonl",
+                return_value=[{"custom_id": "row_0"}],
+            ),
+            patch(
+                "app.crud.assessment.batch.get_anthropic_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.crud.assessment.batch.AnthropicBatchProvider",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.crud.assessment.batch.start_batch_job",
+                return_value=batch_job,
+            ) as start_batch,
+        ):
+            result = submit_assessment_batch(
+                session=session,
+                run=run,
+                assessment=_make_assessment(),
+                dataset=dataset,
+                config_blob=config_blob,
+                assessment_input={
+                    "text_columns": ["question"],
+                    "attachments": [],
+                    "system_instruction": "request system",
+                },
+                organization_id=1,
+                project_id=1,
+            )
+
+        assert result.id == 4
+        assert map_params.call_args.args[0]["instructions"] == "request system"
+        assert start_batch.call_args.kwargs["provider_name"] == "anthropic"
+        assert start_batch.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
+        assert start_batch.call_args.kwargs["config"]["max_tokens"] == (
+            DEFAULT_ANTHROPIC_MAX_TOKENS
+        )
+
 
 class TestBatchDatasetParsing:
     def test_load_dataset_rows_routes_xlsx_to_excel_parser(self) -> None:
@@ -390,6 +456,72 @@ class TestBatchHelpers:
         assert google_jsonl[0]["request"]["systemInstruction"] == {
             "parts": [{"text": "system"}]
         }
+
+    def test_build_anthropic_jsonl(self) -> None:
+        rows = [
+            {
+                "q": "What is 2+2?",
+                "img": "https://example.com/a.png",
+                "pdf": "https://example.com/d.pdf",
+            }
+        ]
+        attachments = [
+            AssessmentAttachment(column="img", type="image", format="url"),
+            AssessmentAttachment(column="pdf", type="pdf", format="url"),
+        ]
+
+        jsonl = build_anthropic_jsonl(
+            rows=rows,
+            text_columns=["q"],
+            attachments=attachments,
+            prompt_template=None,
+            anthropic_params={"model": "claude-sonnet-4-6", "system": "be brief"},
+        )
+        assert len(jsonl) == 1
+        assert jsonl[0]["custom_id"] == "row_0"
+        params = jsonl[0]["params"]
+        assert params["model"] == "claude-sonnet-4-6"
+        assert params["system"] == "be brief"
+        content = params["messages"][0]["content"]
+        assert content[0] == {"type": "text", "text": "What is 2+2?"}
+        assert content[1] == {
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.com/a.png"},
+        }
+        assert content[2] == {
+            "type": "document",
+            "source": {"type": "url", "url": "https://example.com/d.pdf"},
+        }
+
+    def test_build_anthropic_jsonl_skips_empty_rows(self) -> None:
+        jsonl = build_anthropic_jsonl(
+            rows=[{"q": "  "}],
+            text_columns=["q"],
+            attachments=[],
+            prompt_template=None,
+            anthropic_params={"model": "claude-sonnet-4-6"},
+        )
+        assert jsonl == []
+
+    def test_build_anthropic_jsonl_uses_row_indices(self) -> None:
+        jsonl = build_anthropic_jsonl(
+            rows=[{"q": "a"}, {"q": "b"}],
+            text_columns=["q"],
+            attachments=[],
+            prompt_template=None,
+            anthropic_params={"model": "claude-sonnet-4-6"},
+            row_indices=[3, 7],
+        )
+        assert [line["custom_id"] for line in jsonl] == ["row_3", "row_7"]
+
+    def test_build_anthropic_attachment_parts(self) -> None:
+        image_att = AssessmentAttachment(column="img", type="image", format="url")
+        parts = build_anthropic_attachment_parts(
+            "https://example.com/a.png,https://example.com/b.png", image_att
+        )
+        assert len(parts) == 2
+        assert parts[0]["type"] == "image"
+        assert parts[0]["source"] == {"type": "url", "url": "https://example.com/a.png"}
 
 
 class TestResolveItemType:
