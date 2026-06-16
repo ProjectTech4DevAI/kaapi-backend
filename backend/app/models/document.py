@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlmodel import Field, SQLModel
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Column, Field, SQLModel
 
 from app.core.util import now
 from app.models.doc_transformation_job import TransformationStatus
@@ -41,6 +42,14 @@ class Document(DocumentBase, table=True):
         default=None,
         description="The size of the document in kilobytes",
         sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
+    )
+    file_id: dict | None = Field(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment='Provider-keyed file IDs, e.g. {"openai": "file-abc"}, to avoid re-uploading',
+        ),
     )
 
     # Foreign keys
