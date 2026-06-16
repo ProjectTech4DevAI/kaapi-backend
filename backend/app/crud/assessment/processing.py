@@ -13,10 +13,7 @@ from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
 from app.core.batch import BATCH_KEY, poll_batch_status, process_completed_batch
-from app.core.batch.anthropic import (
-    MessageBatchStatus,
-    extract_text_from_anthropic_response,
-)
+from app.core.batch.anthropic import MessageBatchStatus
 from app.core.batch.base import BatchProvider
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.assessment import (
@@ -207,7 +204,11 @@ def parse_assessment_output(
                 continue
 
             if response:
-                text = extract_text_from_anthropic_response(response)
+                text = "".join(
+                    block.get("text", "")
+                    for block in response.get("content", [])
+                    if block.get("type") == "text"
+                )
                 results.append(
                     {
                         "row_id": row_id,
@@ -304,16 +305,18 @@ def _poll_stage_outcome(session: Session, provider: BatchProvider, batch_job) ->
     status = batch_job.provider_status
 
     if status in _PROVIDER_SUCCESS:
+        counts = status_result.get("request_counts") or {}
+        if counts.get("completed", 0) == 0 and (
+            counts.get("failed", 0) > 0
+            or status_result.get("error_file_id")
+            or status_result.get("error_message")
+        ):
+            return "failed"
         if batch_job.provider_output_file_id:
             process_completed_batch(
                 session=session, provider=provider, batch_job=batch_job
             )
             return "completed"
-        counts = status_result.get("request_counts") or {}
-        if counts.get("completed", 0) == 0 and (
-            counts.get("failed", 0) > 0 or status_result.get("error_file_id")
-        ):
-            return "failed"
         return "no_change"  # output genuinely not ready yet — retry next cycle
     if status in _PROVIDER_FAILED:
         return "failed"

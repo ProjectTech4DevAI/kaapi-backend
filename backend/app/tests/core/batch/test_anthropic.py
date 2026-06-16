@@ -2,10 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core.batch.anthropic import (
-    AnthropicBatchProvider,
-    extract_text_from_anthropic_response,
-)
+from app.core.batch.anthropic import AnthropicBatchProvider
 from app.models.llm.constants import (
     DEFAULT_ANTHROPIC_MAX_TOKENS,
     DEFAULT_TEXT_MODELS,
@@ -362,36 +359,3 @@ class TestAnthropicBatchProvider:
         """Test that download_file raises NotImplementedError."""
         with pytest.raises(NotImplementedError):
             provider.download_file("file-123")
-
-
-class TestExtractTextFromAnthropicResponse:
-    """Test cases for extract_text_from_anthropic_response."""
-
-    def test_extracts_single_text_block(self):
-        response = {"content": [{"type": "text", "text": "Hello world"}]}
-        assert extract_text_from_anthropic_response(response) == "Hello world"
-
-    def test_concatenates_multiple_text_blocks(self):
-        response = {
-            "content": [
-                {"type": "text", "text": "Hello "},
-                {"type": "text", "text": "world"},
-            ]
-        }
-        assert extract_text_from_anthropic_response(response) == "Hello world"
-
-    def test_skips_non_text_blocks(self):
-        response = {
-            "content": [
-                {"type": "thinking", "thinking": "hmm"},
-                {"type": "text", "text": "Answer"},
-                {"type": "tool_use", "id": "toolu_1", "name": "t", "input": {}},
-            ]
-        }
-        assert extract_text_from_anthropic_response(response) == "Answer"
-
-    def test_empty_content(self):
-        assert extract_text_from_anthropic_response({"content": []}) == ""
-
-    def test_missing_content_key(self):
-        assert extract_text_from_anthropic_response({}) == ""

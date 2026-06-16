@@ -1,10 +1,6 @@
 """Batch processing infrastructure for LLM providers."""
 
-from .anthropic import (
-    AnthropicBatchProvider,
-    MessageBatchStatus,
-    extract_text_from_anthropic_response,
-)
+from .anthropic import AnthropicBatchProvider, MessageBatchStatus
 from .base import BATCH_KEY, BatchProvider
 from .client import GeminiClient, GeminiClientError
 from .gemini import (
@@ -29,7 +25,6 @@ __all__ = [
     "BatchProvider",
     "BatchJobState",
     "MessageBatchStatus",
-    "extract_text_from_anthropic_response",
     "GeminiClient",
     "GeminiClientError",
     "GeminiBatchProvider",

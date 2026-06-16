@@ -22,22 +22,6 @@ class MessageBatchStatus(str, Enum):
     ENDED = "ended"
 
 
-def extract_text_from_anthropic_response(response: dict[str, Any]) -> str:
-    """Extract text content from an Anthropic Message response dictionary.
-
-    Args:
-        response: Anthropic Message response as a dictionary
-
-    Returns:
-        str: Concatenated text from all text content blocks
-    """
-    return "".join(
-        block.get("text", "")
-        for block in response.get("content", [])
-        if block.get("type") == "text"
-    )
-
-
 class AnthropicBatchProvider(BatchProvider):
     """Anthropic implementation of the BatchProvider interface."""
 

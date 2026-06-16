@@ -533,3 +533,28 @@ class TestPollStageOutcome:
                 MagicMock(), MagicMock(), self._job(provider_output_file_id="file_1")
             )
         assert outcome == "completed"
+
+    def test_ended_with_zero_success_is_failed(self) -> None:
+        """Anthropic ENDED with every request errored must fail, not complete.
+
+        Anthropic always reports provider_output_file_id (= batch_id), so the
+        zero-success guard must run before that field advances the pipeline.
+        """
+        from app.crud.assessment.processing import _poll_stage_outcome
+
+        with patch(
+            "app.crud.assessment.processing.poll_batch_status",
+            return_value={
+                "request_counts": {"completed": 0, "failed": 5},
+                "error_message": "Batch ended with no successful requests",
+            },
+        ), patch(
+            "app.crud.assessment.processing.process_completed_batch"
+        ) as mock_process:
+            outcome = _poll_stage_outcome(
+                MagicMock(),
+                MagicMock(),
+                self._job(provider_status="ended", provider_output_file_id="batch_1"),
+            )
+        assert outcome == "failed"
+        mock_process.assert_not_called()
