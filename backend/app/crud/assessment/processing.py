@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
 from app.core.batch import BATCH_KEY, poll_batch_status, process_completed_batch
+from app.core.batch.anthropic import MessageBatchStatus
 from app.core.batch.base import BatchProvider
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.assessment import (
@@ -96,7 +97,7 @@ def parse_assessment_output(
 
     Args:
         raw_results: Raw results from batch provider
-        provider_name: Provider name ('openai' or 'google-aistudio')
+        provider_name: Provider name ('openai', 'google', or 'anthropic')
 
     Returns:
         List of parsed results with row_id, output text, usage, etc.
@@ -187,6 +188,46 @@ def parse_assessment_output(
                 }
             )
 
+        elif provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
+            response = result.get("response")
+            error = result.get("error")
+
+            if error:
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": None,
+                        "error": str(error),
+                        "usage": None,
+                    }
+                )
+                continue
+
+            if response:
+                text = "".join(
+                    block.get("text", "")
+                    for block in response.get("content", [])
+                    if block.get("type") == "text"
+                )
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": text if text else None,
+                        "error": None if text else "Empty response output",
+                        "usage": response.get("usage"),
+                        "response_id": response.get("id"),
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": None,
+                        "error": "Empty response",
+                        "usage": None,
+                    }
+                )
+
         elif provider_name in (
             LLMProvider.GOOGLE_AISTUDIO,
             LLMProvider.GOOGLE_AISTUDIO_NATIVE,
@@ -240,7 +281,11 @@ def parse_assessment_output(
     return results
 
 
-_PROVIDER_SUCCESS = {"completed", BatchJobState.SUCCEEDED.value}
+_PROVIDER_SUCCESS = {
+    "completed",
+    BatchJobState.SUCCEEDED.value,
+    MessageBatchStatus.ENDED.value,
+}
 _PROVIDER_FAILED = {
     "failed",
     "expired",
@@ -260,16 +305,18 @@ def _poll_stage_outcome(session: Session, provider: BatchProvider, batch_job) ->
     status = batch_job.provider_status
 
     if status in _PROVIDER_SUCCESS:
+        counts = status_result.get("request_counts") or {}
+        if counts.get("completed", 0) == 0 and (
+            counts.get("failed", 0) > 0
+            or status_result.get("error_file_id")
+            or status_result.get("error_message")
+        ):
+            return "failed"
         if batch_job.provider_output_file_id:
             process_completed_batch(
                 session=session, provider=provider, batch_job=batch_job
             )
             return "completed"
-        counts = status_result.get("request_counts") or {}
-        if counts.get("completed", 0) == 0 and (
-            counts.get("failed", 0) > 0 or status_result.get("error_file_id")
-        ):
-            return "failed"
         return "no_change"  # output genuinely not ready yet — retry next cycle
     if status in _PROVIDER_FAILED:
         return "failed"

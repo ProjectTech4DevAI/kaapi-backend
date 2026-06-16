@@ -270,3 +270,62 @@ class TestOpenAIResponseFormat:
     def test_non_text_response_format_sets_text_field(self) -> None:
         result, _ = self._call({"model": "gpt-4o", "response_format": "json_object"})
         assert result["text"]["format"]["type"] == "json_object"
+
+
+class TestMapKaapiToAnthropicParams:
+    def _call(self, params: dict):
+        from app.services.assessment.mappers import map_kaapi_to_anthropic_params
+
+        return map_kaapi_to_anthropic_params(params)
+
+    def test_missing_model_returns_warning(self) -> None:
+        result, warnings = self._call({})
+        assert result == {}
+        assert any("model" in w for w in warnings)
+
+    def test_basic_params_mapped(self) -> None:
+        result, warnings = self._call(
+            {
+                "model": "claude-sonnet-4-6",
+                "instructions": "be brief",
+                "temperature": 0.3,
+                "max_output_tokens": 2048,
+            }
+        )
+        assert result["model"] == "claude-sonnet-4-6"
+        assert result["system"] == "be brief"
+        assert result["temperature"] == 0.3
+        assert result["max_tokens"] == 2048
+        assert warnings == []
+
+    def test_top_p_suppressed_when_temperature_present(self) -> None:
+        result, warnings = self._call(
+            {"model": "claude-sonnet-4-6", "temperature": 0.3, "top_p": 0.9}
+        )
+        assert result["temperature"] == 0.3
+        assert "top_p" not in result
+        assert any("top_p" in w for w in warnings)
+
+    def test_top_p_alone_passes_through(self) -> None:
+        result, warnings = self._call({"model": "claude-sonnet-4-6", "top_p": 0.9})
+        assert result["top_p"] == 0.9
+        assert warnings == []
+
+    def test_output_schema_maps_to_output_config(self) -> None:
+        schema = {"type": "object", "properties": {"score": {"type": "integer"}}}
+        result, _ = self._call({"model": "claude-sonnet-4-6", "output_schema": schema})
+        fmt = result["output_config"]["format"]
+        assert fmt["type"] == "json_schema"
+        assert fmt["schema"]["additionalProperties"] is False
+
+    def test_unsupported_params_warned(self) -> None:
+        result, warnings = self._call(
+            {
+                "model": "claude-sonnet-4-6",
+                "effort": "high",
+                "knowledge_base_ids": ["kb1"],
+            }
+        )
+        assert "effort" not in result
+        assert any("effort" in w for w in warnings)
+        assert any("knowledge_base_ids" in w for w in warnings)
