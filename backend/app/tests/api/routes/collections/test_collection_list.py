@@ -3,10 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import (
-    get_assistant_collection,
-    get_vector_store_collection,
-)
+from app.tests.utils.collection import get_vector_store_collection
 from app.services.collections.helpers import get_service_name
 
 
@@ -34,14 +31,13 @@ def test_list_collections_returns_api_response(
     assert isinstance(data["data"], list)
 
 
-def test_list_collections_includes_assistant_collection(
+def test_list_collections_includes_new_collection(
     db: Session,
     client: TestClient,
     user_api_key_header: dict[str, str],
 ) -> None:
     """
-    Ensure that a newly created assistant-style collection (get_assistant_collection)
-    appears in the list for the current project.
+    Ensure that a newly created collection appears in the list for the current project.
     """
 
     project = get_project(db, "Dalgo")
@@ -52,7 +48,7 @@ def test_list_collections_includes_assistant_collection(
     )
     assert response_before.status_code == 200
 
-    collection = get_assistant_collection(db, project)
+    collection = get_vector_store_collection(db, project)
 
     response_after = client.get(
         f"{settings.API_V1_STR}/collections",
@@ -102,12 +98,8 @@ def test_list_collections_includes_vector_store_collection_with_fields(
 
     row = matching[0]
     assert row["project_id"] == project.id
-    # Vector store collection should have knowledge_base fields, not llm_service fields
     assert row["knowledge_base_provider"] == get_service_name("openai")
-    assert row["knowledge_base_id"] == collection.llm_service_id
-    # LLM service fields should not be present in the response
-    assert "llm_service_name" not in row
-    assert "llm_service_id" not in row
+    assert row["knowledge_base_id"] == collection.knowledge_base_id
 
 
 def test_list_collections_does_not_error_with_no_collections(

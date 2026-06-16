@@ -10,13 +10,13 @@ from app.crud import CollectionCrud
 from app.crud.collection.collection import CollectionNameConflictError
 from app.models import CollectionUpdate
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_assistant_collection
+from app.tests.utils.collection import get_vector_store_collection
 
 
 class TestCollectionCrudUpdate:
     def test_update_name_and_description(self, db: Session) -> None:
         project = get_project(db, "Dalgo")
-        collection = get_assistant_collection(db, project)
+        collection = get_vector_store_collection(db, project)
 
         crud = CollectionCrud(db, project.id)
         updated = crud.update(
@@ -29,7 +29,7 @@ class TestCollectionCrudUpdate:
 
     def test_update_only_name_leaves_description_untouched(self, db: Session) -> None:
         project = get_project(db, "Dalgo")
-        collection = get_assistant_collection(db, project)
+        collection = get_vector_store_collection(db, project)
         crud = CollectionCrud(db, project.id)
 
         crud.update(collection.id, CollectionUpdate(description="initial"))
@@ -40,7 +40,7 @@ class TestCollectionCrudUpdate:
 
     def test_update_with_same_name_is_noop_no_conflict(self, db: Session) -> None:
         project = get_project(db, "Dalgo")
-        collection = get_assistant_collection(db, project)
+        collection = get_vector_store_collection(db, project)
         crud = CollectionCrud(db, project.id)
 
         crud.update(collection.id, CollectionUpdate(name="same"))
@@ -52,10 +52,10 @@ class TestCollectionCrudUpdate:
         project = get_project(db, "Dalgo")
         crud = CollectionCrud(db, project.id)
 
-        existing = get_assistant_collection(db, project)
+        existing = get_vector_store_collection(db, project)
         crud.update(existing.id, CollectionUpdate(name="taken"))
 
-        target = get_assistant_collection(db, project)
+        target = get_vector_store_collection(db, project)
 
         with pytest.raises(CollectionNameConflictError) as excinfo:
             crud.update(target.id, CollectionUpdate(name="taken"))
@@ -79,7 +79,7 @@ class TestCollectionCrudUpdate:
         (the route is responsible for translating it into HTTP 409).
         """
         project = get_project(db, "Dalgo")
-        collection = get_assistant_collection(db, project)
+        collection = get_vector_store_collection(db, project)
         crud = CollectionCrud(db, project.id)
 
         with patch.object(

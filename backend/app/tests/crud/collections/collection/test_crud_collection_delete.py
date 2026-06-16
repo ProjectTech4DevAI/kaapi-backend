@@ -4,29 +4,17 @@ from sqlmodel import Session, select
 
 from app.crud import CollectionCrud
 from app.models import APIKey, Collection, ProviderType
-from app.crud.rag import OpenAIAssistantCrud
+from app.crud.rag import OpenAIVectorStoreCrud
 from app.tests.utils.utils import get_project
 from app.tests.utils.document import DocumentStore
 
 
-def get_assistant_collection_for_delete(
-    db: Session, client=None, project_id: int = None
-) -> Collection:
-    project = get_project(db)
-    if client is None:
-        client = OpenAI(api_key="test_api_key")
-
+def get_vector_store_collection(client: OpenAI, project_id: int) -> Collection:
     vector_store = client.vector_stores.create()
-    assistant = client.beta.assistants.create(
-        model="gpt-4o",
-        tools=[{"type": "file_search"}],
-        tool_resources={"file_search": {"vector_store_ids": [vector_store.id]}},
-    )
-
     return Collection(
         project_id=project_id,
-        llm_service_id=assistant.id,
-        llm_service_name="gpt-4o",
+        knowledge_base_id=vector_store.id,
+        knowledge_base_provider="openai vector store",
         provider=ProviderType.openai,
     )
 
@@ -39,26 +27,24 @@ class TestCollectionDelete:
         project = get_project(db)
         client = OpenAI(api_key="sk-test-key")
 
-        assistant = OpenAIAssistantCrud(client)
-        collection = get_assistant_collection_for_delete(
-            db, client, project_id=project.id
-        )
+        v_crud = OpenAIVectorStoreCrud(client)
+        collection = get_vector_store_collection(client, project_id=project.id)
 
         crud = CollectionCrud(db, collection.project_id)
-        collection_ = crud.delete(collection, assistant)
+        collection_ = crud.delete(collection, v_crud)
 
         assert collection_.deleted_at is not None
 
     @openai_responses.mock()
     def test_delete_follows_insert(self, db: Session) -> None:
+        project = get_project(db)
         client = OpenAI(api_key="sk-test-key")
 
-        assistant = OpenAIAssistantCrud(client)
-        project = get_project(db)
-        collection = get_assistant_collection_for_delete(db, project_id=project.id)
+        v_crud = OpenAIVectorStoreCrud(client)
+        collection = get_vector_store_collection(client, project_id=project.id)
 
         crud = CollectionCrud(db, collection.project_id)
-        collection_ = crud.delete(collection, assistant)
+        collection_ = crud.delete(collection, v_crud)
 
         assert collection_.inserted_at <= collection_.deleted_at
 
@@ -76,15 +62,13 @@ class TestCollectionDelete:
         client = OpenAI(api_key="sk-test-key")
         resources = []
         for _ in range(self._n_collections):
-            coll = get_assistant_collection_for_delete(
-                db, client, project_id=project.id
-            )
+            coll = get_vector_store_collection(client, project_id=project.id)
             crud = CollectionCrud(db, project_id=project.id)
             collection = crud.create(coll, documents)
             resources.append((crud, collection))
 
         ((crud, _), *_) = resources
-        assistant = OpenAIAssistantCrud(client)
-        crud.delete(documents[0], assistant)
+        v_crud = OpenAIVectorStoreCrud(client)
+        crud.delete(documents[0], v_crud)
 
         assert all(y.deleted_at for (_, y) in resources)

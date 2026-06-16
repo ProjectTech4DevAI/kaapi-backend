@@ -17,7 +17,7 @@ tags_metadata = [
     },
     {
         "name": "Collections",
-        "description": "Collection creation, deletion, and management for vector stores and assistants",
+        "description": "Collection creation, deletion, and management for vector stores",
     },
     {
         "name": "Config Management",

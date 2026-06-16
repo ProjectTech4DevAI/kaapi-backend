@@ -150,6 +150,33 @@ def resolve_attachment_values(
     return resolved
 
 
+def build_anthropic_attachment_parts(
+    value: str,
+    att: AssessmentAttachment,
+    type_override: str | None = None,
+) -> list[dict[str, Any]]:
+    """Convert one dataset cell into one or more Anthropic content blocks (by URL)."""
+    value = value.strip()
+    if not value:
+        return []
+
+    item_type = resolve_item_type(att.type, type_override)
+    if item_type is None:
+        logger.warning(
+            "[build_anthropic_attachment_parts] Unresolved type for column=%s — skipping",
+            att.column,
+        )
+        return []
+    blocks: list[dict[str, Any]] = []
+    for item_value in split_attachment_urls(value):
+        url = to_direct_attachment_url(item_value, item_type)
+        if item_type == "image":
+            blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+        else:
+            blocks.append({"type": "document", "source": {"type": "url", "url": url}})
+    return blocks
+
+
 def build_gemini_attachment_parts(
     value: str,
     att: AssessmentAttachment,
