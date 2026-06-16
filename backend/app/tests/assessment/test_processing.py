@@ -213,6 +213,73 @@ class TestParseAssessmentOutputGoogle:
         assert results[0]["output"] == "out"
 
 
+class TestParseAssessmentOutputAnthropic:
+    def test_successful_anthropic_result(self) -> None:
+        raw = [
+            {
+                "custom_id": "row_0",
+                "response": {
+                    "id": "msg_1",
+                    "content": [{"type": "text", "text": "claude output"}],
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+                "error": None,
+            }
+        ]
+        results = parse_assessment_output(raw, "anthropic")
+
+        assert results[0]["row_id"] == "row_0"
+        assert results[0]["output"] == "claude output"
+        assert results[0]["error"] is None
+        assert results[0]["usage"] == {"input_tokens": 10, "output_tokens": 5}
+        assert results[0]["response_id"] == "msg_1"
+
+    def test_anthropic_concatenates_text_blocks(self) -> None:
+        raw = [
+            {
+                "custom_id": "row_0",
+                "response": {
+                    "content": [
+                        {"type": "text", "text": "part1 "},
+                        {"type": "tool_use", "id": "t1", "name": "x", "input": {}},
+                        {"type": "text", "text": "part2"},
+                    ]
+                },
+                "error": None,
+            }
+        ]
+        results = parse_assessment_output(raw, "anthropic")
+        assert results[0]["output"] == "part1 part2"
+
+    def test_anthropic_error_result(self) -> None:
+        raw = [{"custom_id": "row_0", "response": None, "error": "rate limited"}]
+        results = parse_assessment_output(raw, "anthropic")
+        assert results[0]["error"] == "rate limited"
+        assert results[0]["output"] is None
+
+    def test_anthropic_empty_response(self) -> None:
+        raw = [{"custom_id": "row_0", "response": None, "error": None}]
+        results = parse_assessment_output(raw, "anthropic")
+        assert results[0]["error"] == "Empty response"
+
+    def test_anthropic_empty_text_sets_error(self) -> None:
+        raw = [{"custom_id": "row_0", "response": {"content": []}, "error": None}]
+        results = parse_assessment_output(raw, "anthropic")
+        assert results[0]["output"] is None
+        assert results[0]["error"] == "Empty response output"
+
+    def test_anthropic_native_provider_accepted(self) -> None:
+        raw = [
+            {
+                "custom_id": "row_0",
+                "response": {"content": [{"type": "text", "text": "out"}]},
+                "error": None,
+            }
+        ]
+        results = parse_assessment_output(raw, "anthropic-native")
+        assert results[0]["output"] == "out"
+
+
 class TestRecordGateStats:
     def _patches(self, parsed):
         return [
@@ -260,10 +327,25 @@ class TestGetBatchProvider:
         with pytest.raises(ValueError, match="Unsupported batch provider"):
             _get_batch_provider(
                 session=session,
+                provider_name="sarvamai",
+                organization_id=1,
+                project_id=1,
+            )
+
+    def test_anthropic_provider_returned(self) -> None:
+        session = MagicMock()
+        mock_client = MagicMock()
+        with patch(
+            "app.services.assessment.stages.get_anthropic_client",
+            return_value=mock_client,
+        ), patch("app.services.assessment.stages.AnthropicBatchProvider") as mock_cls:
+            _get_batch_provider(
+                session=session,
                 provider_name="anthropic",
                 organization_id=1,
                 project_id=1,
             )
+        mock_cls.assert_called_once_with(client=mock_client)
 
     def test_openai_provider_returned(self) -> None:
         session = MagicMock()
@@ -451,3 +533,28 @@ class TestPollStageOutcome:
                 MagicMock(), MagicMock(), self._job(provider_output_file_id="file_1")
             )
         assert outcome == "completed"
+
+    def test_ended_with_zero_success_is_failed(self) -> None:
+        """Anthropic ENDED with every request errored must fail, not complete.
+
+        Anthropic always reports provider_output_file_id (= batch_id), so the
+        zero-success guard must run before that field advances the pipeline.
+        """
+        from app.crud.assessment.processing import _poll_stage_outcome
+
+        with patch(
+            "app.crud.assessment.processing.poll_batch_status",
+            return_value={
+                "request_counts": {"completed": 0, "failed": 5},
+                "error_message": "Batch ended with no successful requests",
+            },
+        ), patch(
+            "app.crud.assessment.processing.process_completed_batch"
+        ) as mock_process:
+            outcome = _poll_stage_outcome(
+                MagicMock(),
+                MagicMock(),
+                self._job(provider_status="ended", provider_output_file_id="batch_1"),
+            )
+        assert outcome == "failed"
+        mock_process.assert_not_called()
