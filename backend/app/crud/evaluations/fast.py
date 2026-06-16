@@ -829,11 +829,13 @@ def run_fast_evaluation(
         log_prefix=log_prefix,
     )
 
-    # Stage 4
+    # Stage 4 — mark completed and clear any error_message left by a transient
+    # failure (e.g. the batch poller racing this synchronous run), so a
+    # successful fast eval never displays a stale error.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(status="completed"),
+        update=EvaluationRunUpdate(status="completed", error_message=None),
     )
 
     # Stage 5 — persist the score unit (traces to S3, summary to DB) via the

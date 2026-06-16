@@ -42,6 +42,7 @@ from app.crud.evaluations.langfuse import (
 from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
+from app.models.evaluation import RunModeEnum
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
@@ -816,11 +817,16 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [...]
         }
     """
-    # Single query to fetch all processing text evaluation runs
-    # STT/TTS evaluations have their own polling
+    # Single query to fetch all processing text evaluation runs.
+    # STT/TTS evaluations have their own polling. Fast-mode runs are handled
+    # synchronously in the run_evaluation_fast Celery task and have no provider
+    # batch job, so they must be excluded from the batch poller — otherwise it
+    # picks up an in-flight fast run (status="processing", no batch_job_id yet)
+    # and marks it "Checking failed: ... has no batch_job_id".
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.type == "text",
+        EvaluationRun.run_mode == RunModeEnum.BATCH.value,
     )
     pending_runs = session.exec(statement).all()
 

@@ -704,6 +704,56 @@ class TestFastPipelineEndToEnd:
         assert sample["scores"][0]["name"] == "Cosine Similarity"
         assert sample["scores"][0]["value"] == pytest.approx(1.0, abs=0.01)
 
+    def test_completion_clears_stale_error_message(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _fast_pipeline_mocks,
+    ):
+        """A successful fast run clears any error_message left by a transient
+        failure (e.g. the batch poller racing this synchronous run), so it never
+        displays as completed-with-error."""
+        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_openai_config(db, user_api_key.project_id)
+        eval_run = EvaluationRun(
+            run_name="pipeline-clears-error",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config_id=config.id,
+            config_version=1,
+            status="processing",
+            error_message="Checking failed: EvaluationRun 640 has no batch_job_id",
+            run_mode=RunModeEnum.FAST.value,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        fake_openai = MagicMock()
+        fake_openai.responses.create.side_effect = lambda **_: _fake_openai_response(
+            text="LLM answer", item_id="x"
+        )
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        with patch(
+            "app.crud.evaluations.fast.save_score",
+            side_effect=lambda *, eval_run_id, **_: db.get(EvaluationRun, eval_run_id),
+        ):
+            result = run_fast_evaluation(
+                session=db,
+                openai_client=fake_openai,
+                langfuse=MagicMock(),
+                eval_run=eval_run,
+                config=TextLLMParams(model="gpt-4o", instructions="be helpful"),
+            )
+
+        assert result.status == "completed"
+        assert result.error_message is None
+        db.refresh(eval_run)
+        assert eval_run.error_message is None
+
 
 # ---------------------------------------------------------------------------
 # Failure-threshold short-circuit (FR-14)
