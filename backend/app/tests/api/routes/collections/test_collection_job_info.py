@@ -5,7 +5,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_assistant_collection, get_collection_job
+from app.tests.utils.collection import get_vector_store_collection, get_collection_job
 from app.models import (
     CollectionActionType,
     CollectionJobStatus,
@@ -41,7 +41,7 @@ def test_collection_info_create_successful(
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
-    collection = get_assistant_collection(db, project)
+    collection = get_vector_store_collection(db, project)
 
     collection_job = get_collection_job(
         db, project, collection_id=collection.id, status=CollectionJobStatus.SUCCESSFUL
@@ -61,8 +61,8 @@ def test_collection_info_create_successful(
     assert data["collection"] is not None
     col = data["collection"]
     assert col["id"] == str(collection.id)
-    assert col["llm_service_id"] == collection.llm_service_id
-    assert col["llm_service_name"] == "gpt-4o"
+    assert col["knowledge_base_id"] == collection.knowledge_base_id
+    assert col["knowledge_base_provider"] == collection.knowledge_base_provider
 
 
 def test_collection_info_create_failed(
@@ -101,7 +101,7 @@ def test_collection_info_delete_successful(
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
-    collection = get_assistant_collection(db, project)
+    collection = get_vector_store_collection(db, project)
 
     collection_job = get_collection_job(
         db,
@@ -133,7 +133,7 @@ def test_collection_info_delete_failed(
     headers = user_api_key_header
     project = get_project(db, "Dalgo")
 
-    collection = get_assistant_collection(db, project)
+    collection = get_vector_store_collection(db, project)
 
     collection_job = get_collection_job(
         db,

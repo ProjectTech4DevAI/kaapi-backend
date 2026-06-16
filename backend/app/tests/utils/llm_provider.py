@@ -174,24 +174,27 @@ def create_mock_batch(
 
 
 def get_mock_provider(
-    llm_service_id: str = "mock_service_id",
-    llm_service_name: str = "mock_service_name",
+    knowledge_base_id: str = "mock_service_id",
+    knowledge_base_provider: str = "mock_service_name",
 ):
     """
     Create a properly configured mock provider for tests.
 
     Returns a mock that mimics BaseProvider with:
-    - create() method returning result with llm_service_id and llm_service_name
-    - cleanup() method for cleanup on failure
+    - create_vector_store() method returning the vector store ID
+    - create() method returning result with knowledge_base_id and knowledge_base_provider
+    - upload_files() method for batch file uploads
     - delete() method for deletion
     """
     mock_provider = MagicMock()
 
     mock_result = MagicMock()
-    mock_result.llm_service_id = llm_service_id
-    mock_result.llm_service_name = llm_service_name
+    mock_result.knowledge_base_id = knowledge_base_id
+    mock_result.knowledge_base_provider = knowledge_base_provider
 
+    mock_provider.create_vector_store.return_value = knowledge_base_id
     mock_provider.create.return_value = mock_result
+    mock_provider.upload_files = MagicMock()
     mock_provider.delete = MagicMock()
 
     return mock_provider

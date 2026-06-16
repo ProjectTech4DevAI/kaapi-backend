@@ -1,6 +1,4 @@
 import pytest
-from openai import OpenAI
-from openai_responses import OpenAIMock
 from fastapi import HTTPException
 from sqlmodel import Session
 
@@ -8,18 +6,16 @@ from app.crud import CollectionCrud
 from app.models import Collection
 from app.tests.utils.document import DocumentStore
 from app.tests.utils.utils import get_project
-from app.tests.utils.collection import get_assistant_collection
+from app.tests.utils.collection import get_vector_store_collection
 
 
 def mk_collection(db: Session) -> Collection:
-    openai_mock = OpenAIMock()
     project = get_project(db)
-    with openai_mock.router:
-        collection = get_assistant_collection(db, project=project)
-        store = DocumentStore(db, project_id=collection.project_id)
-        documents = store.fill(1)
-        crud = CollectionCrud(db, collection.project_id)
-        return crud.create(collection, documents)
+    collection = get_vector_store_collection(db, project=project)
+    store = DocumentStore(db, project_id=collection.project_id)
+    documents = store.fill(1)
+    crud = CollectionCrud(db, collection.project_id)
+    return crud.create(collection, documents)
 
 
 class TestDatabaseReadOne:
