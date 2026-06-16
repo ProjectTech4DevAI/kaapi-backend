@@ -18,8 +18,8 @@ class TestCollectionCreate:
         collection = Collection(
             id=uuid4(),
             project_id=project.id,
-            llm_service_id="asst_dummy",
-            llm_service_name="gpt-4o",
+            knowledge_base_id="asst_dummy",
+            knowledge_base_provider="gpt-4o",
             provider=ProviderType.openai,
         )
 
