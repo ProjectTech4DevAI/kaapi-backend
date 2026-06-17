@@ -17,10 +17,11 @@ from fastapi import HTTPException
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud import CollectionCrud, DocumentCrud
-from app.crud.rag import OpenAIAssistantCrud, OpenAIVectorStoreCrud
+from app.crud.rag import OpenAIFileCrud, OpenAIVectorStoreCrud
 from app.models import (
     Document,
     DocumentPublic,
+    ProviderType,
     TransformedDocumentPublic,
     DocumentUploadResponse,
     Message,
@@ -28,7 +29,7 @@ from app.models import (
     DocTransformationJobPublic,
 )
 from app.core.cloud import get_cloud_storage
-from app.services.collections.helpers import pick_service_for_documennt, MAX_DOC_SIZE_MB
+from app.services.collections.helpers import MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,
@@ -197,16 +198,16 @@ def remove_doc(
         session, current_user.organization_.id, current_user.project_.id
     )
 
-    a_crud = OpenAIAssistantCrud(client)
     v_crud = OpenAIVectorStoreCrud(client)
+    f_crud = OpenAIFileCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
     c_crud = CollectionCrud(session, current_user.project_.id)
     document = d_crud.read_one(doc_id)
 
-    remote = pick_service_for_documennt(
-        session, doc_id, a_crud, v_crud
-    )  # assistant crud or vector store crud
-    c_crud.delete(document, remote)
+    c_crud.delete(document, v_crud)
+    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
+    if openai_file_id:
+        f_crud.delete(openai_file_id)
     d_crud.delete(doc_id)
 
     return APIResponse.success_response(
@@ -228,19 +229,18 @@ def permanent_delete_doc(
     client = get_openai_client(
         session, current_user.organization_.id, current_user.project_.id
     )
-    a_crud = OpenAIAssistantCrud(client)
     v_crud = OpenAIVectorStoreCrud(client)
+    f_crud = OpenAIFileCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
     c_crud = CollectionCrud(session, current_user.project_.id)
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
 
     document = d_crud.read_one(doc_id)
 
-    remote = pick_service_for_documennt(
-        session, doc_id, a_crud, v_crud
-    )  # assistant crud or vector store crud
-    c_crud.delete(document, remote)
-
+    c_crud.delete(document, v_crud)
+    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
+    if openai_file_id:
+        f_crud.delete(openai_file_id)
     storage.delete(document.object_store_url)
     d_crud.delete(doc_id)
 

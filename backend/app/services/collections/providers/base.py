@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from app.core.cloud.storage import CloudStorage
-from app.models import CreationRequest, Collection, Document
+from app.models import Collection, Document
 
 
 class BaseProvider(ABC):
@@ -11,56 +11,54 @@ class BaseProvider(ABC):
     All provider implementations (OpenAI, Bedrock, etc.) must inherit from
     this class and implement the required methods.
 
-    Providers handle creation of collection and
-    optional assistant/agent creation backed by those collections.
+    Providers handle creation of vector store collections.
 
     Attributes:
         client: The provider-specific client instance
     """
 
     def __init__(self, client: Any) -> None:
-        """Initialize provider with client.
+        self.client = client
+
+    @abstractmethod
+    def upload_files(
+        self,
+        storage: CloudStorage,
+        docs: list[Document],
+        project_id: int,
+    ) -> None:
+        """Upload all documents to the provider's file storage and persist their file IDs.
 
         Args:
-            client: Provider-specific client instance
+            storage: Cloud storage instance to fetch raw file bytes from
+            docs: Documents to upload
+            project_id: Project ID used to persist the provider file IDs to the DB
         """
-        self.client = client
+        raise NotImplementedError("Providers must implement upload_files method")
+
+    @abstractmethod
+    def create_vector_store(self) -> str:
+        """Create an empty vector store and return its ID."""
+        raise NotImplementedError("Providers must implement create_vector_store method")
 
     @abstractmethod
     def create(
         self,
-        collection_request: CreationRequest,
-        storage: CloudStorage,
-        documents: list[Document],
+        docs: list[Document],
+        vector_store_id: str,
     ) -> Collection:
-        """Create collection with documents and optionally an assistant.
-
-        Args:
-            collection_request: Collection parameters (name, description, document list, etc.)
-            storage: Cloud storage instance for file access
-            documents: Pre-fetched list of Document objects to add to the collection
-
-        Returns:
-            Collection object with llm_service_id and llm_service_name populated
-        """
-        raise NotImplementedError("Providers must implement execute method")
+        """Attach docs batch to an existing vector store.
+        Returns Collection with knowledge_base_id set to the vector store ID."""
+        raise NotImplementedError("Providers must implement create method")
 
     @abstractmethod
     def delete(self, collection: Collection) -> None:
-        """Delete remote resources associated with a collection.
-
-        Called when a collection is being deleted and remote resources need to be cleaned up.
-
-        Args:
-            llm_service_id: ID of the resource to delete
-            llm_service_name: Name of the service (determines resource type)
-        """
+        """Delete remote resources associated with a collection."""
         raise NotImplementedError("Providers must implement delete method")
 
-    def get_provider_name(self) -> str:
-        """Get the name of the provider.
+    def get_existing_file_id(self, _doc: Document) -> str | None:
+        """Return the already-uploaded file ID for this provider, or None to trigger upload."""
+        return None
 
-        Returns:
-            Provider name (e.g., "openai", "bedrock", "pinecone")
-        """
+    def get_provider_name(self) -> str:
         return self.__class__.__name__.replace("Provider", "").lower()

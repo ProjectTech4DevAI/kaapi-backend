@@ -122,14 +122,34 @@ def test_batch_documents_mixed_size_batching() -> None:
     assert len(batches[2]) == 1  # 15 MB total
 
 
-def test_batch_documents_with_none_file_size() -> None:
-    """Test that documents with None file_size are treated as 0 bytes."""
-    docs = create_fake_documents(10, file_size_kb=None)
+def test_batch_documents_zero_size_files_batches_by_count() -> None:
+    """Zero-size docs contribute nothing to size, so only the 200-doc count limit applies."""
+    docs = create_fake_documents(250, file_size_kb=0)
     batches = helpers.batch_documents(docs)
 
-    # All files with None/0 size should fit in one batch (under both limits)
+    assert len(batches) == 2
+    assert len(batches[0]) == 200
+    assert len(batches[1]) == 50
+
+
+def test_batch_documents_doc_exactly_at_size_limit_stays_in_same_batch() -> None:
+    """A doc whose size exactly equals MAX_BATCH_SIZE_KB should not trigger a new batch
+    on its own — the split only happens when adding it would *exceed* the limit."""
+    from app.services.collections.helpers import MAX_BATCH_SIZE_KB
+
+    docs = create_fake_documents(1, file_size_kb=MAX_BATCH_SIZE_KB)
+    batches = helpers.batch_documents(docs)
+
     assert len(batches) == 1
-    assert len(batches[0]) == 10
+    assert len(batches[0]) == 1
+
+
+def test_batch_documents_with_none_file_size_raises() -> None:
+    """Test that documents with None file_size raise TypeError — sizes must be backfilled before batching."""
+    docs = create_fake_documents(10, file_size_kb=None)
+
+    with pytest.raises(TypeError):
+        helpers.batch_documents(docs)
 
 
 def test_batch_documents_empty_input() -> None:
@@ -208,8 +228,8 @@ def test_to_collection_public_vector_store() -> None:
         id=uuid4(),
         project_id=1,
         provider=ProviderType.openai,
-        llm_service_id="vs_123",
-        llm_service_name="openai vector store",  # Matches get_service_name("openai")
+        knowledge_base_id="vs_123",
+        knowledge_base_provider="openai vector store",  # Matches get_service_name("openai")
         name="Test Collection",
         description="Test description",
         inserted_at=now(),
@@ -219,42 +239,10 @@ def test_to_collection_public_vector_store() -> None:
 
     result = to_collection_public(collection)
 
-    # For vector store, should map to knowledge_base fields
     assert result.id == collection.id
     assert result.knowledge_base_id == "vs_123"
     assert result.knowledge_base_provider == "openai vector store"
-    assert result.llm_service_id is None
-    assert result.llm_service_name is None
     assert result.project_id == 1
-    assert result.inserted_at == collection.inserted_at
-    assert result.updated_at == collection.updated_at
-    assert result.deleted_at is None
-
-
-def test_to_collection_public_assistant() -> None:
-    """Test conversion of assistant collection to public model."""
-    collection = Collection(
-        id=uuid4(),
-        project_id=2,
-        provider=ProviderType.openai,
-        llm_service_id="asst_456",
-        llm_service_name="gpt-4",  # Does NOT match vector store name
-        name="Assistant Collection",
-        description="Assistant description",
-        inserted_at=now(),
-        updated_at=now(),
-        deleted_at=None,
-    )
-
-    result = to_collection_public(collection)
-
-    # For assistant, should map to llm_service fields
-    assert result.id == collection.id
-    assert result.llm_service_id == "asst_456"
-    assert result.llm_service_name == "gpt-4"
-    assert result.knowledge_base_id is None
-    assert result.knowledge_base_provider is None
-    assert result.project_id == 2
     assert result.inserted_at == collection.inserted_at
     assert result.updated_at == collection.updated_at
     assert result.deleted_at is None
@@ -267,8 +255,8 @@ def test_to_collection_public_with_deleted_at() -> None:
         id=uuid4(),
         project_id=3,
         provider=ProviderType.openai,
-        llm_service_id="vs_789",
-        llm_service_name="openai vector store",
+        knowledge_base_id="vs_789",
+        knowledge_base_provider="openai vector store",
         name="Deleted Collection",
         description="Deleted",
         inserted_at=now(),
