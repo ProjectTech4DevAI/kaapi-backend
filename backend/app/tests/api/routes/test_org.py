@@ -3,9 +3,9 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
-from app.models import Organization
-from app.main import app
 from app.crud.organization import get_organization_by_id
+from app.main import app
+from app.models import Organization
 from app.tests.utils.test_data import create_test_organization
 
 client = TestClient(app)
@@ -74,22 +74,51 @@ def test_update_organization(
     assert updated_org["is_active"] == update_data["is_active"]
 
 
-# Test deleting an organization
+# Test soft deleting an organization (default)
 def test_delete_organization(
     db: Session,
     test_organization: Organization,
     superuser_token_headers: dict[str, str],
 ) -> None:
+    org_id = test_organization.id
     response = client.delete(
-        f"{settings.API_V1_STR}/organizations/{test_organization.id}",
+        f"{settings.API_V1_STR}/organizations/{org_id}",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200
+
+    # Soft-deleted orgs are hidden from the API...
     response = client.get(
-        f"{settings.API_V1_STR}/organizations/{test_organization.id}",
+        f"{settings.API_V1_STR}/organizations/{org_id}",
         headers=superuser_token_headers,
     )
     assert response.status_code == 404
+
+    # ...but the row still exists, marked inactive (recoverable).
+    db.expire_all()
+    org = get_organization_by_id(session=db, org_id=org_id)
+    assert org is not None
+    assert org.is_active is False
+
+
+# Test hard (permanent) deletion of an organization
+def test_hard_delete_organization(
+    db: Session,
+    test_organization: Organization,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    org_id = test_organization.id
+    response = client.request(
+        "DELETE",
+        f"{settings.API_V1_STR}/organizations/{org_id}",
+        json={"hard_delete": True},
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+
+    # The row is permanently gone.
+    db.expire_all()
+    assert get_organization_by_id(session=db, org_id=org_id) is None
 
 
 # Test pagination has_more metadata

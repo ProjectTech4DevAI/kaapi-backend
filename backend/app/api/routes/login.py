@@ -1,7 +1,7 @@
 from datetime import timedelta
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Form
+from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -11,6 +11,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.crud import authenticate, get_user_by_email
+from app.crud.auth import get_user_accessible_projects
 from app.models import Message, NewPassword, Token, UserPublic
 from app.utils import (
     generate_password_reset_token,
@@ -26,9 +27,8 @@ router = APIRouter(tags=["Login"])
 def login_access_token(
     session: SessionDep,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    token_expiry_minutes: Optional[int] = Form(
-        default=settings.ACCESS_TOKEN_EXPIRE_MINUTES, ge=1, le=60 * 24 * 360
-    ),
+    token_expiry_minutes: int
+    | None = Form(default=settings.ACCESS_TOKEN_EXPIRE_MINUTES, ge=1, le=60 * 24 * 360),
 ) -> Token:
     """
     OAuth2 compatible token login with customizable expiration time.
@@ -41,6 +41,16 @@ def login_access_token(
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     elif not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    # A user must belong to at least one active project to log in. Superusers
+    # manage the platform and are exempt from this check.
+    if not user.is_superuser and not get_user_accessible_projects(
+        session=session, user_id=user.id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not assigned to any active project. Please contact your administrator.",
+        )
 
     access_token_expires = timedelta(minutes=token_expiry_minutes)
 

@@ -1,10 +1,11 @@
 import logging
 import secrets
-from typing import Sequence
+from collections.abc import Iterable, Sequence
 
 from sqlmodel import Session, and_, select
 
 from app.core.security import get_password_hash
+from app.crud.auth import get_user_accessible_projects
 from app.models import (
     User,
     UserProject,
@@ -94,12 +95,85 @@ def add_user_to_project(
     return user, "added"
 
 
+def deactivate_users_without_projects(
+    *, session: Session, user_ids: Iterable[int]
+) -> list[int]:
+    """
+    Mark users inactive when they no longer belong to any *active* project.
+
+    A user counts as having access only through a mapping to an active project
+    in an active organization (see ``get_user_accessible_projects``), so this
+    correctly handles soft-deleted orgs/projects whose mappings still exist.
+
+    Users are never deleted: superusers are left untouched, and any user that
+    still has at least one accessible project keeps their active status. A user
+    left without any accessible project can no longer log in until they are
+    added to one again. Returns the list of user IDs that were deactivated.
+    """
+    deactivated: list[int] = []
+    for user_id in set(user_ids):
+        if get_user_accessible_projects(session=session, user_id=user_id):
+            continue
+
+        user = session.get(User, user_id)
+        if user and not user.is_superuser and user.is_active:
+            user.is_active = False
+            session.add(user)
+            deactivated.append(user_id)
+
+    if deactivated:
+        session.flush()
+        logger.info(
+            f"[deactivate_users_without_projects] Users deactivated | user_ids: {deactivated}"
+        )
+    return deactivated
+
+
+def reactivate_users_with_access(
+    *, session: Session, user_ids: Iterable[int]
+) -> list[int]:
+    """
+    Re-activate users who regained access to an active project.
+
+    The inverse of ``deactivate_users_without_projects``: when an org or project
+    is reactivated, users that had been deactivated (because they had lost all
+    access) are made active again so they can log in. Their project mappings are
+    never removed by a soft delete, so access is restored automatically once the
+    org/project is active again. Superusers and already-active users are left
+    untouched. Returns the list of user IDs that were reactivated.
+    """
+    reactivated: list[int] = []
+    for user_id in set(user_ids):
+        user = session.get(User, user_id)
+        if user and not user.is_active and not user.is_superuser:
+            if get_user_accessible_projects(session=session, user_id=user_id):
+                user.is_active = True
+                session.add(user)
+                reactivated.append(user_id)
+
+    if reactivated:
+        session.flush()
+        logger.info(
+            f"[reactivate_users_with_access] Users reactivated | user_ids: {reactivated}"
+        )
+    return reactivated
+
+
+def get_user_ids_for_project(*, session: Session, project_id: int) -> list[int]:
+    """Return the IDs of all users mapped to a project."""
+    return list(
+        session.exec(
+            select(UserProject.user_id).where(UserProject.project_id == project_id)
+        ).all()
+    )
+
+
 def remove_user_from_project(
     *, session: Session, user_id: int, project_id: int
 ) -> bool:
     """
     Remove a user from a project. If this was their last project,
-    deactivate the user account.
+    deactivate the user account (the user is never deleted).
 
     Returns True if removed, False if not found.
     """
@@ -118,16 +192,7 @@ def remove_user_from_project(
     session.delete(user_project)
     session.flush()
 
-    # Check if user has any remaining projects
-    remaining = session.exec(
-        select(UserProject.id).where(UserProject.user_id == user_id).limit(1)
-    ).first()
-
-    if not remaining:
-        user = session.get(User, user_id)
-        if user and not user.is_superuser:
-            session.delete(user)
-            session.flush()
+    deactivate_users_without_projects(session=session, user_ids=[user_id])
 
     return True
 

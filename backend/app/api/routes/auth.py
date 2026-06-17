@@ -114,6 +114,17 @@ def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
 
     available_projects = get_user_accessible_projects(session=session, user_id=user.id)
 
+    # A user must belong to at least one active project to log in. Superusers
+    # manage the platform and are exempt from this check.
+    if not user.is_superuser and not available_projects:
+        logger.info(
+            f"[google_auth] User has no accessible projects | user_id: {user.id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to any active project. Please contact your administrator.",
+        )
+
     if len(available_projects) == 1:
         proj = available_projects[0]
         logger.info(
@@ -388,6 +399,17 @@ def verify_magic_link(session: SessionDep, token: str) -> JSONResponse:
 
     # Get user's projects to embed in token
     available_projects = get_user_accessible_projects(session=session, user_id=user.id)
+
+    # A user must belong to at least one active project to log in. Superusers
+    # manage the platform and are exempt from this check.
+    if not user.is_superuser and not available_projects:
+        logger.info(
+            f"[verify_magic_link] User has no accessible projects | user_id: {user.id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to any active project. Please contact your administrator.",
+        )
 
     organization_id = None
     project_id = None

@@ -1,10 +1,11 @@
 import logging
-from typing import List, Optional
-from sqlmodel import Session, select
+
 from fastapi import HTTPException
+from sqlmodel import Session, select
 
 from app.core.util import now
-from app.models import Project, ProjectCreate, Organization
+from app.crud.user_project import deactivate_users_without_projects
+from app.models import Project, ProjectCreate, UserProject
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,22 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
         organization_id=project_create.organization_id,
         project_name=project_create.name,
     )
+    # Project names are unique per organization. Because deletes are soft, the
+    # name may still be held by an inactive project — give a clear message so the
+    # caller reactivates it instead of hitting a raw constraint error.
     if project:
         logger.warning(
-            f"[create_project] Project already exists | 'project_id': {project.id}, 'name': {project.name}"
+            f"[create_project] Project name already exists | 'project_id': {project.id}, "
+            f"'name': {project.name}, 'is_active': {project.is_active}"
         )
-        raise HTTPException(409, "Project already exists")
+        if project.is_active:
+            raise HTTPException(
+                409, "A project with this name already exists in this organization"
+            )
+        raise HTTPException(
+            409,
+            "A project with this name already exists in this organization but is inactive. Reactivate it instead of creating a new one.",
+        )
 
     db_project = Project.model_validate(project_create)
     db_project.inserted_at = now()
@@ -33,22 +45,95 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
     return db_project
 
 
-def get_project_by_id(*, session: Session, project_id: int) -> Optional[Project]:
+def get_project_by_id(*, session: Session, project_id: int) -> Project | None:
     return session.get(Project, project_id)
 
 
 def get_project_by_name(
     *, session: Session, project_name: str, organization_id: int
-) -> Optional[Project]:
+) -> Project | None:
     statement = select(Project).where(
         Project.name == project_name, Project.organization_id == organization_id
     )
     return session.exec(statement).first()
 
 
-def get_projects_by_organization(*, session: Session, org_id: int) -> List[Project]:
+def get_projects_by_organization(
+    *, session: Session, org_id: int, is_active: bool | None = True
+) -> list[Project]:
+    """
+    Return projects for an organization.
+
+    By default only active projects are returned. Pass ``is_active=False`` to
+    list soft-deleted projects (e.g. to selectively reactivate them), or
+    ``is_active=None`` to return every project regardless of status.
+    """
     statement = select(Project).where(Project.organization_id == org_id)
+    if is_active is not None:
+        statement = statement.where(Project.is_active.is_(is_active))
     return session.exec(statement).all()
+
+
+def soft_delete_project(*, session: Session, project: Project) -> list[int]:
+    """
+    Soft-delete a project by marking it inactive, so it stops appearing in
+    listings and can no longer be used. No rows are removed.
+
+    User accounts are never deleted. Any user left without an accessible project
+    afterwards is marked inactive so they can no longer log in. Returns the list
+    of deactivated user IDs.
+    """
+    project_id = project.id
+
+    affected_user_ids = session.exec(
+        select(UserProject.user_id).where(UserProject.project_id == project_id)
+    ).all()
+
+    # Soft-delete the project.
+    project.is_active = False
+    session.add(project)
+    session.flush()
+
+    deactivated = deactivate_users_without_projects(
+        session=session, user_ids=affected_user_ids
+    )
+    session.commit()
+    logger.info(
+        f"[soft_delete_project] Project soft-deleted | 'project_id': {project_id}, "
+        f"deactivated_users: {len(deactivated)}"
+    )
+    return deactivated
+
+
+def hard_delete_project(*, session: Session, project: Project) -> list[int]:
+    """
+    Permanently delete a project and everything owned by it — collections,
+    documents, credentials, assistants, fine-tunings, conversations, and
+    user-project mappings all cascade away. This cannot be undone.
+
+    User *accounts* are still never deleted (a user may belong to other
+    projects): any user left without an accessible project after the cascade is
+    marked inactive instead. Returns the list of deactivated user IDs.
+    """
+    project_id = project.id
+
+    # Capture affected users before the cascade removes their mappings.
+    affected_user_ids = session.exec(
+        select(UserProject.user_id).where(UserProject.project_id == project_id)
+    ).all()
+
+    session.delete(project)
+    session.flush()
+
+    deactivated = deactivate_users_without_projects(
+        session=session, user_ids=affected_user_ids
+    )
+    session.commit()
+    logger.info(
+        f"[hard_delete_project] Project permanently deleted | "
+        f"'project_id': {project_id}, deactivated_users: {len(deactivated)}"
+    )
+    return deactivated
 
 
 def validate_project(session: Session, project_id: int) -> Project:

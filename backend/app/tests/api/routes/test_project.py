@@ -2,11 +2,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.main import app
 from app.core.config import settings
+from app.crud.project import get_project_by_id
+from app.main import app
 from app.models import Project, ProjectCreate
 from app.tests.utils.test_data import create_test_organization, create_test_project
-
 
 client = TestClient(app)
 
@@ -106,20 +106,47 @@ def test_update_project(
     assert updated_project["is_active"] == update_data["is_active"]
 
 
-# Test deleting a project
+# Test soft deleting a project (default)
 def test_delete_project(
     db: Session, test_project: Project, superuser_token_headers: dict[str, str]
 ) -> None:
+    project_id = test_project.id
     response = client.delete(
-        f"{settings.API_V1_STR}/projects/{test_project.id}",
+        f"{settings.API_V1_STR}/projects/{project_id}",
         headers=superuser_token_headers,
     )
     assert response.status_code == 200
+
+    # Soft-deleted projects are hidden from the API...
     response = client.get(
-        f"{settings.API_V1_STR}/projects/{test_project.id}",
+        f"{settings.API_V1_STR}/projects/{project_id}",
         headers=superuser_token_headers,
     )
     assert response.status_code == 404
+
+    # ...but the row still exists, marked inactive (recoverable).
+    db.expire_all()
+    project = get_project_by_id(session=db, project_id=project_id)
+    assert project is not None
+    assert project.is_active is False
+
+
+# Test hard (permanent) deletion of a project
+def test_hard_delete_project(
+    db: Session, test_project: Project, superuser_token_headers: dict[str, str]
+) -> None:
+    project_id = test_project.id
+    response = client.request(
+        "DELETE",
+        f"{settings.API_V1_STR}/projects/{project_id}",
+        json={"hard_delete": True},
+        headers=superuser_token_headers,
+    )
+    assert response.status_code == 200
+
+    # The row is permanently gone.
+    db.expire_all()
+    assert get_project_by_id(session=db, project_id=project_id) is None
 
 
 # Test retrieving projects by organization

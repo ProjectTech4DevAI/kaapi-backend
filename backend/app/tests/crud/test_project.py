@@ -1,8 +1,7 @@
 import pytest
-from sqlmodel import Session
 from fastapi import HTTPException
+from sqlmodel import Session
 
-from app.models import Project, ProjectCreate
 from app.crud.project import (
     create_project,
     get_project_by_id,
@@ -10,8 +9,9 @@ from app.crud.project import (
     get_projects_by_organization,
     validate_project,
 )
-from app.tests.utils.utils import random_lower_string, get_non_existent_id
-from app.tests.utils.test_data import create_test_project, create_test_organization
+from app.models import Project, ProjectCreate
+from app.tests.utils.test_data import create_test_organization, create_test_project
+from app.tests.utils.utils import get_non_existent_id, random_lower_string
 
 
 def test_create_project(db: Session) -> None:
@@ -45,8 +45,29 @@ def test_create_project_duplicate_name(db: Session) -> None:
         is_active=True,
         organization_id=organization.id,
     )
+    create_project(session=db, project_create=project_data)
+    with pytest.raises(HTTPException, match="already exists in this organization"):
+        create_project(session=db, project_create=project_data)
+
+
+def test_create_project_duplicate_inactive_name(db: Session) -> None:
+    """Recreating a soft-deleted project name is rejected with a reactivate hint."""
+    organization = create_test_organization(db)
+
+    project_data = ProjectCreate(
+        name=random_lower_string(),
+        description="Test description",
+        is_active=True,
+        organization_id=organization.id,
+    )
     project = create_project(session=db, project_create=project_data)
-    with pytest.raises(HTTPException, match="Project already exists"):
+
+    # Soft-delete it, then try to create another project with the same name.
+    project.is_active = False
+    db.add(project)
+    db.flush()
+
+    with pytest.raises(HTTPException, match="inactive"):
         create_project(session=db, project_create=project_data)
 
 
