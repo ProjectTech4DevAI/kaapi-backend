@@ -186,6 +186,65 @@ def map_kaapi_to_openai_params(
     return openai_params, warnings
 
 
+def map_kaapi_to_anthropic_params(kaapi_params: dict) -> tuple[dict, list[str]]:
+    """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
+
+    Returns:
+        Tuple of (Anthropic API params dict, list of warning strings)
+    """
+    anthropic_params: dict = {}
+    warnings: list[str] = []
+
+    model = kaapi_params.get("model")
+    if not model:
+        return {}, ["Missing required 'model' parameter"]
+
+    anthropic_params["model"] = model
+
+    instructions = normalize_llm_text(kaapi_params.get("instructions"))
+    if instructions:
+        anthropic_params["system"] = instructions
+
+    temperature = kaapi_params.get("temperature")
+    top_p = kaapi_params.get("top_p")
+    if temperature is not None and top_p is not None:
+        warnings.append(
+            "Parameter 'top_p' was suppressed because Anthropic does not accept "
+            "both 'temperature' and 'top_p' on the same request."
+        )
+        top_p = None
+    if temperature is not None:
+        anthropic_params["temperature"] = temperature
+    if top_p is not None:
+        anthropic_params["top_p"] = top_p
+
+    max_output_tokens = kaapi_params.get("max_output_tokens")
+    if max_output_tokens is not None:
+        anthropic_params["max_tokens"] = max_output_tokens
+
+    output_schema = kaapi_params.get("output_schema")
+    if output_schema is not None:
+        anthropic_params["output_config"] = {
+            "format": {
+                "type": "json_schema",
+                "schema": _ensure_openai_strict_schema(output_schema),
+            }
+        }
+
+    if kaapi_params.get("effort") or kaapi_params.get("reasoning"):
+        warnings.append(
+            "Parameters 'effort'/'reasoning' are not mapped for Anthropic "
+            "batch assessment and were ignored."
+        )
+
+    if kaapi_params.get("knowledge_base_ids"):
+        warnings.append(
+            "Parameter 'knowledge_base_ids' is not supported by Anthropic and was ignored."
+        )
+
+    return anthropic_params, warnings
+
+
 def map_kaapi_to_google_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
