@@ -19,6 +19,7 @@ from app.crud.evaluations.processing import (
 )
 from app.models import BatchJob, EvaluationDataset, EvaluationRun, Organization, Project
 from app.models.batch_job import BatchJobType
+from app.models.evaluation import RunModeEnum
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
 
@@ -1345,3 +1346,43 @@ class TestPollAllPendingEvaluations:
         assert result["total"] == 1
         assert result["still_processing"] == 1
         mock_check.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.check_and_process_evaluation")
+    async def test_poll_all_pending_evaluations_excludes_fast_runs(
+        self,
+        mock_check,
+        db: Session,
+        test_dataset,
+    ):
+        """Fast-mode runs are handled synchronously and have no provider batch
+        job, so the batch poller must skip them. Otherwise it picks up an
+        in-flight fast run (status='processing', no batch_job_id yet) and wrongly
+        marks it 'Checking failed: ... has no batch_job_id'."""
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+
+        eval_run = create_evaluation_run(
+            session=db,
+            run_name="test_fast_run",
+            dataset_name=test_dataset.name,
+            dataset_id=test_dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=test_dataset.organization_id,
+            project_id=test_dataset.project_id,
+            run_mode=RunModeEnum.FAST,
+        )
+        eval_run.status = "processing"
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        result = await poll_all_pending_evaluations(session=db)
+
+        assert result["total"] == 0
+        mock_check.assert_not_called()
+        db.refresh(eval_run)
+        assert eval_run.status == "processing"
+        assert eval_run.error_message is None
