@@ -1,8 +1,7 @@
 name: Pre-release Tag
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
 
 concurrency:
@@ -11,7 +10,6 @@ concurrency:
 
 jobs:
   pre-release:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     name: Pre-Release
     permissions:
@@ -22,25 +20,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
-
-      - name: Get PR type from description
-        id: pr-type
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const body = context.payload.pull_request.body || '';
-            const typeMatch = body.match(/type:\s*(feat|fix|chore|docs|refactor)/i);
-
-            if (!typeMatch) {
-              core.setOutput('type', 'fix');
-              return;
-            }
-
-            const type = typeMatch[1].toLowerCase();
-            core.setOutput('type', type);
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -54,15 +35,6 @@ jobs:
             @semantic-release/commit-analyzer \
             @semantic-release/release-notes-generator \
             @semantic-release/github
-
-      - name: Create conventional commit
-        env:
-          COMMIT_TYPE: ${{ steps.pr-type.outputs.type }}
-        run: |
-          git config user.email "ci@github.com"
-          git config user.name "GitHub CI"
-          ORIGINAL_MSG=$(git log -1 --pretty=%s)
-          git commit --allow-empty -m "${COMMIT_TYPE}: ${ORIGINAL_MSG}"
 
       - name: Run semantic-release
         env:
@@ -134,11 +106,11 @@ jobs:
             }
 
             const cats = [
-              { title: '🚀 Features', types: ['feat'] },
-              { title: '🐛 Fixes', types: ['fix'] },
-              { title: '🧹 Chores', types: ['chore'] },
-              { title: '📚 Documentation', types: ['docs'] },
-              { title: '♻️ Refactors', types: ['refactor'] },
+              { title: 'Features', types: ['feat'] },
+              { title: 'Fixes', types: ['fix'] },
+              { title: 'Chores', types: ['chore'] },
+              { title: 'Documentation', types: ['docs'] },
+              { title: 'Refactors', types: ['refactor'] },
               { title: 'Other Changes', types: ['*'] },
             ].map(c => ({ ...c, items: [] }));
 
@@ -204,46 +176,3 @@ jobs:
                 core.warning(`Could not delete tag ${r.tag_name}: ${e.message}`);
               }
             }
-
-      - name: Update PR labels
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const prNumber = context.payload.pull_request.number;
-
-            const labelsToCreate = [
-              { name: 'released', color: '0075ca' },
-              { name: 'released on @main', color: '0052cc' }
-            ];
-
-            for (const label of labelsToCreate) {
-              try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name
-                });
-              } catch {
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name,
-                  color: label.color
-                });
-              }
-            }
-
-            await github.rest.issues.removeAllLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber
-            });
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              labels: ['released', 'released on @main']
-            });
