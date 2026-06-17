@@ -1,84 +1,133 @@
 import logging
+import tempfile
 from typing import List
 
 from openai import OpenAI
+from sqlmodel import Session
 
 from app.services.collections.providers import BaseProvider
 from app.core.cloud.storage import CloudStorage
-from app.crud.rag import OpenAIVectorStoreCrud, OpenAIAssistantCrud
-from app.services.collections.helpers import get_service_name, batch_documents
-from app.models import CreationRequest, Collection, Document
+from app.core.db import engine
+from app.crud import DocumentCrud
+from app.crud.rag import OpenAIVectorStoreCrud
+from app.services.collections.helpers import get_service_name
+from app.models import Collection, Document, ProviderType
 
 
 logger = logging.getLogger(__name__)
 
+OPENAI_PROVIDER = ProviderType.openai.value
+
 
 class OpenAIProvider(BaseProvider):
-    """OpenAI-specific collection provider for vector stores and assistants."""
+    """OpenAI-specific collection provider for vector stores."""
 
     def __init__(self, client: OpenAI):
         super().__init__(client)
         self.client = client
 
+    def get_existing_file_id(self, doc: Document) -> str | None:
+        return (doc.file_id or {}).get(OPENAI_PROVIDER)
+
+    def upload_files(
+        self,
+        storage: CloudStorage,
+        docs: list[Document],
+        project_id: int,
+    ) -> None:
+        for doc in docs:
+            if self.get_existing_file_id(doc):
+                continue
+
+            try:
+                with tempfile.NamedTemporaryFile() as tmp:
+                    body = storage.stream(doc.object_store_url)
+                    while chunk := body.read(1024 * 1024):
+                        tmp.write(chunk)
+                    if doc.file_size_kb is None:
+                        doc.file_size_kb = round(tmp.tell() / 1024, 2)
+                    tmp.seek(0)
+                    uploaded = self.client.files.create(
+                        file=(doc.fname, tmp), purpose="assistants"
+                    )
+            except Exception as err:
+                logger.error(
+                    "[OpenAIProvider.upload_files] Failed to upload file | doc_id=%s, error=%s",
+                    doc.id,
+                    str(err),
+                    exc_info=True,
+                )
+                raise
+
+            doc.file_id = {**(doc.file_id or {}), OPENAI_PROVIDER: uploaded.id}
+            try:
+                with Session(engine) as session:
+                    document_crud = DocumentCrud(session, project_id)
+                    db_doc = document_crud.read_one(doc.id)
+                    db_doc.file_id = doc.file_id
+                    db_doc.file_size_kb = doc.file_size_kb
+                    document_crud.update(db_doc)
+            except Exception as err:
+                logger.error(
+                    "[OpenAIProvider.upload_files] DB persistence failed, rolling back OpenAI file | "
+                    "doc_id=%s, openai_file_id=%s, error=%s",
+                    doc.id,
+                    uploaded.id,
+                    str(err),
+                    exc_info=True,
+                )
+                try:
+                    self.client.files.delete(uploaded.id)
+                    logger.info(
+                        "[OpenAIProvider.upload_files] Rolled back OpenAI file | "
+                        "doc_id=%s, openai_file_id=%s",
+                        doc.id,
+                        uploaded.id,
+                    )
+                except Exception as delete_err:
+                    logger.error(
+                        "[OpenAIProvider.upload_files] Rollback failed, file is orphaned | "
+                        "doc_id=%s, openai_file_id=%s, error=%s",
+                        doc.id,
+                        uploaded.id,
+                        str(delete_err),
+                    )
+                doc.file_id.pop(OPENAI_PROVIDER, None)
+                raise
+
+    def create_vector_store(self) -> str:
+        try:
+            vector_store = OpenAIVectorStoreCrud(self.client).create()
+            logger.info(
+                "[OpenAIProvider.create_vector_store] Vector store created | vector_store_id=%s",
+                vector_store.id,
+            )
+            return vector_store.id
+        except Exception as e:
+            logger.error(
+                f"[OpenAIProvider.create_vector_store] Failed to create vector store: {str(e)}",
+                exc_info=True,
+            )
+            raise
+
     def create(
         self,
-        collection_request: CreationRequest,
-        storage: CloudStorage,
-        documents: List[Document],
+        docs: List[Document],
+        vector_store_id: str,
     ) -> Collection:
-        """
-        Create OpenAI vector store with documents and optionally an assistant.
-        docs_batches must be pre-fetched inside a DB session before this call.
-        """
         try:
-            docs_batches = batch_documents(documents)
-            vector_store_crud = OpenAIVectorStoreCrud(self.client)
-            vector_store = vector_store_crud.create()
-
-            list(vector_store_crud.update(vector_store.id, storage, docs_batches))
-
-            logger.info(
-                "[OpenAIProvider.create] Vector store created | "
-                f"vector_store_id={vector_store.id}, batches={len(docs_batches)}"
-            )
-
-            # Check if we need to create an assistant (based on assistant options in request)
-            with_assistant = (
-                collection_request.model is not None
-                and collection_request.instructions is not None
-            )
-            if with_assistant:
-                assistant_crud = OpenAIAssistantCrud(self.client)
-
-                assistant_options = {
-                    "model": collection_request.model,
-                    "instructions": collection_request.instructions,
-                    "temperature": collection_request.temperature,
-                }
-                filtered_options = {
-                    k: v for k, v in assistant_options.items() if v is not None
-                }
-
-                assistant = assistant_crud.create(vector_store.id, **filtered_options)
-
+            if docs:
+                OpenAIVectorStoreCrud(self.client).update(vector_store_id, docs)
                 logger.info(
-                    "[OpenAIProvider.create] Assistant created | "
-                    f"assistant_id={assistant.id}, vector_store_id={vector_store.id}"
+                    "[OpenAIProvider.create] Batch uploaded | vector_store_id=%s, doc_count=%d",
+                    vector_store_id,
+                    len(docs),
                 )
 
-                return Collection(
-                    llm_service_id=assistant.id,
-                    llm_service_name=filtered_options.get("model", "assistant"),
-                )
-            else:
-                logger.info(
-                    "[OpenAIProvider.create] Skipping assistant creation | with_assistant=False"
-                )
-
-                return Collection(
-                    llm_service_id=vector_store.id,
-                    llm_service_name=get_service_name("openai"),
-                )
+            return Collection(
+                knowledge_base_id=vector_store_id,
+                knowledge_base_provider=get_service_name(OPENAI_PROVIDER),
+            )
 
         except Exception as e:
             logger.error(
@@ -88,27 +137,15 @@ class OpenAIProvider(BaseProvider):
             raise
 
     def delete(self, collection: Collection) -> None:
-        """Delete OpenAI resources (assistant or vector store).
-
-        Determines what to delete based on llm_service_name:
-        - If assistant was created, delete the assistant (which also removes the vector store)
-        - If only vector store was created, delete the vector store
-        """
         try:
-            if collection.llm_service_name != get_service_name("openai"):
-                OpenAIAssistantCrud(self.client).delete(collection.llm_service_id)
-                logger.info(
-                    f"[OpenAIProvider.delete] Deleted assistant | assistant_id={collection.llm_service_id}"
-                )
-            else:
-                OpenAIVectorStoreCrud(self.client).delete(collection.llm_service_id)
-                logger.info(
-                    f"[OpenAIProvider.delete] Deleted vector store | vector_store_id={collection.llm_service_id}"
-                )
+            OpenAIVectorStoreCrud(self.client).delete(collection.knowledge_base_id)
+            logger.info(
+                f"[OpenAIProvider.delete] Deleted vector store | vector_store_id={collection.knowledge_base_id}"
+            )
         except Exception as e:
             logger.error(
-                f"[OpenAIProvider.delete] Failed to delete resource | "
-                f"llm_service_id={collection.llm_service_id}, error={str(e)}",
+                f"[OpenAIProvider.delete] Failed to delete vector store | "
+                f"knowledge_base_id={collection.knowledge_base_id}, error={str(e)}",
                 exc_info=True,
             )
             raise

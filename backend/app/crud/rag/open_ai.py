@@ -1,17 +1,16 @@
 import json
 import logging
 import functools as ft
-from io import BytesIO
-from typing import Iterable
 
 import openai
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
 
-from app.core.cloud import CloudStorage
-from app.models import Document
+from app.models import Document, ProviderType
 
 logger = logging.getLogger(__name__)
+
+OPENAI_PROVIDER = ProviderType.openai.value
 
 
 def vs_ls(client: OpenAI, vector_store_id: str):
@@ -68,21 +67,8 @@ class ResourceCleaner:
         raise NotImplementedError()
 
 
-class AssistantCleaner(ResourceCleaner):
-    def clean(self, resource):
-        logger.info(
-            f"[AssistantCleaner.clean] Deleting assistant | {{'assistant_id': '{resource}'}}"
-        )
-        self.client.beta.assistants.delete(resource)
-
-
 class VectorStoreCleaner(ResourceCleaner):
     def clean(self, resource):
-        logger.info(
-            f"[VectorStoreCleaner.clean] Starting vector store cleanup | {{'vector_store_id': '{resource}'}}"
-        )
-        for i in vs_ls(self.client, resource):
-            self.client.files.delete(i.id)
         logger.info(
             f"[VectorStoreCleaner.clean] Deleting vector store | {{'vector_store_id': '{resource}'}}"
         )
@@ -118,178 +104,141 @@ class OpenAIVectorStoreCrud(OpenAICrud):
     def update(
         self,
         vector_store_id: str,
-        storage: CloudStorage,
-        documents: Iterable[Document],
-    ):
-        for docs in documents:
-            files = []
-            for d in docs:
-                # Get file bytes and wrap in BytesIO for OpenAI API
-                content = storage.get(d.object_store_url)
-                f_obj = BytesIO(content)
-                f_obj.name = d.fname
-                files.append(f_obj)
+        docs: list[Document],
+    ) -> None:
+        if not docs:
+            return
 
-            logger.info(
-                f"[OpenAIVectorStoreCrud.update] Uploading files to vector store | "
-                f"{{'vector_store_id': '{vector_store_id}', 'file_count': {len(files)}}}"
+        logger.info(
+            f"[OpenAIVectorStoreCrud.update] Uploading files to vector store | "
+            f"{{'vector_store_id': '{vector_store_id}', 'file_count': {len(docs)}}}"
+        )
+
+        try:
+            batch = self.client.vector_stores.file_batches.upload_and_poll(
+                vector_store_id=vector_store_id,
+                files=[],
+                file_ids=[doc.file_id[OPENAI_PROVIDER] for doc in docs],
             )
+        except openai.RateLimitError as e:
+            error_message = (
+                f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "
+                f"{e.message}. Try again in 1 minute. If issue persists, "
+                f"contact Kaapi."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.AuthenticationError as e:
+            error_message = (
+                f"[OPENAI] Authentication failed (code: {e.status_code}): "
+                f"{e.message}. Check your OpenAI API key is valid and "
+                f"has not expired."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.NotFoundError as e:
+            error_message = (
+                f"[OPENAI] Resource not found (code: {e.status_code}): "
+                f"{e.message}. Verify the vector store ID exists and "
+                f"hasn't been deleted."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.BadRequestError as e:
+            error_message = (
+                f"[OPENAI] Bad request (code: {e.status_code}): "
+                f"{e.message}. Review the file payload and metadata; the "
+                f"request may be malformed."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.UnprocessableEntityError as e:
+            error_message = (
+                f"[OPENAI] Unprocessable entity (code: {e.status_code}): "
+                f"{e.message}. The uploaded files may be in an "
+                f"unsupported format or exceed size limits."
+            )
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.InternalServerError as e:
+            error_message = (
+                f"[OPENAI] Server error (code: {e.status_code}): "
+                f"{e.message}. This is usually transient — retry in a "
+                f"few seconds. If issue persists, contact Kaapi."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.APITimeoutError as e:
+            error_message = (
+                f"[KAAPI] OpenAI request timed out (code: "
+                f"{type(e).__name__}): {e}. Retry the upload, or split "
+                f"the batch into smaller chunks."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, file_count={len(docs)}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
+        except openai.OpenAIError as e:
+            error_message = f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
+            logger.warning(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}",
+                exc_info=True,
+            )
+            raise InterruptedError(error_message)
 
+        logger.info(
+            f"[OpenAIVectorStoreCrud.update] Batch complete | "
+            f"{{'vector_store_id': '{vector_store_id}', "
+            f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
+        )
+        if batch.file_counts.failed > 0:
             try:
-                req = self.client.vector_stores.file_batches.upload_and_poll(
+                failed_files = self.client.vector_stores.file_batches.list_files(
                     vector_store_id=vector_store_id,
-                    files=files,
+                    batch_id=batch.id,
+                    filter="failed",
                 )
-            except openai.RateLimitError as e:
-                error_message = (
-                    f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "
-                    f"{e.message}. Try again in 1 minute. If issue persists, "
-                    f"contact Kaapi."
-                )
+                doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
+                parts = []
+                for f in failed_files:
+                    d = doc_by_file_id.get(f.id)
+                    label = d.fname if d else f.id
+                    msg = f.last_error.message if f.last_error else "no error detail"
+                    parts.append(f"{label}: {msg}")
+                raise RuntimeError("; ".join(parts))
+            except OpenAIError as err:
                 logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
-                    exc_info=True,
+                    f"[OpenAIVectorStoreCrud.update] Could not fetch per-file errors | "
+                    f"{{'batch_id': '{batch.id}', 'error': '{str(err)}'}}"
                 )
-                raise InterruptedError(error_message)
-            except openai.AuthenticationError as e:
-                error_message = (
-                    f"[OPENAI] Authentication failed (code: {e.status_code}): "
-                    f"{e.message}. Check your OpenAI API key is valid and "
-                    f"has not expired."
-                )
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.NotFoundError as e:
-                error_message = (
-                    f"[OPENAI] Resource not found (code: {e.status_code}): "
-                    f"{e.message}. Verify the vector store ID exists and "
-                    f"hasn't been deleted."
-                )
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.BadRequestError as e:
-                error_message = (
-                    f"[OPENAI] Bad request (code: {e.status_code}): "
-                    f"{e.message}. Review the file payload and metadata; the "
-                    f"request may be malformed."
-                )
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.UnprocessableEntityError as e:
-                error_message = (
-                    f"[OPENAI] Unprocessable entity (code: {e.status_code}): "
-                    f"{e.message}. The uploaded files may be in an "
-                    f"unsupported format or exceed size limits."
-                )
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.InternalServerError as e:
-                error_message = (
-                    f"[OPENAI] Server error (code: {e.status_code}): "
-                    f"{e.message}. This is usually transient — retry in a "
-                    f"few seconds. If issue persists, contact Kaapi."
-                )
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.APITimeoutError as e:
-                error_message = (
-                    f"[KAAPI] OpenAI request timed out (code: "
-                    f"{type(e).__name__}): {e}. Retry the upload, or split "
-                    f"the batch into smaller chunks."
-                )
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}, file_count={len(files)}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-            except openai.OpenAIError as e:
-                error_message = (
-                    f"[OPENAI] SDK error: {e}. If this persists, contact Kaapi."
-                )
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] {error_message} | "
-                    f"vector_store_id={vector_store_id}",
-                    exc_info=True,
-                )
-                raise InterruptedError(error_message)
-
-            logger.info(
-                f"[OpenAIVectorStoreCrud.update] File upload completed | "
-                f"{{'vector_store_id': '{vector_store_id}', "
-                f"'completed_files': {req.file_counts.completed}, "
-                f"'total_files': {req.file_counts.total}}}"
-            )
-
-            if req.file_counts.completed != req.file_counts.total:
-                # Enrich the error string by listing each failed file's
-                # `last_error.message` from OpenAI. Fall back to the
-                # count-only message if the follow-up list_files call
-                # itself fails.
-                failed_summary = ""
-                try:
-                    page = self.client.vector_stores.file_batches.list_files(
-                        batch_id=req.id,
-                        vector_store_id=vector_store_id,
-                        filter="failed",
-                        limit=10,
-                    )
-                    parts = []
-                    for f in page:
-                        f_err = getattr(f, "last_error", None)
-                        f_msg = (
-                            getattr(f_err, "message", None) if f_err else None
-                        ) or "Unknown error"
-                        parts.append(f"{f.id} ({f_msg})")
-                    failed_summary = ", ".join(parts)
-                    if getattr(page, "has_more", False):
-                        failed_summary = f"{failed_summary}, ..."
-                    if len(failed_summary) > 600:
-                        failed_summary = failed_summary[:597] + "..."
-                except OpenAIError as list_err:
-                    logger.warning(
-                        f"[OpenAIVectorStoreCrud.update] Could not list failed "
-                        f"files | {{'vector_store_id': '{vector_store_id}', "
-                        f"'batch_id': '{req.id}', 'error': '{list_err}'}}"
-                    )
-
-                error_msg = (
-                    f"OpenAI document processing error: "
-                    f"{req.file_counts.completed}/{req.file_counts.total} "
-                    f"files completed"
-                )
-                if failed_summary:
-                    error_msg = f"{error_msg}. Failed files: {failed_summary}"
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.update] Document processing error | "
-                    f"{{'vector_store_id': '{vector_store_id}', "
-                    f"'completed_files': {req.file_counts.completed}, "
-                    f"'total_files': {req.file_counts.total}}}"
-                )
-                raise InterruptedError(error_msg)
-
-            yield from docs
+                raise
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:
@@ -309,58 +258,17 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
 
 
-class OpenAIAssistantCrud(OpenAICrud):
-    def create(self, vector_store_id: str, **kwargs):
+class OpenAIFileCrud(OpenAICrud):
+    def delete(self, file_id: str) -> None:
         logger.info(
-            f"[OpenAIAssistantCrud.create] Creating assistant | {{'vector_store_id': '{vector_store_id}'}}"
+            f"[OpenAIFileCrud.delete] Deleting OpenAI file | {{'file_id': '{file_id}'}}"
         )
-        assistant = self.client.beta.assistants.create(
-            tools=[
-                {
-                    "type": "file_search",
-                }
-            ],
-            tool_resources={
-                "file_search": {
-                    "vector_store_ids": [
-                        vector_store_id,
-                    ],
-                },
-            },
-            **kwargs,
-        )
-        logger.info(
-            f"[OpenAIAssistantCrud.create] Assistant created | {{'assistant_id': '{assistant.id}', 'vector_store_id': '{vector_store_id}'}}"
-        )
-        return assistant
-
-    def delete(self, assistant_id: str):
-        logger.info(
-            f"[OpenAIAssistantCrud.delete] Starting assistant deletion | {{'assistant_id': '{assistant_id}'}}"
-        )
-        assistant = self.client.beta.assistants.retrieve(assistant_id)
-        vector_stores = assistant.tool_resources.file_search.vector_store_ids
-
         try:
-            (vector_store_id,) = vector_stores
-        except ValueError:
-            if vector_stores:
-                names = ", ".join(vector_stores)
-                err = ValueError(f"Too many attached vector stores: {names}")
-            else:
-                err = ValueError("No vector stores found")
-
-            logger.error(
-                f"[OpenAIAssistantCrud.delete] Invalid vector store state | {{'assistant_id': '{assistant_id}', 'vector_stores': '{vector_stores}'}}",
-                exc_info=True,
+            self.client.files.delete(file_id)
+            logger.info(
+                f"[OpenAIFileCrud.delete] OpenAI file deleted | {{'file_id': '{file_id}'}}"
             )
-            raise err
-
-        v_crud = OpenAIVectorStoreCrud(self.client)
-        v_crud.delete(vector_store_id)
-
-        cleaner = AssistantCleaner(self.client)
-        cleaner(assistant_id)
-        logger.info(
-            f"[OpenAIAssistantCrud.delete] Assistant deleted | {{'assistant_id': '{assistant_id}'}}"
-        )
+        except OpenAIError as err:
+            logger.warning(
+                f"[OpenAIFileCrud.delete] Failed to delete OpenAI file | {{'file_id': '{file_id}', 'error': '{str(err)}'}}"
+            )
