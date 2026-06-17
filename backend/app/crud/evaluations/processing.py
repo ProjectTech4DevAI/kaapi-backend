@@ -817,12 +817,8 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [...]
         }
     """
-    # Single query to fetch all processing text evaluation runs.
-    # STT/TTS evaluations have their own polling. Fast-mode runs are handled
-    # synchronously in the run_evaluation_fast Celery task and have no provider
-    # batch job, so they must be excluded from the batch poller — otherwise it
-    # picks up an in-flight fast run (status="processing", no batch_job_id yet)
-    # and marks it "Checking failed: ... has no batch_job_id".
+    # Only batch-mode text runs are polled here; fast-mode runs complete
+    # synchronously and have no batch_job_id, and STT/TTS poll separately.
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.type == "text",

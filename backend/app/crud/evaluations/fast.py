@@ -829,9 +829,7 @@ def run_fast_evaluation(
         log_prefix=log_prefix,
     )
 
-    # Stage 4 — mark completed and clear any error_message left by a transient
-    # failure (e.g. the batch poller racing this synchronous run), so a
-    # successful fast eval never displays a stale error.
+    # Stage 4 — clear any stale error_message on success
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,

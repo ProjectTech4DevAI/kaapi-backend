@@ -1200,7 +1200,6 @@ class TestPollAllPendingEvaluations:
 
         result = await poll_all_pending_evaluations(session=db)
 
-        # The fast run is not polled, and its status/error are left untouched.
         assert result["total"] == 0
         mock_check.assert_not_called()
         db.refresh(eval_run)
