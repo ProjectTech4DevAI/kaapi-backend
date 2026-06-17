@@ -910,10 +910,18 @@ class TestBuildGoogleEvaluationJSONL:
     def test_skips_empty_and_missing_questions(self) -> None:
         """Items with empty or missing questions are dropped."""
         dataset_items = [
-            {"id": "ok", "input": {"question": "Real"}, "expected_output": {},
-             "metadata": {}},
-            {"id": "empty", "input": {"question": ""}, "expected_output": {},
-             "metadata": {}},
+            {
+                "id": "ok",
+                "input": {"question": "Real"},
+                "expected_output": {},
+                "metadata": {},
+            },
+            {
+                "id": "empty",
+                "input": {"question": ""},
+                "expected_output": {},
+                "metadata": {},
+            },
             {"id": "missing", "input": {}, "expected_output": {}, "metadata": {}},
         ]
 
