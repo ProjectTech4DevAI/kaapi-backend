@@ -350,6 +350,34 @@ class EvaluationRun(SQLModel, table=True):
         description="Evaluation scores (e.g., correctness, cosine_similarity, etc.)",
     )
 
+    # Durable per-item cosine scores - source of truth for resync backfill.
+    per_item_scores: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "Durable {trace_id: cosine_similarity} map of computed pair "
+                "scores; source of truth used to backfill Langfuse on resync"
+            ),
+        ),
+        description="Durable map of computed per-trace cosine scores keyed by trace_id",
+    )
+
+    # Items that cannot be scored, with the reason why.
+    unscoreable: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "{trace_id: reason} for items that cannot be scored "
+                "(empty_output / empty_ground_truth / embedding_failed)"
+            ),
+        ),
+        description="Map of trace_id to the reason the item cannot be scored",
+    )
+
     # Cost tracking field
     cost: dict[str, Any] | None = SQLField(
         default=None,
@@ -442,6 +470,8 @@ class EvaluationRunUpdate(SQLModel):
     object_store_url: str | None = None
     score_trace_url: str | None = None
     score: dict[str, Any] | None = None
+    per_item_scores: dict[str, Any] | None = None
+    unscoreable: dict[str, Any] | None = None
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
 
@@ -463,6 +493,7 @@ class EvaluationRunPublic(SQLModel):
     score_trace_url: str | None
     total_items: int
     score: dict[str, Any] | None
+    unscoreable: dict[str, Any] | None = None
     cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int

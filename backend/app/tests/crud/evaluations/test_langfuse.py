@@ -365,7 +365,7 @@ class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""
 
     def test_update_traces_with_cosine_scores_success(self) -> None:
-        """Test successfully updating traces with scores."""
+        """Test successfully updating traces with scores, returning no failures."""
         mock_langfuse = MagicMock()
 
         per_item_scores = [
@@ -374,10 +374,11 @@ class TestUpdateTracesWithCosineScores:
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 
-        update_traces_with_cosine_scores(
+        failed = update_traces_with_cosine_scores(
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
+        assert failed == []
         assert mock_langfuse.score.call_count == 3
 
         calls = mock_langfuse.score.call_args_list
@@ -391,6 +392,25 @@ class TestUpdateTracesWithCosineScores:
 
         mock_langfuse.flush.assert_called_once()
 
+    def test_update_traces_with_cosine_scores_unscoreable(self) -> None:
+        """Unscoreable items are written as 0 with a 'Cannot compute' comment."""
+        mock_langfuse = MagicMock()
+
+        per_item_scores = [
+            {"trace_id": "trace_1", "cosine_similarity": 0.95},
+            {"trace_id": "trace_2", "unscoreable": True, "reason": "empty_output"},
+        ]
+
+        failed = update_traces_with_cosine_scores(
+            langfuse=mock_langfuse, per_item_scores=per_item_scores
+        )
+
+        assert failed == []
+        calls = mock_langfuse.score.call_args_list
+        assert calls[1].kwargs["trace_id"] == "trace_2"
+        assert calls[1].kwargs["value"] == 0
+        assert calls[1].kwargs["comment"] == "Cannot compute: empty_output"
+
     def test_update_traces_with_cosine_scores_missing_trace_id(self) -> None:
         """Test that items without trace_id are skipped."""
         mock_langfuse = MagicMock()
@@ -401,17 +421,30 @@ class TestUpdateTracesWithCosineScores:
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 
-        update_traces_with_cosine_scores(
+        failed = update_traces_with_cosine_scores(
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
+        assert failed == []
         assert mock_langfuse.score.call_count == 2
 
-    def test_update_traces_with_cosine_scores_error_handling(self) -> None:
-        """Test that score errors don't stop processing."""
+    def test_update_traces_with_cosine_scores_retries_then_reports_failure(
+        self,
+    ) -> None:
+        """A persistently failing write is retried, then reported (not raised)."""
         mock_langfuse = MagicMock()
 
-        mock_langfuse.score.side_effect = [None, Exception("Score failed"), None]
+        # trace_2 always fails; trace_1 and trace_3 succeed.
+        def score_side_effect(*args: Any, **kwargs: Any) -> None:
+            if kwargs.get("trace_id") == "trace_2":
+                raise Exception("Score failed")
+
+        mock_langfuse.score.side_effect = score_side_effect
+
+        # Don't actually sleep between retries.
+        from app.crud.evaluations.langfuse import _write_trace_score
+
+        _write_trace_score.retry.sleep = lambda *a, **k: None
 
         per_item_scores = [
             {"trace_id": "trace_1", "cosine_similarity": 0.95},
@@ -419,19 +452,25 @@ class TestUpdateTracesWithCosineScores:
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 
-        update_traces_with_cosine_scores(
+        failed = update_traces_with_cosine_scores(
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
-        assert mock_langfuse.score.call_count == 3
+        # Only the persistently failing trace is reported.
+        assert failed == ["trace_2"]
+        # trace_1 (1) + trace_2 (3 attempts) + trace_3 (1) = 5 score calls.
+        assert mock_langfuse.score.call_count == 5
         mock_langfuse.flush.assert_called_once()
 
     def test_update_traces_with_cosine_scores_empty_list(self) -> None:
         """Test with empty scores list."""
         mock_langfuse = MagicMock()
 
-        update_traces_with_cosine_scores(langfuse=mock_langfuse, per_item_scores=[])
+        failed = update_traces_with_cosine_scores(
+            langfuse=mock_langfuse, per_item_scores=[]
+        )
 
+        assert failed == []
         mock_langfuse.score.assert_not_called()
         mock_langfuse.flush.assert_called_once()
 

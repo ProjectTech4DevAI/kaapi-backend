@@ -55,7 +55,14 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
-from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
+from app.crud.evaluations.merge import apply_cosine_breakdown
+from app.crud.evaluations.score import (
+    COSINE_SCORE_COMMENT,
+    COSINE_SCORE_NAME,
+    EvaluationScore,
+    TraceData,
+    TraceScore,
+)
 from app.crud.job import create_batch_job, get_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJobCreate
@@ -627,19 +634,31 @@ def _stage3_score_and_trace(
 
     # Per-item cosine scores keyed on Langfuse trace_id (for Langfuse updates)
     # and on item_id (for building the persisted per-trace records below).
+    # Items that have a trace but no computable score are flagged unscoreable
+    # with a reason so the gap is explained (kept out of avg/std/total_pairs).
     per_item_scores: list[dict[str, Any]] = []
     item_id_to_score: dict[str, float] = {}
     similarities: list[float] = []
+    unscoreable: dict[str, str] = {}  # {trace_id: reason}
     for response in response_results:
         item_id = response["item_id"]
-        embedding_pair = item_id_to_pair.get(item_id)
         trace_id = trace_id_mapping.get(item_id)
-        if not embedding_pair or not trace_id:
+        if not trace_id:
             continue
-        if (
-            embedding_pair.get("output_embedding") is None
-            or embedding_pair.get("ground_truth_embedding") is None
-        ):
+        embedding_pair = item_id_to_pair.get(item_id)
+        has_embeddings = (
+            embedding_pair is not None
+            and embedding_pair.get("output_embedding") is not None
+            and embedding_pair.get("ground_truth_embedding") is not None
+        )
+        if not has_embeddings:
+            # Classify why this item cannot be scored, for the UI flag.
+            if not response.get("generated_output"):
+                unscoreable[trace_id] = "empty_output"
+            elif not response.get("ground_truth"):
+                unscoreable[trace_id] = "empty_ground_truth"
+            else:
+                unscoreable[trace_id] = "embedding_failed"
             continue
         cosine = calculate_cosine_similarity(
             embedding_pair["output_embedding"],
@@ -649,11 +668,23 @@ def _stage3_score_and_trace(
         item_id_to_score[item_id] = cosine
         per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
 
-    if per_item_scores:
+    # Write cosine scores plus explicit 0-scores for unscoreable items to Langfuse.
+    unscoreable_writes = [
+        {"trace_id": trace_id, "unscoreable": True, "reason": reason}
+        for trace_id, reason in unscoreable.items()
+    ]
+    write_items = per_item_scores + unscoreable_writes
+    if write_items:
         try:
-            update_traces_with_cosine_scores(
-                langfuse=langfuse, per_item_scores=per_item_scores
+            failed_trace_ids = update_traces_with_cosine_scores(
+                langfuse=langfuse, per_item_scores=write_items
             )
+            if failed_trace_ids:
+                logger.warning(
+                    f"[_stage3_score_and_trace] {log_prefix} "
+                    f"{len(failed_trace_ids)} Langfuse score writes failed; "
+                    f"recoverable from durable per_item_scores on resync"
+                )
         except Exception as exc:
             # Score-update failures don't fail the run (score lives in eval_run.score).
             logger.warning(
@@ -661,6 +692,15 @@ def _stage3_score_and_trace(
                 f"Failed to update Langfuse traces with scores | error={exc}",
                 exc_info=True,
             )
+
+    # Durable per-item scores (source of truth) + the unscoreable map, persisted
+    # below via update_evaluation_run's commit of the eval_run object.
+    eval_run.per_item_scores = {
+        trace_id_mapping[item_id]: round(float(score), 6)
+        for item_id, score in item_id_to_score.items()
+        if item_id in trace_id_mapping
+    }
+    eval_run.unscoreable = unscoreable or None
 
     # Aggregate similarity stats, in the batch path's summary_scores shape.
     if similarities:
@@ -672,15 +712,19 @@ def _stage3_score_and_trace(
         std = 0.0
 
     score_payload = {
-        "summary_scores": [
-            {
-                "name": "Cosine Similarity",
-                "avg": round(avg, 2),
-                "std": round(std, 2),
-                "total_pairs": len(similarities),
-                "data_type": "NUMERIC",
-            }
-        ]
+        "summary_scores": apply_cosine_breakdown(
+            [
+                {
+                    "name": COSINE_SCORE_NAME,
+                    "avg": round(avg, 2),
+                    "std": round(std, 2),
+                    "total_pairs": len(similarities),
+                    "data_type": "NUMERIC",
+                }
+            ],
+            total_items=eval_run.total_items,
+            unscoreable=eval_run.unscoreable,
+        )
     }
 
     # Attach response- and embedding-stage costs (attach_cost is idempotent per stage).
@@ -730,13 +774,22 @@ def _stage3_score_and_trace(
         if cosine is not None:
             trace_scores.append(
                 {
-                    "name": "Cosine Similarity",
+                    "name": COSINE_SCORE_NAME,
                     "value": round(cosine, 2),
                     "data_type": "NUMERIC",
-                    "comment": (
-                        "Cosine similarity between generated output and "
-                        "ground truth embeddings"
-                    ),
+                    "comment": COSINE_SCORE_COMMENT,
+                }
+            )
+        elif trace_id in unscoreable:
+            # Placeholder 0-score so the item is visible with its reason;
+            # excluded from summary stats via the unscoreable marker.
+            trace_scores.append(
+                {
+                    "name": COSINE_SCORE_NAME,
+                    "value": 0,
+                    "data_type": "NUMERIC",
+                    "comment": f"Cannot compute: {unscoreable[trace_id]}",
+                    "unscoreable": True,
                 }
             )
         traces.append(

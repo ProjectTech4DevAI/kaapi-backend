@@ -415,6 +415,75 @@ class TestProcessCompletedEvaluation:
         assert "embedding" not in result.cost
 
     @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing.download_batch_results")
+    @patch("app.crud.evaluations.processing.fetch_dataset_items")
+    @patch("app.crud.evaluations.processing.create_langfuse_dataset_run")
+    @patch("app.crud.evaluations.processing.start_embedding_batch")
+    @patch("app.crud.evaluations.processing.upload_batch_results_to_object_store")
+    async def test_process_completed_evaluation_persists_trace_skeleton(
+        self,
+        mock_upload,
+        mock_start_embedding,
+        mock_create_langfuse,
+        mock_fetch_dataset,
+        mock_download,
+        mock_save_score,
+        db: Session,
+        eval_run_with_batch,
+    ):
+        """Q&A trace skeleton is persisted durably before embeddings complete."""
+        mock_download.return_value = [
+            {
+                "custom_id": "item1",
+                "response": {
+                    "body": {
+                        "id": "resp_123",
+                        "output": "Answer 1",
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 50,
+                            "total_tokens": 150,
+                        },
+                    }
+                },
+            }
+        ]
+        mock_fetch_dataset.return_value = [
+            {
+                "id": "item1",
+                "input": {"question": "Q1"},
+                "expected_output": {"answer": "A1"},
+                "metadata": {"question_id": 7},
+            }
+        ]
+        mock_create_langfuse.return_value = {"item1": "trace_123"}
+        mock_start_embedding.return_value = eval_run_with_batch
+        mock_upload.return_value = "s3://bucket/results.jsonl"
+        mock_save_score.return_value = eval_run_with_batch
+
+        await process_completed_evaluation(
+            eval_run=eval_run_with_batch,
+            session=db,
+            openai_client=MagicMock(),
+            langfuse=MagicMock(),
+        )
+
+        # save_score is called with a Q&A-only skeleton (no scores yet), keyed by
+        # the Langfuse trace_id, so the embedding stage can attach cosine later.
+        mock_save_score.assert_called_once()
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        assert saved_score["summary_scores"] == []
+        traces = saved_score["traces"]
+        assert len(traces) == 1
+        assert traces[0]["trace_id"] == "trace_123"
+        assert traces[0]["question"] == "Q1"
+        assert traces[0]["llm_answer"] == "Answer 1"
+        assert traces[0]["ground_truth_answer"] == "A1"
+        assert traces[0]["question_id"] == 7
+        assert traces[0]["scores"] == []
+
+    @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
     @patch("app.crud.evaluations.processing.fetch_dataset_items")
     async def test_process_completed_evaluation_no_results(
@@ -626,6 +695,12 @@ class TestProcessCompletedEmbeddingBatch:
         )
         assert cosine_score is not None
         assert cosine_score["avg"] == 0.95
+        # Denominator is surfaced for the UI alongside the scored pair count.
+        assert cosine_score["total_items"] == result.total_items
+
+        # Durable per-item scores are persisted as the resync source of truth,
+        # so a lost/failed Langfuse write can always be backfilled later.
+        assert result.per_item_scores == {"trace_123": pytest.approx(0.95)}
 
         # Cost tracking: embedding entry is added, response entry is preserved,
         # and total_cost_usd is the sum of both.
@@ -642,6 +717,163 @@ class TestProcessCompletedEmbeddingBatch:
         assert result.cost["total_cost_usd"] == pytest.approx(
             0.000375 + embedding_cost["cost_usd"]
         )
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing._load_score_traces")
+    @patch("app.crud.evaluations.processing.download_batch_results")
+    @patch("app.crud.evaluations.processing.parse_embedding_results")
+    @patch("app.crud.evaluations.processing.calculate_average_similarity")
+    @patch("app.crud.evaluations.processing.update_traces_with_cosine_scores")
+    async def test_process_completed_embedding_batch_persists_durable_traces(
+        self,
+        mock_update_traces,
+        mock_calculate,
+        mock_parse,
+        mock_download,
+        mock_load_traces,
+        mock_save_score,
+        db: Session,
+        eval_run_with_embedding_batch,
+    ):
+        """When a Q&A skeleton exists, cosine is attached and full traces saved.
+
+        Cosine display then comes straight from score_trace_url (no Langfuse).
+        """
+        mock_download.return_value = [
+            {
+                "custom_id": "trace_123",
+                "response": {
+                    "body": {"usage": {"prompt_tokens": 200, "total_tokens": 200}}
+                },
+            }
+        ]
+        mock_parse.return_value = [
+            {
+                "item_id": "item1",
+                "trace_id": "trace_123",
+                "output_embedding": [1.0, 0.0],
+                "ground_truth_embedding": [1.0, 0.0],
+            }
+        ]
+        mock_calculate.return_value = {
+            "cosine_similarity_avg": 0.95,
+            "cosine_similarity_std": 0.0,
+            "total_pairs": 1,
+            "per_item_scores": [
+                {"item_id": "item1", "trace_id": "trace_123", "cosine_similarity": 0.95}
+            ],
+        }
+        # A durable Q&A skeleton (no scores yet) persisted at the response stage.
+        mock_load_traces.return_value = [
+            {
+                "trace_id": "trace_123",
+                "question": "Q1",
+                "llm_answer": "A1",
+                "ground_truth_answer": "GT1",
+                "question_id": 1,
+                "scores": [],
+            }
+        ]
+        mock_save_score.return_value = eval_run_with_embedding_batch
+
+        result = await process_completed_embedding_batch(
+            eval_run=eval_run_with_embedding_batch,
+            session=db,
+            openai_client=MagicMock(),
+            langfuse=MagicMock(),
+        )
+
+        # The full trace unit is persisted with cosine attached to the skeleton.
+        mock_save_score.assert_called_once()
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        traces = saved_score["traces"]
+        assert len(traces) == 1
+        cosine = next(
+            s for s in traces[0]["scores"] if s["name"] == "Cosine Similarity"
+        )
+        assert cosine["value"] == 0.95
+        assert not cosine.get("unscoreable")
+        assert saved_score["summary_scores"][0]["name"] == "Cosine Similarity"
+
+        # The in-memory score carries the traces for the response.
+        assert result.score["traces"][0]["trace_id"] == "trace_123"
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing._load_score_traces")
+    @patch("app.crud.evaluations.processing.download_batch_results")
+    @patch("app.crud.evaluations.processing.parse_embedding_results")
+    @patch("app.crud.evaluations.processing.calculate_average_similarity")
+    @patch("app.crud.evaluations.processing.update_traces_with_cosine_scores")
+    async def test_process_completed_embedding_batch_unscoreable_placeholder(
+        self,
+        mock_update_traces,
+        mock_calculate,
+        mock_parse,
+        mock_download,
+        mock_load_traces,
+        mock_save_score,
+        db: Session,
+        eval_run_with_embedding_batch,
+    ):
+        """Unscoreable items get a flagged 0-score placeholder on the durable trace."""
+        # Flag trace_empty as unscoreable (empty model output).
+        eval_run_with_embedding_batch.unscoreable = {"trace_empty": "empty_output"}
+        db.add(eval_run_with_embedding_batch)
+        db.commit()
+        db.refresh(eval_run_with_embedding_batch)
+
+        mock_download.return_value = []
+        mock_parse.return_value = [
+            {
+                "item_id": "item1",
+                "trace_id": "trace_123",
+                "output_embedding": [1.0, 0.0],
+                "ground_truth_embedding": [1.0, 0.0],
+            }
+        ]
+        mock_calculate.return_value = {
+            "cosine_similarity_avg": 0.95,
+            "cosine_similarity_std": 0.0,
+            "total_pairs": 1,
+            "per_item_scores": [
+                {"item_id": "item1", "trace_id": "trace_123", "cosine_similarity": 0.95}
+            ],
+        }
+        mock_load_traces.return_value = [
+            {
+                "trace_id": "trace_123",
+                "question": "Q1",
+                "llm_answer": "A1",
+                "ground_truth_answer": "GT1",
+                "question_id": 1,
+                "scores": [],
+            },
+            {
+                "trace_id": "trace_empty",
+                "question": "Q2",
+                "llm_answer": "",
+                "ground_truth_answer": "GT2",
+                "question_id": 2,
+                "scores": [],
+            },
+        ]
+        mock_save_score.return_value = eval_run_with_embedding_batch
+
+        await process_completed_embedding_batch(
+            eval_run=eval_run_with_embedding_batch,
+            session=db,
+            openai_client=MagicMock(),
+            langfuse=MagicMock(),
+        )
+
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        by_id = {t["trace_id"]: t for t in saved_score["traces"]}
+        placeholder = by_id["trace_empty"]["scores"][0]
+        assert placeholder["value"] == 0
+        assert placeholder["unscoreable"] is True
+        assert "empty_output" in placeholder["comment"]
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")

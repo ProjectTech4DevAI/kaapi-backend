@@ -13,9 +13,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from langfuse import Langfuse
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import (
+    COSINE_SCORE_COMMENT,
+    COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
     EvaluationScore,
     TraceData,
@@ -23,6 +31,39 @@ from app.crud.evaluations.score import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-write retry policy for Langfuse score writes. The Langfuse SDK enqueues
+# scores and surfaces transport errors variously, so we retry broadly (reraise
+# the original error to the caller after the final attempt fails).
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY_SECONDS = 0.5
+_RETRY_MAX_DELAY_SECONDS = 8.0
+
+_retry_langfuse_call = retry(
+    wait=wait_random_exponential(
+        multiplier=_RETRY_BASE_DELAY_SECONDS, max=_RETRY_MAX_DELAY_SECONDS
+    ),
+    stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
+    before_sleep=before_sleep_log(logger, logging.INFO),
+    reraise=True,
+)
+
+
+@_retry_langfuse_call
+def _write_trace_score(
+    langfuse: Langfuse,
+    *,
+    trace_id: str,
+    value: float,
+    comment: str,
+) -> None:
+    """Write a single trace-level score to Langfuse, retrying transient failures."""
+    langfuse.score(
+        trace_id=trace_id,
+        name=COSINE_SCORE_NAME,
+        value=value,
+        comment=comment,
+    )
 
 
 def create_langfuse_dataset_run(
@@ -183,32 +224,37 @@ def create_langfuse_dataset_run(
 def update_traces_with_cosine_scores(
     langfuse: Langfuse,
     per_item_scores: list[dict[str, Any]],
-) -> None:
+) -> list[str]:
     """
     Update Langfuse traces with cosine similarity scores.
 
-    This function adds custom "cosine_similarity" scores to traces at the trace level,
-    allowing them to be visualized in the Langfuse UI.
+    Adds a trace-level "Cosine Similarity" score to each trace so it can be
+    visualized in the Langfuse UI. Each write is retried on transient failures.
+    Per-item failures are isolated (one bad trace never aborts the batch) and
+    reported back so the caller can surface/resync them.
+
+    Items may be flagged as unscoreable (e.g. empty model output): those are
+    written with value 0 and a "Cannot compute: <reason>" comment instead of
+    the default cosine comment, so the gap is explained in the Langfuse UI.
 
     Args:
         langfuse: Configured Langfuse client
-        per_item_scores: List of per-item score dictionaries from
-            calculate_average_similarity()
-                        Format: [
-                            {
-                                "trace_id": "trace-uuid-123",
-                                "cosine_similarity": 0.95
-                            },
-                            ...
-                        ]
+        per_item_scores: List of per-item score dictionaries, e.g.
+            [
+                {"trace_id": "trace-uuid-123", "cosine_similarity": 0.95},
+                {"trace_id": "trace-uuid-456", "unscoreable": True,
+                 "reason": "empty model output"},
+                ...
+            ]
 
-    Note:
-        This function logs errors but does not raise exceptions to avoid blocking
-        evaluation completion if Langfuse updates fail.
+    Returns:
+        List of trace_ids whose score write still failed after retries. Empty
+        when every score was written successfully.
     """
+    failed_trace_ids: list[str] = []
+
     for score_item in per_item_scores:
         trace_id = score_item.get("trace_id")
-        cosine_score = score_item.get("cosine_similarity")
 
         if not trace_id:
             logger.warning(
@@ -217,15 +263,17 @@ def update_traces_with_cosine_scores(
             )
             continue
 
+        if score_item.get("unscoreable"):
+            value = 0
+            reason = score_item.get("reason", "unscoreable")
+            comment = f"Cannot compute: {reason}"
+        else:
+            value = score_item.get("cosine_similarity")
+            comment = COSINE_SCORE_COMMENT
+
         try:
-            langfuse.score(
-                trace_id=trace_id,
-                name="Cosine Similarity",
-                value=cosine_score,
-                comment=(
-                    "Cosine similarity between generated output and "
-                    "ground truth embeddings"
-                ),
+            _write_trace_score(
+                langfuse, trace_id=trace_id, value=value, comment=comment
             )
         except Exception as e:
             logger.error(
@@ -233,8 +281,18 @@ def update_traces_with_cosine_scores(
                 f"trace_id={trace_id} | {e}",
                 exc_info=True,
             )
+            failed_trace_ids.append(trace_id)
 
     langfuse.flush()
+
+    if failed_trace_ids:
+        logger.warning(
+            f"[update_traces_with_cosine_scores] Score writes failed after retries | "
+            f"failed={len(failed_trace_ids)}/{len(per_item_scores)} | "
+            f"failed_trace_ids={failed_trace_ids}"
+        )
+
+    return failed_trace_ids
 
 
 def upload_dataset_to_langfuse(

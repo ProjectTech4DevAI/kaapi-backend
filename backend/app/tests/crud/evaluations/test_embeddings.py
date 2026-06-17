@@ -33,9 +33,10 @@ class TestBuildEmbeddingJsonl:
             "item_2": "trace_2",
         }
 
-        jsonl_data = build_embedding_jsonl(results, trace_id_mapping)
+        jsonl_data, skipped = build_embedding_jsonl(results, trace_id_mapping)
 
         assert len(jsonl_data) == 2
+        assert skipped == []
 
         assert jsonl_data[0]["custom_id"] == "trace_1"
         assert jsonl_data[0]["method"] == "POST"
@@ -57,11 +58,12 @@ class TestBuildEmbeddingJsonl:
 
         trace_id_mapping = {"item_1": "trace_1"}
 
-        jsonl_data = build_embedding_jsonl(
+        jsonl_data, skipped = build_embedding_jsonl(
             results, trace_id_mapping, embedding_model="text-embedding-3-small"
         )
 
         assert len(jsonl_data) == 1
+        assert skipped == []
         assert jsonl_data[0]["body"]["model"] == "text-embedding-3-small"
 
     def test_build_embedding_jsonl_skips_empty(self) -> None:
@@ -93,10 +95,17 @@ class TestBuildEmbeddingJsonl:
             "item_3": "trace_3",
         }
 
-        jsonl_data = build_embedding_jsonl(results, trace_id_mapping)
+        jsonl_data, skipped = build_embedding_jsonl(results, trace_id_mapping)
 
         assert len(jsonl_data) == 1
         assert jsonl_data[0]["custom_id"] == "trace_3"
+
+        # Empty output/ground_truth are reported with a per-item reason + trace_id.
+        skipped_by_trace = {s["trace_id"]: s["reason"] for s in skipped}
+        assert skipped_by_trace == {
+            "trace_1": "empty_output",
+            "trace_2": "empty_ground_truth",
+        }
 
     def test_build_embedding_jsonl_missing_item_id(self) -> None:
         """Test that items without item_id or trace_id are skipped."""
@@ -116,10 +125,39 @@ class TestBuildEmbeddingJsonl:
 
         trace_id_mapping = {"item_2": "trace_2"}
 
-        jsonl_data = build_embedding_jsonl(results, trace_id_mapping)
+        jsonl_data, skipped = build_embedding_jsonl(results, trace_id_mapping)
 
         assert len(jsonl_data) == 1
         assert jsonl_data[0]["custom_id"] == "trace_2"
+        # Item with no item_id is dropped silently (cannot be keyed at all).
+        assert skipped == []
+
+    def test_build_embedding_jsonl_missing_trace_id(self) -> None:
+        """Items whose item_id has no mapped trace_id are reported as skipped."""
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "Test?",
+                "generated_output": "Output",
+                "ground_truth": "Truth",
+            },
+            {
+                "item_id": "item_2",
+                "question": "Test?",
+                "generated_output": "Output",
+                "ground_truth": "Truth",
+            },
+        ]
+
+        trace_id_mapping = {"item_2": "trace_2"}
+
+        jsonl_data, skipped = build_embedding_jsonl(results, trace_id_mapping)
+
+        assert len(jsonl_data) == 1
+        assert jsonl_data[0]["custom_id"] == "trace_2"
+        assert skipped == [
+            {"item_id": "item_1", "trace_id": None, "reason": "missing_trace_id"}
+        ]
 
 
 class TestParseEmbeddingResults:
