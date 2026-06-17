@@ -54,6 +54,7 @@ from app.crud.evaluations.score import (
 from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
+from app.models.evaluation import RunModeEnum
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
@@ -1022,11 +1023,12 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [...]
         }
     """
-    # Single query to fetch all processing text evaluation runs
-    # STT/TTS evaluations have their own polling
+    # Only batch-mode text runs are polled here; fast-mode runs complete
+    # synchronously and have no batch_job_id, and STT/TTS poll separately.
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.type == "text",
+        EvaluationRun.run_mode == RunModeEnum.BATCH.value,
     )
     pending_runs = session.exec(statement).all()
 
