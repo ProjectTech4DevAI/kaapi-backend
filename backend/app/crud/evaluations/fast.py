@@ -829,11 +829,11 @@ def run_fast_evaluation(
         log_prefix=log_prefix,
     )
 
-    # Stage 4 — clear any stale error_message on success
+    # Stage 4
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(status="completed", error_message=None),
+        update=EvaluationRunUpdate(status="completed"),
     )
 
     # Stage 5 — persist the score unit (traces to S3, summary to DB) via the
