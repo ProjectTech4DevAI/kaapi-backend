@@ -111,7 +111,7 @@ class TestStartAssessment:
     def test_rejects_unsupported_provider(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="anthropic"))
+        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="sarvamai"))
 
         with (
             patch(
@@ -146,7 +146,9 @@ class TestStartAssessment:
         assessment.id = 21
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
+            completion=SimpleNamespace(
+                provider="google-aistudio", params={"model": "gemini"}
+            )
         )
 
         with (
@@ -178,6 +180,106 @@ class TestStartAssessment:
             )
 
         # Google is an accepted provider — no rejection, one Celery task dispatched.
+        assert response.num_configs == 1
+        dispatch.delay.assert_called_once()
+        assert dispatch.delay.call_args.kwargs["run_id"] == 11
+
+    @pytest.mark.parametrize(
+        "provider",
+        [
+            "openai",
+            "openai-native",
+            "google-aistudio",
+            "google-aistudio-native",
+            "anthropic",
+            "anthropic-native",
+        ],
+    )
+    def test_supported_batch_providers_are_accepted(self, provider: str) -> None:
+        """Every provider in _SUPPORTED_BATCH_PROVIDERS must pass validation."""
+        session = MagicMock()
+        request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
+        dataset = _make_dataset()
+        assessment = MagicMock()
+        assessment.id = 21
+        run = _make_run()
+        config_blob = SimpleNamespace(
+            completion=SimpleNamespace(provider=provider, params={"model": "m"})
+        )
+
+        with (
+            patch(
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=dataset,
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.services.assessment.service.create_assessment",
+                return_value=assessment,
+            ),
+            patch(
+                "app.services.assessment.service.create_assessment_run",
+                return_value=run,
+            ),
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
+            patch("app.services.assessment.service.recompute_assessment_status"),
+            _assessment_config_crud_patch(),
+        ):
+            response = start_assessment(
+                session=session,
+                request=request,
+                organization_id=1,
+                project_id=1,
+            )
+
+        assert response.num_configs == 1
+        dispatch.delay.assert_called_once()
+
+    def test_anthropic_provider_is_supported(self) -> None:
+        session = MagicMock()
+        request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
+        dataset = _make_dataset()
+        assessment = MagicMock()
+        assessment.id = 21
+        run = _make_run()
+        config_blob = SimpleNamespace(
+            completion=SimpleNamespace(
+                provider="anthropic", params={"model": "claude-opus-4-8"}
+            )
+        )
+
+        with (
+            patch(
+                "app.services.assessment.service.get_assessment_dataset_by_id",
+                return_value=dataset,
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.services.assessment.service.create_assessment",
+                return_value=assessment,
+            ),
+            patch(
+                "app.services.assessment.service.create_assessment_run",
+                return_value=run,
+            ),
+            patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
+            patch("app.services.assessment.service.recompute_assessment_status"),
+            _assessment_config_crud_patch(),
+        ):
+            response = start_assessment(
+                session=session,
+                request=request,
+                organization_id=1,
+                project_id=1,
+            )
+
+        # Anthropic is an accepted provider — no rejection, one Celery task dispatched.
         assert response.num_configs == 1
         dispatch.delay.assert_called_once()
         assert dispatch.delay.call_args.kwargs["run_id"] == 11

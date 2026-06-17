@@ -105,7 +105,7 @@ def start_tts_evaluation_batch(
             batch_job = start_batch_job(
                 session=session,
                 provider=batch_provider,
-                provider_name="google",
+                provider_name="google-aistudio",
                 job_type=BatchJobType.TTS_EVALUATION,
                 organization_id=org_id,
                 project_id=project_id,

@@ -23,6 +23,7 @@ from jinja2 import Template
 from fastapi import HTTPException
 from langfuse import Langfuse
 import openai
+from anthropic import Anthropic
 from openai import OpenAI
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -310,6 +311,39 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to configure OpenAI client: {str(e)}",
+        )
+
+
+def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anthropic:
+    """
+    Fetch Anthropic credentials for the current org/project and return a configured client.
+    """
+    credentials = get_provider_credential(
+        session=session,
+        org_id=org_id,
+        provider="anthropic",
+        project_id=project_id,
+    )
+
+    if not credentials or "api_key" not in credentials:
+        logger.warning(
+            f"[get_anthropic_client] Anthropic credentials not found. | project_id: {project_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Anthropic credentials not configured for this organization/project.",
+        )
+
+    try:
+        return Anthropic(api_key=credentials["api_key"])
+    except Exception as e:
+        logger.error(
+            f"[get_anthropic_client] Failed to configure Anthropic client. | project_id: {project_id} | error: {str(e)}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to configure Anthropic client: {str(e)}",
         )
 
 

@@ -90,20 +90,38 @@ def start_doctransform_job(
     return task_id
 
 
-def start_create_collection_job(
+def start_collection_setup_job(
     project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:
-    from app.celery.tasks.job_execution import run_create_collection_job
+    from app.celery.tasks.job_execution import run_collection_setup_job
 
     task_id = _enqueue_with_trace_context(
-        run_create_collection_job,
+        run_collection_setup_job,
         project_id=project_id,
         job_id=job_id,
         trace_id=trace_id,
         **kwargs,
     )
     logger.info(
-        f"[start_create_collection_job] Started job {job_id} with Celery task {task_id}"
+        f"[start_collection_setup_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_collection_batch_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_collection_batch_job
+
+    task_id = _enqueue_with_trace_context(
+        run_collection_batch_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_collection_batch_job] Started job {job_id} with Celery task {task_id}"
     )
     return task_id
 
@@ -194,6 +212,22 @@ def start_tts_result_processing(
     )
     logger.info(
         f"[start_tts_result_processing] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_fast_evaluation(eval_run_id: int, trace_id: str = "N/A") -> str:
+    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun."""
+    from app.celery.tasks.evaluation_fast import run_evaluation_fast
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_fast,
+        eval_run_id=eval_run_id,
+        trace_id=trace_id,
+    )
+    logger.info(
+        f"[start_fast_evaluation] Enqueued fast eval | "
+        f"eval_run_id={eval_run_id} | task_id={task_id}"
     )
     return task_id
 

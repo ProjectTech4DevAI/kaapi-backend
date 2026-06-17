@@ -7,6 +7,7 @@ from typing import Any
 from sqlmodel import Session
 
 from app.core.batch import (
+    AnthropicBatchProvider,
     GeminiBatchProvider,
     OpenAIBatchProvider,
     download_batch_results,
@@ -27,7 +28,7 @@ from app.services.assessment.prefilter.topic_relevance import (
     parse_topic_relevance_results,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_openai_client
+from app.utils import get_anthropic_client, get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +143,20 @@ def _get_batch_provider(
                 session=session, org_id=organization_id, project_id=project_id
             )
         )
-    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
+    if provider_name in (
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+    ):
         gemini_client = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
         return GeminiBatchProvider(client=gemini_client.client)
+    if provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
+        return AnthropicBatchProvider(
+            client=get_anthropic_client(
+                session=session, org_id=organization_id, project_id=project_id
+            )
+        )
     raise ValueError(f"Unsupported batch provider: {provider_name}")
 
 

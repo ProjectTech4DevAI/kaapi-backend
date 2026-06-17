@@ -1,17 +1,30 @@
 import logging
+from datetime import datetime
 from typing import Any, Literal, get_args
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+
+from app.models import ModelConfig
+from app.models.llm.constants import CompletionType, Provider as ProviderEnum
+from app.models.llm.request import ConfigBlob
+from app.models.model_config import (
+    ModelConfigBulkUpdateItem,
+    ModelConfigCreate,
+    ModelConfigUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
-from app.models import ModelConfig
-from app.models.llm.request import ConfigBlob
-from app.models.model_config import CompletionType
-
 Provider = Literal[
-    "openai", "google", "sarvamai", "elevenlabs", "anthropic", "google-vertex"
+    "openai",
+    "google",
+    "sarvamai",
+    "elevenlabs",
+    "anthropic",
+    "google-aistudio",
+    "proxy",
 ]
 
 # Runtime view of the Provider Literal. Use this anywhere the `global.provider_enum`
@@ -70,13 +83,17 @@ def list_all_active_model_configs(
 
 
 def get_model_config(
-    session: Session, provider: Provider, model_name: str
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    include_inactive: bool = False,
 ) -> ModelConfig | None:
     statement = select(ModelConfig).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
-        ModelConfig.is_active,
     )
+    if not include_inactive:
+        statement = statement.where(ModelConfig.is_active)
     return session.exec(statement).first()
 
 
@@ -86,7 +103,7 @@ def list_supported_models(
     """Return active model names for a provider + completion type."""
     stmt = select(ModelConfig.model_name).where(
         ModelConfig.provider == provider,
-        ModelConfig.completion_type == completion_type,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
     return list(session.exec(stmt).all())
@@ -98,11 +115,11 @@ def is_model_supported(
     completion_type: CompletionType,
     model_name: str,
 ) -> bool:
-    """Check whether (provider, model_name) is active and matches the completion type."""
+    """Check whether (provider, model_name) is active and supports the completion type."""
     stmt = select(ModelConfig.id).where(
         ModelConfig.provider == provider,
         ModelConfig.model_name == model_name,
-        ModelConfig.completion_type == completion_type,
+        ModelConfig.completion_type.contains([completion_type]),  # type: ignore[union-attr]
         ModelConfig.is_active,
     )
     return session.exec(stmt).first() is not None
@@ -113,19 +130,28 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
 
     model_config is the source of truth — all providers/types validated.
     Native configs are exempt (they forward raw params to the provider).
+
+    # As of now - this whole validation is liberal
+    # change this if we want to be more strict about unsupported models/providers or missing model configs.
     """
     completion = blob.completion
     raw_provider = completion.provider
     completion_type = completion.type
+
+    # Proxy forwards the request to the client's own LLM endpoint — no model
+    # lookup, no provider mapping.
+    if completion_type == ProviderEnum.PROXY.value:
+        return
+
     if raw_provider is None:
         return
 
-    if raw_provider.endswith("-native"):
+    if raw_provider.endswith(NATIVE_PROVIDER_SUFFIX):
         return
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model")
+    model_name = (completion.params or {}).get("model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -158,6 +184,93 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
                 f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
                 f"model='{model_name}'. Allowed: {allowed_voices}."
             )
+
+
+def bulk_create_model_configs(
+    session: Session, items: list[ModelConfigCreate]
+) -> list[ModelConfig]:
+    models = [ModelConfig.model_validate(item) for item in items]
+    session.add_all(models)
+    try:
+        session.commit()
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate (provider, model_name) — entry already exists",
+        ) from e
+    for m in models:
+        session.refresh(m)
+    return models
+
+
+def update_model_config(
+    session: Session, provider: str, model_name: str, data: ModelConfigUpdate
+) -> ModelConfig:
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(model, field, value)
+    model.updated_at = datetime.utcnow()
+    session.add(model)
+    session.commit()
+    session.refresh(model)
+    return model
+
+
+def bulk_update_model_configs(
+    session: Session, items: list[ModelConfigBulkUpdateItem]
+) -> list[ModelConfig]:
+    keys = [(item.provider, item.model_name) for item in items]
+    existing: dict[tuple, ModelConfig] = {}
+    for provider, model_name in keys:
+        m = get_model_config(
+            session=session,
+            provider=provider,
+            model_name=model_name,
+            include_inactive=True,
+        )
+        if m is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_name}' not found for provider='{provider}'",
+            )
+        existing[(provider, model_name)] = m
+    updated = []
+    now = datetime.utcnow()
+    for item in items:
+        model = existing[(item.provider, item.model_name)]
+        for field, value in item.model_dump(
+            exclude_unset=True, exclude={"provider", "model_name"}
+        ).items():
+            setattr(model, field, value)
+        model.updated_at = now
+        session.add(model)
+        updated.append(model)
+    session.commit()
+    for m in updated:
+        session.refresh(m)
+    return updated
+
+
+def delete_model_config(session: Session, provider: str, model_name: str) -> None:
+    model = get_model_config(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        include_inactive=True,
+    )
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    session.delete(model)
+    session.commit()
 
 
 def is_reasoning_model(session: Session, provider: Provider, model_name: str) -> bool:

@@ -17,38 +17,12 @@ from app.services.collections.helpers import get_service_name
 
 class constants:
     openai_model = "gpt-4o"
-    llm_service_name = "test-service-name"
+    knowledge_base_provider = "test-service-name"
 
 
 def uuid_increment(value: UUID) -> UUID:
     inc = int(value) + 1
     return UUID(int=inc)
-
-
-def get_assistant_collection(
-    db: Session,
-    project: Project,
-    *,
-    assistant_id: Optional[str] = None,
-    model: str = "gpt-4o",
-    collection_id: Optional[UUID] = None,
-) -> Collection:
-    """
-    Create a Collection configured for the Assistant path.
-    execute_job will treat this as `is_vector = False` and use assistant id.
-    """
-    if assistant_id is None:
-        assistant_id = f"asst_{uuid4().hex}"
-
-    collection = Collection(
-        id=collection_id or uuid4(),
-        project_id=project.id,
-        organization_id=project.organization_id,
-        llm_service_name=model,
-        llm_service_id=assistant_id,
-        provider=ProviderType.openai,
-    )
-    return CollectionCrud(db, project.id).create(collection)
 
 
 def get_vector_store_collection(
@@ -68,8 +42,8 @@ def get_vector_store_collection(
     collection = Collection(
         id=collection_id or uuid4(),
         project_id=project.id,
-        llm_service_name=get_service_name("openai"),
-        llm_service_id=vector_store_id,
+        knowledge_base_provider=get_service_name("openai"),
+        knowledge_base_id=vector_store_id,
         provider=ProviderType.openai,
     )
     return CollectionCrud(db, project.id).create(collection)

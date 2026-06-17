@@ -9,10 +9,12 @@ result monotonic, so the pair count can only grow across resyncs (never 29 -> 27
 import itertools
 import logging
 from collections import Counter
+from typing import Any
 
 import numpy as np
 
 from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
     EvaluationScore,
     SummaryScore,
     TraceData,
@@ -20,6 +22,26 @@ from app.crud.evaluations.score import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def sort_traces_by_question_id(traces: list[TraceData]) -> list[TraceData]:
+    """
+    Return ``traces`` ordered by the 1-based ``question_id`` assigned at Langfuse
+    upload time (effectively the CSV row index). Without this, traces come back in
+    ThreadPoolExecutor completion order, so the API response sequence is a race
+    rather than the CSV's natural order. Traces missing or with non-numeric
+    question_id are pushed to the end so the sort is total even for legacy traces.
+    """
+
+    def _key(trace: TraceData) -> tuple[int, int]:
+        qid = trace.get("question_id")
+        if isinstance(qid, int):
+            return (0, qid)
+        if isinstance(qid, str) and qid.strip().isdigit():
+            return (0, int(qid))
+        return (1, 0)
+
+    return sorted(traces, key=_key)
 
 
 def compute_summary_scores(traces: list[TraceData]) -> list[SummaryScore]:
@@ -79,7 +101,7 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
     for fresh_score in fresh.get("scores", []):
         merged_scores_by_name[fresh_score["name"]] = fresh_score
 
-    return {
+    merged: dict[str, Any] = {
         "trace_id": fresh.get("trace_id") or existing.get("trace_id", ""),
         "question": fresh.get("question") or existing.get("question", ""),
         "llm_answer": fresh.get("llm_answer") or existing.get("llm_answer", ""),
@@ -89,6 +111,13 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
         "question_id": fresh.get("question_id") or existing.get("question_id"),
         "scores": list(merged_scores_by_name.values()),
     }
+
+    if "category" in existing or "category" in fresh:
+        merged["category"] = (
+            fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
+        )
+
+    return merged
 
 
 def _reconcile_trace(
@@ -104,7 +133,8 @@ def _reconcile_trace(
     if fresh is None:
         return existing, "reused"
     merged = _merge_single_trace(existing, fresh)
-    return merged, "reused" if merged == existing else "updated"
+    canonical_existing = _merge_single_trace(existing, existing)
+    return merged, "reused" if merged == canonical_existing else "updated"
 
 
 def merge_trace_data(
@@ -150,6 +180,7 @@ def merge_scores_step_forward(
     fresh_traces = fresh_score.get("traces", []) or []
 
     merged_traces, stats = merge_trace_data(existing_traces, fresh_traces)
+    merged_traces = sort_traces_by_question_id(merged_traces)
     recomputed_summary = compute_summary_scores(merged_traces)
 
     # Recomputed summaries take precedence; summary-only scores survive.
