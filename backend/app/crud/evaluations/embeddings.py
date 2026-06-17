@@ -146,7 +146,9 @@ def build_embedding_jsonl(
     return jsonl_data, skipped
 
 
-def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def parse_embedding_results(
+    raw_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
     """
     Parse embedding batch output into structured embedding pairs.
 
@@ -154,21 +156,18 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
         raw_results: Raw results from batch provider (list of JSONL lines)
 
     Returns:
-        List of embedding pairs in format:
-        [
-            {
-                "trace_id": "trace-uuid-123",
-                "output_embedding": [0.1, 0.2, ...],
-                "ground_truth_embedding": [0.15, 0.22, ...]
-            },
-            ...
-        ]
+        Tuple of (embedding_pairs, failed_trace_ids):
+        - embedding_pairs: [{trace_id, output_embedding, ground_truth_embedding}]
+        - failed_trace_ids: trace_ids whose embedding could not be parsed (flagged
+          embedding_failed downstream). Lines with no trace_id are dropped silently.
     """
     logger.info(f"Parsing embedding results from {len(raw_results)} lines")
 
     embedding_pairs = []
+    failed_trace_ids: list[str] = []
 
     for line_num, response in enumerate(raw_results, 1):
+        trace_id = None
         try:
             # Extract BATCH_KEY (which is now the Langfuse trace_id)
             trace_id = response.get(BATCH_KEY)
@@ -182,6 +181,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                 logger.warning(
                     f"[parse_embedding_batch_results] Trace {trace_id} had error: {error_msg}"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             # Extract the response body
@@ -192,6 +192,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                 logger.warning(
                     f"Trace {trace_id}: Expected 2 embeddings, got {len(embedding_data)}"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             # Extract embeddings by index
@@ -217,6 +218,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                     f"Trace {trace_id}: Missing embeddings (output={output_embedding is not None}, "
                     f"ground_truth={ground_truth_embedding is not None})"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             embedding_pairs.append(
@@ -229,12 +231,15 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
 
         except Exception as e:
             logger.error(f"Line {line_num}: Unexpected error: {e}", exc_info=True)
+            if trace_id:
+                failed_trace_ids.append(trace_id)
             continue
 
     logger.info(
-        f"Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines"
+        f"Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines "
+        f"| failed={len(failed_trace_ids)}"
     )
-    return embedding_pairs
+    return embedding_pairs, failed_trace_ids
 
 
 def calculate_cosine_similarity(vec1: list[float], vec2: list[float]) -> float:

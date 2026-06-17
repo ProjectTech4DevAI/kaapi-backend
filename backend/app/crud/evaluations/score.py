@@ -18,6 +18,8 @@ COSINE_SCORE_COMMENT: str = (
 )
 
 # Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
+# "missing_trace_id" only appears in build_embedding_jsonl's internal skipped list,
+# never in EvaluationRun.unscoreable (which is keyed by trace_id).
 UNSCOREABLE_REASONS: tuple[str, ...] = (
     "empty_output",
     "empty_ground_truth",

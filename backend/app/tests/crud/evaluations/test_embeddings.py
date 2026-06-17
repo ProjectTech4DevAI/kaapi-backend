@@ -190,9 +190,10 @@ class TestParseEmbeddingResults:
             },
         ]
 
-        embedding_pairs = parse_embedding_results(raw_results)
+        embedding_pairs, failed_trace_ids = parse_embedding_results(raw_results)
 
         assert len(embedding_pairs) == 2
+        assert failed_trace_ids == []
 
         assert embedding_pairs[0]["trace_id"] == "trace_1"
         assert embedding_pairs[0]["output_embedding"] == [0.1, 0.2, 0.3]
@@ -222,10 +223,12 @@ class TestParseEmbeddingResults:
             },
         ]
 
-        embedding_pairs = parse_embedding_results(raw_results)
+        embedding_pairs, failed_trace_ids = parse_embedding_results(raw_results)
 
         assert len(embedding_pairs) == 1
         assert embedding_pairs[0]["trace_id"] == "trace_2"
+        # The errored line is reported so it can be flagged embedding_failed.
+        assert failed_trace_ids == ["trace_1"]
 
     def test_parse_embedding_results_missing_embedding(self) -> None:
         """Test parsing results with missing embeddings."""
@@ -254,10 +257,54 @@ class TestParseEmbeddingResults:
             },
         ]
 
-        embedding_pairs = parse_embedding_results(raw_results)
+        embedding_pairs, failed_trace_ids = parse_embedding_results(raw_results)
 
         assert len(embedding_pairs) == 1
         assert embedding_pairs[0]["trace_id"] == "trace_2"
+        # The partial-result line (only index 0) is reported as failed.
+        assert failed_trace_ids == ["trace_1"]
+
+    def test_parse_embedding_results_missing_trace_id_not_reported(self) -> None:
+        """A line with no trace_id is dropped silently, not reported as failed."""
+        raw_results = [
+            {
+                # No custom_id / BATCH_KEY: cannot be keyed, so not reportable.
+                "response": {
+                    "body": {
+                        "data": [
+                            {"index": 0, "embedding": [0.1, 0.2]},
+                            {"index": 1, "embedding": [0.15, 0.22]},
+                        ]
+                    }
+                },
+            },
+        ]
+
+        embedding_pairs, failed_trace_ids = parse_embedding_results(raw_results)
+
+        assert embedding_pairs == []
+        assert failed_trace_ids == []
+
+    def test_parse_embedding_results_null_ground_truth_embedding(self) -> None:
+        """Both indices present but one embedding is None -> reported as failed."""
+        raw_results = [
+            {
+                "custom_id": "trace_1",
+                "response": {
+                    "body": {
+                        "data": [
+                            {"index": 0, "embedding": [0.1, 0.2]},
+                            {"index": 1, "embedding": None},
+                        ]
+                    }
+                },
+            },
+        ]
+
+        embedding_pairs, failed_trace_ids = parse_embedding_results(raw_results)
+
+        assert embedding_pairs == []
+        assert failed_trace_ids == ["trace_1"]
 
 
 class TestCalculateCosineSimilarity:

@@ -610,10 +610,20 @@ async def process_completed_embedding_batch(
         )
 
         # Step 3: Parse embedding results
-        embedding_pairs = parse_embedding_results(raw_results=raw_results)
+        embedding_pairs, failed_trace_ids = parse_embedding_results(
+            raw_results=raw_results
+        )
 
         if not embedding_pairs:
             raise ValueError("No valid embedding pairs found in batch output")
+
+        # Flag failed embeddings before Step 5/6 so the gap is counted and written.
+        # setdefault keeps any reason already set at start_embedding_batch.
+        if failed_trace_ids:
+            unscoreable = dict(eval_run.unscoreable or {})
+            for trace_id in failed_trace_ids:
+                unscoreable.setdefault(trace_id, "embedding_failed")
+            eval_run.unscoreable = unscoreable or None
 
         # Step 4: Calculate similarity scores
         similarity_stats = calculate_average_similarity(embedding_pairs=embedding_pairs)

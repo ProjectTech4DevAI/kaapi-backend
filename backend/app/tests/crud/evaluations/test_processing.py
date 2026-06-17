@@ -659,14 +659,17 @@ class TestProcessCompletedEmbeddingBatch:
                 },
             }
         ]
-        mock_parse.return_value = [
-            {
-                "item_id": "item1",
-                "trace_id": "trace_123",
-                "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],
-            }
-        ]
+        mock_parse.return_value = (
+            [
+                {
+                    "item_id": "item1",
+                    "trace_id": "trace_123",
+                    "output_embedding": [1.0, 0.0],
+                    "ground_truth_embedding": [1.0, 0.0],
+                }
+            ],
+            [],
+        )
         mock_calculate.return_value = {
             "cosine_similarity_avg": 0.95,
             "cosine_similarity_std": 0.02,
@@ -749,14 +752,17 @@ class TestProcessCompletedEmbeddingBatch:
                 },
             }
         ]
-        mock_parse.return_value = [
-            {
-                "item_id": "item1",
-                "trace_id": "trace_123",
-                "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],
-            }
-        ]
+        mock_parse.return_value = (
+            [
+                {
+                    "item_id": "item1",
+                    "trace_id": "trace_123",
+                    "output_embedding": [1.0, 0.0],
+                    "ground_truth_embedding": [1.0, 0.0],
+                }
+            ],
+            [],
+        )
         mock_calculate.return_value = {
             "cosine_similarity_avg": 0.95,
             "cosine_similarity_std": 0.0,
@@ -826,14 +832,17 @@ class TestProcessCompletedEmbeddingBatch:
         db.refresh(eval_run_with_embedding_batch)
 
         mock_download.return_value = []
-        mock_parse.return_value = [
-            {
-                "item_id": "item1",
-                "trace_id": "trace_123",
-                "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],
-            }
-        ]
+        mock_parse.return_value = (
+            [
+                {
+                    "item_id": "item1",
+                    "trace_id": "trace_123",
+                    "output_embedding": [1.0, 0.0],
+                    "ground_truth_embedding": [1.0, 0.0],
+                }
+            ],
+            [],
+        )
         mock_calculate.return_value = {
             "cosine_similarity_avg": 0.95,
             "cosine_similarity_std": 0.0,
@@ -877,6 +886,157 @@ class TestProcessCompletedEmbeddingBatch:
         assert "empty_output" in placeholder["comment"]
 
     @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing._load_score_traces")
+    @patch("app.crud.evaluations.processing.download_batch_results")
+    @patch("app.crud.evaluations.processing.parse_embedding_results")
+    @patch("app.crud.evaluations.processing.calculate_average_similarity")
+    @patch("app.crud.evaluations.processing.update_traces_with_cosine_scores")
+    async def test_process_completed_embedding_batch_flags_embedding_failed(
+        self,
+        mock_update_traces,
+        mock_calculate,
+        mock_parse,
+        mock_download,
+        mock_load_traces,
+        mock_save_score,
+        db: Session,
+        eval_run_with_embedding_batch,
+    ):
+        """A failed embedding is flagged embedding_failed across all outputs."""
+        mock_download.return_value = []
+        # trace_ok scored normally; trace_fail dropped by parse_embedding_results.
+        mock_parse.return_value = (
+            [
+                {
+                    "item_id": "item1",
+                    "trace_id": "trace_ok",
+                    "output_embedding": [1.0, 0.0],
+                    "ground_truth_embedding": [1.0, 0.0],
+                }
+            ],
+            ["trace_fail"],
+        )
+        mock_calculate.return_value = {
+            "cosine_similarity_avg": 0.95,
+            "cosine_similarity_std": 0.0,
+            "total_pairs": 1,
+            "per_item_scores": [
+                {"item_id": "item1", "trace_id": "trace_ok", "cosine_similarity": 0.95}
+            ],
+        }
+        mock_update_traces.return_value = []
+        mock_load_traces.return_value = [
+            {
+                "trace_id": "trace_ok",
+                "question": "Q1",
+                "llm_answer": "A1",
+                "ground_truth_answer": "GT1",
+                "question_id": 1,
+                "scores": [],
+            },
+            {
+                "trace_id": "trace_fail",
+                "question": "Q2",
+                "llm_answer": "A2",
+                "ground_truth_answer": "GT2",
+                "question_id": 2,
+                "scores": [],
+            },
+        ]
+        mock_save_score.return_value = eval_run_with_embedding_batch
+
+        result = await process_completed_embedding_batch(
+            eval_run=eval_run_with_embedding_batch,
+            session=db,
+            openai_client=MagicMock(),
+            langfuse=MagicMock(),
+        )
+
+        # Flagged embedding_failed in the durable unscoreable map.
+        assert result.unscoreable["trace_fail"] == "embedding_failed"
+
+        # Counted in the cosine summary's unscoreable breakdown.
+        cosine_summary = result.score["summary_scores"][0]
+        assert cosine_summary["unscoreable"] == {"embedding_failed": 1}
+
+        # Written to Langfuse as a 0-placeholder with the reason.
+        write_items = mock_update_traces.call_args.kwargs["per_item_scores"]
+        assert {
+            "trace_id": "trace_fail",
+            "unscoreable": True,
+            "reason": "embedding_failed",
+        } in write_items
+
+        # Rendered as a flagged 0-score on the durable trace.
+        saved_traces = {
+            t["trace_id"]: t
+            for t in mock_save_score.call_args.kwargs["score"]["traces"]
+        }
+        placeholder = saved_traces["trace_fail"]["scores"][0]
+        assert placeholder["value"] == 0
+        assert placeholder["unscoreable"] is True
+        assert placeholder["comment"] == "Cannot compute: embedding_failed"
+
+    @pytest.mark.asyncio
+    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing._load_score_traces")
+    @patch("app.crud.evaluations.processing.download_batch_results")
+    @patch("app.crud.evaluations.processing.parse_embedding_results")
+    @patch("app.crud.evaluations.processing.calculate_average_similarity")
+    @patch("app.crud.evaluations.processing.update_traces_with_cosine_scores")
+    async def test_process_completed_embedding_batch_failed_does_not_override_empty(
+        self,
+        mock_update_traces,
+        mock_calculate,
+        mock_parse,
+        mock_download,
+        mock_load_traces,
+        mock_save_score,
+        db: Session,
+        eval_run_with_embedding_batch,
+    ):
+        """A trace already flagged empty_* keeps its reason (no embedding_failed)."""
+        eval_run_with_embedding_batch.unscoreable = {"trace_x": "empty_output"}
+        db.add(eval_run_with_embedding_batch)
+        db.commit()
+        db.refresh(eval_run_with_embedding_batch)
+
+        mock_download.return_value = []
+        mock_parse.return_value = (
+            [
+                {
+                    "item_id": "item1",
+                    "trace_id": "trace_ok",
+                    "output_embedding": [1.0, 0.0],
+                    "ground_truth_embedding": [1.0, 0.0],
+                }
+            ],
+            ["trace_x"],
+        )
+        mock_calculate.return_value = {
+            "cosine_similarity_avg": 0.95,
+            "cosine_similarity_std": 0.0,
+            "total_pairs": 1,
+            "per_item_scores": [
+                {"item_id": "item1", "trace_id": "trace_ok", "cosine_similarity": 0.95}
+            ],
+        }
+        mock_update_traces.return_value = []
+        mock_load_traces.return_value = None
+        mock_save_score.return_value = eval_run_with_embedding_batch
+
+        result = await process_completed_embedding_batch(
+            eval_run=eval_run_with_embedding_batch,
+            session=db,
+            openai_client=MagicMock(),
+            langfuse=MagicMock(),
+        )
+
+        # setdefault preserves the original empty_output reason.
+        assert result.unscoreable["trace_x"] == "empty_output"
+
+    @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
     @patch("app.crud.evaluations.processing.parse_embedding_results")
     async def test_process_completed_embedding_batch_no_results(
@@ -888,7 +1048,7 @@ class TestProcessCompletedEmbeddingBatch:
     ):
         """Test processing with no valid embedding results."""
         mock_download.return_value = []
-        mock_parse.return_value = []
+        mock_parse.return_value = ([], [])
 
         mock_openai = MagicMock()
         mock_langfuse = MagicMock()
