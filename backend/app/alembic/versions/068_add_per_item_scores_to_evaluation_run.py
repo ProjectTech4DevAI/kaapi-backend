@@ -1,4 +1,4 @@
-"""add per_item_scores and unscoreable columns to evaluation_run
+"""add per_item_scores, unscoreable and is_score_updated columns to evaluation_run
 
 Revision ID: 068
 Revises: 067
@@ -42,8 +42,22 @@ def upgrade():
             ),
         ),
     )
+    op.add_column(
+        "evaluation_run",
+        sa.Column(
+            "is_score_updated",
+            sa.Boolean(),
+            nullable=True,
+            comment=(
+                "True once all computed per-item cosine scores were written to "
+                "Langfuse; False if any write failed (a cron retries these from "
+                "per_item_scores later). NULL until scores are first written"
+            ),
+        ),
+    )
 
 
 def downgrade():
+    op.drop_column("evaluation_run", "is_score_updated")
     op.drop_column("evaluation_run", "unscoreable")
     op.drop_column("evaluation_run", "per_item_scores")

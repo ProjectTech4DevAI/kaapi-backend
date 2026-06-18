@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Index, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlmodel import Field as SQLField, Relationship, SQLModel
 
@@ -378,6 +378,21 @@ class EvaluationRun(SQLModel, table=True):
         description="Map of trace_id to the reason the item cannot be scored",
     )
 
+    # Whether every computed per-item score was written to Langfuse.
+    is_score_updated: bool | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Boolean,
+            nullable=True,
+            comment=(
+                "True once all computed per-item cosine scores were written to "
+                "Langfuse; False if any write failed (a cron retries these from "
+                "per_item_scores later). NULL until scores are first written"
+            ),
+        ),
+        description="True if all per-item scores were synced to Langfuse, else False",
+    )
+
     # Cost tracking field
     cost: dict[str, Any] | None = SQLField(
         default=None,
@@ -472,6 +487,7 @@ class EvaluationRunUpdate(SQLModel):
     score: dict[str, Any] | None = None
     per_item_scores: dict[str, Any] | None = None
     unscoreable: dict[str, Any] | None = None
+    is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
 
@@ -494,6 +510,7 @@ class EvaluationRunPublic(SQLModel):
     total_items: int
     score: dict[str, Any] | None
     unscoreable: dict[str, Any] | None = None
+    is_score_updated: bool | None = None
     cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int

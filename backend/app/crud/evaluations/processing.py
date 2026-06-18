@@ -666,6 +666,9 @@ async def process_completed_embedding_batch(
             for trace_id, reason in (eval_run.unscoreable or {}).items()
         ]
         write_items = per_item_scores + unscoreable_writes
+        # Track whether every score landed in Langfuse. False if any write fails
+        # so a cron can later retry the gap from the durable per_item_scores.
+        is_score_updated = True
         if write_items:
             try:
                 failed_trace_ids = update_traces_with_cosine_scores(
@@ -673,6 +676,7 @@ async def process_completed_embedding_batch(
                     per_item_scores=write_items,
                 )
                 if failed_trace_ids:
+                    is_score_updated = False
                     logger.warning(
                         f"[process_completed_embedding_batch] {log_prefix} "
                         f"{len(failed_trace_ids)} Langfuse score writes failed; "
@@ -680,6 +684,7 @@ async def process_completed_embedding_batch(
                     )
             except Exception as e:
                 # Log error but don't fail the evaluation
+                is_score_updated = False
                 logger.warning(
                     f"[process_completed_embedding_batch] {log_prefix} Failed to update Langfuse traces with scores | {e}",
                     exc_info=True,
@@ -702,6 +707,7 @@ async def process_completed_embedding_batch(
                 status="completed",
                 score=eval_run.score,
                 cost=eval_run.cost,
+                is_score_updated=is_score_updated,
             ),
         )
 

@@ -13,12 +13,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from langfuse import Langfuse
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import (
@@ -32,24 +26,7 @@ from app.crud.evaluations.score import (
 
 logger = logging.getLogger(__name__)
 
-# Per-write retry policy for Langfuse score writes. The Langfuse SDK enqueues
-# scores and surfaces transport errors variously, so we retry broadly (reraise
-# the original error to the caller after the final attempt fails).
-_RETRY_MAX_ATTEMPTS = 3
-_RETRY_BASE_DELAY_SECONDS = 0.5
-_RETRY_MAX_DELAY_SECONDS = 8.0
 
-_retry_langfuse_call = retry(
-    wait=wait_random_exponential(
-        multiplier=_RETRY_BASE_DELAY_SECONDS, max=_RETRY_MAX_DELAY_SECONDS
-    ),
-    stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
-    before_sleep=before_sleep_log(logger, logging.INFO),
-    reraise=True,
-)
-
-
-@_retry_langfuse_call
 def _write_trace_score(
     langfuse: Langfuse,
     *,
@@ -57,7 +34,11 @@ def _write_trace_score(
     value: float,
     comment: str,
 ) -> None:
-    """Write a single trace-level score to Langfuse, retrying transient failures."""
+    """Write a single trace-level score to Langfuse.
+
+    Failures are surfaced to the caller (no retry here); items that fail to
+    write are reported via ``failed_trace_ids`` and retried later by a cron.
+    """
     langfuse.score(
         trace_id=trace_id,
         name=COSINE_SCORE_NAME,
@@ -229,9 +210,9 @@ def update_traces_with_cosine_scores(
     Update Langfuse traces with cosine similarity scores.
 
     Adds a trace-level "Cosine Similarity" score to each trace so it can be
-    visualized in the Langfuse UI. Each write is retried on transient failures.
-    Per-item failures are isolated (one bad trace never aborts the batch) and
-    reported back so the caller can surface/resync them.
+    visualized in the Langfuse UI. Per-item failures are isolated (one bad
+    trace never aborts the batch) and reported back so the caller can
+    surface/resync them (a cron retries the failures later).
 
     Items may be flagged as unscoreable (e.g. empty model output): those are
     written with value 0 and a "Cannot compute: <reason>" comment instead of
@@ -248,8 +229,8 @@ def update_traces_with_cosine_scores(
             ]
 
     Returns:
-        List of trace_ids whose score write still failed after retries. Empty
-        when every score was written successfully.
+        List of trace_ids whose score write failed. Empty when every score was
+        written successfully.
     """
     failed_trace_ids: list[str] = []
 
@@ -287,7 +268,7 @@ def update_traces_with_cosine_scores(
 
     if failed_trace_ids:
         logger.warning(
-            f"[update_traces_with_cosine_scores] Score writes failed after retries | "
+            f"[update_traces_with_cosine_scores] Score writes failed | "
             f"failed={len(failed_trace_ids)}/{len(per_item_scores)} | "
             f"failed_trace_ids={failed_trace_ids}"
         )

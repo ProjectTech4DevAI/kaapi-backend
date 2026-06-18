@@ -428,23 +428,18 @@ class TestUpdateTracesWithCosineScores:
         assert failed == []
         assert mock_langfuse.score.call_count == 2
 
-    def test_update_traces_with_cosine_scores_retries_then_reports_failure(
+    def test_update_traces_with_cosine_scores_reports_failure(
         self,
     ) -> None:
-        """A persistently failing write is retried, then reported (not raised)."""
+        """A failing write is reported (not raised); a cron retries it later."""
         mock_langfuse = MagicMock()
 
-        # trace_2 always fails; trace_1 and trace_3 succeed.
+        # trace_2 fails; trace_1 and trace_3 succeed.
         def score_side_effect(*args: Any, **kwargs: Any) -> None:
             if kwargs.get("trace_id") == "trace_2":
                 raise Exception("Score failed")
 
         mock_langfuse.score.side_effect = score_side_effect
-
-        # Don't actually sleep between retries.
-        from app.crud.evaluations.langfuse import _write_trace_score
-
-        _write_trace_score.retry.sleep = lambda *a, **k: None
 
         per_item_scores = [
             {"trace_id": "trace_1", "cosine_similarity": 0.95},
@@ -456,10 +451,10 @@ class TestUpdateTracesWithCosineScores:
             langfuse=mock_langfuse, per_item_scores=per_item_scores
         )
 
-        # Only the persistently failing trace is reported.
+        # Only the failing trace is reported.
         assert failed == ["trace_2"]
-        # trace_1 (1) + trace_2 (3 attempts) + trace_3 (1) = 5 score calls.
-        assert mock_langfuse.score.call_count == 5
+        # No retries: one score call per trace.
+        assert mock_langfuse.score.call_count == 3
         mock_langfuse.flush.assert_called_once()
 
     def test_update_traces_with_cosine_scores_empty_list(self) -> None:
