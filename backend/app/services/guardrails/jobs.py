@@ -1,6 +1,6 @@
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
