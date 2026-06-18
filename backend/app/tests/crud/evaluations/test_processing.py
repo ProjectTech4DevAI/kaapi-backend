@@ -416,7 +416,7 @@ class TestProcessCompletedEvaluation:
         assert "embedding" not in result.cost
 
     @pytest.mark.asyncio
-    @patch("app.crud.evaluations.processing.save_score")
+    @patch("app.crud.evaluations.processing.persist_score_traces")
     @patch("app.crud.evaluations.processing.download_batch_results")
     @patch("app.crud.evaluations.processing.fetch_dataset_items")
     @patch("app.crud.evaluations.processing.create_langfuse_dataset_run")
@@ -429,7 +429,7 @@ class TestProcessCompletedEvaluation:
         mock_create_langfuse,
         mock_fetch_dataset,
         mock_download,
-        mock_save_score,
+        mock_persist_traces,
         db: Session,
         eval_run_with_batch,
     ):
@@ -461,7 +461,7 @@ class TestProcessCompletedEvaluation:
         mock_create_langfuse.return_value = {"item1": "trace_123"}
         mock_start_embedding.return_value = eval_run_with_batch
         mock_upload.return_value = "s3://bucket/results.jsonl"
-        mock_save_score.return_value = eval_run_with_batch
+        mock_persist_traces.return_value = eval_run_with_batch
 
         await process_completed_evaluation(
             eval_run=eval_run_with_batch,
@@ -470,12 +470,12 @@ class TestProcessCompletedEvaluation:
             langfuse=MagicMock(),
         )
 
-        # save_score is called with a Q&A-only skeleton (no scores yet), keyed by
-        # the Langfuse trace_id, so the embedding stage can attach cosine later.
-        mock_save_score.assert_called_once()
-        saved_score = mock_save_score.call_args.kwargs["score"]
-        assert saved_score["summary_scores"] == []
-        traces = saved_score["traces"]
+        # The Q&A-only skeleton is persisted via persist_score_traces (trace
+        # pointer only — it never writes the `score` column, so the run stays
+        # score-less / "processing" until cosine is computed), keyed by the
+        # Langfuse trace_id so the embedding stage can attach cosine later.
+        mock_persist_traces.assert_called_once()
+        traces = mock_persist_traces.call_args.kwargs["traces"]
         assert len(traces) == 1
         assert traces[0]["trace_id"] == "trace_123"
         assert traces[0]["question"] == "Q1"

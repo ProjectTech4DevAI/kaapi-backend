@@ -30,6 +30,7 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import (
+    persist_score_traces,
     resolve_model_from_config,
     save_score,
     update_evaluation_run,
@@ -413,18 +414,20 @@ async def process_completed_evaluation(
         # trace_id_mapping are in hand. process_completed_embedding_batch runs in a
         # later poll cycle without this data in memory, so persisting it here lets
         # that step write a complete trace unit to score_trace_url and serve cosine
-        # scores without depending on Langfuse. Best-effort: save_score falls back
-        # to DB storage if S3 is unavailable, and the read path can still backfill
-        # from per_item_scores if the skeleton is missing.
+        # scores without depending on Langfuse. persist_score_traces records only
+        # the trace pointer (not the `score` column) so the run stays score-less —
+        # UI "processing", not "No scores available" — until cosine completes.
+        # Best-effort: the read path can still backfill from per_item_scores if the
+        # skeleton is missing.
         skeleton = build_trace_skeleton(
             results=results, trace_id_mapping=trace_id_mapping
         )
         if skeleton:
-            save_score(
+            persist_score_traces(
                 eval_run_id=eval_run.id,
                 organization_id=eval_run.organization_id,
                 project_id=eval_run.project_id,
-                score={"summary_scores": [], "traces": skeleton},
+                traces=skeleton,
             )
             logger.info(
                 f"[process_completed_evaluation] {log_prefix} Persisted trace "
@@ -656,8 +659,34 @@ async def process_completed_embedding_batch(
             if item.get("trace_id") is not None
         }
 
-        # Step 6: Update Langfuse traces with cosine similarity scores. Also write
-        # explicit 0-scores for unscoreable items so the gap is visible in the UI.
+        # Step 6: Accumulate embedding cost onto existing response cost. Mutates
+        # eval_run.cost in memory; persisted in the completion commit below.
+        attach_cost(
+            session=session,
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_raw_results=raw_results,
+        )
+
+        # Step 7: Mark completed WITH the computed score now that cosine is done.
+        # This commit also persists the dirty per_item_scores / unscoreable
+        # attributes set above. Trace-writing happens afterwards (Steps 8-9) so
+        # completion is not gated on Langfuse network calls; is_score_updated is
+        # set in a follow-up update once those writes land.
+        eval_run = update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(
+                status="completed",
+                score=eval_run.score,
+                cost=eval_run.cost,
+            ),
+        )
+
+        # Step 8: With the run completed, update Langfuse traces with cosine
+        # similarity scores. Also write explicit 0-scores for unscoreable items so
+        # the gap is visible in the UI.
         logger.info(
             f"[process_completed_embedding_batch] {log_prefix} Updating Langfuse traces with cosine similarity scores"
         )
@@ -690,25 +719,11 @@ async def process_completed_embedding_batch(
                     exc_info=True,
                 )
 
-        # Step 7: Accumulate embedding cost onto existing response cost
-        attach_cost(
-            session=session,
-            eval_run=eval_run,
-            log_prefix=log_prefix,
-            embedding_model=EMBEDDING_MODEL,
-            embedding_raw_results=raw_results,
-        )
-
-        # Step 8: Mark evaluation as completed (summary + durable per_item_scores)
+        # Persist the Langfuse write outcome so a cron can retry the gap later.
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            update=EvaluationRunUpdate(
-                status="completed",
-                score=eval_run.score,
-                cost=eval_run.cost,
-                is_score_updated=is_score_updated,
-            ),
+            update=EvaluationRunUpdate(is_score_updated=is_score_updated),
         )
 
         # Step 9: Upgrade the score to a complete trace unit. Load the Q&A skeleton
