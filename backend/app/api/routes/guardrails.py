@@ -57,7 +57,7 @@ def apply_guardrails_endpoint(
     _current_user: AuthContextDep,
     session: SessionDep,
     request: GuardrailsRequest,
-):
+)  -> APIResponse[GuardrailsJobImmediatePublic]:
     """Initiate a guardrails-only job. Returns the job_id immediately; the
     sanitised text is delivered via callback_url (or polled via GET)."""
     project_id = _current_user.project_.id
