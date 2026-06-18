@@ -59,18 +59,25 @@ def get_project_by_name(
 
 
 def get_projects_by_organization(
-    *, session: Session, org_id: int, is_active: bool | None = True
+    *,
+    session: Session,
+    org_id: int,
+    is_active: bool | None = True,
+    search: str | None = None,
 ) -> list[Project]:
     """
     Return projects for an organization.
 
     By default only active projects are returned. Pass ``is_active=False`` to
     list soft-deleted projects (e.g. to selectively reactivate them), or
-    ``is_active=None`` to return every project regardless of status.
+    ``is_active=None`` to return every project regardless of status. Pass
+    ``search`` for a case-insensitive substring match on the project name.
     """
     statement = select(Project).where(Project.organization_id == org_id)
     if is_active is not None:
         statement = statement.where(Project.is_active.is_(is_active))
+    if search and search.strip():
+        statement = statement.where(Project.name.ilike(f"%{search.strip()}%"))
     return session.exec(statement).all()
 
 

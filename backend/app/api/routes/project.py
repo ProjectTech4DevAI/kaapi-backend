@@ -207,9 +207,13 @@ def read_projects_by_organization(
         True,
         description="Filter by active status. Pass false to list soft-deleted projects to reactivate.",
     ),
+    search: str
+    | None = Query(
+        None, description="Case-insensitive substring match on the project name"
+    ),
 ) -> APIResponse[list[ProjectPublic]]:
     validate_organization(session=session, org_id=org_id)
     projects = get_projects_by_organization(
-        session=session, org_id=org_id, is_active=is_active
+        session=session, org_id=org_id, is_active=is_active, search=search
     )
     return APIResponse.success_response(projects)
