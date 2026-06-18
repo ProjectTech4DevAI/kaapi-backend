@@ -122,12 +122,9 @@ class GoogleVertexAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        # Fall back to platform-shared defaults from settings for any field
-        # the caller didn't provide. The SA JSON falls back to the file at
         # settings.GCP_SA_KEY; BYOK rows pass `sa_key` inline.
         credentials = credentials or {}
         api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
-        logger.info(f"Vertex API Key {api_key}")
         project_id = credentials.get("project_id") or settings.GCP_PROJECT_ID
         location = credentials.get("location") or settings.GCP_VERTEX_LOCATION
         gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
