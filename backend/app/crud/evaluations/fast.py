@@ -608,15 +608,11 @@ def _stage3_score_and_trace(
 ) -> tuple[EvaluationRun, EvaluationScore, list[dict[str, Any]]]:
     """Stage 3 — compute cosine, create Langfuse traces, attach costs.
 
-    Returns the run, the full score unit (summary_scores + per-trace records) in
-    the exact shape `fetch_trace_scores_from_langfuse` produces for the batch
-    path, and the Langfuse `write_items` (per-item cosine + unscoreable
-    placeholders). The caller marks the run completed first, then writes those
-    items and persists the unit via `save_score` — so completion is not gated on
-    Langfuse network calls.
-
-    No stage marker; each step is idempotent (deterministic cosine, Langfuse
-    dedupes on the observe key, attach_cost overwrites per stage).
+    Returns the run, the full score unit (summary_scores + per-trace records, in
+    the batch path's shape), and the Langfuse `write_items` (per-item cosine +
+    unscoreable placeholders). The caller completes the run before writing those
+    items, so completion is not gated on Langfuse calls. Idempotent, no stage
+    marker.
     """
     logger.info(
         f"[_stage3_score_and_trace] {log_prefix} Computing cosine + creating traces"
@@ -635,10 +631,9 @@ def _stage3_score_and_trace(
         model=model,
     )
 
-    # Per-item cosine scores keyed on Langfuse trace_id (for Langfuse updates)
-    # and on item_id (for building the persisted per-trace records below).
-    # Items that have a trace but no computable score are flagged unscoreable
-    # with a reason so the gap is explained (kept out of avg/std/total_pairs).
+    # Per-item cosine scores, keyed by trace_id (Langfuse) and item_id (persisted
+    # records). Items with a trace but no computable score are flagged unscoreable
+    # so they're kept out of avg/std/total_pairs.
     per_item_scores: list[dict[str, Any]] = []
     item_id_to_score: dict[str, float] = {}
     similarities: list[float] = []
@@ -671,17 +666,15 @@ def _stage3_score_and_trace(
         item_id_to_score[item_id] = cosine
         per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
 
-    # Build the Langfuse write list (per-item cosine + explicit 0-scores for
-    # unscoreable items). The actual write happens after the run is marked
-    # completed (see run_fast_evaluation) so completion is not gated on Langfuse.
+    # Langfuse write list (cosine + 0-scores for unscoreable items); written
+    # after completion in run_fast_evaluation.
     unscoreable_writes = [
         {"trace_id": trace_id, "unscoreable": True, "reason": reason}
         for trace_id, reason in unscoreable.items()
     ]
     write_items = per_item_scores + unscoreable_writes
 
-    # Durable per-item scores (source of truth) + the unscoreable map, persisted
-    # below via update_evaluation_run's commit of the eval_run object.
+    # Durable source of truth, persisted by the commit below.
     eval_run.per_item_scores = {
         trace_id_mapping[item_id]: round(float(score), 6)
         for item_id, score in item_id_to_score.items()
@@ -768,8 +761,7 @@ def _stage3_score_and_trace(
                 }
             )
         elif trace_id in unscoreable:
-            # Placeholder 0-score so the item is visible with its reason;
-            # excluded from summary stats via the unscoreable marker.
+            # Placeholder 0-score, excluded from summary stats via the marker.
             trace_scores.append(
                 {
                     "name": COSINE_SCORE_NAME,
@@ -869,8 +861,8 @@ def run_fast_evaluation(
         log_prefix=log_prefix,
     )
 
-    # Stage 4 — mark completed WITH the computed summary score so the run never
-    # surfaces a completed + NULL-score window. Cost was persisted in Stage 3.
+    # Stage 4 — mark completed WITH the summary score so there's never a
+    # completed + NULL-score window. Cost was persisted in Stage 3.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
@@ -881,9 +873,9 @@ def run_fast_evaluation(
         ),
     )
 
-    # Stage 5a — trace-writing AFTER completion (mirrors the batch path): write
-    # cosine scores to Langfuse. is_score_updated tracks the outcome so a cron can
-    # retry the gap from the durable per_item_scores.
+    # Stage 5a — write cosine scores to Langfuse after completion (mirrors the
+    # batch path). is_score_updated tracks the outcome so a cron can retry the
+    # gap from per_item_scores.
     is_score_updated = True
     if write_items:
         try:
@@ -911,9 +903,8 @@ def run_fast_evaluation(
         update=EvaluationRunUpdate(is_score_updated=is_score_updated),
     )
 
-    # Stage 5b — persist the score unit (traces to S3, summary to DB) via the
-    # shared batch helper so the read path serves the cached unit instead of
-    # racing Langfuse ingestion.
+    # Stage 5b — persist the score unit (traces to S3, summary to DB) so the read
+    # path serves the cached unit instead of racing Langfuse ingestion.
     saved = save_score(
         eval_run_id=eval_run.id,
         organization_id=eval_run.organization_id,

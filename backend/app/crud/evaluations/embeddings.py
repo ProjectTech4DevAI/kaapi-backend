@@ -114,8 +114,7 @@ def build_embedding_jsonl(
             )
             continue
 
-        # Skip if either output or ground_truth is empty: these cannot be
-        # embedded, so the pair is structurally unscoreable. Record the reason.
+        # Empty output/ground_truth can't be embedded; record the reason.
         if not generated_output or not ground_truth:
             reason = "empty_output" if not generated_output else "empty_ground_truth"
             logger.warning(f"Skipping item {item_id} - {reason}")
@@ -397,9 +396,8 @@ def start_embedding_batch(
             embedding_model=embedding_model,
         )
 
-        # Record items that cannot be embedded (empty output/ground_truth) so
-        # the read path can flag them as unscoreable with their reason. Keyed by
-        # trace_id; items without a trace_id can't be flagged in Langfuse.
+        # Record un-embeddable items (keyed by trace_id) so the read path can
+        # flag them unscoreable with their reason.
         unscoreable = {
             item["trace_id"]: item["reason"] for item in skipped if item.get("trace_id")
         }

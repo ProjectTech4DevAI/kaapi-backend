@@ -456,12 +456,10 @@ def get_evaluation_with_scores(
     )
 
     if not resync_score and cached_traces:
-        # Serve from cache, but still backfill any trace missing a cosine score
-        # from the durable per_item_scores and recompute the summary, so caches
-        # written before this change (or before a failed Langfuse write) self-heal
-        # on a normal read without needing a resync. Reuse the step-forward merge
-        # (empty fresh side) so summary-only scores are preserved and traces are
-        # sorted. `_attach_category_metrics` then backfills `category_metrics`.
+        # Serve from cache, but backfill any trace missing a cosine score from
+        # per_item_scores and recompute the summary, so older caches self-heal
+        # without a resync. The step-forward merge (empty fresh side) preserves
+        # summary-only scores and sorts traces.
         cached_score, _ = merge_scores_step_forward(
             existing_score={
                 "summary_scores": (eval_run.score or {}).get("summary_scores", []),
@@ -533,10 +531,8 @@ def get_evaluation_with_scores(
         "summary_scores": (eval_run.score or {}).get("summary_scores", []),
         "traces": cached_traces,
     }
-    # Pass the durable per_item_scores so any trace Langfuse is still missing a
-    # cosine for is backfilled from our source of truth before summaries are
-    # recomputed — recovering computed-but-unwritten scores and preventing the
-    # count from regressing below what we actually computed.
+    # Pass per_item_scores so any trace Langfuse is still missing a cosine for is
+    # backfilled from our source of truth, recovering computed-but-unwritten scores.
     merged_score, merge_stats = merge_scores_step_forward(
         existing_score=existing_score,
         fresh_score=langfuse_score,

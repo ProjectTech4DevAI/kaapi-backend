@@ -52,9 +52,8 @@ def compute_summary_scores(traces: list[TraceData]) -> list[SummaryScore]:
     Aggregate per-trace scores by name: numeric scores get avg/std, categorical
     scores get a value distribution. ``total_pairs`` counts non-null values.
 
-    Entries flagged ``unscoreable`` (placeholder 0-scores written to explain a
-    gap, e.g. empty model output) are skipped so they never drag the average
-    down or inflate ``total_pairs`` — they exist only for per-trace display.
+    ``unscoreable`` placeholder scores are skipped so they don't affect the
+    average or ``total_pairs``; they exist only for per-trace display.
     """
     # {name: {"data_type": str, "values": list}}
     score_aggregations: dict[str, dict] = {}
@@ -102,11 +101,9 @@ def compute_summary_scores(traces: list[TraceData]) -> list[SummaryScore]:
 def summarize_unscoreable(
     unscoreable: dict[str, str] | None,
 ) -> dict[str, int]:
-    """Count unscoreable items per reason, e.g. ``{"empty_output": 3}``.
-
-    ``unscoreable`` is the ``EvaluationRun.unscoreable`` map ``{trace_id: reason}``.
-    Only the known reasons in ``UNSCOREABLE_REASONS`` are counted; unknown
-    reasons are bucketed under ``"other"`` so nothing is silently dropped.
+    """Count unscoreable items per reason, e.g. ``{"empty_output": 3}``, from the
+    ``{trace_id: reason}`` map. Reasons outside ``UNSCOREABLE_REASONS`` are
+    bucketed under ``"other"`` so nothing is silently dropped.
     """
     breakdown: dict[str, int] = {}
     for reason in (unscoreable or {}).values():
@@ -121,12 +118,10 @@ def apply_cosine_breakdown(
     total_items: int | None,
     unscoreable: dict[str, str] | None,
 ) -> list[SummaryScore]:
-    """Attach ``total_items`` (the UI denominator) and the ``unscoreable``
-    per-reason breakdown to the cosine-similarity summary score, in place.
-
-    ``compute_summary_scores`` rebuilds summaries from traces alone and so
-    cannot know the run-level denominator/flags; this re-applies them wherever
-    the summary is (re)built. No-op when there is no cosine summary entry.
+    """Attach the run-level ``total_items`` (UI denominator) and ``unscoreable``
+    per-reason breakdown to the cosine summary score, in place — values that
+    ``compute_summary_scores`` (trace-only) can't know. No-op without a cosine
+    entry.
     """
     breakdown = summarize_unscoreable(unscoreable)
     for entry in summary_scores:
@@ -143,12 +138,9 @@ def backfill_missing_scores(
 ) -> list[TraceData]:
     """Inject durable cosine scores into traces that lack one, in place.
 
-    ``per_item_scores`` is the ``EvaluationRun.per_item_scores`` map
-    ``{trace_id: cosine}`` — the durable source of truth for computed scores.
-    For any trace whose ``scores`` has no (non-unscoreable) cosine entry but
-    whose ``trace_id`` is in the map, append the stored cosine score. This
-    recovers scores that were computed but never landed in Langfuse, so the
-    resync count reflects everything we actually computed.
+    For any trace with no (non-unscoreable) cosine entry whose ``trace_id`` is in
+    the ``{trace_id: cosine}`` source-of-truth map, append the stored score. This
+    recovers scores computed but never landed in Langfuse.
     """
     if not per_item_scores:
         return traces
@@ -261,11 +253,9 @@ def merge_scores_step_forward(
     merged step-forward and summaries recomputed from the union. Summary-only
     scores (no per-trace value) are preserved from the existing score.
 
-    When ``per_item_scores`` (the durable ``{trace_id: cosine}`` source of truth)
-    is provided, any merged trace still missing a cosine score is backfilled from
-    it before summaries are recomputed — so scores that were computed but never
-    landed in Langfuse are recovered, and the count never regresses below what we
-    actually computed.
+    When ``per_item_scores`` is provided, any merged trace still missing a cosine
+    score is backfilled from it before summaries are recomputed, recovering
+    scores that never landed in Langfuse.
     """
     existing_traces = (existing_score or {}).get("traces", []) or []
     fresh_traces = fresh_score.get("traces", []) or []

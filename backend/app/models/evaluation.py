@@ -350,7 +350,6 @@ class EvaluationRun(SQLModel, table=True):
         description="Evaluation scores (e.g., correctness, cosine_similarity, etc.)",
     )
 
-    # Durable per-item cosine scores - source of truth for resync backfill.
     per_item_scores: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
@@ -364,7 +363,6 @@ class EvaluationRun(SQLModel, table=True):
         description="Durable map of computed per-trace cosine scores keyed by trace_id",
     )
 
-    # Items that cannot be scored, with the reason why.
     unscoreable: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
@@ -378,7 +376,6 @@ class EvaluationRun(SQLModel, table=True):
         description="Map of trace_id to the reason the item cannot be scored",
     )
 
-    # Whether every computed per-item score was written to Langfuse.
     is_score_updated: bool | None = SQLField(
         default=None,
         sa_column=Column(

@@ -273,14 +273,10 @@ def build_trace_skeleton(
 ) -> list[TraceData]:
     """
     Build per-trace records (Q&A keyed by Langfuse trace_id, no scores yet) from
-    parsed evaluation results.
-
-    Persisted durably at the response stage so the embedding-completion step can
-    attach the computed cosine scores and write a complete trace unit to
-    ``score_trace_url`` — making cosine display independent of Langfuse. Mirrors
-    the per-trace shape the fast path produces in ``_stage3_score_and_trace`` and
-    that ``fetch_trace_scores_from_langfuse`` returns. Items without a trace_id
-    are skipped (they have no Langfuse trace to score against).
+    parsed evaluation results. Persisted at the response stage so the
+    embedding-completion step can attach cosine scores and write a complete trace
+    unit, making cosine display independent of Langfuse. Items without a trace_id
+    are skipped.
     """
     traces: list[TraceData] = []
     for result in results:
@@ -409,16 +405,12 @@ async def process_completed_evaluation(
             session.add(eval_run)
             session.commit()
 
-        # Step 5b: Persist a durable trace skeleton (Q&A keyed by trace_id, scores
-        # filled in once embeddings complete) to S3 now, while results and the
-        # trace_id_mapping are in hand. process_completed_embedding_batch runs in a
-        # later poll cycle without this data in memory, so persisting it here lets
-        # that step write a complete trace unit to score_trace_url and serve cosine
-        # scores without depending on Langfuse. persist_score_traces records only
-        # the trace pointer (not the `score` column) so the run stays score-less —
-        # UI "processing", not "No scores available" — until cosine completes.
-        # Best-effort: the read path can still backfill from per_item_scores if the
-        # skeleton is missing.
+        # Step 5b: Persist the trace skeleton now, while results and
+        # trace_id_mapping are in hand, so the later embedding-completion poll can
+        # attach cosine scores without depending on Langfuse. persist_score_traces
+        # records only the pointer (not `score`), keeping the run score-less until
+        # cosine completes. Best-effort: the read path can backfill from
+        # per_item_scores if the skeleton is missing.
         skeleton = build_trace_skeleton(
             results=results, trace_id_mapping=trace_id_mapping
         )
@@ -489,10 +481,9 @@ def _load_score_traces(
     eval_run: EvaluationRun,
 ) -> list[TraceData] | None:
     """
-    Load the durable trace skeleton persisted to ``score_trace_url`` at the
-    response stage. Returns None when there is no pointer or it cannot be read,
-    so the caller falls back to a summary-only score (still resync-recoverable
-    via per_item_scores). Never raises.
+    Load the trace skeleton persisted to ``score_trace_url`` at the response
+    stage. Returns None when there is no pointer or it can't be read, so the
+    caller falls back to a summary-only score. Never raises.
     """
     if not eval_run.score_trace_url:
         return None
@@ -518,12 +509,10 @@ def _attach_cosine_scores(
     unscoreable: dict[str, str],
 ) -> list[TraceData]:
     """
-    Attach computed cosine scores (and explicit 0-score placeholders for
-    unscoreable items) onto the trace skeleton, in place. Mirrors the per-trace
-    score shape the fast path builds in ``_stage3_score_and_trace`` so both run
-    modes render identically. A trace already carrying a computed cosine is left
-    untouched; unscoreable placeholders are flagged so they stay out of the
-    summary stats.
+    Attach computed cosine scores (and 0-score placeholders for unscoreable
+    items) onto the trace skeleton, in place. Traces already carrying a computed
+    cosine are left untouched; unscoreable placeholders are flagged to stay out
+    of the summary stats.
     """
     for trace in traces:
         trace_id = trace.get("trace_id")
@@ -650,9 +639,8 @@ async def process_completed_embedding_batch(
         )
         eval_run.score = {"summary_scores": summary_scores}
 
-        # Persist the computed per-item cosine scores durably (source of truth),
-        # independent of Langfuse — so a failed/lost Langfuse write can always be
-        # backfilled on resync and the count never silently regresses.
+        # Durable per-item cosine scores (source of truth), so a failed Langfuse
+        # write can be backfilled on resync.
         eval_run.per_item_scores = {
             item["trace_id"]: round(float(item["cosine_similarity"]), 6)
             for item in per_item_scores
@@ -669,11 +657,9 @@ async def process_completed_embedding_batch(
             embedding_raw_results=raw_results,
         )
 
-        # Step 7: Mark completed WITH the computed score now that cosine is done.
-        # This commit also persists the dirty per_item_scores / unscoreable
-        # attributes set above. Trace-writing happens afterwards (Steps 8-9) so
-        # completion is not gated on Langfuse network calls; is_score_updated is
-        # set in a follow-up update once those writes land.
+        # Step 7: Mark completed WITH the score now that cosine is done; this also
+        # persists the per_item_scores / unscoreable set above. Trace-writing
+        # happens afterwards (Steps 8-9) so completion isn't gated on Langfuse.
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
@@ -695,8 +681,7 @@ async def process_completed_embedding_batch(
             for trace_id, reason in (eval_run.unscoreable or {}).items()
         ]
         write_items = per_item_scores + unscoreable_writes
-        # Track whether every score landed in Langfuse. False if any write fails
-        # so a cron can later retry the gap from the durable per_item_scores.
+        # False if any write fails, so a cron can retry the gap from per_item_scores.
         is_score_updated = True
         if write_items:
             try:
@@ -726,12 +711,9 @@ async def process_completed_embedding_batch(
             update=EvaluationRunUpdate(is_score_updated=is_score_updated),
         )
 
-        # Step 9: Upgrade the score to a complete trace unit. Load the Q&A skeleton
-        # persisted at the response stage, attach the computed cosine scores (plus
-        # 0-score placeholders for unscoreable items), and persist via save_score so
-        # the traces land in score_trace_url. The read path then serves cosine
-        # straight from this durable unit — no Langfuse dependency — while resync
-        # still merges any later scores (e.g. LLM-as-judge) fetched from Langfuse.
+        # Step 9: Upgrade the score to a complete trace unit. Load the skeleton,
+        # attach cosine scores (and 0-score placeholders), and persist via
+        # save_score so the read path serves cosine without a Langfuse dependency.
         skeleton = _load_score_traces(
             session=session, project_id=eval_run.project_id, eval_run=eval_run
         )

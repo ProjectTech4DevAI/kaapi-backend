@@ -34,11 +34,8 @@ def _write_trace_score(
     value: float,
     comment: str,
 ) -> None:
-    """Write a single trace-level score to Langfuse.
-
-    Failures are surfaced to the caller (no retry here); items that fail to
-    write are reported via ``failed_trace_ids`` and retried later by a cron.
-    """
+    """Write a single trace-level score to Langfuse. Failures propagate to the
+    caller (no retry here)."""
     langfuse.score(
         trace_id=trace_id,
         name=COSINE_SCORE_NAME,
@@ -207,30 +204,19 @@ def update_traces_with_cosine_scores(
     per_item_scores: list[dict[str, Any]],
 ) -> list[str]:
     """
-    Update Langfuse traces with cosine similarity scores.
+    Add a trace-level "Cosine Similarity" score to each trace. Per-item failures
+    are isolated (one bad trace never aborts the batch).
 
-    Adds a trace-level "Cosine Similarity" score to each trace so it can be
-    visualized in the Langfuse UI. Per-item failures are isolated (one bad
-    trace never aborts the batch) and reported back so the caller can
-    surface/resync them (a cron retries the failures later).
-
-    Items may be flagged as unscoreable (e.g. empty model output): those are
-    written with value 0 and a "Cannot compute: <reason>" comment instead of
-    the default cosine comment, so the gap is explained in the Langfuse UI.
+    Items flagged ``unscoreable`` are written with value 0 and a
+    "Cannot compute: <reason>" comment so the gap is explained in the UI.
 
     Args:
         langfuse: Configured Langfuse client
-        per_item_scores: List of per-item score dictionaries, e.g.
-            [
-                {"trace_id": "trace-uuid-123", "cosine_similarity": 0.95},
-                {"trace_id": "trace-uuid-456", "unscoreable": True,
-                 "reason": "empty model output"},
-                ...
-            ]
+        per_item_scores: e.g. [{"trace_id": "...", "cosine_similarity": 0.95},
+            {"trace_id": "...", "unscoreable": True, "reason": "empty model output"}]
 
     Returns:
-        List of trace_ids whose score write failed. Empty when every score was
-        written successfully.
+        trace_ids whose score write failed (empty on full success).
     """
     failed_trace_ids: list[str] = []
 

@@ -10,16 +10,15 @@ from typing import NotRequired, TypedDict
 
 DEFAULT_CATEGORY: str = "Other"
 
-# Canonical name/comment for the cosine-similarity score (written to Langfuse
-# and used as the summary score name). Centralized here to avoid import cycles.
+# Canonical name/comment for the cosine-similarity score, centralized to avoid
+# import cycles.
 COSINE_SCORE_NAME: str = "Cosine Similarity"
 COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )
 
 # Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
-# "missing_trace_id" only appears in build_embedding_jsonl's internal skipped list,
-# never in EvaluationRun.unscoreable (which is keyed by trace_id).
+# "missing_trace_id" appears only in build_embedding_jsonl's internal skipped list.
 UNSCOREABLE_REASONS: tuple[str, ...] = (
     "empty_output",
     "empty_ground_truth",
@@ -35,8 +34,7 @@ class TraceScore(TypedDict):
     value: float | str
     data_type: str
     comment: NotRequired[str]
-    # True for placeholder scores on items that cannot be scored (e.g. empty
-    # output). Excluded from summary avg/std/total_pairs; shown for context.
+    # True for placeholder scores on unscoreable items; excluded from summary stats.
     unscoreable: NotRequired[bool]
 
 
@@ -74,8 +72,8 @@ class NumericSummaryScore(TypedDict):
     std: float
     total_pairs: int
     data_type: str
-    # Denominator for the UI (total dataset items) and the per-reason breakdown
-    # of items that could not be scored. Present on the cosine-similarity score.
+    # UI denominator (total dataset items) and per-reason unscoreable breakdown.
+    # Present on the cosine-similarity score.
     total_items: NotRequired[int]
     unscoreable: NotRequired[dict[str, int]]
 
