@@ -48,6 +48,7 @@ from app.models.llm.request import (
     ImageInput,
     KaapiCompletionConfig,
     LLMCallConfig,
+    NativeCompletionConfig,
     PDFInput,
     QueryParams,
     TextContent,
@@ -453,6 +454,37 @@ def apply_output_guardrails(
     return result, None
 
 
+DETECTED_LANGUAGE_FALLBACK = "en-IN"
+_TTS_LANGUAGE_KEYS = ("target_language_code", "language_code")
+
+
+def _substitute_detected_language_marker(
+    params: dict,
+    detected_language: str | None,
+    job_id: UUID,
+) -> None:
+    """Replace the `{{detected}}` sentinel in TTS language params.
+
+    Used by /llm/chain/sts to propagate the STT-detected language to TTS.
+    Falls back to en-IN when STT didn't yield a language.
+    """
+    for key in _TTS_LANGUAGE_KEYS:
+        if params.get(key) != "{{detected}}":
+            continue
+        if detected_language:
+            params[key] = detected_language
+            logger.info(
+                f"[_substitute_detected_language_marker] Using detected language for TTS: "
+                f"{detected_language} | job_id={job_id}"
+            )
+        else:
+            params[key] = DETECTED_LANGUAGE_FALLBACK
+            logger.warning(
+                f"[_substitute_detected_language_marker] No language detected, falling back "
+                f"to {DETECTED_LANGUAGE_FALLBACK} for TTS | job_id={job_id}"
+            )
+
+
 def execute_llm_call(
     *,
     config: LLMCallConfig,
@@ -464,10 +496,14 @@ def execute_llm_call(
     langfuse_credentials: dict | None,
     include_provider_raw_response: bool = False,
     chain_id: UUID | None = None,
+    detected_language: str | None = None,
 ) -> BlockResult:
     """Execute a single LLM call. Shared by /llm/call and /llm/chain.
 
     Returns BlockResult with response + usage on success, or error on failure.
+
+    Args:
+        detected_language: Language code detected by STT (used to replace {{detected}} marker in TTS)
     """
 
     config_blob: ConfigBlob | None = None
@@ -804,10 +840,20 @@ def execute_llm_call(
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session, kaapi_config=completion_config
                 )
-                if request_metadata is None:
-                    request_metadata = {}
-                request_metadata.setdefault("warnings", []).extend(warnings)
+                existing = request_metadata or {}
+                existing_warnings = list(existing.get("warnings") or [])
+                request_metadata = {
+                    **existing,
+                    "warnings": existing_warnings + list(warnings),
+                }
 
+            if (
+                isinstance(completion_config, NativeCompletionConfig)
+                and completion_config.type == "tts"
+            ):
+                _substitute_detected_language_marker(
+                    completion_config.params, detected_language, job_id
+                )
             model_name = str(completion_config.params.get("model") or "")
 
             resolved_config_blob = ConfigBlob(
