@@ -8,7 +8,7 @@ more `validator_config_id`s, and receive the sanitised text on your
 
 ### Flow
 
-1. Caller POSTs `{text, guardrail_config, callback_url}` to `/api/v1/guardrails`.
+1. Caller POSTs `{text, config, callback_url}` to `/api/v1/guardrails`.
 2. Kaapi creates a job (`job_type=LLM_GUARDRAILS`), returns `job_id` with HTTP 200
    immediately.
 3. A Celery worker resolves the validators, calls the guardrails service, and
@@ -48,12 +48,14 @@ The webhook receives a standard `APIResponse` envelope:
 If the guardrails service hard-blocks the text, `success` is `false`, `error`
 carries the upstream message, and `data` is `null`. If the guardrails service
 is unreachable the job still succeeds but the webhook carries the original
-text unchanged and `metadata.warnings` includes
-`guardrails_service_unavailable_text_returned_unchanged`.
+text unchanged and `metadata.warnings` carries a human-readable note (e.g.
+`"Guardrails service was unavailable; original text was returned unchanged."`).
+Other warnings may surface for duplicate validator IDs, an empty validator
+list, or a missing sanitised text in the upstream response.
 
 ### Notes
 
-- `guardrail_config[].type` and `guardrail_config[].tag` are caller-side
+- `config[].type` and `config[].tag` are caller-side
   bookkeeping. They are not interpreted by the server but are useful for your
   own correlation (echoed back via `request_metadata` if you include them
   there).

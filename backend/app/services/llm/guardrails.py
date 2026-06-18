@@ -1,7 +1,9 @@
+import json
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
-import logging
 
 import httpx
 
@@ -77,6 +79,12 @@ def apply_guardrails(
     )
     resolved = output_cfgs if is_output else input_cfgs
     if not resolved:
+        logger.info(
+            f"[apply_guardrails] No validator configs resolved upstream; skipping "
+            f"POST /guardrails. job_id={job_id}, requested_ids="
+            f"{[str(v.validator_config_id) for v in validators]}, "
+            f"is_output={is_output}"
+        )
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
@@ -173,20 +181,45 @@ def run_guardrails_validation(
         "Content-Type": "application/json",
     }
 
+    url = f"{settings.KAAPI_GUARDRAILS_URL}"
+    payload_bytes = json.dumps(payload).encode()
+    logger.info(
+        f"[run_guardrails_validation] POST guardrails | job_id={job_id}, url={url}, "
+        f"validators={len(validators)}, input_len={len(input_text)}, "
+        f"output_len={len(output_text) if output_text else 0}, "
+        f"payload_bytes={len(payload_bytes)}"
+    )
+    logger.info(
+        f"[run_guardrails_validation] Request payload | job_id={job_id}, "
+        f"payload={json.dumps(payload)}"
+    )
+
+    started = time.monotonic()
     try:
         with httpx.Client(timeout=45.0) as client:
             response = client.post(
-                f"{settings.KAAPI_GUARDRAILS_URL}/",
+                url,
                 json=payload,
                 params={"suppress_pass_logs": str(suppress_pass_logs).lower()},
                 headers=headers,
             )
-
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                f"[run_guardrails_validation] Response received | job_id={job_id}, "
+                f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
+                f"response_bytes={len(response.content)}"
+            )
+            logger.info(
+                f"[run_guardrails_validation] Response body | job_id={job_id}, "
+                f"body={response.text}"
+            )
             response.raise_for_status()
             return response.json()
     except Exception as e:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.warning(
-            f"[run_guardrails_validation] Service unavailable. Bypassing guardrails. job_id={job_id}. error={e}"
+            f"[run_guardrails_validation] Service unavailable. Bypassing guardrails. "
+            f"job_id={job_id}, elapsed_ms={elapsed_ms}, error={e}"
         )
 
         return {
@@ -246,10 +279,25 @@ def list_validators_config(
                 if not validator_ids:
                     return []
 
-                response = client.get(
-                    endpoint,
-                    params=_build_params(validator_ids),
-                    headers=headers,
+                params = _build_params(validator_ids)
+                logger.info(
+                    f"[list_validators_config] GET validator configs | "
+                    f"endpoint={endpoint}, ids={len(validator_ids)}, "
+                    f"organization_id={organization_id}, project_id={project_id}"
+                )
+                logger.debug(
+                    f"[list_validators_config] Request params | params={params}"
+                )
+                started = time.monotonic()
+                response = client.get(endpoint, params=params, headers=headers)
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    f"[list_validators_config] Response received | "
+                    f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
+                    f"response_bytes={len(response.content)}"
+                )
+                logger.info(
+                    f"[list_validators_config] Response body | body={response.text}"
                 )
                 response.raise_for_status()
 

@@ -57,7 +57,7 @@ def apply_guardrails_endpoint(
     _current_user: AuthContextDep,
     session: SessionDep,
     request: GuardrailsRequest,
-)  -> APIResponse[GuardrailsJobImmediatePublic]:
+) -> APIResponse[GuardrailsJobImmediatePublic]:
     """Initiate a guardrails-only job. Returns the job_id immediately; the
     sanitised text is delivered via callback_url (or polled via GET)."""
     project_id = _current_user.project_.id
@@ -140,8 +140,7 @@ def get_guardrails_job_status(
     ):
         job = JobCrud(session=session).get(job_id=job_id, project_id=project_id)
         if not job or job.job_type != JobType.LLM_GUARDRAILS:
-            # Hide non-guardrails jobs behind a 404 so this endpoint cannot
-            # be used to enumerate or peek at LLM-call / chain job rows.
+            # 404 (not 403) to avoid leaking existence of non-guardrails jobs.
             raise HTTPException(status_code=404, detail="Job not found")
 
         meta = job.meta if isinstance(job.meta, dict) else {}
@@ -154,7 +153,7 @@ def get_guardrails_job_status(
                 warnings = [w for w in raw_warnings if isinstance(w, str)]
 
         guardrails_response: GuardrailsCallbackData | None = None
-        if job.status.value == JobStatus.SUCCESS:
+        if job.status == JobStatus.SUCCESS:
             response_blob = meta.get("response") or {}
             data_blob = (
                 response_blob.get("data") if isinstance(response_blob, dict) else None
@@ -168,8 +167,6 @@ def get_guardrails_job_status(
             )
             value = safe_text if isinstance(safe_text, str) else (original_text or "")
 
-            # Prefer the server-minted response_id stamped on the callback
-            # blob; fall back to None if (for older rows) it is absent.
             response_id: str | None = None
             if isinstance(callback_blob, dict):
                 rid = callback_blob.get("response_id")

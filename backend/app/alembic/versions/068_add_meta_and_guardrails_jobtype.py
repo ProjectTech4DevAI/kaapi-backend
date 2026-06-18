@@ -1,7 +1,7 @@
 """add job.meta JSONB column and LLM_GUARDRAILS jobtype enum value
 
-Revision ID: 067
-Revises: 066
+Revision ID: 068
+Revises: 067
 Create Date: 2026-06-15 00:00:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "067"
-down_revision = "066"
+revision = "068"
+down_revision = "067"
 branch_labels = None
 depends_on = None
 

@@ -46,7 +46,7 @@ class GuardrailsRequest(SQLModel):
         min_length=1,
         description="Text to validate/sanitise. May be a user prompt or an LLM response.",
     )
-    guardrail_config: list[GuardrailValidator] = Field(
+    config: list[GuardrailValidator] = Field(
         ...,
         min_length=1,
         description="Validators to apply, identified by validator_config_id.",
