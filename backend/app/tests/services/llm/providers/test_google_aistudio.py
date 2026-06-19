@@ -543,3 +543,87 @@ class TestGoogleAIProviderTTS:
         )
         assert voice_name == "Kore"
         assert config_arg.speech_config.language_code == "en-US"
+
+
+class TestGoogleAIProviderText:
+    """Coverage for the text completion path (`_execute_text`)."""
+
+    @pytest.fixture
+    def mock_client(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def provider(self, mock_client):
+        return GoogleAIProvider(client=mock_client)
+
+    @pytest.fixture
+    def text_config(self):
+        return NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-pro", "temperature": 0.2},
+        )
+
+    @pytest.fixture
+    def query_params(self):
+        return QueryParams(input="Hello there")
+
+    def test_text_happy_path(self, provider, mock_client, text_config, query_params):
+        mock_client.models.generate_content.return_value = mock_google_response(
+            text="Hi!"
+        )
+        result, error = provider.execute(text_config, query_params, "Hello there")
+        assert error is None
+        assert result.response.output.content.value == "Hi!"
+        assert result.usage.input_tokens == 50
+        assert result.usage.output_tokens == 100
+
+    def test_text_with_instructions_and_reasoning(
+        self, provider, mock_client, text_config, query_params
+    ):
+        text_config.params["instructions"] = "Be terse."
+        text_config.params["reasoning"] = "low"
+        mock_client.models.generate_content.return_value = mock_google_response(
+            text="ok"
+        )
+        result, error = provider.execute(text_config, query_params, "Ping")
+        assert error is None
+        config_arg = mock_client.models.generate_content.call_args[1]["config"]
+        assert config_arg.system_instruction == "Be terse."
+        assert config_arg.thinking_config is not None
+
+    def test_text_missing_response_id_returns_error(
+        self, provider, mock_client, text_config, query_params
+    ):
+        resp = mock_google_response(text="x")
+        resp.response_id = None
+        mock_client.models.generate_content.return_value = resp
+        result, error = provider.execute(text_config, query_params, "Hi")
+        assert result is None
+        assert "response_id" in error
+
+    def test_text_missing_text_returns_error(
+        self, provider, mock_client, text_config, query_params
+    ):
+        resp = mock_google_response(text="")
+        resp.candidates = [SimpleNamespace(finish_reason="SAFETY")]
+        resp.prompt_feedback = SimpleNamespace(block_reason="HATE")
+        mock_client.models.generate_content.return_value = resp
+        result, error = provider.execute(text_config, query_params, "Hi")
+        assert result is None
+        assert "missing generated content" in error
+
+    def test_text_accepts_list_of_content_parts(
+        self, provider, mock_client, text_config, query_params
+    ):
+        from app.models.llm import TextContent
+
+        mock_client.models.generate_content.return_value = mock_google_response(
+            text="seen"
+        )
+        result, error = provider.execute(
+            text_config, query_params, [TextContent(value="part one")]
+        )
+        assert error is None
+        contents = mock_client.models.generate_content.call_args[1]["contents"]
+        assert contents[0]["parts"][0]["text"] == "part one"
