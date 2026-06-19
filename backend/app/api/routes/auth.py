@@ -400,8 +400,6 @@ def verify_magic_link(session: SessionDep, token: str) -> JSONResponse:
     # Get user's projects to embed in token
     available_projects = get_user_accessible_projects(session=session, user_id=user.id)
 
-    # A user must belong to at least one active project to log in. Superusers
-    # manage the platform and are exempt from this check.
     if not user.is_superuser and not available_projects:
         logger.info(
             f"[verify_magic_link] User has no accessible projects | user_id: {user.id}"

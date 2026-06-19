@@ -6,7 +6,6 @@ class Message(SQLModel):
     message: str
 
 
-# Optional request body for delete endpoints that support hard deletion.
 class DeleteRequest(SQLModel):
     hard_delete: bool = Field(
         default=False,

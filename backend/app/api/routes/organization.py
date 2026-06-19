@@ -109,8 +109,6 @@ def update_organization(
 
     org_data = org_in.model_dump(exclude_unset=True)
 
-    # Reject renaming to a name already taken by another organization (active or
-    # not), matching the uniqueness rule enforced on create.
     new_name = org_data.get("name")
     if new_name and new_name != org.name:
         existing = get_organization_by_name(session=session, name=new_name)
@@ -129,9 +127,6 @@ def update_organization(
     session.flush()
 
     if deactivating:
-        # Mirror the soft-delete: deactivate child projects and orphaned users.
-        # Reactivating an org intentionally leaves its projects inactive so they
-        # can be brought back selectively.
         cascade_deactivate_organization(session=session, organization=org)
 
     session.commit()

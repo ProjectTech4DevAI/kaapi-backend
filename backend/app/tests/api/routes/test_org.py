@@ -94,14 +94,12 @@ def test_delete_organization(
     )
     assert response.status_code == 404
 
-    # ...but the row still exists, marked inactive (recoverable).
     db.expire_all()
     org = get_organization_by_id(session=db, org_id=org_id)
     assert org is not None
     assert org.is_active is False
 
 
-# Test hard (permanent) deletion of an organization
 def test_hard_delete_organization(
     db: Session,
     test_organization: Organization,

@@ -62,7 +62,6 @@ def test_create_project_duplicate_inactive_name(db: Session) -> None:
     )
     project = create_project(session=db, project_create=project_data)
 
-    # Soft-delete it, then try to create another project with the same name.
     project.is_active = False
     db.add(project)
     db.flush()

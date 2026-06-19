@@ -16,9 +16,6 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
         organization_id=project_create.organization_id,
         project_name=project_create.name,
     )
-    # Project names are unique per organization. Because deletes are soft, the
-    # name may still be held by an inactive project — give a clear message so the
-    # caller reactivates it instead of hitting a raw constraint error.
     if project:
         logger.warning(
             f"[create_project] Project name already exists | 'project_id': {project.id}, "

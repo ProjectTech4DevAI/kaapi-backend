@@ -117,21 +117,18 @@ def test_delete_project(
     )
     assert response.status_code == 200
 
-    # Soft-deleted projects are hidden from the API...
     response = client.get(
         f"{settings.API_V1_STR}/projects/{project_id}",
         headers=superuser_token_headers,
     )
     assert response.status_code == 404
 
-    # ...but the row still exists, marked inactive (recoverable).
     db.expire_all()
     project = get_project_by_id(session=db, project_id=project_id)
     assert project is not None
     assert project.is_active is False
 
 
-# Test hard (permanent) deletion of a project
 def test_hard_delete_project(
     db: Session, test_project: Project, superuser_token_headers: dict[str, str]
 ) -> None:
