@@ -1,0 +1,178 @@
+name: Pre-release Tag
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
+jobs:
+  pre-release:
+    runs-on: ubuntu-latest
+    name: Pre-Release
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install semantic-release
+        run: |
+          npm install -g \
+            semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/github
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+
+      - name: Rewrite notes (cumulative, grouped, since last stable)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            });
+            const latest = releases
+              .filter(r => r.prerelease && /-main\.\d+$/.test(r.tag_name))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+            if (!latest) {
+              core.info('No pre-release found to update.');
+              return;
+            }
+
+            const tags = await github.paginate(github.rest.repos.listTags, {
+              owner, repo, per_page: 100,
+            });
+            const stableRe = /^v(\d+)\.(\d+)\.(\d+)$/;
+            let stableTag = null;
+            let stableVer = [-1, -1, -1];
+            for (const t of tags) {
+              const m = stableRe.exec(t.name);
+              if (m) {
+                const v = [+m[1], +m[2], +m[3]];
+                if (cmp(v, stableVer) > 0) { stableVer = v; stableTag = t.name; }
+              }
+            }
+
+            let sinceMs = 0;
+            if (stableTag) {
+              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${stableTag}` });
+              let sha = ref.data.object.sha;
+              if (ref.data.object.type === 'tag') {
+                const t = await github.rest.git.getTag({ owner, repo, tag_sha: sha });
+                sha = t.data.object.sha;
+              }
+              const c = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+              sinceMs = new Date(c.data.commit.committer.date).getTime();
+            }
+
+            const merged = [];
+            for (let page = 1; page <= 20; page++) {
+              const { data } = await github.rest.pulls.list({
+                owner, repo, state: 'closed', base: 'main',
+                sort: 'updated', direction: 'desc', per_page: 100, page,
+              });
+              if (!data.length) break;
+              for (const pr of data) {
+                if (pr.merged_at && new Date(pr.merged_at).getTime() > sinceMs) merged.push(pr);
+              }
+              if (new Date(data[data.length - 1].updated_at).getTime() < sinceMs) break;
+            }
+
+            if (!merged.length) {
+              core.info('No merged PRs since last stable; leaving notes as-is.');
+              return;
+            }
+
+            const cats = [
+              { title: 'Features', types: ['feat'] },
+              { title: 'Fixes', types: ['fix'] },
+              { title: 'Chores', types: ['chore'] },
+              { title: 'Documentation', types: ['docs'] },
+              { title: 'Refactors', types: ['refactor'] },
+              { title: 'Other Changes', types: ['*'] },
+            ].map(c => ({ ...c, items: [] }));
+
+            const typeOf = (pr) => {
+              const m = (pr.body || '').match(/type:\s*(feat|fix|chore|docs|refactor)/i);
+              return m ? m[1].toLowerCase() : 'fix';
+            };
+            const seen = new Set();
+            for (const pr of merged) {
+              if (seen.has(pr.number)) continue;
+              seen.add(pr.number);
+              const type = typeOf(pr);
+              const bucket = cats.find(c => c.types.includes(type)) || cats.find(c => c.types.includes('*'));
+              bucket.items.push(pr);
+            }
+
+            let body = `## What's Changed\n`;
+            for (const c of cats) {
+              if (!c.items.length) continue;
+              body += `\n### ${c.title}\n`;
+              for (const pr of c.items) {
+                body += `* ${pr.title} by @${pr.user.login} in #${pr.number}\n`;
+              }
+            }
+            if (stableTag) {
+              body += `\n**Full Changelog**: https://github.com/${owner}/${repo}/compare/${stableTag}...${latest.tag_name}\n`;
+            }
+
+            await github.rest.repos.updateRelease({
+              owner, repo, release_id: latest.id, body,
+            });
+            core.info(`Rewrote ${latest.tag_name} notes: ${merged.length} PR(s) since ${stableTag || 'repo start'}.`);
+
+      - name: Remove previous pre-releases
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+
+            const releases = await github.paginate(
+              github.rest.repos.listReleases,
+              { owner, repo, per_page: 100 }
+            );
+
+            const preReleases = releases
+              .filter(r => r.prerelease && /-main\.\d+$/.test(r.tag_name))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const stale = preReleases.slice(1);
+
+            for (const r of stale) {
+              core.info(`Deleting stale pre-release ${r.tag_name}`);
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: r.id });
+              try {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `tags/${r.tag_name}`,
+                });
+              } catch (e) {
+                core.warning(`Could not delete tag ${r.tag_name}: ${e.message}`);
+              }
+            }
