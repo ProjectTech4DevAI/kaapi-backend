@@ -42,8 +42,6 @@ def login_access_token(
     elif not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
-    # A user must belong to at least one active project to log in. Superusers
-    # manage the platform and are exempt from this check.
     if not user.is_superuser and not get_user_accessible_projects(
         session=session, user_id=user.id
     ):

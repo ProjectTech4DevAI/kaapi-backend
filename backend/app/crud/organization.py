@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 def create_organization(
     *, session: Session, org_create: OrganizationCreate
 ) -> Organization:
-    # Organization names are globally unique. Because deletes are soft, a name
-    # may still be taken by an inactive org — surface a clear error in that case
-    # so the caller reactivates it instead of hitting a raw constraint error.
     existing = get_organization_by_name(session=session, name=org_create.name)
     if existing:
         logger.warning(

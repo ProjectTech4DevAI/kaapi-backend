@@ -118,7 +118,6 @@ def update_organization(
                 detail="An organization with this name already exists",
             )
 
-    # Detect an is_active transition so we can cascade consistently with delete.
     target_active = org_data.get("is_active")
     deactivating = target_active is False and org.is_active
 
