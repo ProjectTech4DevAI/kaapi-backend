@@ -8,27 +8,29 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session
 
-from app.core.batch import (
-    BATCH_KEY,
-    GeminiBatchProvider,
-    OpenAIBatchProvider,
-    download_batch_results,
-    poll_batch_status,
-    upload_batch_results_to_object_store,
-)
+from app.celery.tasks.job_execution import run_assessment_pipeline
+from app.core.batch import BATCH_KEY, poll_batch_status, process_completed_batch
+from app.core.batch.anthropic import MessageBatchStatus
 from app.core.batch.base import BatchProvider
-from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.crud.assessment import (
     recompute_assessment_status,
+    update_assessment_run_prefilter_stats,
     update_assessment_run_status,
 )
 from app.crud.job import get_batch_job
-from app.models.assessment import Assessment, AssessmentRun
+from app.models.assessment import Assessment, AssessmentRun, StageStatus
+from app.services.assessment.stages import (
+    GATE_STAGES,
+    STAGE_PARSERS,
+    _get_batch_provider,
+    advance_or_finalize,
+    load_raw_batch_results,
+)
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -87,32 +89,6 @@ def _sanitize_json_output(raw: str) -> str:
     return "".join(result)
 
 
-def _get_batch_provider(
-    session: Session,
-    provider_name: str,
-    organization_id: int,
-    project_id: int,
-) -> BatchProvider:
-    """Get the appropriate batch provider instance."""
-    if provider_name in (LLMProvider.OPENAI, LLMProvider.OPENAI_NATIVE):
-        openai_client = get_openai_client(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-        )
-        return OpenAIBatchProvider(client=openai_client)
-
-    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
-        gemini_client = GeminiClient.from_credentials(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-        )
-        return GeminiBatchProvider(client=gemini_client.client)
-
-    raise ValueError(f"Unsupported provider for assessment polling: {provider_name}")
-
-
 def parse_assessment_output(
     raw_results: list[dict[str, Any]],
     provider_name: str,
@@ -121,7 +97,7 @@ def parse_assessment_output(
 
     Args:
         raw_results: Raw results from batch provider
-        provider_name: Provider name ('openai' or 'google')
+        provider_name: Provider name ('openai', 'google', or 'anthropic')
 
     Returns:
         List of parsed results with row_id, output text, usage, etc.
@@ -212,7 +188,50 @@ def parse_assessment_output(
                 }
             )
 
-        elif provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_NATIVE):
+        elif provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
+            response = result.get("response")
+            error = result.get("error")
+
+            if error:
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": None,
+                        "error": str(error),
+                        "usage": None,
+                    }
+                )
+                continue
+
+            if response:
+                text = "".join(
+                    block.get("text", "")
+                    for block in response.get("content", [])
+                    if block.get("type") == "text"
+                )
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": text if text else None,
+                        "error": None if text else "Empty response output",
+                        "usage": response.get("usage"),
+                        "response_id": response.get("id"),
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "row_id": row_id,
+                        "output": None,
+                        "error": "Empty response",
+                        "usage": None,
+                    }
+                )
+
+        elif provider_name in (
+            LLMProvider.GOOGLE_AISTUDIO,
+            LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+        ):
             response = result.get("response")
             error = result.get("error")
 
@@ -262,234 +281,176 @@ def parse_assessment_output(
     return results
 
 
-async def check_and_process_assessment(
-    run: AssessmentRun,
-    session: Session,
-) -> dict[str, Any]:
-    """Check assessment batch status and process if completed.
+_PROVIDER_SUCCESS = {
+    "completed",
+    BatchJobState.SUCCEEDED.value,
+    MessageBatchStatus.ENDED.value,
+}
+_PROVIDER_FAILED = {
+    "failed",
+    "expired",
+    "cancelled",
+    BatchJobState.FAILED.value,
+    BatchJobState.CANCELLED.value,
+    BatchJobState.EXPIRED.value,
+}
 
-    Args:
-        run: AssessmentRun to check
-        session: Database session
 
-    Returns:
-        Dict with status information
+def _poll_stage_outcome(session: Session, provider: BatchProvider, batch_job) -> str:
+    """Poll one stage's batch; on success download+persist. Returns the outcome."""
+    status_result = poll_batch_status(
+        session=session, provider=provider, batch_job=batch_job
+    )
+    session.refresh(batch_job)
+    status = batch_job.provider_status
+
+    if status in _PROVIDER_SUCCESS:
+        counts = status_result.get("request_counts") or {}
+        if counts.get("completed", 0) == 0 and (
+            counts.get("failed", 0) > 0
+            or status_result.get("error_file_id")
+            or status_result.get("error_message")
+        ):
+            return "failed"
+        if batch_job.provider_output_file_id:
+            process_completed_batch(
+                session=session, provider=provider, batch_job=batch_job
+            )
+            return "completed"
+        return "no_change"  # output genuinely not ready yet — retry next cycle
+    if status in _PROVIDER_FAILED:
+        return "failed"
+    return "no_change"
+
+
+def _record_gate_stats(
+    session: Session, run: AssessmentRun, stage: str, batch_job, project_id: int
+) -> None:
+    """For a go/no-go stage, persist passed/rejected counts and accepted row indices.
+
+    The accepted indices are stored on ``run.pipeline`` so the next stage's batch
+    build reads them directly instead of re-downloading and re-parsing this batch.
     """
-    log_prefix = f"[check_and_process_assessment][assessment_run={run.id}]"
-    previous_status = run.status
-    parent_pre = session.get(Assessment, run.assessment_id)
-    experiment_name_pre = parent_pre.experiment_name if parent_pre else None
-
     try:
-        if not run.batch_job_id:
-            raise ValueError(f"Assessment run {run.id} has no batch_job_id")
+        raw = load_raw_batch_results(session, batch_job, project_id)
+        outputs = parse_assessment_output(raw, batch_job.provider)
+        parsed = STAGE_PARSERS[stage](outputs)
+        total = len(parsed)
+        passed = sum(1 for r in parsed.values() if r.get("verdict"))
+        update_assessment_run_prefilter_stats(
+            session=session,
+            run=run,
+            prefilter_total_rows=total,
+            prefilter_total_passed=passed,
+            prefilter_total_rejected=total - passed,
+        )
 
-        batch_job = get_batch_job(session=session, batch_job_id=run.batch_job_id)
-        if not batch_job:
-            raise ValueError(f"BatchJob {run.batch_job_id} not found")
+        # Persist the cumulative accepted set (intersect with prior gates).
+        accepted = {idx for idx, r in parsed.items() if r.get("verdict")}
+        prev = (run.pipeline or {}).get("accepted_indices")
+        if prev is not None:
+            accepted &= set(prev)
+        pipeline = dict(run.pipeline or {})
+        pipeline["accepted_indices"] = sorted(accepted)
+        run.pipeline = pipeline
+        flag_modified(run, "pipeline")
+    except Exception as exc:
+        logger.warning(
+            "[_record_gate_stats] run_id=%s stage=%s — %s", run.id, stage, exc
+        )
 
-        parent = parent_pre
-        if not parent:
-            raise ValueError(f"Parent assessment {run.assessment_id} not found")
 
-        # Get provider and poll status
+def _fail_run_stage(
+    session: Session, run: AssessmentRun, message: str
+) -> dict[str, Any]:
+    # Keep run.stage at the failed stage so a resume knows where to restart;
+    # stage_status == FAILED is the failure marker.
+    run.stage_status = StageStatus.FAILED
+    update_assessment_run_status(
+        session=session, run=run, status="failed", error_message=message
+    )
+    recompute_assessment_status(session=session, assessment_id=run.assessment_id)
+    return {"run_id": run.id, "current_status": "failed", "action": "failed"}
+
+
+async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str, Any]:
+    """Poll the run's current-stage batch; on completion advance to the next stage."""
+    parent = session.get(Assessment, run.assessment_id)
+    if not parent:
+        raise ValueError(f"Parent assessment {run.assessment_id} not found")
+
+    stage = run.stage
+    if not stage or run.stage_status != StageStatus.PROCESSING:
+        return {"run_id": run.id, "current_status": run.status, "action": "no_change"}
+
+    batch_id = (run.stage_batches or {}).get(stage)
+    batch_job = (
+        get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
+    )
+    if not batch_job:
+        return _fail_run_stage(session, run, f"Stage {stage} batch not found")
+
+    # Transient errors here (DNS, network, provider hiccup) must NOT fail the run —
+    # the batch is still running. Skip this cycle; the cron retries next tick.
+    try:
         provider = _get_batch_provider(
             session=session,
             provider_name=batch_job.provider,
             organization_id=parent.organization_id,
             project_id=parent.project_id,
         )
-        status_result = poll_batch_status(
-            session=session,
-            provider=provider,
-            batch_job=batch_job,
+        outcome = _poll_stage_outcome(session, provider, batch_job)
+    except Exception as exc:
+        logger.warning(
+            "[process_run_batches] run_id=%s stage=%s poll error, will retry: %s",
+            run.id,
+            stage,
+            exc,
         )
-        session.refresh(batch_job)
+        return {"run_id": run.id, "current_status": run.status, "action": "no_change"}
 
-        provider_status = batch_job.provider_status
-
-        if (
-            provider_status == "completed"
-            or provider_status == BatchJobState.SUCCEEDED.value
-        ):
-            if not batch_job.provider_output_file_id:
-                request_counts = status_result.get("request_counts") or {}
-                error_file_id = status_result.get("error_file_id")
-                failed_count = request_counts.get("failed", 0)
-                completed_count = request_counts.get("completed", 0)
-                total_count = request_counts.get("total", 0)
-
-                if error_file_id and failed_count > 0 and completed_count == 0:
-                    error_msg = (
-                        f"Batch completed with {failed_count} failed request(s)"
-                        f" and no successful outputs"
-                    )
-                    if total_count:
-                        error_msg += f" out of {total_count}"
-                    error_msg += f" (error_file_id: {error_file_id})"
-
-                    update_assessment_run_status(
-                        session=session,
-                        run=run,
-                        status="failed",
-                        error_message=error_msg,
-                    )
-                    recompute_assessment_status(
-                        session=session, assessment_id=run.assessment_id
-                    )
-
-                    return {
-                        "run_id": run.id,
-                        "assessment_id": run.assessment_id,
-                        "experiment_name": experiment_name_pre,
-                        "previous_status": previous_status,
-                        "current_status": "failed",
-                        "provider_status": provider_status,
-                        "action": "failed",
-                        "error": error_msg,
-                    }
-
-                logger.info(
-                    f"{log_prefix} Batch completed but output file is not ready yet | "
-                    f"batch_job_id={batch_job.id} | provider_status={provider_status}"
-                )
-                return {
-                    "run_id": run.id,
-                    "assessment_id": run.assessment_id,
-                    "experiment_name": experiment_name_pre,
-                    "previous_status": previous_status,
-                    "current_status": run.status,
-                    "provider_status": provider_status,
-                    "action": "no_change",
-                }
-
-            # Download and process results
-            raw_results = download_batch_results(provider=provider, batch_job=batch_job)
-
-            # Upload raw results to object store
-            object_store_url = None
-            try:
-                object_store_url = upload_batch_results_to_object_store(
-                    session=session, batch_job=batch_job, results=raw_results
-                )
-            except Exception as e:
-                logger.error(
-                    "%s Object store upload failed — results may be unrecoverable "
-                    "if the provider deletes the output file before next poll: %s",
-                    log_prefix,
-                    e,
-                    exc_info=True,
-                )
-
-            # Parse results
-            parsed = parse_assessment_output(raw_results, batch_job.provider)
-            error_count = sum(1 for result in parsed if result.get("error"))
-            success_count = sum(1 for result in parsed if not result.get("error"))
-
-            # Update run status
-            error_msg = f"{error_count} item(s) failed" if error_count > 0 else None
-            run_status = (
-                "failed"
-                if parsed and success_count == 0 and error_count > 0
-                else "completed"
-            )
-
-            if not parsed:
-                run_status = "failed"
-                error_msg = "Batch completed but no valid results were produced"
-
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status=run_status,
-                error_message=error_msg,
-                object_store_url=object_store_url,
-            )
-            recompute_assessment_status(
-                session=session, assessment_id=run.assessment_id
-            )
-
-            return {
-                "run_id": run.id,
-                "assessment_id": run.assessment_id,
-                "experiment_name": experiment_name_pre,
-                "previous_status": previous_status,
-                "current_status": run_status,
-                "provider_status": provider_status,
-                "action": "processed" if run_status == "completed" else "failed",
-                "total_results": len(parsed),
-                "errors": error_count,
-            }
-
-        elif provider_status in (
-            "failed",
-            "expired",
-            "cancelled",
-            BatchJobState.FAILED.value,
-            BatchJobState.CANCELLED.value,
-            BatchJobState.EXPIRED.value,
-        ):
-            error_msg = batch_job.error_message or f"Batch {provider_status}"
-            update_assessment_run_status(
-                session=session,
-                run=run,
-                status="failed",
-                error_message=error_msg,
-            )
-            recompute_assessment_status(
-                session=session, assessment_id=run.assessment_id
-            )
-
-            return {
-                "run_id": run.id,
-                "assessment_id": run.assessment_id,
-                "experiment_name": experiment_name_pre,
-                "previous_status": previous_status,
-                "current_status": "failed",
-                "provider_status": provider_status,
-                "action": "failed",
-                "error": error_msg,
-            }
-
-        else:
-            # Still processing
-            return {
-                "run_id": run.id,
-                "assessment_id": run.assessment_id,
-                "experiment_name": experiment_name_pre,
-                "previous_status": previous_status,
-                "current_status": run.status,
-                "provider_status": provider_status,
-                "action": "no_change",
-            }
-
-    except Exception as e:
-        error_msg = format_assessment_failure_message(e)
-        logger.error(
-            f"{log_prefix} Error checking assessment: {error_msg}",
-            exc_info=True,
+    if outcome == "no_change":
+        return {"run_id": run.id, "current_status": run.status, "action": "no_change"}
+    if outcome == "failed":
+        return _fail_run_stage(
+            session, run, batch_job.error_message or f"Stage {stage} failed"
         )
-        update_assessment_run_status(
-            session=session,
-            run=run,
-            status="failed",
-            error_message=error_msg,
-        )
-        recompute_assessment_status(session=session, assessment_id=run.assessment_id)
-        return {
-            "run_id": run.id,
-            "assessment_id": run.assessment_id,
-            "experiment_name": experiment_name_pre,
-            "previous_status": previous_status,
-            "current_status": "failed",
-            "provider_status": "unknown",
-            "action": "failed",
-            "error": error_msg,
-        }
 
+    run.stage_status = StageStatus.COMPLETED
+    if stage in GATE_STAGES:
+        _record_gate_stats(session, run, stage, batch_job, parent.project_id)
 
-async def poll_all_pending_assessments(session: Session) -> dict[str, Any]:
-    """Backward-compatible wrapper for parent-first assessment polling."""
-    from app.crud.assessment.cron import poll_all_pending_assessment_evaluations
+    nxt = advance_or_finalize(run)
+    session.add(run)
+    session.commit()
+    recompute_assessment_status(session=session, assessment_id=run.assessment_id)
 
-    return await poll_all_pending_assessment_evaluations(session=session)
+    if nxt:
+        try:
+            run_assessment_pipeline.delay(
+                run_id=run.id,
+                organization_id=parent.organization_id,
+                project_id=parent.project_id,
+                trace_id="",
+            )
+        except Exception as exc:
+            logger.error(
+                "[process_run_batches] run_id=%s stage=%s enqueue failed — marking failed for resume: %s",
+                run.id,
+                run.stage,
+                exc,
+                exc_info=True,
+            )
+            return _fail_run_stage(
+                session,
+                run,
+                "Failed to enqueue the next pipeline stage. Resume the run to retry.",
+            )
+
+    return {
+        "run_id": run.id,
+        "assessment_id": run.assessment_id,
+        "experiment_name": parent.experiment_name,
+        "current_status": run.status,
+        "action": "processed",
+    }

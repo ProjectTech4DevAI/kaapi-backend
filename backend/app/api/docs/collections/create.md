@@ -3,14 +3,11 @@ pipeline:
 
 * Create a vector store from the document IDs you received after uploading your
   documents through the Documents module.
-* Documents are automatically batched when creating the vector store to optimize
-  the upload process for large document sets. A new batch is created when either
-  the cumulative size reaches 30 MB of documents given to upload to a vector store
-  or the document count reaches 200 files in a batch, whichever limit is hit first.
+* Given Documents are automatically batched during vector store creation to handle large uploads efficiently. A new batch starts when the total size reaches 30 MB or the file count reaches 200, whichever comes first.
 
-If any step in the LLM service interaction fails, all previously created resources are cleaned up automatically. For example, if the vector store creation fails, any files already uploaded to OpenAI are removed. Failures can be caused by service downtime, invalid parameter values, or unsupported document types — the latter is especially common with PDFs that cannot be parsed.
+If any step in the LLM service interaction fails, all previously created resources are cleaned up automatically. Failures can be caused by service downtime, invalid parameter values, or unsupported document types — the latter is especially common with PDFs that cannot be parsed.
 
-The Vector store/assistant will be created asynchronously.
+The Vector store will be created asynchronously.
 The immediate response from this endpoint is
 going to contain the collection "job ID" and status. Once the collection has
 been created, information about the collection will be returned to the user via

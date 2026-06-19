@@ -99,6 +99,7 @@ from .evaluation import (
     EvaluationRunCreate,
     EvaluationRunPublic,
     EvaluationRunUpdate,
+    RunModeEnum,
 )
 from .feature_flag import (
     FeatureFlag,
@@ -139,8 +140,11 @@ from .message import Message
 from .model_config import (
     ModelConfig,
     ModelConfigBase,
+    ModelConfigBulkUpdateItem,
+    ModelConfigCreate,
     ModelConfigListPublic,
     ModelConfigPublic,
+    ModelConfigUpdate,
 )
 from .model_evaluation import (
     ModelEvaluation,

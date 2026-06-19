@@ -11,12 +11,13 @@ class Provider(str, Enum):
 
     OPENAI = "openai"
     LANGFUSE = "langfuse"
-    GOOGLE = "google"
+    GOOGLE_AISTUDIO = "google-aistudio"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
-    GOOGLE_VERTEX = "google-vertex"
+    GOOGLE = "google"
     WEBHOOK_SECRET = "webhook_secret"
+    PROXY = "proxy"
 
 
 @dataclass
@@ -36,7 +37,7 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
         required_fields=["secret_key", "public_key", "host"],
         sensitive_fields=["secret_key"],
     ),
-    Provider.GOOGLE: ProviderConfig(
+    Provider.GOOGLE_AISTUDIO: ProviderConfig(
         required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
     Provider.SARVAMAI: ProviderConfig(
@@ -48,7 +49,7 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.ANTHROPIC: ProviderConfig(
         required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
-    Provider.GOOGLE_VERTEX: ProviderConfig(
+    Provider.GOOGLE: ProviderConfig(
         required_fields=[
             "api_key",
             "project_id",
@@ -60,6 +61,9 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
         required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]
+    ),
+    Provider.PROXY: ProviderConfig(
+        required_fields=["api_key"], sensitive_fields=["api_key"]
     ),
 }
 
@@ -144,7 +148,7 @@ def mask_credential_fields(
         if isinstance(value, str):
             masked[field_name] = mask_string(value)
         else:
-            # Non-string secrets (e.g. google-vertex `sa_key` is a dict)
+            # Non-string secrets (e.g. ``google`` Vertex `sa_key` is a dict)
             # are masked wholesale — the raw value is only decrypted at
             # provider runtime, never returned via the API.
             masked[field_name] = "********"

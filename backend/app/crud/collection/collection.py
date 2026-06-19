@@ -41,8 +41,8 @@ class CollectionCrud:
     def _exists(self, collection: Collection) -> bool:
         stmt = select(Collection.id).where(
             (Collection.project_id == self.project_id)
-            & (Collection.llm_service_id == collection.llm_service_id)
-            & (Collection.llm_service_name == collection.llm_service_name)
+            & (Collection.knowledge_base_id == collection.knowledge_base_id)
+            & (Collection.knowledge_base_provider == collection.knowledge_base_provider)
         )
         present = self.session.exec(stmt).scalar_one_or_none() is not None
 
@@ -88,6 +88,31 @@ class CollectionCrud:
             "[CollectionCrud.read_one] Retrieved collection | "
             f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
         )
+        return collection
+
+    def read_one_if_delete(self, collection_id: UUID) -> Collection:
+        statement = select(Collection).where(
+            and_(
+                Collection.project_id == self.project_id,
+                Collection.id == collection_id,
+            )
+        )
+
+        collection = self.session.exec(statement).one_or_none()
+        if collection is None:
+            logger.warning(
+                "[CollectionCrud.read_one_if_delete] Collection not found | "
+                f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
+            )
+            raise HTTPException(status_code=404, detail="Collection not found")
+
+        if collection.deleted_at is not None:
+            logger.warning(
+                "[CollectionCrud.read_one_if_delete] Collection already deleted | "
+                f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
+            )
+            raise HTTPException(status_code=400, detail="Collection already deleted")
+
         return collection
 
     def read_all(self):
@@ -156,7 +181,12 @@ class CollectionCrud:
 
     @delete.register
     def _(self, model: Collection, remote):
-        remote.delete(model.llm_service_id)
+        if model.deleted_at is not None:
+            logger.info(
+                f"[CollectionCrud.delete] Collection already deleted | {{'collection_id': '{model.id}'}}"
+            )
+            return model
+        remote.delete(model.knowledge_base_id)
         model.deleted_at = now()
         collection = self._update(model)
         logger.info(

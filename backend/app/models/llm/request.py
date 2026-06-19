@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -13,6 +13,13 @@ from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
+    KaapiProvider,
+    NativeProvider,
+    Provider,
+    RAGProvider,
+    STTProvider,
+    TTSProvider,
 )
 
 
@@ -69,6 +76,8 @@ class TextLLMParams(SQLModel):
 
 
 class STTLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_STT_MODEL
     instructions: str | None = None
     input_language: str | None = "auto"
@@ -86,23 +95,44 @@ class STTLLMParams(SQLModel):
 
 
 class TTSLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
     model: str = DEFAULT_TTS_MODEL
     voice: str = DEFAULT_TTS_VOICE
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
 
 
-KaapiLLMParams = Union[
-    TextLLMParams,
-    STTLLMParams,
-    TTSLLMParams,
-]
+class ProxyLLMParams(SQLModel):
+    model_config = {"extra": "forbid"}
+
+    client_llm_url: HttpUrl = Field(
+        ...,
+        description=(
+            "HTTPS URL of the client's own LLM endpoint. Kaapi forwards the "
+            "(guardrail-sanitised) input here and applies output guardrails to the response."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_https(self) -> Self:
+        if self.client_llm_url.scheme != "https":
+            raise ValueError(
+                f"client_llm_url must be HTTPS, got scheme: {self.client_llm_url.scheme}"
+            )
+        return self
+
+
+KaapiLLMParams = Union[TextLLMParams, STTLLMParams, TTSLLMParams, ProxyLLMParams]
 
 
 # Input type models for discriminated union
 class TextContent(SQLModel):
     format: Literal["text"] = "text"
     value: str = Field(..., description="Text content")
+    language_code: str | None = Field(
+        None, description="Optional detected language code in STT 'auto' mode"
+    )
 
 
 class AudioContent(SQLModel):
@@ -232,14 +262,7 @@ class NativeCompletionConfig(SQLModel):
     Supports any LLM provider's native API format.
     """
 
-    provider: Literal[
-        "openai-native",
-        "google-native",
-        "sarvamai-native",
-        "elevenlabs-native",
-        "anthropic-native",
-        "google-vertex-native",
-    ] = Field(
+    provider: NativeProvider = Field(
         ...,
         description="Native provider type (e.g., openai-native)",
     )
@@ -247,7 +270,7 @@ class NativeCompletionConfig(SQLModel):
         ...,
         description="Provider-specific parameters (schema varies by provider), should exactly match the provider's endpoint params structure",
     )
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
 
@@ -259,24 +282,16 @@ class KaapiCompletionConfig(SQLModel):
     Supports multiple providers: OpenAI, Claude, Gemini, etc.
     """
 
-    provider: (
-        Literal[
-            "openai",
-            "google",
-            "sarvamai",
-            "elevenlabs",
-            "anthropic",
-            "google-vertex",
-        ]
-        | None
-    ) = Field(
+    provider: KaapiProvider | None = Field(
         None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, google-vertex)"
+            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
+            "google-aistudio). 'google' routes via Google Vertex AI; "
+            "'google-aistudio' uses Google AI Studio."
         ),
     )
 
-    type: Literal["text", "stt", "tts"] = Field(
+    type: CompletionType = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: dict[str, Any] = Field(
@@ -294,8 +309,11 @@ class KaapiCompletionConfig(SQLModel):
         }
         model_class = param_models[self.type]
 
-        if self.type in ("stt", "tts") and self.provider is None:
-            self.provider = "google"
+        if (
+            self.type in (CompletionType.STT, CompletionType.TTS)
+            and self.provider is None
+        ):
+            self.provider = Provider.GOOGLE
 
         user_provided_temperature = "temperature" in self.params
         validated = model_class.model_validate(self.params)
@@ -306,9 +324,39 @@ class KaapiCompletionConfig(SQLModel):
         return self
 
 
+class ProxyCompletionConfig(SQLModel):
+    """
+    Proxy completion: Kaapi forwards the (guardrail-sanitised) input to the
+    client's own LLM endpoint and applies output guardrails to the response.
+    No upstream provider is dispatched — `provider` is fixed to "proxy" so
+    the discriminated union can route cleanly.
+    """
+
+    provider: Literal["proxy"] = Field(
+        "proxy",
+        description=(
+            "Discriminator value for the proxy variant. Auto-injected when "
+            "type=proxy; clients may omit it."
+        ),
+    )
+    type: Literal["proxy"] = Field(..., description="Must be 'proxy'.")
+    params: dict[str, Any] = Field(
+        ...,
+        description="Proxy params (client_llm_url, ...)",
+    )
+
+    @model_validator(mode="after")
+    def validate_params(self) -> Self:
+        validated = ProxyLLMParams.model_validate(self.params)
+        # mode="json" coerces HttpUrl → plain str so downstream consumers
+        # (httpx.post, urlparse) get the type they expect from params dict.
+        self.params = validated.model_dump(mode="json", exclude_none=True)
+        return self
+
+
 # Discriminated union for completion configs based on provider field
 CompletionConfig = Annotated[
-    Union[NativeCompletionConfig, KaapiCompletionConfig],
+    Union[NativeCompletionConfig, KaapiCompletionConfig, ProxyCompletionConfig],
     Field(discriminator="provider"),
 ]
 
@@ -325,6 +373,24 @@ class ConfigBlob(SQLModel):
     """Raw JSON blob of config."""
 
     completion: CompletionConfig = Field(..., description="Completion configuration")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_proxy_provider(cls, data: Any) -> Any:
+        """For `type=proxy`, provider is meaningless to the caller.
+        Inject provider="proxy" so the CompletionConfig discriminator routes
+        to ProxyCompletionConfig without forcing the client to set it."""
+        if not isinstance(data, dict):
+            return data
+        completion = data.get("completion")
+        if (
+            isinstance(completion, dict)
+            and completion.get("type") == Provider.PROXY.value
+        ):
+            existing = completion.get("provider")
+            if existing in (None, Provider.PROXY.value):
+                completion["provider"] = Provider.PROXY.value
+        return data
 
     # used for llm-chain to provide prompt interpolation
     prompt_template: PromptTemplate | None = Field(
@@ -828,3 +894,153 @@ class LlmChain(SQLModel, table=True):
             "comment": "Timestamp when the chain record was last updated"
         },
     )
+
+
+class _BlockSpecBase(SQLModel):
+    """Common xor logic for per-block specs: provide *either* (config_id +
+    config_version) for a stored config, *or* inline `params`. Not both.
+    """
+
+    config_id: UUID | None = Field(
+        default=None,
+        description="ID of a stored LLM config to use for this block.",
+    )
+    config_version: int | None = Field(
+        default=None,
+        ge=1,
+        description="Version of the stored config (required when config_id is set).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_xor(self):
+        has_ref = self.config_id is not None or self.config_version is not None
+        has_params = getattr(self, "params", None) is not None
+
+        if has_ref and has_params:
+            raise ValueError(
+                "Provide either (config_id + config_version) OR inline 'params', not both."
+            )
+        if has_ref and (self.config_id is None or self.config_version is None):
+            raise ValueError(
+                "Both 'config_id' and 'config_version' must be set together."
+            )
+        return self
+
+    @property
+    def is_stored_ref(self) -> bool:
+        return self.config_id is not None and self.config_version is not None
+
+
+class STTBlockSpec(_BlockSpecBase):
+    params: STTLLMParams | None = Field(
+        default=None,
+        description="Inline STT parameters. Omit to use endpoint defaults.",
+    )
+
+
+class RAGBlockSpec(_BlockSpecBase):
+    params: TextLLMParams | None = Field(
+        default=None,
+        description="Inline RAG (text) parameters. Omit to use endpoint defaults.",
+    )
+
+
+class TTSBlockSpec(_BlockSpecBase):
+    params: TTSLLMParams | None = Field(
+        default=None,
+        description="Inline TTS parameters. Omit to use endpoint defaults.",
+    )
+
+
+class SpeechToSpeechRequest(SQLModel):
+    """
+    API request for speech-to-speech (STS) with RAG.
+
+    Convenience endpoint that orchestrates a 3-block chain:
+    STT → RAG → TTS
+
+    Input: Audio
+    Output: Audio + Text (via callback)
+    """
+
+    query: AudioInput = Field(
+        ..., description="Voice note input (WhatsApp compatible format)"
+    )
+    knowledge_base_ids: list[str] = Field(
+        ..., min_length=1, description="Knowledge base IDs for RAG retrieval"
+    )
+
+    # Optional language config (BCP-47 codes)
+    input_language: str = Field(
+        "auto",
+        description=(
+            "BCP-47 language code for STT input (auto-detect by default). "
+            "Supported codes: 'auto', 'en-IN', 'hi-IN', 'bn-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'od-IN', "
+            "'pa-IN', 'ta-IN', 'te-IN', 'gu-IN', 'as-IN', 'ur-IN', 'ne-IN', 'kok-IN', 'ks-IN', "
+            "'sd-IN', 'sa-IN', 'sat-IN', 'mni-IN', 'brx-IN', 'mai-IN', 'doi-IN'"
+        ),
+    )
+    output_language: str | None = Field(
+        None,
+        description=(
+            "BCP-47 language code for TTS output (defaults to input_language if not specified). "
+            "Supported codes: same as input_language (except 'auto')."
+        ),
+    )
+
+    # Per-block specs. Each spec accepts EITHER (config_id + config_version)
+    # to reference a stored config, OR inline `params` to override the
+    # endpoint defaults. Omit entirely to use defaults only.
+    stt: STTBlockSpec | None = Field(
+        None,
+        description=(
+            "STT block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
+    )
+    rag: RAGBlockSpec | None = Field(
+        None,
+        description=(
+            "RAG block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
+    )
+    tts: TTSBlockSpec | None = Field(
+        None,
+        description=(
+            "TTS block spec. Use 'params' for inline overrides or "
+            "'config_id' + 'config_version' to reference a stored config."
+        ),
+    )
+
+    # Provider hints. Optional — KaapiCompletionConfig auto-defaults to
+    # "google" for stt/tts when omitted.
+    stt_provider: STTProvider | None = None
+    tts_provider: TTSProvider | None = None
+    rag_provider: RAGProvider | None = None
+
+    # Callback and metadata
+    callback_url: HttpUrl | None = Field(
+        None, description="Webhook URL for async response delivery"
+    )
+    request_metadata: dict[str, Any] | None = Field(
+        None, description="Client-provided metadata"
+    )
+
+    @model_validator(mode="after")
+    def validate_languages(self):
+        """Normalize BCP-47 language codes to standard format (e.g., 'hi-in' -> 'hi-IN')."""
+        # Normalize input_language
+        if self.input_language and self.input_language != "auto":
+            # Normalize BCP-47: lowercase language, uppercase region (e.g., "hi-IN")
+            parts = self.input_language.split("-")
+            if len(parts) == 2:
+                self.input_language = f"{parts[0].lower()}-{parts[1].upper()}"
+
+        # Normalize output_language
+        if self.output_language:
+            parts = self.output_language.split("-")
+            if len(parts) == 2:
+                self.output_language = f"{parts[0].lower()}-{parts[1].upper()}"
+
+        return self

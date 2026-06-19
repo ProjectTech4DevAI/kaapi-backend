@@ -12,12 +12,36 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import numpy as np
 from langfuse import Langfuse
 
-from app.crud.evaluations.score import EvaluationScore, TraceData, TraceScore
+from app.crud.evaluations.merge import compute_summary_scores
+from app.crud.evaluations.score import (
+    COSINE_SCORE_COMMENT,
+    COSINE_SCORE_NAME,
+    DEFAULT_CATEGORY,
+    EvaluationScore,
+    TraceData,
+    TraceScore,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _write_trace_score(
+    langfuse: Langfuse,
+    *,
+    trace_id: str,
+    value: float,
+    comment: str,
+) -> None:
+    """Write a single trace-level score to Langfuse. Failures propagate to the
+    caller (no retry here)."""
+    langfuse.score(
+        trace_id=trace_id,
+        name=COSINE_SCORE_NAME,
+        value=value,
+        comment=comment,
+    )
 
 
 def create_langfuse_dataset_run(
@@ -109,6 +133,12 @@ def create_langfuse_dataset_run(
                     if question_id:
                         metadata["question_id"] = question_id
 
+                    item_metadata = getattr(dataset_item, "metadata", None)
+                    if isinstance(item_metadata, dict):
+                        item_category = item_metadata.get("category")
+                        if item_category:
+                            metadata["category"] = item_category
+
                     # Create trace with basic info
                     langfuse.trace(
                         id=trace_id,
@@ -172,32 +202,26 @@ def create_langfuse_dataset_run(
 def update_traces_with_cosine_scores(
     langfuse: Langfuse,
     per_item_scores: list[dict[str, Any]],
-) -> None:
+) -> list[str]:
     """
-    Update Langfuse traces with cosine similarity scores.
+    Add a trace-level "Cosine Similarity" score to each trace. Per-item failures
+    are isolated (one bad trace never aborts the batch).
 
-    This function adds custom "cosine_similarity" scores to traces at the trace level,
-    allowing them to be visualized in the Langfuse UI.
+    Items flagged ``unscoreable`` are written with value 0 and a
+    "Cannot compute: <reason>" comment so the gap is explained in the UI.
 
     Args:
         langfuse: Configured Langfuse client
-        per_item_scores: List of per-item score dictionaries from
-            calculate_average_similarity()
-                        Format: [
-                            {
-                                "trace_id": "trace-uuid-123",
-                                "cosine_similarity": 0.95
-                            },
-                            ...
-                        ]
+        per_item_scores: e.g. [{"trace_id": "...", "cosine_similarity": 0.95},
+            {"trace_id": "...", "unscoreable": True, "reason": "empty model output"}]
 
-    Note:
-        This function logs errors but does not raise exceptions to avoid blocking
-        evaluation completion if Langfuse updates fail.
+    Returns:
+        trace_ids whose score write failed (empty on full success).
     """
+    failed_trace_ids: list[str] = []
+
     for score_item in per_item_scores:
         trace_id = score_item.get("trace_id")
-        cosine_score = score_item.get("cosine_similarity")
 
         if not trace_id:
             logger.warning(
@@ -206,15 +230,17 @@ def update_traces_with_cosine_scores(
             )
             continue
 
+        if score_item.get("unscoreable"):
+            value = 0
+            reason = score_item.get("reason", "unscoreable")
+            comment = f"Cannot compute: {reason}"
+        else:
+            value = score_item.get("cosine_similarity")
+            comment = COSINE_SCORE_COMMENT
+
         try:
-            langfuse.score(
-                trace_id=trace_id,
-                name="Cosine Similarity",
-                value=cosine_score,
-                comment=(
-                    "Cosine similarity between generated output and "
-                    "ground truth embeddings"
-                ),
+            _write_trace_score(
+                langfuse, trace_id=trace_id, value=value, comment=comment
             )
         except Exception as e:
             logger.error(
@@ -222,8 +248,18 @@ def update_traces_with_cosine_scores(
                 f"trace_id={trace_id} | {e}",
                 exc_info=True,
             )
+            failed_trace_ids.append(trace_id)
 
     langfuse.flush()
+
+    if failed_trace_ids:
+        logger.warning(
+            f"[update_traces_with_cosine_scores] Score writes failed | "
+            f"failed={len(failed_trace_ids)}/{len(per_item_scores)} | "
+            f"failed_trace_ids={failed_trace_ids}"
+        )
+
+    return failed_trace_ids
 
 
 def upload_dataset_to_langfuse(
@@ -255,16 +291,19 @@ def upload_dataset_to_langfuse(
 
     def upload_item(item: dict[str, str], duplicate_num: int, question_id: str) -> bool:
         try:
+            metadata = {
+                "original_question": item["question"],
+                "duplicate_number": duplicate_num + 1,
+                "duplication_factor": duplication_factor,
+                "question_id": question_id,
+            }
+            if "category" in item:
+                metadata["category"] = item["category"] or DEFAULT_CATEGORY
             langfuse.create_dataset_item(
                 dataset_name=dataset_name,
                 input={"question": item["question"]},
                 expected_output={"answer": item["answer"]},
-                metadata={
-                    "original_question": item["question"],
-                    "duplicate_number": duplicate_num + 1,
-                    "duplication_factor": duplication_factor,
-                    "question_id": question_id,
-                },
+                metadata=metadata,
             )
             return True
         except Exception as e:
@@ -328,6 +367,7 @@ def fetch_trace_scores_from_langfuse(
     langfuse: Langfuse,
     dataset_name: str,
     run_name: str,
+    project_id: int | None = None,
 ) -> EvaluationScore:
     """
     Fetch trace scores from Langfuse for an evaluation run.
@@ -412,13 +452,14 @@ def fetch_trace_scores_from_langfuse(
 
         # 3. Fetch trace details with scores concurrently
         traces: list[TraceData] = []
-        # Track score aggregations by name: {name: {"data_type": str, "values": list}}
-        score_aggregations: dict[str, dict[str, Any]] = {}
 
         # Circuit breaker: abort early if too many consecutive failures
         max_consecutive_failures = 5
         consecutive_failures = 0
         total_failures = 0
+        # Track which traces could not be fetched so the failure is explicit in
+        # logs (instead of silently dropping them from the result).
+        failed_trace_ids: list[str] = []
 
         def _fetch_single_trace(trace_id: str) -> TraceData | None:
             """Fetch a single trace from Langfuse and extract its data."""
@@ -446,12 +487,18 @@ def fetch_trace_scores_from_langfuse(
                 elif isinstance(trace.output, str):
                     trace_data["llm_answer"] = trace.output
 
-            # Get ground truth and question_id from metadata
+            # Get ground truth, question_id, and category from metadata.
+            # `category` is intentionally omitted from the trace when the metadata
+            # has none — datasets uploaded without a `category` CSV column should
+            # not surface a category dimension in the API response.
             if trace.metadata and isinstance(trace.metadata, dict):
                 trace_data["ground_truth_answer"] = trace.metadata.get(
                     "ground_truth", ""
                 )
                 trace_data["question_id"] = trace.metadata.get("question_id", "")
+                raw_category = trace.metadata.get("category") or ""
+                if raw_category:
+                    trace_data["category"] = raw_category.title()
 
             # Add scores from this trace
             if trace.scores:
@@ -495,25 +542,12 @@ def fetch_trace_scores_from_langfuse(
                         continue
 
                     consecutive_failures = 0
-
-                    # Aggregate scores for summary calculation
-                    for score_entry in trace_data["scores"]:
-                        score_name = score_entry["name"]
-                        score_value = score_entry["value"]
-                        data_type = score_entry["data_type"]
-                        if score_value is not None:
-                            if score_name not in score_aggregations:
-                                score_aggregations[score_name] = {
-                                    "data_type": data_type,
-                                    "values": [],
-                                }
-                            score_aggregations[score_name]["values"].append(score_value)
-
                     traces.append(trace_data)
 
                 except Exception as e:
                     consecutive_failures += 1
                     total_failures += 1
+                    failed_trace_ids.append(trace_id)
                     logger.warning(
                         f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
                         f"trace_id={trace_id} | error={e}"
@@ -541,39 +575,18 @@ def fetch_trace_scores_from_langfuse(
                 f"fetches failed. Try again later."
             )
 
-        # 4. Calculate summary scores for all scores that have at least one value
-        summary_scores = []
-        for score_name, agg_data in score_aggregations.items():
-            data_type = agg_data["data_type"]
-            values = agg_data["values"]
+        # Partial failure below the outage threshold: log it instead of dropping
+        # traces silently. The caller backfills the missing ones on a later resync.
+        if total_failures > 0:
+            logger.warning(
+                f"[fetch_trace_scores_from_langfuse] Partial fetch | "
+                f"fetched={len(traces)}/{len(trace_ids)} | "
+                f"failed_trace_ids={failed_trace_ids} | "
+                f"dataset={dataset_name} | run={run_name} | project_id={project_id}"
+            )
 
-            if data_type == "CATEGORICAL":
-                # For categorical scores, compute distribution
-                distribution: dict[str, int] = {}
-                for val in values:
-                    str_val = str(val)
-                    distribution[str_val] = distribution.get(str_val, 0) + 1
-
-                summary_scores.append(
-                    {
-                        "name": score_name,
-                        "distribution": distribution,
-                        "total_pairs": len(values),
-                        "data_type": data_type,
-                    }
-                )
-            else:
-                # For numeric scores, compute avg and std (rounded to 2 decimal places)
-                numeric_values = [float(v) for v in values]
-                summary_scores.append(
-                    {
-                        "name": score_name,
-                        "avg": round(float(np.mean(numeric_values)), 2),
-                        "std": round(float(np.std(numeric_values)), 2),
-                        "total_pairs": len(numeric_values),
-                        "data_type": data_type,
-                    }
-                )
+        # 4. Calculate summary scores from the fetched traces.
+        summary_scores = compute_summary_scores(traces)
 
         result: EvaluationScore = {
             "summary_scores": summary_scores,
@@ -582,7 +595,8 @@ def fetch_trace_scores_from_langfuse(
 
         logger.info(
             f"[fetch_trace_scores_from_langfuse] Successfully fetched scores | "
-            f"total_traces={len(traces)} | score_names={list(score_aggregations.keys())}"
+            f"total_traces={len(traces)} | "
+            f"score_names={[s['name'] for s in summary_scores]}"
         )
 
         return result

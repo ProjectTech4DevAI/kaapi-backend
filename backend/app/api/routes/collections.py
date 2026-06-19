@@ -8,6 +8,7 @@ from fastapi import Path as FastPath
 from app.api.deps import SessionDep, AuthContextDep
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
+from app.core.rate_monitor import monitor_rate
 from app.crud import (
     CollectionCrud,
     CollectionJobCrud,
@@ -85,7 +86,10 @@ def list_collections(
     description=load_description("collections/create.md"),
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(monitor_rate("collections")),
+    ],
 )
 def create_collection(
     session: SessionDep,
@@ -119,32 +123,16 @@ def create_collection(
             )
         )
 
-        # True if both model and instructions were provided in the request body
-        with_assistant = bool(
-            getattr(request, "model", None) and getattr(request, "instructions", None)
-        )
-
         create_service.start_job(
             db=session,
             request=request,
             collection_job_id=collection_job.id,
             project_id=current_user.project_.id,
             organization_id=current_user.organization_.id,
-            with_assistant=with_assistant,
         )
-
-        metadata = None
-        if not with_assistant:
-            metadata = {
-                "note": (
-                    "This job will create a vector store only (no Assistant). "
-                    "Assistant creation happens when both 'model' and 'instructions' are included."
-                )
-            }
 
         return APIResponse.success_response(
             CollectionJobImmediatePublic.model_validate(collection_job),
-            metadata=metadata,
         )
 
 
@@ -173,7 +161,9 @@ def delete_collection(
         if request and request.callback_url:
             validate_callback_url(str(request.callback_url))
 
-        _ = CollectionCrud(session, current_user.project_.id).read_one(collection_id)
+        _ = CollectionCrud(session, current_user.project_.id).read_one_if_delete(
+            collection_id
+        )
 
         deletion_request = DeletionRequest(
             collection_id=collection_id,

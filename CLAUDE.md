@@ -20,8 +20,10 @@ fastapi run --reload app/main.py
 # Run pre-commit hooks
 uv run pre-commit run --all-files
 
-# Generate database migration (rev-id should be latest existing revision ID + 1)
-uv run alembic revision --autogenerate -m "Description" --rev-id 061
+# Generate database migration.
+# Compute <next_rev_id> at runtime as the latest existing revision ID + 1,
+# zero-padded to 3 digits (check the highest NNN in app/alembic/versions/NNN_*.py).
+alembic revision --autogenerate -m "Description" --rev-id <next_rev_id>
 
 # Seed database with test data
 uv run python -m app.seed_data.seed_data

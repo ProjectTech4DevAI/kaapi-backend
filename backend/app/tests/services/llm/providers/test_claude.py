@@ -20,6 +20,7 @@ from app.models.llm import (
     QueryParams,
     TextContent,
 )
+from app.models.llm.constants import CompletionType
 from app.services.llm.providers.base import MultiModalInput
 from app.services.llm.providers.claude import (
     FILES_API_BETA,
@@ -47,7 +48,7 @@ def _mock_message(
     msg = MagicMock()
     msg.id = msg_id
     msg.model = model
-    msg.content = [SimpleNamespace(type="text", text=text)]
+    msg.content = [SimpleNamespace(type=CompletionType.TEXT, text=text)]
     msg.usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
     msg.model_dump.return_value = {
         "id": msg_id,
@@ -70,7 +71,7 @@ def query() -> QueryParams:
 def config() -> NativeCompletionConfig:
     return NativeCompletionConfig(
         provider="anthropic-native",
-        type="text",
+        type=CompletionType.TEXT,
         params={"model": "claude-sonnet-4-6", "max_tokens": 512},
     )
 
@@ -217,7 +218,7 @@ class TestExecuteText:
     ):
         """Empty params → provider falls back to project defaults."""
         cfg = NativeCompletionConfig(
-            provider="anthropic-native", type="text", params={}
+            provider="anthropic-native", type=CompletionType.TEXT, params={}
         )
         resp, err = provider.execute(cfg, query, "hello")
 
@@ -231,7 +232,7 @@ class TestExecuteText:
         to the Anthropic SDK (which would raise TypeError)."""
         cfg = NativeCompletionConfig(
             provider="anthropic-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={"model": "claude-sonnet-4-6", "conversation": "conv_123"},
         )
         resp, err = provider.execute(cfg, query, "hello")
@@ -247,9 +248,9 @@ class TestExecuteText:
             id="msg_multi",
             model="claude-sonnet-4-6",
             content=[
-                SimpleNamespace(type="text", text="hello "),
+                SimpleNamespace(type=CompletionType.TEXT, text="hello "),
                 SimpleNamespace(type="tool_use", text=None),
-                SimpleNamespace(type="text", text="world"),
+                SimpleNamespace(type=CompletionType.TEXT, text="world"),
             ],
             usage=SimpleNamespace(input_tokens=1, output_tokens=2),
         )
@@ -373,7 +374,7 @@ class TestFilesApiUploadPath:
         """Caller-supplied beta headers must not be clobbered."""
         cfg = NativeCompletionConfig(
             provider="anthropic-native",
-            type="text",
+            type=CompletionType.TEXT,
             params={
                 "model": "claude-sonnet-4-6",
                 "max_tokens": 512,
@@ -429,7 +430,7 @@ class TestExecuteErrors:
         )
         resp, err = provider.execute(config, query, "hi")
         assert resp is None
-        assert "Anthropic API error" in err
+        assert "[ANTHROPIC]" in err
         assert "rate limited" in err
 
     def test_generic_exception_returns_opaque_message(
@@ -440,4 +441,4 @@ class TestExecuteErrors:
         mock_client.messages.create.side_effect = RuntimeError("boom internal detail")
         resp, err = provider.execute(config, query, "hi")
         assert resp is None
-        assert err == "Unexpected error occurred"
+        assert err.startswith("[KAAPI] Unexpected error")

@@ -9,7 +9,7 @@ from sqlmodel import Session
 from openai import OpenAI
 
 from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.oai import OpenAIProvider
+from app.services.llm.providers.open_ai import OpenAIProvider
 from app.services.llm.providers.registry import (
     LLMProvider,
     get_llm_provider,
@@ -105,13 +105,13 @@ class TestGetLLMProvider:
 
             assert "not configured for this project" in str(exc_info.value)
 
-    def test_google_vertex_falls_back_to_platform_settings(self, db: Session):
-        """No credential row for google-vertex → create_client synthesizes the
+    def test_google_falls_back_to_platform_settings(self, db: Session):
+        """No credential row for ``google`` → create_client synthesizes the
         platform defaults from settings (api_key/project/location/bucket) and
         parses the inline SA JSON from GCP_SA_KEY."""
         import json as _json
 
-        from app.services.llm.providers.gai_vertex import (
+        from app.services.llm.providers.google_ai import (
             GoogleVertexAIProvider,
             VertexClient,
         )
@@ -127,7 +127,7 @@ class TestGetLLMProvider:
         with patch(
             "app.crud.credentials.get_provider_credential"
         ) as mock_get_creds, patch(
-            "app.services.llm.providers.gai_vertex.settings"
+            "app.services.llm.providers.google_ai.settings"
         ) as mock_settings:
             mock_get_creds.return_value = None
             mock_settings.GCP_VERTEX_API_KEY = "platform-key"
@@ -138,7 +138,7 @@ class TestGetLLMProvider:
 
             provider = get_llm_provider(
                 session=db,
-                provider_type="google-vertex-native",
+                provider_type="google-native",
                 project_id=project.id,
                 organization_id=project.organization_id,
             )

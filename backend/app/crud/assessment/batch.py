@@ -13,7 +13,13 @@ import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlmodel import Session
 
-from app.core.batch import BATCH_KEY, start_batch_job
+from app.core.batch import (
+    BATCH_KEY,
+    AnthropicBatchProvider,
+    GeminiBatchProvider,
+    start_batch_job,
+)
+from app.core.batch.client import GeminiClient
 from app.core.batch.openai import OpenAIBatchProvider
 from app.core.cloud import get_cloud_storage
 from app.models.assessment import (
@@ -23,20 +29,22 @@ from app.models.assessment import (
 )
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
+from app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
+    map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
     normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
+    attachment_type_for_row,
+    build_anthropic_attachment_parts,
+    build_gemini_attachment_parts,
     resolve_attachment_values,
-    resolve_image_mime_and_payload,
-    split_attachment_urls,
-    split_data_url,
-    to_direct_attachment_url,
 )
 from app.services.llm.providers.registry import LLMProvider
+from app.utils import get_anthropic_client, get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +169,7 @@ def build_openai_jsonl(
     attachments: list[AssessmentAttachment],
     prompt_template: str | None,
     openai_params: dict,
+    row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build OpenAI batch JSONL data from dataset rows.
 
@@ -174,7 +183,8 @@ def build_openai_jsonl(
     """
     jsonl_data = []
 
-    for idx, row in enumerate(rows):
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
         # Build input array
         input_parts: list[dict[str, Any]] = []
 
@@ -186,7 +196,13 @@ def build_openai_jsonl(
         # Attachments
         for att in attachments:
             cell_value = row.get(att.column, "")
-            input_parts.extend(resolve_attachment_values(cell_value, att))
+            input_parts.extend(
+                resolve_attachment_values(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
+                )
+            )
 
         if not input_parts:
             logger.warning("[build_openai_jsonl] Skipping empty row | idx=%s", idx)
@@ -219,6 +235,7 @@ def build_google_jsonl(
     attachments: list[AssessmentAttachment],
     prompt_template: str | None,
     google_params: dict,
+    row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build Google (Gemini) batch JSONL data from dataset rows.
 
@@ -230,7 +247,8 @@ def build_google_jsonl(
     """
     jsonl_data = []
 
-    for idx, row in enumerate(rows):
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
         parts: list[dict[str, Any]] = []
 
         # Text prompt
@@ -240,64 +258,14 @@ def build_google_jsonl(
 
         # Attachments (Gemini uses file_data for inline content)
         for att in attachments:
-            cell_value = row.get(att.column, "").strip()
-            if not cell_value:
-                continue
-
-            cell_values = (
-                split_attachment_urls(cell_value)
-                if att.format == "url"
-                else [cell_value]
-            )
-
-            for item_value in cell_values:
-                normalized_value = (
-                    to_direct_attachment_url(item_value, att.type)
-                    if att.format == "url"
-                    else item_value
+            cell_value = row.get(att.column, "")
+            parts.extend(
+                build_gemini_attachment_parts(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
                 )
-                if att.type == "image":
-                    mime_type, payload = resolve_image_mime_and_payload(
-                        normalized_value,
-                        att.format,
-                    )
-                    if att.format == "url":
-                        parts.append(
-                            {
-                                "fileData": {
-                                    "mimeType": mime_type,
-                                    "fileUri": normalized_value,
-                                }
-                            }
-                        )
-                    else:
-                        parts.append(
-                            {
-                                "inlineData": {
-                                    "mimeType": mime_type,
-                                    "data": payload,
-                                }
-                            }
-                        )
-                elif att.type == "pdf":
-                    if att.format == "url":
-                        parts.append(
-                            {
-                                "fileData": {
-                                    "mimeType": "application/pdf",
-                                    "fileUri": normalized_value,
-                                }
-                            }
-                        )
-                    else:
-                        parts.append(
-                            {
-                                "inlineData": {
-                                    "mimeType": "application/pdf",
-                                    "data": split_data_url(normalized_value)[1],
-                                }
-                            }
-                        )
+            )
 
         if not parts:
             logger.warning("[build_google_jsonl] Skipping empty row | idx=%s", idx)
@@ -340,6 +308,60 @@ def build_google_jsonl(
     return jsonl_data
 
 
+def build_anthropic_jsonl(
+    rows: list[dict[str, str]],
+    text_columns: list[str],
+    attachments: list[AssessmentAttachment],
+    prompt_template: str | None,
+    anthropic_params: dict,
+    row_indices: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Build Anthropic batch request data from dataset rows.
+
+    Each line follows the Anthropic Message Batches format:
+    {
+        "custom_id": "row_0",
+        "params": { model, max_tokens, system, messages: [{role, content: [...]}] }
+    }
+    """
+    jsonl_data = []
+
+    for i, row in enumerate(rows):
+        idx = row_indices[i] if row_indices is not None else i
+        content: list[dict[str, Any]] = []
+
+        text_prompt = _build_text_prompt(row, text_columns, prompt_template)
+        if text_prompt.strip():
+            content.append({"type": "text", "text": text_prompt})
+
+        # Attachments (Anthropic uses url-source image/document blocks)
+        for att in attachments:
+            cell_value = row.get(att.column, "")
+            content.extend(
+                build_anthropic_attachment_parts(
+                    cell_value,
+                    att,
+                    type_override=attachment_type_for_row(att, row),
+                )
+            )
+
+        if not content:
+            logger.warning("[build_anthropic_jsonl] Skipping empty row | idx=%s", idx)
+            continue
+
+        params = dict(anthropic_params)
+        params["messages"] = [{"role": "user", "content": content}]
+
+        jsonl_data.append(
+            {
+                BATCH_KEY: f"row_{idx}",
+                "params": params,
+            }
+        )
+
+    return jsonl_data
+
+
 def submit_assessment_batch(
     session: Session,
     run: AssessmentRun,
@@ -349,6 +371,8 @@ def submit_assessment_batch(
     assessment_input: dict[str, Any],
     organization_id: int,
     project_id: int,
+    preloaded_rows: list[dict[str, str]] | None = None,
+    row_indices: list[int] | None = None,
 ) -> BatchJob:
     """Build JSONL and submit a batch for one assessment run.
 
@@ -371,8 +395,11 @@ def submit_assessment_batch(
     output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
-    # Load dataset rows
-    rows = _load_dataset_rows(session, dataset)
+    # Use preloaded rows (post-prefilter filtered) if provided, else load from dataset.
+    if preloaded_rows is not None:
+        rows = preloaded_rows
+    else:
+        rows = _load_dataset_rows(session, dataset)
     if not rows:
         raise ValueError(f"Dataset {dataset.id} has no rows")
 
@@ -412,10 +439,8 @@ def submit_assessment_batch(
             attachments=attachments,
             prompt_template=prompt_template,
             openai_params=mapped_params,
+            row_indices=row_indices,
         )
-
-        # Get OpenAI client and submit
-        from app.utils import get_openai_client
 
         openai_client = get_openai_client(
             session=session,
@@ -441,7 +466,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == LLMProvider.GOOGLE:
+    elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
@@ -452,11 +477,8 @@ def submit_assessment_batch(
             attachments=attachments,
             prompt_template=prompt_template,
             google_params=mapped_params,
+            row_indices=row_indices,
         )
-
-        # Get Gemini client and submit
-        from app.core.batch import GeminiBatchProvider
-        from app.core.batch.client import GeminiClient
 
         gemini_client = GeminiClient.from_credentials(
             session=session,
@@ -476,7 +498,45 @@ def submit_assessment_batch(
         batch_job = start_batch_job(
             session=session,
             provider=provider,
-            provider_name="google",
+            provider_name="google-aistudio",
+            job_type=BatchJobType.ASSESSMENT,
+            organization_id=organization_id,
+            project_id=project_id,
+            jsonl_data=jsonl_data,
+            config=batch_config,
+        )
+
+    elif base_provider == LLMProvider.ANTHROPIC:
+        mapped_params, warnings = map_kaapi_to_anthropic_params(params)
+        if warnings:
+            logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
+
+        jsonl_data = build_anthropic_jsonl(
+            rows=rows,
+            text_columns=text_columns,
+            attachments=attachments,
+            prompt_template=prompt_template,
+            anthropic_params=mapped_params,
+            row_indices=row_indices,
+        )
+
+        anthropic_client = get_anthropic_client(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
+        provider = AnthropicBatchProvider(client=anthropic_client)
+
+        batch_config = {
+            "model": mapped_params.get("model"),
+            "max_tokens": mapped_params.get("max_tokens")
+            or DEFAULT_ANTHROPIC_MAX_TOKENS,
+        }
+
+        batch_job = start_batch_job(
+            session=session,
+            provider=provider,
+            provider_name=LLMProvider.ANTHROPIC,
             job_type=BatchJobType.ASSESSMENT,
             organization_id=organization_id,
             project_id=project_id,

@@ -105,13 +105,13 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_PREFIX: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
-    # its own google-vertex credential row (BYOK is all-or-nothing — see the
-    # Provider.GOOGLE_VERTEX comment in app/core/providers.py).
+    # its own ``google`` credential row (BYOK is all-or-nothing — see the
+    # Provider.GOOGLE comment in app/core/providers.py).
     GCP_VERTEX_API_KEY: str = ""
     GCP_VERTEX_LOCATION: str = ""
     GCP_PROJECT_ID: str = ""
     # Filesystem path to the platform-default GCP service-account JSON.
-    # Used by the registry fallback when a project has no google-vertex row.
+    # Used by the registry fallback when a project has no ``google`` row.
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
 
+    # Threshold Request Rate per minute
+    THRESHOLD_LLM_CALL_RATE: int = 15
+    THRESHOLD_COLLECTIONS_RATE: int = 3
+    THRESHOLD_EVALUATIONS_RATE: int = 3
+
     # Celery Configuration
     CELERY_WORKER_CONCURRENCY: int | None = None
     CELERY_WORKER_MAX_TASKS_PER_CHILD: int = 150
@@ -181,6 +186,14 @@ class Settings(BaseSettings):
     COLLECTION_PENDING_THRESHOLD_MINUTES: int = 30
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
+
+    # Fast evaluation (run_mode="fast") configuration.
+    # See "Fast Evaluation SRD.md" for the full design rationale.
+    EVAL_FAST_MAX_UNIQUE_ROWS: int = 10
+    EVAL_FAST_FAILURE_THRESHOLD: float = 0.5
+    # Capped at 4 by default: higher values (8-10) across multiple Celery
+    # workers can cause memory pressure on smaller EC2 instances.
+    EVAL_FAST_API_CONCURRENCY: int = 4
 
     @computed_field  # type: ignore[prop-decorator]
     @property
