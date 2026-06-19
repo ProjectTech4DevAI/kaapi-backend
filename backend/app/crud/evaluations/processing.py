@@ -26,8 +26,15 @@ from app.core.batch import (
     upload_batch_results_to_object_store,
 )
 from app.core.batch.base import BATCH_KEY
+from app.core.cloud.storage import get_cloud_storage
+from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import resolve_model_from_config, update_evaluation_run
+from app.crud.evaluations.core import (
+    persist_score_traces,
+    resolve_model_from_config,
+    save_score,
+    update_evaluation_run,
+)
 from app.crud.evaluations.cost import attach_cost
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
@@ -38,6 +45,12 @@ from app.crud.evaluations.embeddings import (
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
+)
+from app.crud.evaluations.merge import apply_cosine_breakdown
+from app.crud.evaluations.score import (
+    COSINE_SCORE_COMMENT,
+    COSINE_SCORE_NAME,
+    TraceData,
 )
 from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
@@ -254,6 +267,35 @@ def parse_evaluation_output(
     return results
 
 
+def build_trace_skeleton(
+    results: list[dict[str, Any]],
+    trace_id_mapping: dict[str, str],
+) -> list[TraceData]:
+    """
+    Build per-trace records (Q&A keyed by Langfuse trace_id, no scores yet) from
+    parsed evaluation results. Persisted at the response stage so the
+    embedding-completion step can attach cosine scores and write a complete trace
+    unit, making cosine display independent of Langfuse. Items without a trace_id
+    are skipped.
+    """
+    traces: list[TraceData] = []
+    for result in results:
+        trace_id = trace_id_mapping.get(result.get("item_id"))
+        if not trace_id:
+            continue
+        traces.append(
+            {
+                "trace_id": trace_id,
+                "question": result.get("question", ""),
+                "llm_answer": result.get("generated_output", ""),
+                "ground_truth_answer": result.get("ground_truth", ""),
+                "question_id": result.get("question_id"),
+                "scores": [],
+            }
+        )
+    return traces
+
+
 async def process_completed_evaluation(
     eval_run: EvaluationRun,
     session: Session,
@@ -363,6 +405,27 @@ async def process_completed_evaluation(
             session.add(eval_run)
             session.commit()
 
+        # Step 5b: Persist the trace skeleton now, while results and
+        # trace_id_mapping are in hand, so the later embedding-completion poll can
+        # attach cosine scores without depending on Langfuse. persist_score_traces
+        # records only the pointer (not `score`), keeping the run score-less until
+        # cosine completes. Best-effort: the read path can backfill from
+        # per_item_scores if the skeleton is missing.
+        skeleton = build_trace_skeleton(
+            results=results, trace_id_mapping=trace_id_mapping
+        )
+        if skeleton:
+            persist_score_traces(
+                eval_run_id=eval_run.id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+                traces=skeleton,
+            )
+            logger.info(
+                f"[process_completed_evaluation] {log_prefix} Persisted trace "
+                f"skeleton | traces={len(skeleton)}"
+            )
+
         # Step 6: Start embedding batch for similarity scoring
         # Pass trace_id_mapping directly without storing in DB
         try:
@@ -410,6 +473,76 @@ async def process_completed_evaluation(
                 error_message=f"Processing failed: {str(e)}",
             ),
         )
+
+
+def _load_score_traces(
+    session: Session,
+    project_id: int,
+    eval_run: EvaluationRun,
+) -> list[TraceData] | None:
+    """
+    Load the trace skeleton persisted to ``score_trace_url`` at the response
+    stage. Returns None when there is no pointer or it can't be read, so the
+    caller falls back to a summary-only score. Never raises.
+    """
+    if not eval_run.score_trace_url:
+        return None
+    try:
+        storage = get_cloud_storage(session=session, project_id=project_id)
+        traces = load_json_from_object_store(
+            storage=storage, url=eval_run.score_trace_url
+        )
+        if isinstance(traces, list) and traces:
+            return traces
+    except Exception as e:
+        logger.warning(
+            f"[_load_score_traces] Could not load trace skeleton | "
+            f"evaluation_id={eval_run.id} | url={eval_run.score_trace_url} | {e}",
+            exc_info=True,
+        )
+    return None
+
+
+def _attach_cosine_scores(
+    traces: list[TraceData],
+    cosine_by_trace: dict[str, float],
+    unscoreable: dict[str, str],
+) -> list[TraceData]:
+    """
+    Attach computed cosine scores (and 0-score placeholders for unscoreable
+    items) onto the trace skeleton, in place. Traces already carrying a computed
+    cosine are left untouched; unscoreable placeholders are flagged to stay out
+    of the summary stats.
+    """
+    for trace in traces:
+        trace_id = trace.get("trace_id")
+        scores = trace.setdefault("scores", [])
+        has_cosine = any(
+            s.get("name") == COSINE_SCORE_NAME and not s.get("unscoreable")
+            for s in scores
+        )
+        if has_cosine:
+            continue
+        if trace_id in cosine_by_trace:
+            scores.append(
+                {
+                    "name": COSINE_SCORE_NAME,
+                    "value": round(float(cosine_by_trace[trace_id]), 2),
+                    "data_type": "NUMERIC",
+                    "comment": COSINE_SCORE_COMMENT,
+                }
+            )
+        elif trace_id in unscoreable:
+            scores.append(
+                {
+                    "name": COSINE_SCORE_NAME,
+                    "value": 0,
+                    "data_type": "NUMERIC",
+                    "comment": f"Cannot compute: {unscoreable[trace_id]}",
+                    "unscoreable": True,
+                }
+            )
+    return traces
 
 
 async def process_completed_embedding_batch(
@@ -469,47 +602,53 @@ async def process_completed_embedding_batch(
         )
 
         # Step 3: Parse embedding results
-        embedding_pairs = parse_embedding_results(raw_results=raw_results)
+        embedding_pairs, failed_trace_ids = parse_embedding_results(
+            raw_results=raw_results
+        )
 
         if not embedding_pairs:
             raise ValueError("No valid embedding pairs found in batch output")
+
+        # Flag failed embeddings before Step 5/6 so the gap is counted and written.
+        # setdefault keeps any reason already set at start_embedding_batch.
+        if failed_trace_ids:
+            unscoreable = dict(eval_run.unscoreable or {})
+            for trace_id in failed_trace_ids:
+                unscoreable.setdefault(trace_id, "embedding_failed")
+            eval_run.unscoreable = unscoreable or None
 
         # Step 4: Calculate similarity scores
         similarity_stats = calculate_average_similarity(embedding_pairs=embedding_pairs)
 
         # Step 5: Update evaluation_run with scores in summary_scores format
         # This format is consistent with what Langfuse returns when fetching traces
-        eval_run.score = {
-            "summary_scores": [
+        per_item_scores = similarity_stats.get("per_item_scores", [])
+
+        summary_scores = apply_cosine_breakdown(
+            [
                 {
-                    "name": "Cosine Similarity",
+                    "name": COSINE_SCORE_NAME,
                     "avg": round(float(similarity_stats["cosine_similarity_avg"]), 2),
                     "std": round(float(similarity_stats["cosine_similarity_std"]), 2),
                     "total_pairs": similarity_stats["total_pairs"],
                     "data_type": "NUMERIC",
                 }
-            ]
+            ],
+            total_items=eval_run.total_items,
+            unscoreable=eval_run.unscoreable,
+        )
+        eval_run.score = {"summary_scores": summary_scores}
+
+        # Durable per-item cosine scores (source of truth), so a failed Langfuse
+        # write can be backfilled on resync.
+        eval_run.per_item_scores = {
+            item["trace_id"]: round(float(item["cosine_similarity"]), 6)
+            for item in per_item_scores
+            if item.get("trace_id") is not None
         }
 
-        # Step 6: Update Langfuse traces with cosine similarity scores
-        logger.info(
-            f"[process_completed_embedding_batch] {log_prefix} Updating Langfuse traces with cosine similarity scores"
-        )
-        per_item_scores = similarity_stats.get("per_item_scores", [])
-        if per_item_scores:
-            try:
-                update_traces_with_cosine_scores(
-                    langfuse=langfuse,
-                    per_item_scores=per_item_scores,
-                )
-            except Exception as e:
-                # Log error but don't fail the evaluation
-                logger.warning(
-                    f"[process_completed_embedding_batch] {log_prefix} Failed to update Langfuse traces with scores | {e}",
-                    exc_info=True,
-                )
-
-        # Step 7: Accumulate embedding cost onto existing response cost
+        # Step 6: Accumulate embedding cost onto existing response cost. Mutates
+        # eval_run.cost in memory; persisted in the completion commit below.
         attach_cost(
             session=session,
             eval_run=eval_run,
@@ -518,7 +657,9 @@ async def process_completed_embedding_batch(
             embedding_raw_results=raw_results,
         )
 
-        # Step 8: Mark evaluation as completed
+        # Step 7: Mark completed WITH the score now that cosine is done; this also
+        # persists the per_item_scores / unscoreable set above. Trace-writing
+        # happens afterwards (Steps 8-9) so completion isn't gated on Langfuse.
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
@@ -528,6 +669,84 @@ async def process_completed_embedding_batch(
                 cost=eval_run.cost,
             ),
         )
+
+        # Step 8: With the run completed, update Langfuse traces with cosine
+        # similarity scores. Also write explicit 0-scores for unscoreable items so
+        # the gap is visible in the UI.
+        logger.info(
+            f"[process_completed_embedding_batch] {log_prefix} Updating Langfuse traces with cosine similarity scores"
+        )
+        unscoreable_writes = [
+            {"trace_id": trace_id, "unscoreable": True, "reason": reason}
+            for trace_id, reason in (eval_run.unscoreable or {}).items()
+        ]
+        write_items = per_item_scores + unscoreable_writes
+        # False if any write fails, so a cron can retry the gap from per_item_scores.
+        is_score_updated = True
+        if write_items:
+            try:
+                failed_trace_ids = update_traces_with_cosine_scores(
+                    langfuse=langfuse,
+                    per_item_scores=write_items,
+                )
+                if failed_trace_ids:
+                    is_score_updated = False
+                    logger.warning(
+                        f"[process_completed_embedding_batch] {log_prefix} "
+                        f"{len(failed_trace_ids)} Langfuse score writes failed; "
+                        f"recoverable from durable per_item_scores on resync"
+                    )
+            except Exception as e:
+                # Log error but don't fail the evaluation
+                is_score_updated = False
+                logger.warning(
+                    f"[process_completed_embedding_batch] {log_prefix} Failed to update Langfuse traces with scores | {e}",
+                    exc_info=True,
+                )
+
+        # Persist the Langfuse write outcome so a cron can retry the gap later.
+        eval_run = update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(is_score_updated=is_score_updated),
+        )
+
+        # Step 9: Upgrade the score to a complete trace unit. Load the skeleton,
+        # attach cosine scores (and 0-score placeholders), and persist via
+        # save_score so the read path serves cosine without a Langfuse dependency.
+        skeleton = _load_score_traces(
+            session=session, project_id=eval_run.project_id, eval_run=eval_run
+        )
+        if skeleton:
+            traces = _attach_cosine_scores(
+                traces=skeleton,
+                cosine_by_trace={
+                    item["trace_id"]: item["cosine_similarity"]
+                    for item in per_item_scores
+                    if item.get("trace_id") is not None
+                },
+                unscoreable=eval_run.unscoreable or {},
+            )
+            full_score = {"summary_scores": summary_scores, "traces": traces}
+            saved = save_score(
+                eval_run_id=eval_run.id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+                score=full_score,
+            )
+            if saved is not None:
+                eval_run = saved
+                eval_run.score = full_score
+            logger.info(
+                f"[process_completed_embedding_batch] {log_prefix} Persisted "
+                f"durable trace unit | traces={len(traces)}"
+            )
+        else:
+            logger.info(
+                f"[process_completed_embedding_batch] {log_prefix} No trace "
+                f"skeleton found; cosine recoverable via per_item_scores backfill "
+                f"on read"
+            )
 
         logger.info(
             f"[process_completed_embedding_batch] {log_prefix} Completed evaluation | avg_similarity={similarity_stats['cosine_similarity_avg']:.3f}"
