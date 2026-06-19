@@ -33,6 +33,24 @@ class TestResolvePrefilterSettings:
         assert cfg["tr_enabled"] is False
         assert cfg["dup_enabled"] is False
 
+    def test_tr_enabled_with_attachment_columns_only(self) -> None:
+        cfg = resolve_prefilter_settings(
+            {
+                "topic_relevance": {
+                    "columns": [],
+                    "attachment_columns": ["Answer Sheet"],
+                    "prompt": "rubric",
+                }
+            }
+        )
+        assert cfg["tr_enabled"] is True
+
+    def test_tr_disabled_when_columns_empty_and_no_prompt(self) -> None:
+        cfg = resolve_prefilter_settings(
+            {"topic_relevance": {"attachment_columns": ["Answer Sheet"]}}
+        )
+        assert cfg["tr_enabled"] is False
+
 
 class TestPipeline:
     def test_full_pipeline_order(self) -> None:
