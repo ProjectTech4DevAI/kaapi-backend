@@ -3,7 +3,7 @@ name: Deploy Kaapi to ECS Production
 on:
   push:
     tags:
-      - 'v*'  # Deploy only when tags like v1.0.0, v2.1.0, etc., are created
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # Deploy only when tags like v1.0.0, v2.1.0, etc., are created
 
 jobs:
   build:

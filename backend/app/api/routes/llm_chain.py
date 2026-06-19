@@ -1,11 +1,12 @@
 import logging
 
 from fastapi import APIRouter, Depends
+
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.models import LLMChainRequest, LLMChainResponse, Message
 from app.services.llm.jobs import start_chain_job
-from app.utils import APIResponse, validate_callback_url, load_description
+from app.utils import APIResponse, load_description, validate_callback_url
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +38,21 @@ def llm_callback_notification(body: APIResponse[LLMChainResponse]):
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def llm_chain(
-    _current_user: AuthContextDep, _session: SessionDep, request: LLMChainRequest
-):
+    current_user: AuthContextDep,
+    session: SessionDep,
+    request: LLMChainRequest,
+) -> APIResponse[Message]:
     """
     Endpoint to initiate an LLM chain as a background job.
     """
-    project_id = _current_user.project_.id
-    organization_id = _current_user.organization_.id
+    project_id = current_user.project_.id
+    organization_id = current_user.organization_.id
 
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
 
     start_chain_job(
-        db=_session,
+        db=session,
         request=request,
         project_id=project_id,
         organization_id=organization_id,
