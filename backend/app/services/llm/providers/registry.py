@@ -7,7 +7,6 @@ from app.services.llm.providers.google_aistudio import GoogleAIProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.claude import ClaudeProvider
-from app.services.llm.providers.google_ai import GoogleVertexAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +27,14 @@ class LLMProvider:
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
-        GOOGLE: GoogleVertexAIProvider,
+        GOOGLE: GoogleAIProvider,
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
-        GOOGLE_NATIVE: GoogleVertexAIProvider,
+        GOOGLE_NATIVE: GoogleAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
         ELEVENLABS_NATIVE: ElevenlabsAIProvider,
         ANTHROPIC_NATIVE: ClaudeProvider,
@@ -65,7 +64,6 @@ def get_llm_provider(
 
     provider_class = LLMProvider.get_provider_class(provider_type)
 
-    # e.g., "openai-native" → "openai", "claude-native" → "claude"
     credential_provider = provider_type.replace("-native", "")
 
     credentials = get_provider_credential(
@@ -75,14 +73,10 @@ def get_llm_provider(
         org_id=organization_id,
     )
 
-    # Pass through whatever the DB returned (including None/empty). Providers
-    # that support platform-default fallbacks (e.g. google) handle the
-    # empty case themselves in create_client; others raise.
-    if not credentials and credential_provider != "google":
+    if not credentials:
         raise ValueError(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )
-    credentials = credentials or {}
 
     try:
         client = provider_class.create_client(credentials=credentials)
