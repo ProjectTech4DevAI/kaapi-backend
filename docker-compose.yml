@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: postgres:16
+    image: postgres:17.9
     container_name: postgres-db
     restart: always
     env_file:
