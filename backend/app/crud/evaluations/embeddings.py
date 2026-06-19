@@ -55,7 +55,7 @@ def build_embedding_jsonl(
     results: list[dict[str, Any]],
     trace_id_mapping: dict[str, str],
     embedding_model: str = EMBEDDING_MODEL,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Build JSONL data for embedding batch using OpenAI Embeddings API.
 
@@ -80,7 +80,11 @@ def build_embedding_jsonl(
         embedding_model: OpenAI embedding model to use (default: text-embedding-3-large)
 
     Returns:
-        List of dictionaries (JSONL data)
+        Tuple of (jsonl_data, skipped) where:
+        - jsonl_data is the list of embedding batch requests
+        - skipped is a list of {item_id, trace_id, reason} for items that
+          cannot be embedded (reason: empty_output / empty_ground_truth /
+          missing_trace_id). Used to flag unscoreable items downstream.
     """
     # Validate embedding model
     validate_embedding_model(embedding_model)
@@ -89,7 +93,8 @@ def build_embedding_jsonl(
         f"[build_embedding_jsonl] Building JSONL | items={len(results)} | model={embedding_model}"
     )
 
-    jsonl_data = []
+    jsonl_data: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
 
     for result in results:
         item_id = result.get("item_id")
@@ -104,11 +109,16 @@ def build_embedding_jsonl(
         trace_id = trace_id_mapping.get(item_id)
         if not trace_id:
             logger.warning(f"Skipping item {item_id} - no trace_id found")
+            skipped.append(
+                {"item_id": item_id, "trace_id": None, "reason": "missing_trace_id"}
+            )
             continue
 
-        # Skip if either output or ground_truth is empty
+        # Empty output/ground_truth can't be embedded; record the reason.
         if not generated_output or not ground_truth:
-            logger.warning(f"Skipping item {item_id} - empty output or ground_truth")
+            reason = "empty_output" if not generated_output else "empty_ground_truth"
+            logger.warning(f"Skipping item {item_id} - {reason}")
+            skipped.append({"item_id": item_id, "trace_id": trace_id, "reason": reason})
             continue
 
         # Build the batch request object for Embeddings API
@@ -129,11 +139,15 @@ def build_embedding_jsonl(
 
         jsonl_data.append(batch_request)
 
-    logger.info(f"Built {len(jsonl_data)} embedding JSONL lines")
-    return jsonl_data
+    logger.info(
+        f"Built {len(jsonl_data)} embedding JSONL lines | skipped={len(skipped)}"
+    )
+    return jsonl_data, skipped
 
 
-def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def parse_embedding_results(
+    raw_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
     """
     Parse embedding batch output into structured embedding pairs.
 
@@ -141,21 +155,18 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
         raw_results: Raw results from batch provider (list of JSONL lines)
 
     Returns:
-        List of embedding pairs in format:
-        [
-            {
-                "trace_id": "trace-uuid-123",
-                "output_embedding": [0.1, 0.2, ...],
-                "ground_truth_embedding": [0.15, 0.22, ...]
-            },
-            ...
-        ]
+        Tuple of (embedding_pairs, failed_trace_ids):
+        - embedding_pairs: [{trace_id, output_embedding, ground_truth_embedding}]
+        - failed_trace_ids: trace_ids whose embedding could not be parsed (flagged
+          embedding_failed downstream). Lines with no trace_id are dropped silently.
     """
     logger.info(f"Parsing embedding results from {len(raw_results)} lines")
 
     embedding_pairs = []
+    failed_trace_ids: list[str] = []
 
     for line_num, response in enumerate(raw_results, 1):
+        trace_id = None
         try:
             # Extract BATCH_KEY (which is now the Langfuse trace_id)
             trace_id = response.get(BATCH_KEY)
@@ -169,6 +180,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                 logger.warning(
                     f"[parse_embedding_batch_results] Trace {trace_id} had error: {error_msg}"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             # Extract the response body
@@ -179,6 +191,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                 logger.warning(
                     f"Trace {trace_id}: Expected 2 embeddings, got {len(embedding_data)}"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             # Extract embeddings by index
@@ -204,6 +217,7 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
                     f"Trace {trace_id}: Missing embeddings (output={output_embedding is not None}, "
                     f"ground_truth={ground_truth_embedding is not None})"
                 )
+                failed_trace_ids.append(trace_id)
                 continue
 
             embedding_pairs.append(
@@ -216,12 +230,15 @@ def parse_embedding_results(raw_results: list[dict[str, Any]]) -> list[dict[str,
 
         except Exception as e:
             logger.error(f"Line {line_num}: Unexpected error: {e}", exc_info=True)
+            if trace_id:
+                failed_trace_ids.append(trace_id)
             continue
 
     logger.info(
-        f"Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines"
+        f"Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines "
+        f"| failed={len(failed_trace_ids)}"
     )
-    return embedding_pairs
+    return embedding_pairs, failed_trace_ids
 
 
 def calculate_cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
@@ -373,11 +390,19 @@ def start_embedding_batch(
         embedding_model = EMBEDDING_MODEL
 
         # Step 1: Build embedding JSONL with trace_ids
-        jsonl_data = build_embedding_jsonl(
+        jsonl_data, skipped = build_embedding_jsonl(
             results=results,
             trace_id_mapping=trace_id_mapping,
             embedding_model=embedding_model,
         )
+
+        # Record un-embeddable items (keyed by trace_id) so the read path can
+        # flag them unscoreable with their reason.
+        unscoreable = {
+            item["trace_id"]: item["reason"] for item in skipped if item.get("trace_id")
+        }
+        if unscoreable:
+            eval_run.unscoreable = unscoreable
 
         if not jsonl_data:
             raise ValueError("No valid items to create embeddings for")
