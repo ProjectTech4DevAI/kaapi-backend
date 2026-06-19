@@ -224,3 +224,141 @@ class TestMergeScoresStepForward:
         fresh = {"summary_scores": [], "traces": [_trace("0")]}
         merged, _ = merge_scores_step_forward(None, fresh)
         assert len(merged["traces"]) == 1
+
+
+def _cosine_trace(trace_id, value=None, *, unscoreable=False, reason="empty_output"):
+    """A trace carrying (or not) a Cosine Similarity score."""
+    scores = []
+    if value is not None:
+        scores.append(
+            {"name": "Cosine Similarity", "value": value, "data_type": "NUMERIC"}
+        )
+    if unscoreable:
+        scores.append(
+            {
+                "name": "Cosine Similarity",
+                "value": 0,
+                "data_type": "NUMERIC",
+                "comment": f"Cannot compute: {reason}",
+                "unscoreable": True,
+            }
+        )
+    return {
+        "trace_id": trace_id,
+        "question": f"q{trace_id}",
+        "llm_answer": "a",
+        "ground_truth_answer": "g",
+        "question_id": int(trace_id),
+        "scores": scores,
+    }
+
+
+class TestComputeSummaryScoresUnscoreable:
+    def test_unscoreable_excluded_from_stats(self):
+        """A 0-value unscoreable entry never enters avg/std/total_pairs."""
+        traces = [
+            _cosine_trace("0", value=0.8),
+            _cosine_trace("1", value=0.6),
+            _cosine_trace("2", unscoreable=True),
+        ]
+        summary = compute_summary_scores(traces)
+        cosine = next(s for s in summary if s["name"] == "Cosine Similarity")
+        assert cosine["total_pairs"] == 2
+        assert cosine["avg"] == 0.7  # mean(0.8, 0.6), not dragged down by the 0
+
+
+class TestBackfillMissingScores:
+    def test_injects_missing_score(self):
+        from app.crud.evaluations.merge import backfill_missing_scores
+
+        traces = [_cosine_trace("0", value=0.8), _cosine_trace("1")]  # trace 1 empty
+        backfill_missing_scores(traces, {"1": 0.55})
+        summary = compute_summary_scores(traces)
+        cosine = next(s for s in summary if s["name"] == "Cosine Similarity")
+        assert cosine["total_pairs"] == 2
+
+    def test_does_not_overwrite_existing(self):
+        from app.crud.evaluations.merge import backfill_missing_scores
+
+        traces = [_cosine_trace("0", value=0.8)]
+        backfill_missing_scores(traces, {"0": 0.1})
+        # Existing 0.8 kept; no duplicate cosine entry appended.
+        cosine_scores = [
+            s for s in traces[0]["scores"] if s["name"] == "Cosine Similarity"
+        ]
+        assert len(cosine_scores) == 1
+        assert cosine_scores[0]["value"] == 0.8
+
+    def test_unknown_trace_ids_ignored(self):
+        from app.crud.evaluations.merge import backfill_missing_scores
+
+        traces = [_cosine_trace("0")]
+        backfill_missing_scores(traces, {"99": 0.5})
+        assert traces[0]["scores"] == []
+
+    def test_none_map_is_noop(self):
+        from app.crud.evaluations.merge import backfill_missing_scores
+
+        traces = [_cosine_trace("0")]
+        backfill_missing_scores(traces, None)
+        assert traces[0]["scores"] == []
+
+
+class TestApplyCosineBreakdown:
+    def test_adds_total_items_and_unscoreable(self):
+        from app.crud.evaluations.merge import apply_cosine_breakdown
+
+        summary = [
+            {
+                "name": "Cosine Similarity",
+                "avg": 0.7,
+                "std": 0.1,
+                "total_pairs": 2,
+                "data_type": "NUMERIC",
+            }
+        ]
+        apply_cosine_breakdown(
+            summary,
+            total_items=4,
+            unscoreable={
+                "t1": "empty_output",
+                "t2": "empty_output",
+                "t3": "embedding_failed",
+            },
+        )
+        cosine = summary[0]
+        assert cosine["total_items"] == 4
+        assert cosine["unscoreable"] == {"empty_output": 2, "embedding_failed": 1}
+
+    def test_noop_without_cosine_entry(self):
+        from app.crud.evaluations.merge import apply_cosine_breakdown
+
+        summary = [{"name": "accuracy", "total_pairs": 1, "data_type": "NUMERIC"}]
+        apply_cosine_breakdown(
+            summary, total_items=10, unscoreable={"t": "empty_output"}
+        )
+        assert "total_items" not in summary[0]
+
+
+class TestMergeBackfillIntegration:
+    def test_resync_backfills_computed_but_unwritten_scores(self):
+        """The Langfuse fetch is missing a score that we computed; backfill recovers it.
+
+        Reproduces the 211/215 freeze: fresh Langfuse traces have scores for
+        only some items, but per_item_scores (durable source of truth) has all.
+        """
+        # Cached has both traces but no cosine scores yet (first batch trace view).
+        cached = {
+            "summary_scores": [],
+            "traces": [_cosine_trace("0"), _cosine_trace("1")],
+        }
+        # Langfuse only returned a score for trace 0 (trace 1's write was lost).
+        fresh = {"summary_scores": [], "traces": [_cosine_trace("0", value=0.9)]}
+
+        merged, _ = merge_scores_step_forward(
+            cached, fresh, per_item_scores={"0": 0.9, "1": 0.4}
+        )
+        cosine = next(
+            s for s in merged["summary_scores"] if s["name"] == "Cosine Similarity"
+        )
+        assert cosine["total_pairs"] == 2  # both recovered, not 1

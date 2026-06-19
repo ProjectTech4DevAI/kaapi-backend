@@ -36,6 +36,9 @@ class ChainContext:
     langfuse_credentials: dict[str, Any] | None = None
     request_metadata: dict | None = None
     intermediate_callback_flags: list[bool] = field(default_factory=list)
+    detected_language: str | None = (
+        None  # Stores language detected by STT for use by TTS
+    )
     aggregated_usage: Usage = field(
         default_factory=lambda: Usage(
             input_tokens=0,
@@ -45,17 +48,39 @@ class ChainContext:
     )
 
 
-def result_to_query(result: BlockResult) -> QueryParams:
+def result_to_query(
+    result: BlockResult, context: ChainContext | None = None
+) -> QueryParams:
     """Convert a block's output into the next block's QueryParams.
 
     Text output → TextInput query
     Audio output → AudioInput query
+
+    Also preserves language_code from STT output for use by downstream TTS blocks.
     """
     output = result.response.response.output
 
     if isinstance(output, TextOutput):
+        # Preserve language_code if present (from STT auto-detection)
+        language_code = (
+            output.content.language_code
+            if hasattr(output.content, "language_code")
+            else None
+        )
+
+        # Store detected language in context for TTS to use.
+        # Skip "unknown" — that's Sarvam's no-detection sentinel; forwarding it
+        # to TTS would defeat the en-IN fallback in execute_llm_call.
+        if context and language_code and language_code != "unknown":
+            context.detected_language = language_code
+            logger.info(f"[result_to_query] Detected language: {language_code}")
+
         return QueryParams(
-            input=TextInput(content=TextContent(value=output.content.value))
+            input=TextInput(
+                content=TextContent(
+                    value=output.content.value, language_code=language_code
+                )
+            )
         )
     elif isinstance(output, AudioOutput):
         return QueryParams(input=AudioInput(content=output.content))
@@ -96,6 +121,7 @@ class ChainBlock:
             langfuse_credentials=self._context.langfuse_credentials,
             include_provider_raw_response=self._include_provider_raw_response,
             chain_id=self._context.chain_id,
+            detected_language=self._context.detected_language,
         )
 
 
@@ -132,6 +158,6 @@ class LLMChain:
                 return result
 
             if block is not self._blocks[-1]:
-                current_query = result_to_query(result)
+                current_query = result_to_query(result, self._context)
 
         return result
