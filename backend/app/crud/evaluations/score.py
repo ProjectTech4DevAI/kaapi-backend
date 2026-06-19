@@ -10,6 +10,22 @@ from typing import NotRequired, TypedDict
 
 DEFAULT_CATEGORY: str = "Other"
 
+# Canonical name/comment for the cosine-similarity score, centralized to avoid
+# import cycles.
+COSINE_SCORE_NAME: str = "Cosine Similarity"
+COSINE_SCORE_COMMENT: str = (
+    "Cosine similarity between generated output and ground truth embeddings"
+)
+
+# Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
+# "missing_trace_id" appears only in build_embedding_jsonl's internal skipped list.
+UNSCOREABLE_REASONS: tuple[str, ...] = (
+    "empty_output",
+    "empty_ground_truth",
+    "embedding_failed",
+    "missing_trace_id",
+)
+
 
 class TraceScore(TypedDict):
     """A score attached to a trace."""
@@ -18,6 +34,8 @@ class TraceScore(TypedDict):
     value: float | str
     data_type: str
     comment: NotRequired[str]
+    # True for placeholder scores on unscoreable items; excluded from summary stats.
+    unscoreable: NotRequired[bool]
 
 
 class TraceData(TypedDict):
@@ -54,6 +72,10 @@ class NumericSummaryScore(TypedDict):
     std: float
     total_pairs: int
     data_type: str
+    # UI denominator (total dataset items) and per-reason unscoreable breakdown.
+    # Present on the cosine-similarity score.
+    total_items: NotRequired[int]
+    unscoreable: NotRequired[dict[str, int]]
 
 
 class CategoricalSummaryScore(TypedDict):
