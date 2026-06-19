@@ -5,7 +5,7 @@ description = ""
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi[standard]>=0.116.0",
-    "python-multipart>=0.0.22,<1.0.0",
+    "python-multipart>=0.0.31,<1.0.0",
     "email-validator<3.0.0.0,>=2.1.0.post1",
     "passlib[bcrypt]<2.0.0,>=1.7.4",
     "tenacity<9.0.0,>=8.2.3",
