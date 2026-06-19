@@ -94,13 +94,7 @@ class VertexClient:
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
-        # The "global" location uses the unprefixed host; regional locations
-        # use the "{location}-" prefix.
-        host = (
-            "aiplatform.googleapis.com"
-            if self.location == "global"
-            else f"{self.location}-aiplatform.googleapis.com"
-        )
+        host = N
         return (
             f"https://{host}/v1"
             f"/projects/{self.project_id}/locations/{self.location}"
