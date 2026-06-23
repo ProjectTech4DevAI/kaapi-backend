@@ -121,7 +121,7 @@ def test_get_guardrails_non_guardrails_job_404(
 ) -> None:
     """A non-guardrails job id must 404, not leak existence."""
     job = JobCrud(session=db).create(
-        job_type=JobType.LLM_CALL, project_id=user_api_key.project_id
+        job_type=JobType.LLM_API, project_id=user_api_key.project_id
     )
     resp = client.get(f"api/v1/guardrails/{job.id}", headers=user_api_key_header)
     assert resp.status_code == 404
