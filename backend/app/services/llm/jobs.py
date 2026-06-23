@@ -119,7 +119,7 @@ def _execute_provider_call(
     kwargs.pop("organization_id", None)
     kwargs.pop("project_id", None)
     kwargs.pop("telemetry_span", None)
-
+    # decorated execution through langfuse
     decorated = observe_llm_execution(
         session_id=session_id,
         credentials=credentials,
@@ -621,10 +621,6 @@ def execute_llm_call(
                 client_llm_url = proxy_params.get("client_llm_url")
                 if not client_llm_url:
                     return BlockResult(error="Proxy config missing client_llm_url")
-
-                # SSRF guard: block proxy URLs that resolve to private/internal IPs.
-                # DNS resolution failures are not treated as blocks — httpx will
-                # fail the request naturally if the host is genuinely unreachable.
                 try:
                     validate_callback_url(client_llm_url)
                 except ValueError as e:
@@ -784,7 +780,7 @@ def execute_llm_call(
                         f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
                         exc_info=True,
                     )
-
+                # sentry emit metrics
                 record_llm_call_finished(
                     provider=Provider.PROXY.value,
                     model=proxy_model,
@@ -950,6 +946,7 @@ def execute_llm_call(
                                 "uri": s3_url,
                             }
                         )
+                        # overwrite with s3 uri
                         update_llm_call_input(session, llm_call_id, stt_input_record)
                         logger.info(
                             f"[execute_llm_call] STT audio uploaded to S3 | llm_call_id={llm_call_id}"
@@ -963,7 +960,7 @@ def execute_llm_call(
                         f"[execute_llm_call] STT S3 upload error, continuing: {e} | llm_call_id={llm_call_id}",
                         exc_info=True,
                     )
-
+            # thirdparty llm_call begins, client init thru llm/registry.py
             try:
                 provider_instance = get_llm_provider(
                     session=session,
@@ -982,6 +979,7 @@ def execute_llm_call(
         provider_name = str(completion_config.provider)
         model_name = str(completion_config.params.get("model") or "")
         completion_type = str(completion_config.type or "")
+        # sentry emit
         record_llm_call_started(
             provider=provider_name,
             model=model_name,
@@ -993,10 +991,6 @@ def execute_llm_call(
         response = None
         error = None
 
-        # Wrap the provider call in a `chat <model>` span so Sentry's AI Insights
-        # module recognises it (op=gen_ai.chat) and surfaces tokens / model /
-        # messages on the trace. This is the span AI Insights keys off — keep it
-        # as the parent of `llm.provider.execute`.
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with tracer.start_as_current_span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
@@ -1045,7 +1039,7 @@ def execute_llm_call(
                             )
                         if model_name:
                             provider_span.set_attribute("llm.request.model", model_name)
-
+                        # real blocking network call to referenced provider
                         response, error = _execute_provider_call(
                             func=provider_instance.execute,
                             completion_config=completion_config,
@@ -1079,9 +1073,6 @@ def execute_llm_call(
                 )
 
         if response:
-            # db_content is what gets persisted — URI-only for TTS to avoid storing
-            # large base64 payloads. The in-memory response keeps base64 + uri field
-            # so existing clients continue to receive base64 unchanged.
             db_content = (
                 response.response.output.model_dump()
                 if response.response.output
@@ -1107,10 +1098,7 @@ def execute_llm_call(
                         subfolder_path,
                     )
                     if s3_url:
-                        # Keep base64 in the response object for backward-compatible clients.
-                        # Set uri so execute_job can swap it for a presigned URL.
                         tts_output.content.uri = s3_url
-                        # Store only the URI in the DB — not the full base64.
                         db_content = {
                             "type": "audio",
                             "content": {
@@ -1308,9 +1296,6 @@ def execute_job(
             )
 
             if result.success:
-                # Swap the s3:// URI in content.uri for a short-lived presigned URL.
-                # content.value (base64) is untouched — existing clients keep working.
-                # On failure, clear uri so clients don't receive a raw s3:// address.
                 if result.response:
                     tts_out = result.response.response.output
                     if isinstance(tts_out, AudioOutput) and tts_out.content.uri:

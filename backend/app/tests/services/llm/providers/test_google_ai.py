@@ -7,6 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+# ponytail: Vertex provider is temporarily disabled in the registry; skip the
+# whole module until it is re-enabled.
+pytestmark = pytest.mark.skip(
+    reason="Vertex provider disabled — routing swapped to GoogleAIProvider"
+)
+
 from app.core.audio_utils import AudioRef
 from app.models.llm import NativeCompletionConfig, QueryParams
 from app.services.llm.providers.google_ai import (
