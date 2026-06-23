@@ -11,7 +11,7 @@ from app.celery.utils import start_guardrails_job
 from app.core.db import engine
 from app.core.telemetry import log_context
 from app.crud.jobs import JobCrud
-from app.models import JobStatus, JobType, JobUpdate
+from app.models import Job, JobStatus, JobType, JobUpdate
 from app.models.guardrails import (
     GuardrailsCallbackData,
     GuardrailsCallbackResponse,
@@ -33,7 +33,7 @@ def start_job(
     request: GuardrailsRequest,
     project_id: int,
     organization_id: int,
-) -> UUID:
+) -> Job:
     """Create a guardrails-only job and schedule its Celery task."""
     trace_id = correlation_id.get() or "N/A"
     logger.debug(
@@ -92,7 +92,7 @@ def start_job(
             f"[start_job] Job scheduled for guardrails | job_id={job.id}, "
             f"project_id={project_id}, task_id={task_id}"
         )
-        return job.id
+        return job
 
 
 def _coerce_int(value: Any) -> int:

@@ -25,24 +25,6 @@ router = APIRouter(tags=["Guardrails"])
 guardrails_callback_router = APIRouter()
 
 
-@guardrails_callback_router.post(
-    "{$callback_url}",
-    name="guardrails_callback",
-)
-def guardrails_callback_notification(body: APIResponse[GuardrailsCallbackData]):
-    """
-    Callback endpoint specification for /guardrails completion.
-
-    The callback will receive:
-    - On success: APIResponse with success=True and data containing
-      GuardrailsCallbackData (sanitised text under data.response.output).
-    - On hard-block / failure: APIResponse with success=False and error set.
-    - metadata field will always include any request_metadata supplied with
-      the original request, plus a `warnings` list.
-    """
-    ...
-
-
 @router.post(
     "/guardrails",
     description=load_description("guardrails/apply_guardrails.md"),
@@ -82,7 +64,7 @@ def apply_guardrails_endpoint(
         if request.callback_url:
             validate_callback_url(str(request.callback_url))
 
-        job_id = start_job(
+        job = start_job(
             db=session,
             request=request,
             project_id=project_id,
@@ -90,11 +72,7 @@ def apply_guardrails_endpoint(
         )
 
         if span.is_recording():
-            span.set_attribute("guardrails.job_id", str(job_id))
-
-        job = JobCrud(session=session).get(job_id=job_id, project_id=project_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+            span.set_attribute("guardrails.job_id", str(job.id))
 
         message = (
             "Guardrails are being applied; the sanitised text will be delivered via callback."
