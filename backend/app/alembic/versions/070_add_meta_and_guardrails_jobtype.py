@@ -1,7 +1,7 @@
 """add job.meta JSONB column and LLM_GUARDRAILS jobtype enum value
 
-Revision ID: 068
-Revises: 067
+Revision ID: 070
+Revises: 069
 Create Date: 2026-06-15 00:00:00.000000
 
 """
@@ -10,21 +10,16 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "068"
-down_revision = "067"
+revision = "070"
+down_revision = "069"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # Add new enum value for guardrails-only jobs. ALTER TYPE ... ADD VALUE
-    # cannot run inside a transaction block, hence the autocommit guard.
     with op.get_context().autocommit_block():
         op.execute("ALTER TYPE jobtype ADD VALUE IF NOT EXISTS 'LLM_GUARDRAILS'")
 
-    # Add nullable meta JSONB column on job for per-job-type tracking payloads
-    # (e.g. guardrails request/response). Nullable + no default so it imposes
-    # zero cost on existing rows and on job types that do not write to it.
     op.add_column(
         "job",
         sa.Column(
@@ -42,5 +37,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("job", "meta")
-    # NOTE: Postgres has no clean way to remove a single enum value. Leaving
-    # 'LLM_GUARDRAILS' on the type on downgrade is intentional and harmless.
