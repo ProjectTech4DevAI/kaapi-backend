@@ -9,7 +9,7 @@ import logging
 
 from sqlmodel import Session
 
-from app.services.notifications.helpers import (
+from app.services.notifications.utils import (
     build_eval_completion_payload,
     notification_type_for_status,
 )

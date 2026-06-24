@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.celery.tasks import job_execution as notif_task
-from app.services.notifications import helpers as notif_helpers
+from app.services.notifications.utils import content as notif_helpers
 from app.crud.user_project import add_user_to_project
 from app.services.notifications import eval_completion as eval_completion_service
 from app.models import (
