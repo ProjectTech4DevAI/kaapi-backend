@@ -105,7 +105,7 @@ class TestTerminalStateTrigger:
         session = MagicMock()
 
         with patch(
-            "app.celery.tasks.notifications.send_eval_completion_notification.delay",
+            "app.celery.tasks.job_execution.send_eval_completion_notification.delay",
             side_effect=RuntimeError("broker down"),
         ):
             # Should NOT raise — the helper swallows broker errors and logs them.
