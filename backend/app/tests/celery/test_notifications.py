@@ -5,7 +5,9 @@ import pytest
 from sqlmodel import Session, select
 
 from app.celery.tasks import job_execution as notif_task
+from app.celery.tasks import notification_utils as notif_helpers
 from app.crud.user_project import add_user_to_project
+from app.services.notifications import eval_completion as eval_completion_service
 from app.models import (
     EvaluationRun,
     Notification,
@@ -13,6 +15,7 @@ from app.models import (
     NotificationStatus,
     NotificationType,
     Project,
+    User,
 )
 from app.tests.utils.test_data import (
     create_test_evaluation_dataset,
@@ -42,7 +45,7 @@ class _NonClosingSession:
 @pytest.fixture
 def patched_session(db: Session):
     with patch(
-        "app.celery.tasks.job_execution.Session",
+        "app.services.notifications.eval_completion.Session",
         side_effect=lambda _engine: _NonClosingSession(db),
     ):
         yield db
@@ -59,8 +62,8 @@ def _emails_enabled(enabled: bool):
     smtp_host = "smtp.test.local" if enabled else ""
     from_email = "noreply@test.local" if enabled else ""
     return _MultiPatch(
-        patch.object(notif_task.settings, "SMTP_HOST", smtp_host),
-        patch.object(notif_task.settings, "EMAILS_FROM_EMAIL", from_email),
+        patch.object(eval_completion_service.settings, "SMTP_HOST", smtp_host),
+        patch.object(eval_completion_service.settings, "EMAILS_FROM_EMAIL", from_email),
     )
 
 
@@ -136,50 +139,52 @@ def _make_eval_run(
 class TestHelperFunctions:
     def test_build_eval_results_link(self):
         eval_run = MagicMock(project_id=1, id=46)
-        with patch.object(notif_task.settings, "FRONTEND_HOST", "http://example.com"):
+        with patch.object(
+            notif_helpers.settings, "FRONTEND_HOST", "http://example.com"
+        ):
             assert (
-                notif_task._build_eval_results_link(eval_run)
+                notif_helpers.build_eval_results_link(eval_run)
                 == "http://example.com/evaluations/46"
             )
 
     def test_format_completed_at_converts_utc_to_ist(self):
         # 18:33 UTC + 5:30 = 00:03 IST next day
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 18, 33))
+            notif_helpers.format_completed_at(datetime(2026, 5, 16, 18, 33))
             == "May 17, 2026 at 12:03 AM"
         )
 
     def test_format_completed_at_strips_leading_zero(self):
         # 00:35 UTC + 5:30 = 06:05 IST
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 0, 35))
+            notif_helpers.format_completed_at(datetime(2026, 5, 16, 0, 35))
             == "May 16, 2026 at 6:05 AM"
         )
 
     def test_format_completed_at_handles_noon_and_midnight(self):
         # 06:30 UTC + 5:30 = 12:00 IST (noon)
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 6, 30))
+            notif_helpers.format_completed_at(datetime(2026, 5, 16, 6, 30))
             == "May 16, 2026 at 12:00 PM"
         )
         # 18:35 UTC + 5:30 = 00:05 IST (midnight next day)
         assert (
-            notif_task._format_completed_at(datetime(2026, 5, 16, 18, 35))
+            notif_helpers.format_completed_at(datetime(2026, 5, 16, 18, 35))
             == "May 17, 2026 at 12:05 AM"
         )
 
     def test_format_completed_at_returns_empty_for_none(self):
-        assert notif_task._format_completed_at(None) == ""
+        assert notif_helpers.format_completed_at(None) == ""
 
     def test_notification_type_for_status_failed(self):
         assert (
-            notif_task._notification_type_for_status("failed")
+            notif_helpers.notification_type_for_status("failed")
             == NotificationType.EVAL_FAILED.value
         )
 
     def test_notification_type_for_status_completed(self):
         assert (
-            notif_task._notification_type_for_status("completed")
+            notif_helpers.notification_type_for_status("completed")
             == NotificationType.EVAL_COMPLETED.value
         )
 
@@ -192,8 +197,10 @@ class TestHelperFunctions:
             updated_at=datetime(2026, 5, 16, 18, 33, 50),
             error_message=None,
         )
-        with patch.object(notif_task.settings, "FRONTEND_HOST", "http://example.com"):
-            payload = notif_task._build_eval_completion_payload(
+        with patch.object(
+            notif_helpers.settings, "FRONTEND_HOST", "http://example.com"
+        ):
+            payload = notif_helpers.build_eval_completion_payload(
                 eval_run=eval_run, project_name="ProjX"
             )
         # 18:33 UTC -> 00:03 IST next day
@@ -223,11 +230,13 @@ class TestSendEvalCompletionNotification:
         project = create_test_project(patched_session)
         run = _make_eval_run(patched_session, project=project)
 
+        recipient_user_id = patched_session.exec(select(User.id)).first()
+
         # Pre-existing notification row simulates a prior fan-out
         existing = Notification(
             notification_type=NotificationType.EVAL_COMPLETED.value,
             provider="email",
-            recipient_user_id=1,
+            recipient_user_id=recipient_user_id,
             entity_type=NotificationEntityType.EVAL_RUN.value,
             entity_id=run.id,
             project_id=project.id,
@@ -278,7 +287,9 @@ class TestSendEvalCompletionNotification:
         _add_active_member(patched_session, project=project)
         _add_active_member(patched_session, project=project)
 
-        with _emails_enabled(True), patch.object(notif_task, "send_email") as mock_send:
+        with _emails_enabled(True), patch.object(
+            eval_completion_service, "send_email"
+        ) as mock_send:
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result
@@ -304,7 +315,9 @@ class TestSendEvalCompletionNotification:
         _add_active_member(patched_session, project=project)
 
         with _emails_enabled(True), patch.object(
-            notif_task, "send_email", side_effect=RuntimeError("SMTP timeout")
+            eval_completion_service,
+            "send_email",
+            side_effect=RuntimeError("SMTP timeout"),
         ):
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
@@ -330,7 +343,7 @@ class TestSendEvalCompletionNotification:
         )
         _add_active_member(patched_session, project=project)
 
-        with _emails_enabled(True), patch.object(notif_task, "send_email"):
+        with _emails_enabled(True), patch.object(eval_completion_service, "send_email"):
             result = notif_task.send_eval_completion_notification.apply(
                 args=[run.id]
             ).result
