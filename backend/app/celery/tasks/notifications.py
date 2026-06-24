@@ -64,7 +64,7 @@ def _build_eval_completion_payload(
     }
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(
     settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
 )
