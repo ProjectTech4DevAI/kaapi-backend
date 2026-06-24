@@ -1,6 +1,6 @@
 ---
 name: start-prd
-description: Turn the current conversation into a product-level PRD and write it to docs/prd-<feature>.md — no interview, just synthesis of what you've already discussed. The PRD covers the product spec only (why / what / for whom); technical "how" belongs in the SRD.
+description: Turn the current conversation into a product-level PRD and write it to features/<feature>/PRD.md — no interview, just synthesis of what you've already discussed. The PRD covers the product spec only (why / what / for whom); technical "how" belongs in the SRD.
 disable-model-invocation: true
 ---
 
