@@ -163,8 +163,6 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
     include=[
         "app.celery.tasks.job_execution",
-        "app.celery.tasks.notifications",
-        "app.celery.tasks.evaluation_fast",
     ],
 )
 
@@ -176,31 +174,12 @@ celery_app.conf.update(
     # Queue configuration with priority support
     task_queues=(
         Queue(
-            "high_priority",
+            "default",
             exchange=default_exchange,
-            routing_key="high",
+            routing_key="default",
             queue_arguments={"x-max-priority": 10},
         ),
-        Queue(
-            "low_priority",
-            exchange=default_exchange,
-            routing_key="low",
-            queue_arguments={"x-max-priority": 1},
-        ),
-        Queue(
-            "evaluations",
-            exchange=default_exchange,
-            routing_key="evaluations",
-            queue_arguments={"x-max-priority": 6},
-        ),
-        Queue("cron", exchange=default_exchange, routing_key="cron"),
-        Queue("default", exchange=default_exchange, routing_key="default"),
     ),
-    # Task routing — queue is set per-task via @celery_app.task(queue=...).
-    # Only cron tasks need an explicit override here.
-    task_routes={
-        "app.celery.tasks.*_cron_*": {"queue": "cron"},
-    },
     task_default_queue="default",
     # Enable priority support
     task_inherit_parent_priority=True,

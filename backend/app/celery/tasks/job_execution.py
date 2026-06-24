@@ -1,7 +1,20 @@
+"""Celery task definitions for the single priority `default` queue.
+
+All tasks share one queue (`default`, declared with `x-max-priority=10`) and are
+ordered by the per-task `priority`:
+
+    9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
+    6  Fast evaluation (run_evaluation_fast)
+    2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
+    1  Notifications (send_eval_completion_notification)
+
+Higher priority drains first; within the same priority, delivery is FIFO.
+"""
+
 import logging
 
 from asgi_correlation_id import correlation_id
-from celery import current_task
+from celery import Task, current_task
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
@@ -11,6 +24,11 @@ from app.celery.utils import gevent_timeout
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Sentinel correlation id used when no trace id is propagated from the
+# enqueueing request. Matches the codebase-wide "N/A" default (see
+# app/core/logger.py and app/celery/utils.py).
+DEFAULT_TRACE_ID = "N/A"
 
 
 def _set_trace(trace_id: str) -> None:
@@ -58,7 +76,7 @@ def _run_with_otel_parent(task_instance, fn):
         otel_context.detach(token)
 
 
-@celery_app.task(bind=True, queue="high_priority", priority=9)
+@celery_app.task(bind=True, queue="default", priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_llm_job")
 def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_job
@@ -76,7 +94,7 @@ def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     )
 
 
-@celery_app.task(bind=True, queue="high_priority", priority=9)
+@celery_app.task(bind=True, queue="default", priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_llm_chain_job")
 def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_chain_job
@@ -94,7 +112,7 @@ def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwarg
     )
 
 
-@celery_app.task(bind=True, queue="high_priority", priority=9)
+@celery_app.task(bind=True, queue="default", priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_response_job")
 def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.response.jobs import execute_job
@@ -112,7 +130,7 @@ def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_doctransform_job")
 def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.doctransform.job import execute_job
@@ -130,7 +148,7 @@ def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kw
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_collection_setup_job")
 def run_collection_setup_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -150,7 +168,7 @@ def run_collection_setup_job(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_collection_batch_job")
 def run_collection_batch_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -170,7 +188,7 @@ def run_collection_batch_job(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_delete_collection_job")
 def run_delete_collection_job(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -190,7 +208,7 @@ def run_delete_collection_job(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_batch_submission")
 def run_stt_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -210,7 +228,7 @@ def run_stt_batch_submission(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_metric_computation")
 def run_stt_metric_computation(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -230,7 +248,7 @@ def run_stt_metric_computation(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_batch_submission")
 def run_tts_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -250,7 +268,7 @@ def run_tts_batch_submission(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_pipeline")
 def run_assessment_pipeline(
     self,
@@ -273,7 +291,7 @@ def run_assessment_pipeline(
     )
 
 
-@celery_app.task(bind=True, queue="low_priority", priority=1)
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -293,3 +311,53 @@ def run_tts_result_processing(
             **kwargs,
         ),
     )
+
+
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast")
+def run_evaluation_fast(
+    self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
+) -> None:
+    """Run the fast evaluation pipeline for one EvaluationRun.
+
+    Idempotency: each stage is skipped on retry when its `batch_job` marker is
+    already set on the EvaluationRun, so Celery redelivery never re-calls
+    OpenAI for work that already succeeded.
+
+    Args:
+        eval_run_id: ID of the EvaluationRun (run_mode="fast").
+        trace_id: Correlation id from the enqueueing request, propagated into
+            the worker for log correlation.
+    """
+    from app.services.evaluations.fast import execute_fast_evaluation
+
+    _set_trace(trace_id)
+    logger.info(
+        f"[run_evaluation_fast] Starting fast evaluation task | "
+        f"eval_run_id={eval_run_id} | task_id={current_task.request.id}"
+    )
+
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_fast_evaluation(eval_run_id=eval_run_id),
+    )
+
+
+@celery_app.task(bind=True, queue="default", priority=1)
+@gevent_timeout(
+    settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
+)
+def send_eval_completion_notification(self, evaluation_id: int) -> dict:
+    """
+    Fan out a completion notification for an eval run to every project member.
+
+    Idempotency: the `notification` table acts as the guard — see
+    `app.services.notifications.eval_completion.execute_eval_completion_notification`
+    for the full flow (it bails out if rows already exist for this
+    entity_type/entity_id/notification_type).
+    """
+    from app.services.notifications.eval_completion import (
+        execute_eval_completion_notification,
+    )
+
+    return execute_eval_completion_notification(evaluation_id=evaluation_id)

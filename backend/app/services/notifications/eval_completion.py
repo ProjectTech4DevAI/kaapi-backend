@@ -1,11 +1,18 @@
+"""Orchestration for fanning out eval-completion notifications to project members.
+
+Delegated to by the `send_eval_completion_notification` Celery task in
+`app/celery/tasks/job_execution.py`, which stays a thin shim over
+`execute_eval_completion_notification`.
+"""
+
 import logging
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from sqlmodel import Session
 
-from app.celery.celery_app import celery_app
-from app.celery.utils import gevent_timeout
+from app.services.notifications.utils import (
+    build_eval_completion_payload,
+    notification_type_for_status,
+)
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.notification import (
@@ -20,7 +27,6 @@ from app.models import (
     EvaluationRun,
     NotificationEntityType,
     NotificationProvider,
-    NotificationType,
     Project,
 )
 from app.utils import generate_eval_completion_email, send_email
@@ -28,47 +34,9 @@ from app.utils import generate_eval_completion_email, send_email
 logger = logging.getLogger(__name__)
 
 EVAL_COMPLETION_TEMPLATE = "eval_completion_v1"
-IST_TZ = ZoneInfo("Asia/Kolkata")
 
 
-def _build_eval_results_link(eval_run: EvaluationRun) -> str:
-    return f"{settings.FRONTEND_HOST}/evaluations/{eval_run.id}"
-
-
-def _notification_type_for_status(status: str) -> str:
-    if status == "failed":
-        return NotificationType.EVAL_FAILED.value
-    return NotificationType.EVAL_COMPLETED.value
-
-
-def _format_completed_at(dt: datetime | None) -> str:
-    if not dt:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    local = dt.astimezone(IST_TZ)
-    hour_12 = local.strftime("%I").lstrip("0") or "12"
-    return local.strftime(f"%B %d, %Y at {hour_12}:%M %p")
-
-
-def _build_eval_completion_payload(
-    *, eval_run: EvaluationRun, project_name: str
-) -> dict:
-    return {
-        "run_name": eval_run.run_name,
-        "project_name": project_name,
-        "status": eval_run.status,
-        "completed_at": _format_completed_at(eval_run.updated_at),
-        "link": _build_eval_results_link(eval_run),
-        "error_message": eval_run.error_message,
-    }
-
-
-@celery_app.task(bind=True, queue="low_priority", priority=1)
-@gevent_timeout(
-    settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
-)
-def send_eval_completion_notification(self, evaluation_id: int) -> dict:
+def execute_eval_completion_notification(evaluation_id: int) -> dict:
     """
     Fan out a completion notification for an eval run to every project member.
 
@@ -83,7 +51,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         eval_run = session.get(EvaluationRun, evaluation_id)
         if not eval_run:
             logger.error(
-                f"[send_eval_completion_notification] EvaluationRun not found | "
+                f"[execute_eval_completion_notification] EvaluationRun not found | "
                 f"evaluation_id={evaluation_id}"
             )
             return {
@@ -93,7 +61,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
                 "not_found": True,
             }
 
-        notification_type = _notification_type_for_status(eval_run.status)
+        notification_type = notification_type_for_status(eval_run.status)
 
         already_processed = notifications_exist_for_entity(
             session=session,
@@ -103,7 +71,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         )
         if already_processed:
             logger.info(
-                f"[send_eval_completion_notification] Already processed; skipping | "
+                f"[execute_eval_completion_notification] Already processed; skipping | "
                 f"evaluation_id={evaluation_id} | type={notification_type}"
             )
             return {
@@ -115,7 +83,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
 
         if not settings.emails_enabled:
             logger.warning(
-                f"[send_eval_completion_notification] Email not configured; skipping | "
+                f"[execute_eval_completion_notification] Email not configured; skipping | "
                 f"evaluation_id={evaluation_id}"
             )
             return {
@@ -132,12 +100,12 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         recipients = [u for u in users if u.is_active and u.email]
         if not recipients:
             logger.info(
-                f"[send_eval_completion_notification] No recipients for project | "
+                f"[execute_eval_completion_notification] No recipients for project | "
                 f"evaluation_id={evaluation_id} | project_id={eval_run.project_id}"
             )
             return {"evaluation_id": evaluation_id, "sent": 0, "failed": 0}
 
-        payload = _build_eval_completion_payload(
+        payload = build_eval_completion_payload(
             eval_run=eval_run, project_name=project_name
         )
         email_data = generate_eval_completion_email(
@@ -203,7 +171,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
                 mark_notification_sent(session=session, notification=notification)
                 sent_count += 1
                 logger.info(
-                    f"[send_eval_completion_notification] Sent | "
+                    f"[execute_eval_completion_notification] Sent | "
                     f"evaluation_id={evaluation_id} | "
                     f"notification_id={notification.id} | to={email_to}"
                 )
@@ -213,7 +181,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
                 )
                 failed_count += 1
                 logger.error(
-                    f"[send_eval_completion_notification] Send failed | "
+                    f"[execute_eval_completion_notification] Send failed | "
                     f"evaluation_id={evaluation_id} | "
                     f"notification_id={notification.id} | to={email_to} | error={e}",
                     exc_info=True,
@@ -221,7 +189,7 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         session.commit()
 
         logger.info(
-            f"[send_eval_completion_notification] Done | "
+            f"[execute_eval_completion_notification] Done | "
             f"evaluation_id={evaluation_id} | project_id={eval_run.project_id} | "
             f"type={notification_type} | recipients={len(pending)} | "
             f"sent={sent_count} | failed={failed_count}"
