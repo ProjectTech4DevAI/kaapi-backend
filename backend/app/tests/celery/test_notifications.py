@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session, select
 
-from app.celery.tasks import notifications as notif_task
+from app.celery.tasks import job_execution as notif_task
 from app.crud.user_project import add_user_to_project
 from app.models import (
     EvaluationRun,
@@ -42,7 +42,7 @@ class _NonClosingSession:
 @pytest.fixture
 def patched_session(db: Session):
     with patch(
-        "app.celery.tasks.notifications.Session",
+        "app.celery.tasks.job_execution.Session",
         side_effect=lambda _engine: _NonClosingSession(db),
     ):
         yield db
