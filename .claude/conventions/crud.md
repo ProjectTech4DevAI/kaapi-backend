@@ -44,7 +44,7 @@ Note: **keyword-only args** with `*` for anything more than `(session, id)`. Red
 ## Performance
 
 - **N+1 is a bug.** If you `list_<things>` and the caller is going to access a relationship attribute, eager-load with `selectinload(...)` or `joinedload(...)`. Read the call sites before deciding.
-- **Index any column you filter on.** That's a model-writer concern, but if you write a `get_<thing>_by_<column>` and the column has no index, flag it.
+- **Index any column you filter on.** That's a model-layer concern (`.claude/conventions/model.md`), but if you write a `get_<thing>_by_<column>` and the column has no index, flag it.
 - **Pagination.** Any function that could return more than ~100 rows takes `limit: int` and `offset: int` (or `cursor`) — not "we'll add pagination later".
 
 ## Concurrency

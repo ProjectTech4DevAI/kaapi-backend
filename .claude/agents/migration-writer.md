@@ -21,11 +21,6 @@ You write Alembic migrations for kaapi-backend. The DB is PostgreSQL. Migration 
 Revision ID: NNN
 Revises: <previous>
 Create Date: YYYY-MM-DD HH:MM:SS.000000
-
-<Short paragraph(s) on the WHY: the reason for the change and any non-obvious
- ordering or gotcha a future reader debugging prod needs. Do NOT narrate the
- obvious operations — the reader can see `add_column` / `create_index` in the
- code; tell them what they can't see.>
 """
 
 import sqlalchemy as sa
@@ -68,14 +63,6 @@ def downgrade():
 ## What you DO NOT do
 
 - Don't add `HTTPException`, route handlers, business logic, or external HTTP calls in a migration.
-- Don't write `print(...)` debug statements — use the migration docstring. If a long backfill genuinely needs progress logging, use `logging.getLogger("alembic.runtime.migration")` with the standard `[<revision_id>] ...` prefix.
-- Don't skip the docstring. The docstring is what someone debugging at 2am will read.
-- Don't pad the docstring either — keep it to the non-obvious WHY. A step-by-step recap of the `op.*` calls (which the reader can already see in `upgrade()`) is noise. Same for inline comments: explain a tricky backfill or lock-avoidance trick, not `# add the column`.
+- Don't write `print(...)` debug statements. If a long backfill genuinely needs progress logging, use `logging.getLogger("alembic.runtime.migration")` with the standard `[<revision_id>] ...` prefix.
+- Keep the docstring to a one-line summary. Don't narrate the `op.*` calls — the reader can see them in `upgrade()`. Same for inline comments: explain only a tricky backfill or lock-avoidance trick, not `# add the column`.
 - Don't import from `app.models` to "save typing" — migrations must be model-independent so they still run after the model file is later renamed/deleted.
-
-## Output for the user
-
-When the migration is written, tell the user:
-1. The new file path and revision id.
-2. Any caller updates still needed (models, CRUD, tests).
-3. The exact `uv run alembic ...` command(s) to apply and verify it.
