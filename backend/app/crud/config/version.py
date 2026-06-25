@@ -119,6 +119,80 @@ class ConfigVersionCrud:
                 detail="Unexpected error occurred: failed to create version",
             )
 
+    def create_from_blob_or_raise(
+        self,
+        source_blob: dict[str, Any],
+        version_create: ConfigVersionUpdate,
+    ) -> ConfigVersion:
+        """Create a new version by merging updates onto a caller-supplied base blob.
+
+        Unlike `create_or_raise`, the merge base is `source_blob` (the version the
+        caller is branching from) rather than the latest version. The new version
+        number is still `latest + 1` so the append-only invariant is preserved.
+
+        Use this when you must guarantee the result derives only from a specific
+        historical version — e.g. prompt-improvement, where the run evaluated that
+        version and "other settings" must be byte-for-byte identical to it.
+        """
+        self._config_exists_or_raise(self.config_id)
+
+        merged_config = self._deep_merge(
+            base=source_blob,
+            updates=version_create.config_blob,
+        )
+
+        self._strip_unsupported_params(merged_config)
+
+        # Immutable-field check against the source blob: the new version is branching
+        # from source, so that is the right baseline for "what must not change".
+        self._validate_immutable_fields(source_blob, merged_config)
+
+        try:
+            validated_blob = ConfigBlob.model_validate(merged_config)
+        except ValidationError as e:
+            validation_errors = e.errors()
+            logger.warning(
+                f"[ConfigVersionCrud.create_from_blob_or_raise] Validation failed | "
+                f"{{'config_id': '{self.config_id}', 'error_count': {len(validation_errors)}, "
+                f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"
+            )
+            raise HTTPException(status_code=400, detail=validation_errors)
+
+        validate_blob_model_or_raise(self.session, validated_blob)
+
+        try:
+            next_version = self._get_next_version(self.config_id)
+
+            version = ConfigVersion(
+                config_id=self.config_id,
+                version=next_version,
+                config_blob=validated_blob.model_dump(mode="json"),
+                commit_message=version_create.commit_message,
+            )
+
+            self.session.add(version)
+            self.session.commit()
+            self.session.refresh(version)
+
+            logger.info(
+                f"[ConfigVersionCrud.create_from_blob_or_raise] Version created successfully | "
+                f"{{'config_id': '{self.config_id}', 'version_id': '{version.id}'}}"
+            )
+
+            return version
+
+        except Exception as e:
+            self.session.rollback()
+            logger.error(
+                f"[ConfigVersionCrud.create_from_blob_or_raise] Failed to create version | "
+                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Unexpected error occurred: failed to create version",
+            )
+
     def _get_latest_version(self) -> ConfigVersion | None:
         """Get the latest version for the config."""
         stmt = (

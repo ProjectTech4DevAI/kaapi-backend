@@ -188,11 +188,15 @@ def improve_prompt(
         config_id=run.config_id,
         project_id=project_id,
     )
-    new_version = version_crud.create_or_raise(
+    # Branch from the source version's blob so all non-instruction fields are
+    # preserved byte-for-byte from the version the run actually evaluated,
+    # regardless of whether newer versions exist with diverging settings.
+    new_version = version_crud.create_from_blob_or_raise(
+        source_version.config_blob,
         ConfigVersionUpdate(
             config_blob=new_blob,
             commit_message=commit_message,
-        )
+        ),
     )
 
     logger.info(

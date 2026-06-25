@@ -1707,3 +1707,176 @@ class TestPromptGenerationFailures:
 
         assert resp.status_code == 502, resp.text
         assert "prompt_generation_failed" in resp.json()["error"]
+
+
+# ── regression: improve derives from SOURCE version, not latest ──────────────
+
+
+class TestImprovesSourceNotLatest:
+    """Regression: the new version must derive its non-instruction fields from the
+    SOURCE config version (the one the run evaluated), not the LATEST version.
+
+    Before the fix, `create_or_raise` was called without a base blob, so the
+    merge used the latest version; a non-instruction field that diverged between
+    source and latest would leak into the improved version.  The fix calls
+    `create_from_blob_or_raise(source_version.config_blob, ...)` so the base is
+    always the source.
+    """
+
+    def test_new_version_derives_model_from_source_not_latest(
+        self,
+        client: TestClient,
+        headers: dict[str, str],
+        db: Session,
+        auth: TestAuthContext,
+        dataset: EvaluationDataset,
+        anthropic_creds: None,
+    ) -> None:
+        """Version 1 (source) has no top_p; version 2 (latest) adds top_p=0.9.
+        The run is evaluated against version 1.  The improved version (3) must
+        NOT carry top_p (absent in source), proving it derived from source (v1),
+        not from the latest (v2).
+
+        Before the fix: create_or_raise merged onto the latest version, so
+        top_p=0.9 from v2 would leak into v3 because new_blob (built from source)
+        doesn't have top_p to override it.
+        After the fix: create_from_blob_or_raise uses source_blob as the merge
+        base, so top_p never enters the result.
+        """
+        from app.crud.config import ConfigCrud
+        from app.models.config.version import ConfigVersionUpdate
+        from app.models.llm.request import ConfigBlob
+        from app.models.llm import KaapiCompletionConfig
+
+        _SOURCE_INSTRUCTIONS = "You are a helpful assistant. Answer clearly."
+        _LATEST_INSTRUCTIONS = "You are an expert. Be concise and technical."
+        _SHARED_MODEL = "gpt-4o"
+        # top_p is a field present in TextLLMParams (optional); only v2 sets it
+        _LATEST_ONLY_TOP_P = 0.9
+
+        # ── version 1 (source) — no top_p ────────────────────────────────────
+        source_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                type="text",
+                params={
+                    "model": _SHARED_MODEL,
+                    "temperature": 0.5,
+                    "instructions": _SOURCE_INSTRUCTIONS,
+                    "knowledge_base_ids": ["vs_source123"],
+                },
+            )
+        )
+        from app.models.config.config import ConfigCreate, ConfigTag
+
+        config_create = ConfigCreate(
+            name=f"test-config-source-not-latest-{random_lower_string()}",
+            description="Regression test: improve-prompt must branch from source",
+            config_blob=source_blob,
+            commit_message="Source version (v1) — no top_p",
+            tag=ConfigTag.DEFAULT,
+        )
+        config_crud = ConfigCrud(session=db, project_id=auth.project_id)
+        config, _ = config_crud.create_or_raise(config_create)
+
+        # ── version 2 (latest) — adds top_p that source does not have ────────
+        latest_blob = ConfigBlob(
+            completion=KaapiCompletionConfig(
+                provider="openai",
+                type="text",
+                params={
+                    "model": _SHARED_MODEL,
+                    "temperature": 0.5,
+                    "instructions": _LATEST_INSTRUCTIONS,
+                    "knowledge_base_ids": ["vs_source123"],
+                    "top_p": _LATEST_ONLY_TOP_P,
+                },
+            )
+        )
+        version_crud = ConfigVersionCrud(
+            session=db,
+            config_id=config.id,
+            project_id=auth.project_id,
+        )
+        version_crud.create_or_raise(
+            ConfigVersionUpdate(
+                config_blob=latest_blob.model_dump(),
+                commit_message="Latest version (v2) — adds top_p",
+            )
+        )
+
+        # Sanity check: source (v1) has no top_p; latest (v2) has top_p
+        v1 = version_crud.read_one(version_number=1)
+        v2 = version_crud.read_one(version_number=2)
+        assert v1 is not None
+        assert v2 is not None
+        assert v1.config_blob["completion"]["params"].get("top_p") is None
+        assert v2.config_blob["completion"]["params"].get("top_p") == _LATEST_ONLY_TOP_P
+
+        # ── run evaluated against version 1 (source) ─────────────────────────
+        score = _score_payload(
+            traces=[
+                _make_trace(
+                    question_id=1,
+                    trace_id="t-regression-1",
+                    metric_name=COSINE_SCORE_NAME,
+                    metric_value=0.2,
+                    category="Regression",
+                    question="What is the capital of France?",
+                    llm_answer="Lyon",
+                    ground_truth_answer="Paris",
+                )
+            ],
+            summary_scores=[
+                {
+                    "name": COSINE_SCORE_NAME,
+                    "avg": 0.2,
+                    "std": 0.0,
+                    "data_type": SCORE_DATA_TYPE_NUMERIC,
+                }
+            ],
+        )
+        run = _make_completed_run(
+            db=db,
+            config_id=config.id,
+            config_version=1,  # explicitly points at the SOURCE version, not latest
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset.id,
+            score=score,
+        )
+
+        # ── call the endpoint ─────────────────────────────────────────────────
+        with patch(
+            "app.services.evaluations.prompt_improvement.Anthropic",
+            return_value=_make_anthropic_mock(),
+        ):
+            resp = client.post(
+                IMPROVE_URL.format(evaluation_id=run.id),
+                json={"metric": COSINE_SCORE_NAME, "threshold": 0.7},
+                headers=headers,
+            )
+
+        assert resp.status_code == 201, resp.text
+        body = resp.json()["data"]
+        # New version is latest+1 = 3
+        assert body["version"] == 3
+
+        # ── fetch new version from DB and assert it derived from source (v1) ─
+        from sqlmodel import select as sql_select
+
+        stmt = sql_select(ConfigVersion).where(ConfigVersion.id == body["id"])
+        new_version = db.exec(stmt).one()
+        new_params = new_version.config_blob["completion"]["params"]
+
+        # The LLM's improved instructions must have been applied
+        assert new_params["instructions"] == _IMPROVED_INSTRUCTIONS
+
+        # top_p must NOT be present in the new version: it was absent in source (v1)
+        # and must not have leaked in from latest (v2).
+        # On the old buggy code, create_or_raise used the latest blob as the merge
+        # base, so top_p=0.9 from v2 would have leaked into v3.
+        assert new_params.get("top_p") is None, (
+            f"top_p={new_params.get('top_p')!r} leaked from latest (v2) into the "
+            "improved version — new version derived from latest instead of source (v1)"
+        )
