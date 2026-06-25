@@ -36,8 +36,13 @@ the Functional Requirements table. It is not design prose; it is testable spec.
    can't write an acceptance criterion for a requirement, the requirement is too
    vague — sharpen it.
 
-5. **Output** as a markdown file. Default name `<feature>-srd.md` in the location
-   the user indicates (repo root or a `docs/` folder). Confirm the path if unclear.
+5. **Output** as `features/<feature-slug>/SRD.md`, where `<feature-slug>` is a
+   short kebab-case slug for the feature (e.g. `features/llm-judge-correctness/SRD.md`).
+   Create the `features/<feature-slug>/` directory if it doesn't exist. Every feature
+   keeps its SRD and PRD together in this one folder — if a `PRD.md` already exists
+   for the same feature (written by the `start-prd` skill), write the `SRD.md`
+   alongside it in the same folder rather than creating a new location. Reuse the
+   existing slug exactly; do not invent a parallel folder.
 
 ## Rules
 
