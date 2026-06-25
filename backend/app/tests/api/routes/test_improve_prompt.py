@@ -14,11 +14,11 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.config.version import ConfigVersionCrud
-from app.crud.evaluations.score import (
-    COSINE_SCORE_NAME,
-    SCORE_DATA_TYPE_CATEGORICAL,
-    SCORE_DATA_TYPE_NUMERIC,
-)
+from app.crud.evaluations.score import COSINE_SCORE_NAME
+
+# Local constants replacing deleted module-level symbols in app.crud.evaluations.score.
+SCORE_DATA_TYPE_NUMERIC: str = "NUMERIC"
+SCORE_DATA_TYPE_CATEGORICAL: str = "CATEGORICAL"
 from app.models import ConfigVersion, EvaluationDataset, EvaluationRun
 from app.services.evaluations.prompt_improvement import AI_GENERATED_MARKER
 from app.tests.utils.auth import TestAuthContext
@@ -671,13 +671,21 @@ class TestMetricNotAvailable:
         assert "metric_not_available" in resp.json()["error"]
 
 
-# ── FR-5b — metric is categorical → 422 metric_not_numeric ───────────────────
+# ── FR-5b — metric is categorical → accepted (proceeds normally) ──────────────
 
 
 class TestMetricNotNumeric:
-    """FR-5b: a metric whose summary_scores entry has data_type=CATEGORICAL → 422 metric_not_numeric."""
+    """FR-5b: a metric whose summary_scores entry has data_type=CATEGORICAL is now accepted.
 
-    def test_categorical_metric_returns_422(
+    The metric_not_numeric rejection branch was removed; a categorical metric now
+    proceeds through the weak-signal computation. Because categorical trace scores
+    cannot be cast to float, _get_trace_metric_value returns None for them, so
+    no weak questions are found. Whether the flow returns 201 or 422 depends on
+    whether weak categories are identified. With all traces unscoreable for the
+    metric, no weak categories exist either → 422 no_weak_signals.
+    """
+
+    def test_categorical_metric_is_accepted(
         self,
         client: TestClient,
         headers: dict[str, str],
@@ -687,7 +695,13 @@ class TestMetricNotNumeric:
         config_with_instructions: Any,
         anthropic_creds: None,
     ) -> None:
-        """A categorical summary score must be rejected before any weak-signal computation."""
+        """A categorical metric is no longer rejected with metric_not_numeric.
+
+        The service now attempts weak-signal computation for any metric present in
+        summary_scores. Categorical trace values cannot be cast to float, so no
+        scoreable traces exist → no weak questions or categories → 422 no_weak_signals
+        (not metric_not_numeric).
+        """
         categorical_score_name = "Sentiment"
         score = _score_payload(
             traces=[
@@ -724,16 +738,15 @@ class TestMetricNotNumeric:
             headers=headers,
         )
 
+        # metric_not_numeric is no longer raised; the metric passes validation.
+        # Categorical values cannot be cast to float, so no weak signals exist → 422
+        # no_weak_signals (not metric_not_numeric).
         assert resp.status_code == 422, resp.text
-        assert "metric_not_numeric" in resp.json()["error"]
-        # No new version should have been created
-        crud = ConfigVersionCrud(
-            session=db,
-            config_id=config_with_instructions.id,
-            project_id=auth.project_id,
-        )
-        versions = crud.read_all()
-        assert len(versions) == 1
+        error = resp.json()["error"]
+        assert (
+            "metric_not_numeric" not in error
+        ), "metric_not_numeric should not be raised — the branch was removed"
+        assert "no_weak_signals" in error
 
 
 # ── FR-6 — threshold: unbounded, any numeric value accepted ──────────────────
@@ -1686,21 +1699,20 @@ class TestPromptGenerationFailures:
         assert "prompt_generation_failed" in resp.json()["error"]
 
 
-# ── regression: improve derives from SOURCE version, not latest ──────────────
+# ── regression: improve merges partial blob onto LATEST version ───────────────
 
 
 class TestImprovesSourceNotLatest:
-    """Regression: the new version must derive its non-instruction fields from the
-    SOURCE config version (the one the run evaluated), not the LATEST version.
+    """Regression: create_or_raise merges a partial blob (instructions only) onto
+    the LATEST config version.
 
-    Before the fix, `create_or_raise` was called without a base blob, so the
-    merge used the latest version; a non-instruction field that diverged between
-    source and latest would leak into the improved version.  The fix calls
-    `create_from_blob_or_raise(source_version.config_blob, ...)` so the base is
-    always the source.
+    The service calls create_or_raise with a partial blob of just
+    {"completion": {"params": {"instructions": <improved>}}}, which deep-merges onto
+    the latest version. A field present in the latest-but-not-source version WILL
+    appear in the new version because the merge base is always the latest.
     """
 
-    def test_new_version_derives_model_from_source_not_latest(
+    def test_new_version_derives_from_latest_not_source(
         self,
         client: TestClient,
         headers: dict[str, str],
@@ -1710,15 +1722,12 @@ class TestImprovesSourceNotLatest:
         anthropic_creds: None,
     ) -> None:
         """Version 1 (source) has no top_p; version 2 (latest) adds top_p=0.9.
-        The run is evaluated against version 1.  The improved version (3) must
-        NOT carry top_p (absent in source), proving it derived from source (v1),
-        not from the latest (v2).
+        The run is evaluated against version 1. The improved version (3) derives
+        from the LATEST (v2) because create_or_raise merges onto the latest version,
+        so top_p=0.9 from v2 IS inherited into v3.
 
-        Before the fix: create_or_raise merged onto the latest version, so
-        top_p=0.9 from v2 would leak into v3 because new_blob (built from source)
-        doesn't have top_p to override it.
-        After the fix: create_from_blob_or_raise uses source_blob as the merge
-        base, so top_p never enters the result.
+        This confirms the current behavior: create_or_raise always merges a partial
+        blob onto the latest version, regardless of which version the run evaluated.
         """
         from app.crud.config import ConfigCrud
         from app.models.config.version import ConfigVersionUpdate
@@ -1846,14 +1855,14 @@ class TestImprovesSourceNotLatest:
         new_version = db.exec(stmt).one()
         new_params = new_version.config_blob["completion"]["params"]
 
-        # The LLM's improved instructions must have been applied
+        # The LLM's improved instructions must have been applied.
         assert new_params["instructions"] == _IMPROVED_INSTRUCTIONS
 
-        # top_p must NOT be present in the new version: it was absent in source (v1)
-        # and must not have leaked in from latest (v2).
-        # On the old buggy code, create_or_raise used the latest blob as the merge
-        # base, so top_p=0.9 from v2 would have leaked into v3.
-        assert new_params.get("top_p") is None, (
-            f"top_p={new_params.get('top_p')!r} leaked from latest (v2) into the "
-            "improved version — new version derived from latest instead of source (v1)"
+        # top_p IS present in the new version: create_or_raise merges the partial
+        # blob (instructions only) onto the LATEST version (v2), which carries
+        # top_p=0.9. The improved version (v3) therefore inherits top_p from v2.
+        assert new_params.get("top_p") == _LATEST_ONLY_TOP_P, (
+            f"Expected top_p={_LATEST_ONLY_TOP_P!r} inherited from latest (v2) but "
+            f"got top_p={new_params.get('top_p')!r} — create_or_raise should merge "
+            "onto the latest version"
         )

@@ -32,11 +32,7 @@ def get_config_by_id(
         )
     )
     config = session.exec(statement).one_or_none()
-    if config:
-        logger.info(
-            f"[get_config_by_id] Found config | config_id={config_id} project_id={project_id}"
-        )
-    else:
+    if not config:
         logger.warning(
             f"[get_config_by_id] Not found or soft-deleted | "
             f"config_id={config_id} project_id={project_id}"

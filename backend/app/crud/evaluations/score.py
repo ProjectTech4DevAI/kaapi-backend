@@ -14,9 +14,6 @@ DEFAULT_CATEGORY: str = "Other"
 # import cycles.
 COSINE_SCORE_NAME: str = "Cosine Similarity"
 
-# Langfuse data_type literals for scores.
-SCORE_DATA_TYPE_NUMERIC: str = "NUMERIC"
-SCORE_DATA_TYPE_CATEGORICAL: str = "CATEGORICAL"
 COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )

@@ -5,7 +5,6 @@ questions and underperforming categories) and uses Claude to draft an improved
 prompt, persisting the result as a new config_version.
 """
 
-import copy
 import json
 import logging
 from typing import Any
@@ -18,8 +17,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.crud.config.config import get_config_by_id
 from app.crud.config.version import ConfigVersionCrud
-from app.crud.evaluations.core import get_evaluation_run_by_id_for_improvement
-from app.crud.evaluations.score import SCORE_DATA_TYPE_NUMERIC
+from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.models.config.config import ConfigTag
 from app.models.config.version import (
     ConfigVersion,
@@ -49,8 +47,8 @@ AI_GENERATED_MARKER = "[AI Generated]"
 # ── internal data shapes ──────────────────────────────────────────────────────
 
 
-class _WeakQuestion:
-    """A question group consistently scoring below threshold."""
+class _LowScoringQuestion:
+    """A question group that consistently scores below threshold across repetitions."""
 
     __slots__ = (
         "question",
@@ -76,8 +74,8 @@ class _WeakQuestion:
         self.mean_score = mean_score
 
 
-class _WeakCategory:
-    """A question category whose metric average is below threshold."""
+class _LowScoringCategory:
+    """A question category whose mean metric score falls below threshold."""
 
     __slots__ = ("category", "avg_score")
 
@@ -107,7 +105,6 @@ def improve_prompt(
         f"metric={metric} threshold={threshold} project_id={project_id}"
     )
 
-    # Step 1-2: load & validate the run
     run = _load_completed_run(
         session=session,
         evaluation_id=evaluation_id,
@@ -115,24 +112,20 @@ def improve_prompt(
         project_id=project_id,
     )
 
-    # Step 3: resolve the source config version (must belong to caller's project)
     source_version = _resolve_source_version(
         session=session,
         run=run,
         project_id=project_id,
     )
 
-    # Step 4: verify the chosen metric is present in the run and is numeric
     _verify_metric(run=run, metric=metric)
 
-    # Step 5: select weak questions
     weak_questions, questions_truncated = _select_weak_questions(
         run=run,
         metric=metric,
         threshold=threshold,
     )
 
-    # Step 6: select underperforming categories
     weak_categories, categories_truncated = _select_weak_categories(
         run=run,
         metric=metric,
@@ -141,7 +134,6 @@ def improve_prompt(
 
     truncated = questions_truncated or categories_truncated
 
-    # Step 7: guard — nothing to improve
     if not weak_questions and not weak_categories:
         raise HTTPException(
             status_code=422,
@@ -154,7 +146,6 @@ def improve_prompt(
         f"truncated={truncated}"
     )
 
-    # Step 8: draft the improved prompt via LLM
     current_instructions = _extract_instructions(source_version)
     improved_instructions, rationale = _draft_improved_prompt(
         current_instructions=current_instructions,
@@ -164,14 +155,7 @@ def improve_prompt(
         threshold=threshold,
     )
 
-    # Step 9: compose new config_blob (deep-copy; replace only instructions)
-    new_blob = _compose_new_blob(
-        source_blob=source_version.config_blob,
-        new_instructions=improved_instructions,
-    )
-
-    # Step 10: persist the new version via the standard version-creation path.
-    # Provenance is embedded in commit_message (no dedicated columns) so that the
+    # Provenance is embedded in commit_message (no dedicated columns) so the
     # evaluation run id, metric, and threshold remain auditable without a schema change.
     raw_commit_message = (
         f"{AI_GENERATED_MARKER} {rationale} "
@@ -185,15 +169,13 @@ def improve_prompt(
         config_id=run.config_id,
         project_id=project_id,
     )
-    # Branch from the source version's blob so all non-instruction fields are
-    # preserved byte-for-byte from the version the run actually evaluated,
-    # regardless of whether newer versions exist with diverging settings.
-    new_version = version_crud.create_from_blob_or_raise(
-        source_version.config_blob,
+    new_version = version_crud.create_or_raise(
         ConfigVersionUpdate(
-            config_blob=new_blob,
+            config_blob={
+                "completion": {"params": {"instructions": improved_instructions}}
+            },
             commit_message=commit_message,
-        ),
+        )
     )
 
     logger.info(
@@ -214,7 +196,7 @@ def _load_completed_run(
     organization_id: int,
     project_id: int,
 ) -> EvaluationRun:
-    run = get_evaluation_run_by_id_for_improvement(
+    run = get_evaluation_run_by_id(
         session=session,
         evaluation_id=evaluation_id,
         organization_id=organization_id,
@@ -280,36 +262,19 @@ def _resolve_summary_score(
     """Find and return the summary_scores entry whose name matches `metric` (case-insensitive).
 
     Raises 422 metric_not_available when no match is found.
-    Raises 422 metric_not_numeric when the matched score is not NUMERIC (Phase 2 deferred).
     """
     score = run.score or {}
     summary_scores: list[dict[str, Any]] = score.get("summary_scores") or []
 
     needle = metric.strip().lower()
-    matched: dict[str, Any] | None = None
     for entry in summary_scores:
-        name = (entry.get("name") or "").strip().lower()
-        if name == needle:
-            matched = entry
-            break
+        if (entry.get("name") or "").strip().lower() == needle:
+            return entry
 
-    if matched is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"metric_not_available: no summary score named '{metric}' is recorded in this run",
-        )
-
-    data_type = matched.get("data_type") or ""
-    if data_type != SCORE_DATA_TYPE_NUMERIC:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"metric_not_numeric: '{metric}' has data_type '{data_type}'; "
-                "only NUMERIC scores are supported for prompt improvement (categorical support is Phase 2)"
-            ),
-        )
-
-    return matched
+    raise HTTPException(
+        status_code=422,
+        detail=f"metric_not_available: no summary score named '{metric}' is recorded in this run",
+    )
 
 
 def _verify_metric(
@@ -317,8 +282,7 @@ def _verify_metric(
     run: EvaluationRun,
     metric: str,
 ) -> None:
-    """Raise 422 when the chosen metric is absent or non-numeric in this run."""
-    # Side-effect-free validation; the resolved entry is discarded here.
+    """Raise 422 when the chosen metric is absent in this run."""
     _resolve_summary_score(run, metric)
 
 
@@ -358,10 +322,10 @@ def _select_weak_questions(
     run: EvaluationRun,
     metric: str,
     threshold: float,
-) -> tuple[list[_WeakQuestion], bool]:
-    """Return (weak_questions, truncated).
+) -> tuple[list[_LowScoringQuestion], bool]:
+    """Return (low_scoring_questions, truncated).
 
-    Groups traces by question_id; a group is 'weak' when the fraction of
+    Groups traces by question_id; a group qualifies when the fraction of
     repetitions scoring below threshold is >= MIN_CONSISTENCY_RATIO.
     Groups with no scoreable repetitions for the chosen metric are skipped.
     Result is sorted by mean score ascending (worst first), then capped.
@@ -369,16 +333,16 @@ def _select_weak_questions(
     score = run.score or {}
     traces: list[dict[str, Any]] = score.get("traces") or []
 
-    # Group by question_id (None question_ids each form a singleton group keyed
-    # by trace_id, since they have no question-level identity)
+    # question_id-less traces each form a singleton group keyed by trace_id
+    # because they have no question-level identity to aggregate on.
     groups: dict[Any, list[dict[str, Any]]] = {}
     for trace in traces:
-        key = trace.get("question_id") or trace.get("trace_id")
-        groups.setdefault(key, []).append(trace)
+        group_key = trace.get("question_id") or trace.get("trace_id")
+        groups.setdefault(group_key, []).append(trace)
 
-    candidates: list[tuple[float, _WeakQuestion]] = []
+    candidates: list[tuple[float, _LowScoringQuestion]] = []
 
-    for _key, group in groups.items():
+    for group in groups.values():
         scoreable = [
             (t, v)
             for t in group
@@ -393,30 +357,28 @@ def _select_weak_questions(
         if ratio < settings.PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO:
             continue
 
-        # Use the first trace in the group to represent question text & answer.
-        # All repetitions share the same question and ground_truth.
-        rep = group[0]
+        # All repetitions share the same question text and ground_truth;
+        # use the first trace to represent the group.
+        first_trace = group[0]
         mean_score = sum(v for _, v in scoreable) / len(scoreable)
         candidates.append(
             (
                 mean_score,
-                _WeakQuestion(
-                    question=rep.get("question") or "",
-                    llm_answer=rep.get("llm_answer") or "",
-                    ground_truth_answer=rep.get("ground_truth_answer") or "",
-                    category=rep.get("category") or "",
+                _LowScoringQuestion(
+                    question=first_trace.get("question") or "",
+                    llm_answer=first_trace.get("llm_answer") or "",
+                    ground_truth_answer=first_trace.get("ground_truth_answer") or "",
+                    category=first_trace.get("category") or "",
                     mean_score=mean_score,
                 ),
             )
         )
 
-    # Sort worst-first (lowest mean score)
     candidates.sort(key=lambda t: t[0])
 
     cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS
     truncated = len(candidates) > cap
-    weak = [wq for _, wq in candidates[:cap]]
-    return weak, truncated
+    return [item for _, item in candidates[:cap]], truncated
 
 
 def _select_weak_categories(
@@ -424,8 +386,8 @@ def _select_weak_categories(
     run: EvaluationRun,
     metric: str,
     threshold: float,
-) -> tuple[list[_WeakCategory], bool]:
-    """Return (weak_categories, truncated).
+) -> tuple[list[_LowScoringCategory], bool]:
+    """Return (low_scoring_categories, truncated).
 
     Computed generically from traces so it works for any score name — not from
     category_metrics, which only carries avg_cosine/avg_correctness for the two
@@ -437,7 +399,6 @@ def _select_weak_categories(
     score = run.score or {}
     traces: list[dict[str, Any]] = score.get("traces") or []
 
-    # Accumulate per-category numeric values for the chosen metric.
     category_values: dict[str, list[float]] = {}
     for trace in traces:
         val = _get_trace_metric_value(trace, metric)
@@ -446,13 +407,13 @@ def _select_weak_categories(
         category = (trace.get("category") or "").strip() or "Other"
         category_values.setdefault(category, []).append(val)
 
-    candidates: list[_WeakCategory] = []
+    candidates: list[_LowScoringCategory] = []
     for category, values in category_values.items():
         avg = sum(values) / len(values)
         if avg < threshold:
-            candidates.append(_WeakCategory(category=category, avg_score=avg))
+            candidates.append(_LowScoringCategory(category=category, avg_score=avg))
 
-    candidates.sort(key=lambda c: c.avg_score)
+    candidates.sort(key=lambda cat: cat.avg_score)
 
     cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_CATEGORIES
     truncated = len(candidates) > cap
@@ -465,23 +426,23 @@ def _select_weak_categories(
 def _build_improvement_prompt(
     *,
     current_instructions: str,
-    weak_questions: list[_WeakQuestion],
-    weak_categories: list[_WeakCategory],
+    weak_questions: list[_LowScoringQuestion],
+    weak_categories: list[_LowScoringCategory],
     metric: str,
     threshold: float,
 ) -> str:
     """Build the user message text sent to Claude."""
-    wq_lines = "\n".join(
-        f"  {i+1}. Question: {wq.question}\n"
-        f"     LLM answer: {wq.llm_answer}\n"
-        f"     Ground truth: {wq.ground_truth_answer}\n"
-        f"     Category: {wq.category} | Mean {metric}: {wq.mean_score:.3f}"
-        for i, wq in enumerate(weak_questions)
+    question_lines = "\n".join(
+        f"  {i+1}. Question: {item.question}\n"
+        f"     LLM answer: {item.llm_answer}\n"
+        f"     Ground truth: {item.ground_truth_answer}\n"
+        f"     Category: {item.category} | Mean {metric}: {item.mean_score:.3f}"
+        for i, item in enumerate(weak_questions)
     )
 
-    wc_lines = "\n".join(
-        f"  - {wc.category} (avg {metric}: {wc.avg_score:.3f})"
-        for wc in weak_categories
+    category_lines = "\n".join(
+        f"  - {cat.category} (avg {metric}: {cat.avg_score:.3f})"
+        for cat in weak_categories
     )
 
     return (
@@ -490,9 +451,9 @@ def _build_improvement_prompt(
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         f"## Evaluation metric\n{metric} (threshold: {threshold})\n\n"
         f"## Questions the assistant answered poorly (consistently below threshold)\n"
-        f"{wq_lines if wq_lines else '  (none)'}\n\n"
+        f"{question_lines if question_lines else '  (none)'}\n\n"
         f"## Underperforming question categories (average score below threshold)\n"
-        f"{wc_lines if wc_lines else '  (none)'}\n\n"
+        f"{category_lines if category_lines else '  (none)'}\n\n"
         "## Instructions\n"
         "1. Rewrite the system prompt to address the weaknesses above.\n"
         "2. Do NOT change the model, knowledge base, or any other configuration — only the prompt text.\n"
@@ -506,8 +467,8 @@ def _build_improvement_prompt(
 def _draft_improved_prompt(
     *,
     current_instructions: str,
-    weak_questions: list[_WeakQuestion],
-    weak_categories: list[_WeakCategory],
+    weak_questions: list[_LowScoringQuestion],
+    weak_categories: list[_LowScoringCategory],
     metric: str,
     threshold: float,
 ) -> tuple[str, str]:
@@ -690,20 +651,4 @@ def _parse_llm_response(raw_text: str) -> tuple[str, str]:
 def _extract_instructions(version: ConfigVersion) -> str:
     """Read completion.params.instructions from the source config_blob."""
     blob: dict[str, Any] = version.config_blob or {}
-    instructions = (
-        blob.get("completion", {}).get("params", {}).get("instructions") or ""
-    )
-    return instructions
-
-
-def _compose_new_blob(
-    *,
-    source_blob: dict[str, Any],
-    new_instructions: str,
-) -> dict[str, Any]:
-    """Deep-copy source_blob and replace only completion.params.instructions."""
-    new_blob = copy.deepcopy(source_blob)
-    completion = new_blob.setdefault("completion", {})
-    params = completion.setdefault("params", {})
-    params["instructions"] = new_instructions
-    return new_blob
+    return blob.get("completion", {}).get("params", {}).get("instructions") or ""
