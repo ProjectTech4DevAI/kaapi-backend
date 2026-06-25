@@ -253,7 +253,7 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     back through `app.crud` package init.
     """
     try:
-        from app.celery.tasks.notifications import send_eval_completion_notification
+        from app.celery.tasks.job_execution import send_eval_completion_notification
 
         send_eval_completion_notification.delay(eval_run.id)
         logger.info(
