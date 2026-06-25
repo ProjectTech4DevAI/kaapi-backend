@@ -16,7 +16,7 @@ The PRD is a **product spec**. It answers one question: *why are we doing this a
 
 2. Draft the PRD using the template below, keeping every section strictly product-level. Before finalizing, check with the user that the **Goals**, **Non-Goals**, and **Scope** match their expectations — these three are where misalignment hides.
 
-3. Write the finished PRD to `docs/prd-<feature>.md`, where `<feature>` is a short kebab-case slug for the feature (e.g. `docs/prd-account-balances.md`). Create the `docs/` directory if it doesn't exist. Giving each PRD its own file keeps prior PRDs preserved rather than overwritten. This file is the deliverable — it can be referenced later when building the SRD and Engineering Plan.
+3. Write the finished PRD to `features/<feature-slug>/PRD.md`, where `<feature-slug>` is a short kebab-case slug for the feature (e.g. `features/account-balances/PRD.md`). Create the `features/<feature-slug>/` directory if it doesn't exist. Every feature keeps its PRD and SRD together in this one folder — if an `SRD.md` already exists for the same feature (written by the `srd-creator` skill), write the `PRD.md` alongside it in the same folder and reuse that slug exactly rather than creating a parallel folder. Giving each feature its own folder keeps prior PRDs preserved rather than overwritten. This file is the deliverable — it can be referenced later when building the SRD and Engineering Plan.
 
 <prd-template>
 
