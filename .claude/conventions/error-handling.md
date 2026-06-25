@@ -1,11 +1,6 @@
----
-name: exception-handling-error-message
-description: Apply Kaapi's standardized error-handling pattern when adding or refactoring exception handling in code that calls external SDKs or makes raw HTTP requests. Use when the user asks to "add error handling", "improve error messages", "log and bubble errors", apply "the same pattern" across providers/CRUD layers, or asks why an error wasn't logged. Produces source-tagged ([KAAPI] vs [<PROVIDER>]) descriptive errors with consistent logging.
----
+# Error-handling & humane-logging conventions
 
-# Exception handling & error-message skill
-
-Apply this pattern when adding or refactoring error handling in:
+Kaapi's standardized error-handling pattern. Apply when adding or refactoring error handling in:
 - LLM/AI provider wrappers (`app/services/llm/providers/*.py`)
 - CRUD layers that call external SDKs (`app/crud/**/*.py`)
 - Any code that calls an external SDK or makes raw HTTP requests
@@ -195,7 +190,7 @@ Whenever the SDK exposes a per-request identifier (OpenAI/Anthropic's `request_i
 - ❌ Don't log every failure as `.warning` "because the operation failed." Pick level by **fault** (see Logging conventions table). Ops alerts fire on `.error` rate; everything-as-warning means real outages get buried.
 - ❌ Don't log every failure as `.error` either. `.error` on every 429 / 401 / 400 generates pager noise — those are the caller's fault.
 
-## Workflow when applying this skill
+## Workflow when applying this pattern
 
 1. **Identify the provider's exception shape** — read the SDK's error module (e.g. `<provider>/errors/__init__.py` or `<provider>/_exceptions.py`) to enumerate available classes and what status codes they map to.
 2. **Identify the Kaapi-side error sites** — every existing `return None, "<string>"` and every `raise <Error>(...)` without a preceding `logger.*` call.

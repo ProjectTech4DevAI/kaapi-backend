@@ -90,6 +90,12 @@ General development docs: [development.md](./development.md).
 
 This includes using Docker Compose, custom local domains, `.env` configurations, etc.
 
+## AI-assisted development
+
+Features are designed and built with Claude Code using a skill-based workflow
+(PRD → SRD → build → review), backed by per-layer code conventions and a
+product domain map. See [.claude/README.md](./.claude/README.md) for how it works.
+
 ## Release Notes
 
 Check the file [release-notes.md](./release-notes.md).

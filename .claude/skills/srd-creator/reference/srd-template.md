@@ -36,6 +36,19 @@ if known.>
 - **Pricing:** <billing notes if a paid external API is involved>
 - **Starting provider/model:** <e.g. Google Gemini 2.5 Pro, gpt-4o>
 
+## Impact / Blast Radius
+
+Product surfaces this feature affects, traced from `docs/domain-map.md` (follow the primary
+surface's `Consumed by` edges 1-hop, then 2-hop). Every impacted surface this feature touches but
+does **not** change must carry a confirmed scope status — no TBDs.
+
+| Surface | Hop | Why affected | Status | Notes |
+|---------|-----|--------------|--------|-------|
+| <surface> | 1 | <direct dependency / shared table / etc.> | in scope / deferred / out of scope | confirmed {date} |
+
+- For every domain-map surface **not** listed, state explicitly why it's unaffected.
+- Record any **drift** found while reconciling `docs/domain-map.md` against live code (map said X, code does Y).
+
 ## Detailed Design (Execution Flow)
 
 <!-- Give each distinct flow its own numbered subsection. -->

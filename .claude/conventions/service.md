@@ -70,7 +70,7 @@ Delegation to `app.core.security` is the pattern — services orchestrate; primi
 - **Timeout** — every `httpx`/`requests` call has an explicit timeout. The default is too long.
 - **Retry policy** — idempotent GETs can retry with backoff. Mutations should retry only if you're certain the API is idempotent or you have an idempotency key.
 - **Error mapping** — `httpx.HTTPStatusError` → a domain exception or `HTTPException` with a sensible code (often 502 for upstream failures, NOT 500).
-- **Mock at this boundary in tests** — `monkeypatch` the HTTP client, not the DB. (See `test-writer` agent.)
+- **Mock at this boundary in tests** — `monkeypatch` the HTTP client, not the DB. (See `test.md`.)
 
 ## Calling CRUD
 

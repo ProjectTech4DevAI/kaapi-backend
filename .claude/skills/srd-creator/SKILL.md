@@ -1,6 +1,6 @@
 ---
 name: srd-creator
-description: Create a Software Requirements Document (SRD) for a Kaapi feature. Use when the user wants to write, draft, scaffold, or plan an SRD / spec / requirements doc for a new feature or capability (e.g. an evaluation pipeline, a new endpoint set, a provider integration). Produces a structured markdown SRD from the standard Kaapi template.
+description: Create a Software Requirements Document (SRD) for a Kaapi feature. Use when the user wants to write, draft, scaffold, or plan an SRD / spec / requirements doc for a new feature or capability (e.g. an evaluation pipeline, a new endpoint set, a provider integration). Produces a structured markdown SRD — including blast-radius impact analysis against the domain map — from the standard Kaapi template.
 ---
 
 # SRD Creator
@@ -28,15 +28,23 @@ the Functional Requirements table. It is not design prose; it is testable spec.
    endpoints, and the data model. If the user has not supplied these, ask — do not
    invent endpoints or schema. Missing info is the #1 cause of a useless SRD.
 
-3. **Fill the template** section by section. Drop optional sections that don't
+3. **Do blast-radius / impact analysis.** Read `docs/domain-map.md`. Name the primary product
+   surface(s) this feature changes (in domain-map vocabulary), then follow their `Consumed by`
+   edges **1-hop, then 2-hop** to build the impact set. Reconcile the map against live
+   `backend/app/{models,services,api/routes}` and note any drift. **For every impacted surface the
+   feature doesn't explicitly address, STOP and ask the user** whether it's *in scope* /
+   *deferred* / *out of scope* — don't silently include or exclude. The confirmed result fills the
+   SRD's **Impact / Blast Radius** section.
+
+4. **Fill the template** section by section. Drop optional sections that don't
    apply (e.g. Resources, Configuration) rather than leaving them empty.
 
-4. **Write the Functional Requirements table** as the testable core. Every row =
+5. **Write the Functional Requirements table** as the testable core. Every row =
    one user-facing behavior + a concrete acceptance criterion + a Status. If you
    can't write an acceptance criterion for a requirement, the requirement is too
    vague — sharpen it.
 
-5. **Output** as `features/<feature-slug>/SRD.md`, where `<feature-slug>` is a
+6. **Output** as `features/<feature-slug>/SRD.md`, where `<feature-slug>` is a
    short kebab-case slug for the feature (e.g. `features/llm-judge-correctness/SRD.md`).
    Create the `features/<feature-slug>/` directory if it doesn't exist. Every feature
    keeps its SRD and PRD together in this one folder — if a `PRD.md` already exists

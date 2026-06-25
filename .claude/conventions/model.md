@@ -101,7 +101,7 @@ class FoosPublic(SQLModel):
 
 ## What you DO NOT do
 
-- Don't write the migration here — that's `migration-writer`. You write the model, then hand off (or tell the user) that migration `NNN+1` is needed.
+- Don't write the migration here — that's the migration step (`migration.md`). You write the model, then note that migration `NNN+1` is needed.
 - Don't import from `fastapi`, `app.crud`, or `app.services` in a model file. Models are leaf nodes.
 - Don't use `setattr` on instances of these models. Use `model_copy(update={...})` or `sqlmodel_update(...)` (see `app/crud/user.py:update_user` for the pattern).
 - Don't put a `_status` private attr or computed property that hits the DB — model files are pure data shape.
