@@ -1,0 +1,641 @@
+"""AI-assisted prompt improvement service.
+
+Analyses a completed evaluation run's weak signals (consistently low-scoring
+questions and underperforming categories) and uses Claude to draft an improved
+prompt, persisting the result as a new config_version.
+"""
+
+import copy
+import json
+import logging
+from typing import Any
+
+from anthropic import Anthropic
+from fastapi import HTTPException
+from sqlmodel import Session, and_, select
+
+from app.core.config import settings
+from app.crud.config.version import ConfigVersionCrud
+from app.crud.credentials import get_provider_credential
+from app.crud.evaluations.score import SCORE_DATA_TYPE_NUMERIC
+from app.models.config.config import Config, ConfigTag
+from app.models.config.version import (
+    ConfigVersion,
+    ConfigVersionPublic,
+    ConfigVersionUpdate,
+)
+from app.models.evaluation import EvaluationRun
+
+logger = logging.getLogger(__name__)
+
+# ── constants ─────────────────────────────────────────────────────────────────
+
+ANTHROPIC_PROVIDER = "anthropic"
+
+# Maximum tokens the LLM should produce for the improvement response.
+_LLM_MAX_TOKENS = 4096
+
+# JSON keys expected in the LLM's structured response.
+_LLM_KEY_INSTRUCTIONS = "improved_instructions"
+_LLM_KEY_RATIONALE = "rationale"
+
+COMMIT_MESSAGE_MAX_LENGTH = 512
+
+# Prefix that marks a commit_message as AI-generated; used as a search token for
+# audit queries and by the test suite to assert provenance.
+AI_GENERATED_MARKER = "[AI Generated]"
+
+
+# ── internal data shapes ──────────────────────────────────────────────────────
+
+
+class _WeakQuestion:
+    """A question group consistently scoring below threshold."""
+
+    __slots__ = (
+        "question",
+        "llm_answer",
+        "ground_truth_answer",
+        "category",
+        "mean_score",
+    )
+
+    def __init__(
+        self,
+        *,
+        question: str,
+        llm_answer: str,
+        ground_truth_answer: str,
+        category: str,
+        mean_score: float,
+    ) -> None:
+        self.question = question
+        self.llm_answer = llm_answer
+        self.ground_truth_answer = ground_truth_answer
+        self.category = category
+        self.mean_score = mean_score
+
+
+class _WeakCategory:
+    """A question category whose metric average is below threshold."""
+
+    __slots__ = ("category", "avg_score")
+
+    def __init__(self, *, category: str, avg_score: float) -> None:
+        self.category = category
+        self.avg_score = avg_score
+
+
+# ── public entry point ────────────────────────────────────────────────────────
+
+
+def improve_prompt(
+    *,
+    session: Session,
+    evaluation_id: int,
+    organization_id: int,
+    project_id: int,
+    metric: str,
+    threshold: float,
+) -> ConfigVersionPublic:
+    """Run the full prompt-improvement flow synchronously and return the new version.
+
+    Raises HTTPException for all domain errors so the route stays thin.
+    """
+    logger.info(
+        f"[improve_prompt] Starting | evaluation_id={evaluation_id} "
+        f"metric={metric} threshold={threshold} project_id={project_id}"
+    )
+
+    # Step 1-2: load & validate the run
+    run = _load_completed_run(
+        session=session,
+        evaluation_id=evaluation_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+
+    # Step 3: resolve the source config version (must belong to caller's project)
+    source_version = _resolve_source_version(
+        session=session,
+        run=run,
+        project_id=project_id,
+    )
+
+    # Step 4: verify the chosen metric is present in the run and is numeric
+    _verify_metric(run=run, metric=metric)
+
+    # Step 5: select weak questions
+    weak_questions, questions_truncated = _select_weak_questions(
+        run=run,
+        metric=metric,
+        threshold=threshold,
+    )
+
+    # Step 6: select underperforming categories
+    weak_categories, categories_truncated = _select_weak_categories(
+        run=run,
+        metric=metric,
+        threshold=threshold,
+    )
+
+    truncated = questions_truncated or categories_truncated
+
+    # Step 7: guard — nothing to improve
+    if not weak_questions and not weak_categories:
+        raise HTTPException(
+            status_code=422,
+            detail="no_weak_signals: no consistently-low questions and no underperforming categories found",
+        )
+
+    logger.info(
+        f"[improve_prompt] Weak signals | evaluation_id={evaluation_id} "
+        f"weak_questions={len(weak_questions)} weak_categories={len(weak_categories)} "
+        f"truncated={truncated}"
+    )
+
+    # Step 8: draft the improved prompt via LLM
+    current_instructions = _extract_instructions(source_version)
+    improved_instructions, rationale = _draft_improved_prompt(
+        session=session,
+        organization_id=organization_id,
+        project_id=project_id,
+        current_instructions=current_instructions,
+        weak_questions=weak_questions,
+        weak_categories=weak_categories,
+        metric=metric,
+        threshold=threshold,
+    )
+
+    # Step 9: compose new config_blob (deep-copy; replace only instructions)
+    new_blob = _compose_new_blob(
+        source_blob=source_version.config_blob,
+        new_instructions=improved_instructions,
+    )
+
+    # Step 10: persist the new version via the standard version-creation path.
+    # Provenance is embedded in commit_message (no dedicated columns) so that the
+    # evaluation run id, metric, and threshold remain auditable without a schema change.
+    raw_commit_message = (
+        f"{AI_GENERATED_MARKER} {rationale} "
+        f"(source_evaluation_run_id={evaluation_id}, "
+        f"metric={metric}, threshold={threshold})"
+    )
+    commit_message = raw_commit_message[:COMMIT_MESSAGE_MAX_LENGTH]
+
+    version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=run.config_id,
+        project_id=project_id,
+    )
+    new_version = version_crud.create_or_raise(
+        ConfigVersionUpdate(
+            config_blob=new_blob,
+            commit_message=commit_message,
+        )
+    )
+
+    logger.info(
+        f"[improve_prompt] Done | evaluation_id={evaluation_id} "
+        f"new_version_id={new_version.id} version={new_version.version}"
+    )
+
+    return ConfigVersionPublic.model_validate(new_version)
+
+
+# ── helpers: validation & data loading ───────────────────────────────────────
+
+
+def _load_completed_run(
+    *,
+    session: Session,
+    evaluation_id: int,
+    organization_id: int,
+    project_id: int,
+) -> EvaluationRun:
+    stmt = select(EvaluationRun).where(
+        and_(
+            EvaluationRun.id == evaluation_id,
+            EvaluationRun.organization_id == organization_id,
+            EvaluationRun.project_id == project_id,
+        )
+    )
+    run = session.exec(stmt).one_or_none()
+
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail="evaluation_not_found: no evaluation run with this id in the caller's project",
+        )
+
+    if run.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"evaluation_not_completed: run status is '{run.status}', must be 'completed'",
+        )
+
+    return run
+
+
+def _resolve_source_version(
+    *,
+    session: Session,
+    run: EvaluationRun,
+    project_id: int,
+) -> ConfigVersion:
+    """Load the config + config_version referenced by the run; guard soft-deletes and tenant scope."""
+    # The run's config must belong to the caller's project (config has no org_id).
+    config_stmt = select(Config).where(
+        and_(
+            Config.id == run.config_id,
+            Config.project_id == project_id,
+            Config.deleted_at.is_(None),
+        )
+    )
+    config = session.exec(config_stmt).one_or_none()
+
+    if config is None:
+        raise HTTPException(
+            status_code=409,
+            detail="source_config_unavailable: the run's config is missing, soft-deleted, or outside the caller's project",
+        )
+
+    version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=run.config_id,
+        project_id=project_id,
+        tag=ConfigTag.DEFAULT,
+    )
+    version = version_crud.read_one(version_number=run.config_version)
+
+    if version is None:
+        raise HTTPException(
+            status_code=409,
+            detail="source_config_unavailable: the run's config_version is missing or soft-deleted",
+        )
+
+    return version
+
+
+def _resolve_summary_score(
+    run: EvaluationRun,
+    metric: str,
+) -> dict[str, Any]:
+    """Find and return the summary_scores entry whose name matches `metric` (case-insensitive).
+
+    Raises 422 metric_not_available when no match is found.
+    Raises 422 metric_not_numeric when the matched score is not NUMERIC (Phase 2 deferred).
+    """
+    score = run.score or {}
+    summary_scores: list[dict[str, Any]] = score.get("summary_scores") or []
+
+    needle = metric.strip().lower()
+    matched: dict[str, Any] | None = None
+    for entry in summary_scores:
+        name = (entry.get("name") or "").strip().lower()
+        if name == needle:
+            matched = entry
+            break
+
+    if matched is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"metric_not_available: no summary score named '{metric}' is recorded in this run",
+        )
+
+    data_type = matched.get("data_type") or ""
+    if data_type != SCORE_DATA_TYPE_NUMERIC:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"metric_not_numeric: '{metric}' has data_type '{data_type}'; "
+                "only NUMERIC scores are supported for prompt improvement (categorical support is Phase 2)"
+            ),
+        )
+
+    return matched
+
+
+def _verify_metric(
+    *,
+    run: EvaluationRun,
+    metric: str,
+) -> None:
+    """Raise 422 when the chosen metric is absent or non-numeric in this run."""
+    # Side-effect-free validation; the resolved entry is discarded here.
+    _resolve_summary_score(run, metric)
+
+
+# ── helpers: weak signal selection ───────────────────────────────────────────
+
+
+def _score_name_matches(score_entry: dict[str, Any], metric: str) -> bool:
+    """Return True when a trace-level score entry's name matches `metric` (case-insensitive)."""
+    return (score_entry.get("name") or "").strip().lower() == metric.strip().lower()
+
+
+def _get_trace_metric_value(
+    trace: dict[str, Any],
+    metric: str,
+) -> float | None:
+    """Extract the numeric metric value for one trace from its inline scores list.
+
+    Returns None if the score is absent, unscoreable, or not a number.
+    """
+    for s in trace.get("scores") or []:
+        if _score_name_matches(s, metric):
+            if s.get("unscoreable"):
+                return None
+            val = s.get("value")
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                # Categorical values can't be cast; treat as unscoreable for this metric.
+                return None
+    return None
+
+
+def _select_weak_questions(
+    *,
+    run: EvaluationRun,
+    metric: str,
+    threshold: float,
+) -> tuple[list[_WeakQuestion], bool]:
+    """Return (weak_questions, truncated).
+
+    Groups traces by question_id; a group is 'weak' when the fraction of
+    repetitions scoring below threshold is >= MIN_CONSISTENCY_RATIO.
+    Groups with no scoreable repetitions for the chosen metric are skipped.
+    Result is sorted by mean score ascending (worst first), then capped.
+    """
+    score = run.score or {}
+    traces: list[dict[str, Any]] = score.get("traces") or []
+
+    # Group by question_id (None question_ids each form a singleton group keyed
+    # by trace_id, since they have no question-level identity)
+    groups: dict[Any, list[dict[str, Any]]] = {}
+    for trace in traces:
+        key = trace.get("question_id") or trace.get("trace_id")
+        groups.setdefault(key, []).append(trace)
+
+    candidates: list[tuple[float, _WeakQuestion]] = []
+
+    for _key, group in groups.items():
+        scoreable = [
+            (t, v)
+            for t in group
+            if (v := _get_trace_metric_value(t, metric)) is not None
+        ]
+        if not scoreable:
+            continue
+
+        below = [v for _, v in scoreable if v < threshold]
+        ratio = len(below) / len(scoreable)
+
+        if ratio < settings.PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO:
+            continue
+
+        # Use the first trace in the group to represent question text & answer.
+        # All repetitions share the same question and ground_truth.
+        rep = group[0]
+        mean_score = sum(v for _, v in scoreable) / len(scoreable)
+        candidates.append(
+            (
+                mean_score,
+                _WeakQuestion(
+                    question=rep.get("question") or "",
+                    llm_answer=rep.get("llm_answer") or "",
+                    ground_truth_answer=rep.get("ground_truth_answer") or "",
+                    category=rep.get("category") or "",
+                    mean_score=mean_score,
+                ),
+            )
+        )
+
+    # Sort worst-first (lowest mean score)
+    candidates.sort(key=lambda t: t[0])
+
+    cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS
+    truncated = len(candidates) > cap
+    weak = [wq for _, wq in candidates[:cap]]
+    return weak, truncated
+
+
+def _select_weak_categories(
+    *,
+    run: EvaluationRun,
+    metric: str,
+    threshold: float,
+) -> tuple[list[_WeakCategory], bool]:
+    """Return (weak_categories, truncated).
+
+    Computed generically from traces so it works for any score name — not from
+    category_metrics, which only carries avg_cosine/avg_correctness for the two
+    built-in scores and won't exist for arbitrary Langfuse scorer names.
+
+    Groups scoreable traces by category; keeps categories whose mean score is below
+    threshold; sorts ascending; truncates to cap.
+    """
+    score = run.score or {}
+    traces: list[dict[str, Any]] = score.get("traces") or []
+
+    # Accumulate per-category numeric values for the chosen metric.
+    category_values: dict[str, list[float]] = {}
+    for trace in traces:
+        val = _get_trace_metric_value(trace, metric)
+        if val is None:
+            continue
+        category = (trace.get("category") or "").strip() or "Other"
+        category_values.setdefault(category, []).append(val)
+
+    candidates: list[_WeakCategory] = []
+    for category, values in category_values.items():
+        avg = sum(values) / len(values)
+        if avg < threshold:
+            candidates.append(_WeakCategory(category=category, avg_score=avg))
+
+    candidates.sort(key=lambda c: c.avg_score)
+
+    cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_CATEGORIES
+    truncated = len(candidates) > cap
+    return candidates[:cap], truncated
+
+
+# ── helpers: LLM call ─────────────────────────────────────────────────────────
+
+
+def _build_improvement_prompt(
+    *,
+    current_instructions: str,
+    weak_questions: list[_WeakQuestion],
+    weak_categories: list[_WeakCategory],
+    metric: str,
+    threshold: float,
+) -> str:
+    """Build the user message text sent to Claude."""
+    wq_lines = "\n".join(
+        f"  {i+1}. Question: {wq.question}\n"
+        f"     LLM answer: {wq.llm_answer}\n"
+        f"     Ground truth: {wq.ground_truth_answer}\n"
+        f"     Category: {wq.category} | Mean {metric}: {wq.mean_score:.3f}"
+        for i, wq in enumerate(weak_questions)
+    )
+
+    wc_lines = "\n".join(
+        f"  - {wc.category} (avg {metric}: {wc.avg_score:.3f})"
+        for wc in weak_categories
+    )
+
+    return (
+        f"You are a prompt engineer. Your task is to improve the following system prompt "
+        f"so that an AI assistant performs better on the weak areas identified by an evaluation.\n\n"
+        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
+        f"## Evaluation metric\n{metric} (threshold: {threshold})\n\n"
+        f"## Questions the assistant answered poorly (consistently below threshold)\n"
+        f"{wq_lines if wq_lines else '  (none)'}\n\n"
+        f"## Underperforming question categories (average score below threshold)\n"
+        f"{wc_lines if wc_lines else '  (none)'}\n\n"
+        "## Instructions\n"
+        "1. Rewrite the system prompt to address the weaknesses above.\n"
+        "2. Do NOT change the model, knowledge base, or any other configuration — only the prompt text.\n"
+        "3. Keep every part of the prompt that is working well.\n"
+        "4. Respond ONLY with a JSON object (no markdown fences) with exactly two keys:\n"
+        '   - "improved_instructions": the full rewritten prompt text (string)\n'
+        '   - "rationale": one short paragraph explaining what you targeted and why (string)\n'
+    )
+
+
+def _draft_improved_prompt(
+    *,
+    session: Session,
+    organization_id: int,
+    project_id: int,
+    current_instructions: str,
+    weak_questions: list[_WeakQuestion],
+    weak_categories: list[_WeakCategory],
+    metric: str,
+    threshold: float,
+) -> tuple[str, str]:
+    """Call Claude to produce improved instructions + rationale.
+
+    Returns (improved_instructions, rationale).
+    Raises HTTPException(502) on any LLM failure or unusable output.
+    """
+    credentials = get_provider_credential(
+        session=session,
+        org_id=organization_id,
+        project_id=project_id,
+        provider=ANTHROPIC_PROVIDER,
+    )
+    if not credentials:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "prompt_generation_failed: Anthropic credentials are not configured "
+                "for this project"
+            ),
+        )
+
+    user_message = _build_improvement_prompt(
+        current_instructions=current_instructions,
+        weak_questions=weak_questions,
+        weak_categories=weak_categories,
+        metric=metric,
+        threshold=threshold,
+    )
+
+    try:
+        client = Anthropic(api_key=credentials["api_key"])
+        response = client.messages.create(
+            model=settings.PROMPT_IMPROVEMENT_MODEL,
+            max_tokens=_LLM_MAX_TOKENS,
+            messages=[{"role": "user", "content": user_message}],
+        )
+        raw_text = "".join(
+            block.text for block in response.content if block.type == "text"
+        )
+        logger.info(
+            f"[_draft_improved_prompt] LLM call succeeded | "
+            f"model={settings.PROMPT_IMPROVEMENT_MODEL} response_id={response.id}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[_draft_improved_prompt] LLM call failed | error={str(e)}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"prompt_generation_failed: LLM call failed — {str(e)}",
+        )
+
+    return _parse_llm_response(raw_text)
+
+
+def _parse_llm_response(raw_text: str) -> tuple[str, str]:
+    """Extract improved_instructions and rationale from the LLM JSON response.
+
+    Raises HTTPException(502) when the response is not parseable or missing keys.
+    """
+    # Strip optional markdown code fences the model sometimes emits despite instructions.
+    stripped = raw_text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        # Remove opening fence line and closing fence line
+        inner = lines[1:] if lines[0].startswith("```") else lines
+        if inner and inner[-1].strip() == "```":
+            inner = inner[:-1]
+        stripped = "\n".join(inner).strip()
+
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            f"[_parse_llm_response] Could not parse LLM JSON response | error={exc}"
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="prompt_generation_failed: LLM returned a response that could not be parsed as JSON",
+        )
+
+    instructions = data.get(_LLM_KEY_INSTRUCTIONS)
+    rationale = data.get(_LLM_KEY_RATIONALE)
+
+    if not instructions or not isinstance(instructions, str):
+        raise HTTPException(
+            status_code=502,
+            detail="prompt_generation_failed: LLM response missing 'improved_instructions' field",
+        )
+    if not rationale or not isinstance(rationale, str):
+        raise HTTPException(
+            status_code=502,
+            detail="prompt_generation_failed: LLM response missing 'rationale' field",
+        )
+
+    return instructions.strip(), rationale.strip()
+
+
+# ── helpers: blob manipulation ────────────────────────────────────────────────
+
+
+def _extract_instructions(version: ConfigVersion) -> str:
+    """Read completion.params.instructions from the source config_blob."""
+    blob: dict[str, Any] = version.config_blob or {}
+    instructions = (
+        blob.get("completion", {}).get("params", {}).get("instructions") or ""
+    )
+    return instructions
+
+
+def _compose_new_blob(
+    *,
+    source_blob: dict[str, Any],
+    new_instructions: str,
+) -> dict[str, Any]:
+    """Deep-copy source_blob and replace only completion.params.instructions."""
+    new_blob = copy.deepcopy(source_blob)
+    completion = new_blob.setdefault("completion", {})
+    params = completion.setdefault("params", {})
+    params["instructions"] = new_instructions
+    return new_blob

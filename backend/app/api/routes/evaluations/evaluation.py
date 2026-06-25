@@ -11,15 +11,18 @@ from fastapi import (
     HTTPException,
     Query,
 )
+from pydantic import BaseModel, Field
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
 from app.crud.evaluations.core import group_traces_by_question_id
+from app.models.config.version import ConfigVersionPublic
 from app.models.evaluation import EvaluationRunPublic, RunModeEnum
 from app.services.evaluations import (
     get_evaluation_with_scores,
+    improve_prompt,
     validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
@@ -200,3 +203,53 @@ def get_evaluation_run_status(
     if error:
         return APIResponse.failure_response(error=error, data=eval_run)
     return APIResponse.success_response(data=eval_run)
+
+
+class ImprovePromptRequest(BaseModel):
+    """Request body for POST /{evaluation_id}/improve-prompt."""
+
+    metric: str = Field(
+        description=(
+            "Name of a NUMERIC score recorded in this run's summary_scores "
+            "(e.g. 'Cosine Similarity'). Case-insensitive exact match on the trimmed name."
+        )
+    )
+    threshold: float = Field(
+        description=(
+            "Numeric threshold; repetitions with a score strictly below this value "
+            "are considered low. No range constraint — the valid range depends on the "
+            "score's scale (e.g. 0–1 for cosine, 1–5 for Likert, 0–100 for percentage)."
+        )
+    )
+
+
+@router.post(
+    "/{evaluation_id}/improve-prompt",
+    description=load_description("evaluation/improve_prompt.md"),
+    response_model=APIResponse[ConfigVersionPublic],
+    status_code=201,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def improve_evaluation_prompt(
+    evaluation_id: int,
+    request: ImprovePromptRequest,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[ConfigVersionPublic]:
+    """Generate an AI-improved prompt iteration from a completed evaluation run."""
+    logger.info(
+        f"[improve_evaluation_prompt] Starting | evaluation_id={evaluation_id} "
+        f"metric={request.metric} threshold={request.threshold} "
+        f"org_id={auth_context.organization_.id} project_id={auth_context.project_.id}"
+    )
+
+    new_version = improve_prompt(
+        session=session,
+        evaluation_id=evaluation_id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+        metric=request.metric,
+        threshold=request.threshold,
+    )
+
+    return APIResponse.success_response(data=new_version)
