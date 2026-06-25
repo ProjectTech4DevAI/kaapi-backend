@@ -14,14 +14,12 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.config.version import ConfigVersionCrud
-from app.crud.credentials import set_creds_for_org
 from app.crud.evaluations.score import (
     COSINE_SCORE_NAME,
     SCORE_DATA_TYPE_CATEGORICAL,
     SCORE_DATA_TYPE_NUMERIC,
 )
 from app.models import ConfigVersion, EvaluationDataset, EvaluationRun
-from app.models.credentials import CredsCreate
 from app.services.evaluations.prompt_improvement import AI_GENERATED_MARKER
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
@@ -60,28 +58,6 @@ def _make_anthropic_mock(text_content: str = _LLM_JSON_RESPONSE) -> MagicMock:
     client_instance.messages.create.return_value = response
 
     return client_instance
-
-
-def _add_anthropic_creds(
-    db: Session,
-    organization_id: int,
-    project_id: int,
-) -> None:
-    """Persist an Anthropic credential row so the service can fetch it."""
-    creds = CredsCreate(
-        is_active=True,
-        credential={
-            "anthropic": {
-                "api_key": "sk-ant-test-" + random_lower_string(),
-            }
-        },
-    )
-    set_creds_for_org(
-        session=db,
-        creds_add=creds,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
 
 
 def _make_config_with_instructions(
@@ -262,11 +238,12 @@ def config_with_instructions(db: Session, auth: TestAuthContext) -> Any:
 
 
 @pytest.fixture
-def anthropic_creds(db: Session, auth: TestAuthContext) -> None:
-    _add_anthropic_creds(
-        db=db,
-        organization_id=auth.organization_id,
-        project_id=auth.project_id,
+def anthropic_creds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure the platform-owned Anthropic key the service reads from settings."""
+    monkeypatch.setattr(
+        settings,
+        "ANTHROPIC_API_KEY",
+        "sk-ant-test-" + random_lower_string(),
     )
 
 
@@ -1687,9 +1664,9 @@ class TestPromptGenerationFailures:
         auth: TestAuthContext,
         dataset: EvaluationDataset,
         config_with_instructions: Any,
-        # Note: no anthropic_creds fixture here — intentionally absent
+        # Note: no anthropic_creds fixture here, so the platform key stays unset
     ) -> None:
-        """If Anthropic credentials are not configured, returns 502."""
+        """If the platform Anthropic key is not configured, returns 502."""
         run = _make_completed_run(
             db=db,
             config_id=config_with_instructions.id,

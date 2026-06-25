@@ -195,6 +195,40 @@ def get_evaluation_run_by_id(
     return eval_run
 
 
+def get_evaluation_run_by_id_for_improvement(
+    *,
+    session: Session,
+    evaluation_id: int,
+    organization_id: int,
+    project_id: int,
+) -> EvaluationRun | None:
+    """Fetch an EvaluationRun by (id, organization_id, project_id) without a type filter.
+
+    The type filter in `get_evaluation_run_by_id` hard-codes `type = 'text'`, which
+    would wrongly exclude STT/TTS runs from the prompt-improvement flow.  This
+    function omits that constraint so any run type can be improved.
+    """
+    statement = (
+        select(EvaluationRun)
+        .where(EvaluationRun.id == evaluation_id)
+        .where(EvaluationRun.organization_id == organization_id)
+        .where(EvaluationRun.project_id == project_id)
+    )
+    run = session.exec(statement).first()
+    if run:
+        logger.info(
+            f"[get_evaluation_run_by_id_for_improvement] Found run | "
+            f"evaluation_id={evaluation_id} status={run.status}"
+        )
+    else:
+        logger.warning(
+            f"[get_evaluation_run_by_id_for_improvement] Not found | "
+            f"evaluation_id={evaluation_id} organization_id={organization_id} "
+            f"project_id={project_id}"
+        )
+    return run
+
+
 TERMINAL_EVAL_STATUSES = {"completed", "failed"}
 
 

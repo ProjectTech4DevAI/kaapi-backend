@@ -189,6 +189,9 @@ class Settings(BaseSettings):
 
     # AI-assisted prompt improvement settings.
     # See docs/srd-ai-prompt-improvement.md for the full design rationale.
+    # Platform-owned Anthropic key shared by every org/project for this feature,
+    # so prompt improvement works without per-project credentials.
+    ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
     PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO: float = 0.5
     PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS: int = 50

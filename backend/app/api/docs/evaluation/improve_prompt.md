@@ -15,4 +15,4 @@ The new prompt is persisted as the next `config_version` for the evaluated confi
 - `422 metric_not_available` — no summary score with the supplied name exists in this run.
 - `422 metric_not_numeric` — the matched score has a non-NUMERIC data type (categorical scores are not yet supported).
 - `422 no_weak_signals` — no consistently-low questions and no underperforming categories found; no version is created.
-- `502 prompt_generation_failed` — Anthropic credentials missing or the LLM call failed.
+- `502 prompt_generation_failed` — the platform Anthropic key is not configured, or the LLM call failed.

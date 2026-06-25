@@ -10,15 +10,17 @@ import json
 import logging
 from typing import Any
 
+import anthropic
 from anthropic import Anthropic
 from fastapi import HTTPException
-from sqlmodel import Session, and_, select
+from sqlmodel import Session
 
 from app.core.config import settings
+from app.crud.config.config import get_config_by_id
 from app.crud.config.version import ConfigVersionCrud
-from app.crud.credentials import get_provider_credential
+from app.crud.evaluations.core import get_evaluation_run_by_id_for_improvement
 from app.crud.evaluations.score import SCORE_DATA_TYPE_NUMERIC
-from app.models.config.config import Config, ConfigTag
+from app.models.config.config import ConfigTag
 from app.models.config.version import (
     ConfigVersion,
     ConfigVersionPublic,
@@ -29,8 +31,6 @@ from app.models.evaluation import EvaluationRun
 logger = logging.getLogger(__name__)
 
 # ── constants ─────────────────────────────────────────────────────────────────
-
-ANTHROPIC_PROVIDER = "anthropic"
 
 # Maximum tokens the LLM should produce for the improvement response.
 _LLM_MAX_TOKENS = 4096
@@ -157,9 +157,6 @@ def improve_prompt(
     # Step 8: draft the improved prompt via LLM
     current_instructions = _extract_instructions(source_version)
     improved_instructions, rationale = _draft_improved_prompt(
-        session=session,
-        organization_id=organization_id,
-        project_id=project_id,
         current_instructions=current_instructions,
         weak_questions=weak_questions,
         weak_categories=weak_categories,
@@ -217,14 +214,12 @@ def _load_completed_run(
     organization_id: int,
     project_id: int,
 ) -> EvaluationRun:
-    stmt = select(EvaluationRun).where(
-        and_(
-            EvaluationRun.id == evaluation_id,
-            EvaluationRun.organization_id == organization_id,
-            EvaluationRun.project_id == project_id,
-        )
+    run = get_evaluation_run_by_id_for_improvement(
+        session=session,
+        evaluation_id=evaluation_id,
+        organization_id=organization_id,
+        project_id=project_id,
     )
-    run = session.exec(stmt).one_or_none()
 
     if run is None:
         raise HTTPException(
@@ -249,14 +244,11 @@ def _resolve_source_version(
 ) -> ConfigVersion:
     """Load the config + config_version referenced by the run; guard soft-deletes and tenant scope."""
     # The run's config must belong to the caller's project (config has no org_id).
-    config_stmt = select(Config).where(
-        and_(
-            Config.id == run.config_id,
-            Config.project_id == project_id,
-            Config.deleted_at.is_(None),
-        )
+    config = get_config_by_id(
+        session=session,
+        config_id=run.config_id,
+        project_id=project_id,
     )
-    config = session.exec(config_stmt).one_or_none()
 
     if config is None:
         raise HTTPException(
@@ -513,9 +505,6 @@ def _build_improvement_prompt(
 
 def _draft_improved_prompt(
     *,
-    session: Session,
-    organization_id: int,
-    project_id: int,
     current_instructions: str,
     weak_questions: list[_WeakQuestion],
     weak_categories: list[_WeakCategory],
@@ -527,18 +516,13 @@ def _draft_improved_prompt(
     Returns (improved_instructions, rationale).
     Raises HTTPException(502) on any LLM failure or unusable output.
     """
-    credentials = get_provider_credential(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-        provider=ANTHROPIC_PROVIDER,
-    )
-    if not credentials:
+    api_key = settings.ANTHROPIC_API_KEY
+    if not api_key:
         raise HTTPException(
             status_code=502,
             detail=(
-                "prompt_generation_failed: Anthropic credentials are not configured "
-                "for this project"
+                "prompt_generation_failed: the platform Anthropic key "
+                "(ANTHROPIC_API_KEY) is not configured"
             ),
         )
 
@@ -551,7 +535,7 @@ def _draft_improved_prompt(
     )
 
     try:
-        client = Anthropic(api_key=credentials["api_key"])
+        client = Anthropic(api_key=api_key)
         response = client.messages.create(
             model=settings.PROMPT_IMPROVEMENT_MODEL,
             max_tokens=_LLM_MAX_TOKENS,
@@ -564,14 +548,95 @@ def _draft_improved_prompt(
             f"[_draft_improved_prompt] LLM call succeeded | "
             f"model={settings.PROMPT_IMPROVEMENT_MODEL} response_id={response.id}"
         )
-    except Exception as e:
-        logger.error(
-            f"[_draft_improved_prompt] LLM call failed | error={str(e)}",
+
+    except anthropic.AuthenticationError as e:
+        logger.warning(
+            f"[_draft_improved_prompt] [ANTHROPIC] Authentication failed "
+            f"(code: 401): Verify the ANTHROPIC_API_KEY is "
+            f"valid, not expired, and configured correctly.",
             exc_info=True,
         )
         raise HTTPException(
             status_code=502,
-            detail=f"prompt_generation_failed: LLM call failed — {str(e)}",
+            detail=(
+                "prompt_generation_failed: Anthropic authentication failed — "
+                "verify the platform API key is valid and not expired"
+            ),
+        )
+
+    except anthropic.RateLimitError as e:
+        logger.warning(
+            f"[_draft_improved_prompt] [ANTHROPIC] Rate limit exceeded "
+            f"(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "prompt_generation_failed: Anthropic rate limit exceeded — "
+                "wait at least 1 minute and retry"
+            ),
+        )
+
+    except anthropic.APITimeoutError as e:
+        # Must come before APIConnectionError — APITimeoutError is a subclass.
+        logger.error(
+            f"[_draft_improved_prompt] [KAAPI] Anthropic request timed out "
+            f"(code: {type(e).__name__}): retry with a smaller payload.",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "prompt_generation_failed: Anthropic request timed out — "
+                "retry. If persistent, contact Kaapi"
+            ),
+        )
+
+    except anthropic.APIConnectionError as e:
+        logger.error(
+            f"[_draft_improved_prompt] [KAAPI] Anthropic connection failed "
+            f"(code: {type(e).__name__}): network or DNS issue reaching Anthropic.",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "prompt_generation_failed: network error reaching Anthropic — "
+                "check connectivity. If persistent, contact Kaapi"
+            ),
+        )
+
+    except anthropic.APIStatusError as e:
+        status = e.status_code
+        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
+        log = logger.error if status and status >= 500 else logger.warning
+        log(
+            f"[_draft_improved_prompt] [ANTHROPIC] API status error "
+            f"(code: {status}): {e.message}.",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"prompt_generation_failed: Anthropic returned HTTP {status} — "
+                "retry or contact Kaapi if persistent"
+            ),
+        )
+
+    except Exception as e:
+        logger.error(
+            f"[_draft_improved_prompt] [KAAPI] Unexpected error during LLM call "
+            f"(code: {type(e).__name__}): not raised by the Anthropic SDK — "
+            f"likely a Kaapi-side failure. Contact Kaapi if persistent.",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "prompt_generation_failed: unexpected error during prompt generation — "
+                "contact Kaapi if persistent"
+            ),
         )
 
     return _parse_llm_response(raw_text)
@@ -586,8 +651,7 @@ def _parse_llm_response(raw_text: str) -> tuple[str, str]:
     stripped = raw_text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()
-        # Remove opening fence line and closing fence line
-        inner = lines[1:] if lines[0].startswith("```") else lines
+        inner = lines[1:]
         if inner and inner[-1].strip() == "```":
             inner = inner[:-1]
         stripped = "\n".join(inner).strip()

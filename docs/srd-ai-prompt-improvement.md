@@ -96,8 +96,12 @@ Quality bar: every generated iteration is **traceable** (to its source evaluatio
   `config_id` must resolve to a config in the caller's project, else the request is rejected.
 - **Pricing:** The improvement makes one LLM call per invocation (paid). Bounded by the
   weak-question/category caps above.
-- **Starting provider/model:** Claude (default `claude-opus-4-8`) via the existing provider
-  abstraction, configurable through settings (see Configuration).
+- **Starting provider/model:** Claude (default `claude-opus-4-8`), configurable through
+  settings (see Configuration).
+- **Credentials:** The feature uses a single platform-owned Anthropic key
+  (`ANTHROPIC_API_KEY` env var) shared by every org/project, so it works
+  without per-project credentials. If the key is unset, the request fails with
+  `502 prompt_generation_failed`.
 
 ## Detailed Design (Execution Flow)
 
@@ -249,6 +253,7 @@ metric is resolved from `summary_scores` and its per-repetition values read from
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
+| ANTHROPIC_API_KEY | str | `""` | Platform-owned Anthropic key shared by all orgs/projects; required for the feature |
 | PROMPT_IMPROVEMENT_MODEL | str | `claude-opus-4-8` | LLM used to draft the improved prompt |
 | PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO | float | `0.5` | Min fraction of a question's repetitions below threshold to count it as consistently weak |
 | PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS | int | `50` | Cap on weak questions sent to the LLM |
