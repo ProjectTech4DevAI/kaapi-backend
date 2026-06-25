@@ -193,9 +193,6 @@ class Settings(BaseSettings):
     # so prompt improvement works without per-project credentials.
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
-    PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO: float = 0.5
-    PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS: int = 50
-    PROMPT_IMPROVEMENT_MAX_WEAK_CATEGORIES: int = 10
 
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.

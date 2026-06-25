@@ -1,8 +1,8 @@
 """AI-assisted prompt improvement service.
 
-Analyses a completed evaluation run's weak signals (consistently low-scoring
-questions and underperforming categories) and uses Claude to draft an improved
-prompt, persisting the result as a new config_version.
+Downloads the evaluation run's stored trace file from S3, hands it to Claude
+via the Files API, and persists the rewritten system prompt as a new
+config_version.
 """
 
 import json
@@ -14,6 +14,7 @@ from anthropic import Anthropic
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.core.cloud.storage import get_cloud_storage
 from app.core.config import settings
 from app.crud.config.config import get_config_by_id
 from app.crud.config.version import ConfigVersionCrud
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-# Maximum tokens the LLM should produce for the improvement response.
-_LLM_MAX_TOKENS = 4096
+# Room for a full prompt rewrite plus structured JSON wrapper.
+_LLM_MAX_TOKENS = 8192
 
 # JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
@@ -43,45 +44,13 @@ COMMIT_MESSAGE_MAX_LENGTH = 512
 # audit queries and by the test suite to assert provenance.
 AI_GENERATED_MARKER = "[AI Generated]"
 
+# Anthropic Files API beta header value — required by client.beta.files.*
+# and client.beta.messages.create(..., betas=[...]).
+_FILES_API_BETA = "files-api-2025-04-14"
 
-# ── internal data shapes ──────────────────────────────────────────────────────
-
-
-class _LowScoringQuestion:
-    """A question group that consistently scores below threshold across repetitions."""
-
-    __slots__ = (
-        "question",
-        "llm_answer",
-        "ground_truth_answer",
-        "category",
-        "mean_score",
-    )
-
-    def __init__(
-        self,
-        *,
-        question: str,
-        llm_answer: str,
-        ground_truth_answer: str,
-        category: str,
-        mean_score: float,
-    ) -> None:
-        self.question = question
-        self.llm_answer = llm_answer
-        self.ground_truth_answer = ground_truth_answer
-        self.category = category
-        self.mean_score = mean_score
-
-
-class _LowScoringCategory:
-    """A question category whose mean metric score falls below threshold."""
-
-    __slots__ = ("category", "avg_score")
-
-    def __init__(self, *, category: str, avg_score: float) -> None:
-        self.category = category
-        self.avg_score = avg_score
+# Content-type for the uploaded trace file. text/plain is reliably accepted as
+# a document block; application/json is sometimes rejected by the Files API.
+_TRACE_CONTENT_TYPE = "text/plain"
 
 
 # ── public entry point ────────────────────────────────────────────────────────
@@ -93,8 +62,6 @@ def improve_prompt(
     evaluation_id: int,
     organization_id: int,
     project_id: int,
-    metric: str,
-    threshold: float,
 ) -> ConfigVersionPublic:
     """Run the full prompt-improvement flow synchronously and return the new version.
 
@@ -102,7 +69,7 @@ def improve_prompt(
     """
     logger.info(
         f"[improve_prompt] Starting | evaluation_id={evaluation_id} "
-        f"metric={metric} threshold={threshold} project_id={project_id}"
+        f"project_id={project_id}"
     )
 
     run = _load_completed_run(
@@ -112,55 +79,46 @@ def improve_prompt(
         project_id=project_id,
     )
 
+    if not run.score_trace_url:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "traces_not_available: this run has no score_trace_url; "
+                "cannot improve prompt"
+            ),
+        )
+
     source_version = _resolve_source_version(
         session=session,
         run=run,
         project_id=project_id,
     )
 
-    _verify_metric(run=run, metric=metric)
-
-    weak_questions, questions_truncated = _select_weak_questions(
-        run=run,
-        metric=metric,
-        threshold=threshold,
-    )
-
-    weak_categories, categories_truncated = _select_weak_categories(
-        run=run,
-        metric=metric,
-        threshold=threshold,
-    )
-
-    truncated = questions_truncated or categories_truncated
-
-    if not weak_questions and not weak_categories:
-        raise HTTPException(
-            status_code=422,
-            detail="no_weak_signals: no consistently-low questions and no underperforming categories found",
-        )
-
-    logger.info(
-        f"[improve_prompt] Weak signals | evaluation_id={evaluation_id} "
-        f"weak_questions={len(weak_questions)} weak_categories={len(weak_categories)} "
-        f"truncated={truncated}"
-    )
-
     current_instructions = _extract_instructions(source_version)
-    improved_instructions, rationale = _draft_improved_prompt(
-        current_instructions=current_instructions,
-        weak_questions=weak_questions,
-        weak_categories=weak_categories,
-        metric=metric,
-        threshold=threshold,
+
+    # Pull the model name from the source config blob for LLM context.
+    # It may be absent (e.g. older blobs), so treat it as optional.
+    blob: dict[str, Any] = source_version.config_blob or {}
+    model_name: str | None = (
+        blob.get("completion", {}).get("params", {}).get("model") or None
     )
 
-    # Provenance is embedded in commit_message (no dedicated columns) so the
-    # evaluation run id, metric, and threshold remain auditable without a schema change.
+    trace_bytes = _download_trace_file(
+        session=session,
+        project_id=project_id,
+        url=run.score_trace_url,
+    )
+
+    improved_instructions, rationale = _draft_improved_prompt(
+        evaluation_id=evaluation_id,
+        current_instructions=current_instructions,
+        model_name=model_name,
+        trace_bytes=trace_bytes,
+    )
+
     raw_commit_message = (
         f"{AI_GENERATED_MARKER} {rationale} "
-        f"(source_evaluation_run_id={evaluation_id}, "
-        f"metric={metric}, threshold={threshold})"
+        f"(source_evaluation_run_id={evaluation_id})"
     )
     commit_message = raw_commit_message[:COMMIT_MESSAGE_MAX_LENGTH]
 
@@ -225,7 +183,6 @@ def _resolve_source_version(
     project_id: int,
 ) -> ConfigVersion:
     """Load the config + config_version referenced by the run; guard soft-deletes and tenant scope."""
-    # The run's config must belong to the caller's project (config has no org_id).
     config = get_config_by_id(
         session=session,
         config_id=run.config_id,
@@ -255,169 +212,32 @@ def _resolve_source_version(
     return version
 
 
-def _resolve_summary_score(
-    run: EvaluationRun,
-    metric: str,
-) -> dict[str, Any]:
-    """Find and return the summary_scores entry whose name matches `metric` (case-insensitive).
-
-    Raises 422 metric_not_available when no match is found.
-    """
-    score = run.score or {}
-    summary_scores: list[dict[str, Any]] = score.get("summary_scores") or []
-
-    needle = metric.strip().lower()
-    for entry in summary_scores:
-        if (entry.get("name") or "").strip().lower() == needle:
-            return entry
-
-    raise HTTPException(
-        status_code=422,
-        detail=f"metric_not_available: no summary score named '{metric}' is recorded in this run",
-    )
-
-
-def _verify_metric(
+def _download_trace_file(
     *,
-    run: EvaluationRun,
-    metric: str,
-) -> None:
-    """Raise 422 when the chosen metric is absent in this run."""
-    _resolve_summary_score(run, metric)
-
-
-# ── helpers: weak signal selection ───────────────────────────────────────────
-
-
-def _score_name_matches(score_entry: dict[str, Any], metric: str) -> bool:
-    """Return True when a trace-level score entry's name matches `metric` (case-insensitive)."""
-    return (score_entry.get("name") or "").strip().lower() == metric.strip().lower()
-
-
-def _get_trace_metric_value(
-    trace: dict[str, Any],
-    metric: str,
-) -> float | None:
-    """Extract the numeric metric value for one trace from its inline scores list.
-
-    Returns None if the score is absent, unscoreable, or not a number.
-    """
-    for s in trace.get("scores") or []:
-        if _score_name_matches(s, metric):
-            if s.get("unscoreable"):
-                return None
-            val = s.get("value")
-            if val is None:
-                return None
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                # Categorical values can't be cast; treat as unscoreable for this metric.
-                return None
-    return None
-
-
-def _select_weak_questions(
-    *,
-    run: EvaluationRun,
-    metric: str,
-    threshold: float,
-) -> tuple[list[_LowScoringQuestion], bool]:
-    """Return (low_scoring_questions, truncated).
-
-    Groups traces by question_id; a group qualifies when the fraction of
-    repetitions scoring below threshold is >= MIN_CONSISTENCY_RATIO.
-    Groups with no scoreable repetitions for the chosen metric are skipped.
-    Result is sorted by mean score ascending (worst first), then capped.
-    """
-    score = run.score or {}
-    traces: list[dict[str, Any]] = score.get("traces") or []
-
-    # question_id-less traces each form a singleton group keyed by trace_id
-    # because they have no question-level identity to aggregate on.
-    groups: dict[Any, list[dict[str, Any]]] = {}
-    for trace in traces:
-        group_key = trace.get("question_id") or trace.get("trace_id")
-        groups.setdefault(group_key, []).append(trace)
-
-    candidates: list[tuple[float, _LowScoringQuestion]] = []
-
-    for group in groups.values():
-        scoreable = [
-            (t, v)
-            for t in group
-            if (v := _get_trace_metric_value(t, metric)) is not None
-        ]
-        if not scoreable:
-            continue
-
-        below = [v for _, v in scoreable if v < threshold]
-        ratio = len(below) / len(scoreable)
-
-        if ratio < settings.PROMPT_IMPROVEMENT_MIN_CONSISTENCY_RATIO:
-            continue
-
-        # All repetitions share the same question text and ground_truth;
-        # use the first trace to represent the group.
-        first_trace = group[0]
-        mean_score = sum(v for _, v in scoreable) / len(scoreable)
-        candidates.append(
-            (
-                mean_score,
-                _LowScoringQuestion(
-                    question=first_trace.get("question") or "",
-                    llm_answer=first_trace.get("llm_answer") or "",
-                    ground_truth_answer=first_trace.get("ground_truth_answer") or "",
-                    category=first_trace.get("category") or "",
-                    mean_score=mean_score,
-                ),
-            )
+    session: Session,
+    project_id: int,
+    url: str,
+) -> bytes:
+    """Fetch the trace JSON bytes from S3. Maps storage errors to 502."""
+    try:
+        storage = get_cloud_storage(session=session, project_id=project_id)
+        trace_bytes = storage.get(url)
+        logger.info(
+            f"[_download_trace_file] Downloaded trace file | "
+            f"project_id={project_id} url={url} size_bytes={len(trace_bytes)}"
         )
-
-    candidates.sort(key=lambda t: t[0])
-
-    cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_QUESTIONS
-    truncated = len(candidates) > cap
-    return [item for _, item in candidates[:cap]], truncated
-
-
-def _select_weak_categories(
-    *,
-    run: EvaluationRun,
-    metric: str,
-    threshold: float,
-) -> tuple[list[_LowScoringCategory], bool]:
-    """Return (low_scoring_categories, truncated).
-
-    Computed generically from traces so it works for any score name — not from
-    category_metrics, which only carries avg_cosine/avg_correctness for the two
-    built-in scores and won't exist for arbitrary Langfuse scorer names.
-
-    Groups scoreable traces by category; keeps categories whose mean score is below
-    threshold; sorts ascending; truncates to cap.
-    """
-    score = run.score or {}
-    traces: list[dict[str, Any]] = score.get("traces") or []
-
-    category_values: dict[str, list[float]] = {}
-    for trace in traces:
-        val = _get_trace_metric_value(trace, metric)
-        if val is None:
-            continue
-        category = (trace.get("category") or "").strip() or "Other"
-        category_values.setdefault(category, []).append(val)
-
-    candidates: list[_LowScoringCategory] = []
-    for category, values in category_values.items():
-        avg = sum(values) / len(values)
-        if avg < threshold:
-            candidates.append(_LowScoringCategory(category=category, avg_score=avg))
-
-    candidates.sort(key=lambda cat: cat.avg_score)
-
-    cap = settings.PROMPT_IMPROVEMENT_MAX_WEAK_CATEGORIES
-    truncated = len(candidates) > cap
-    return candidates[:cap], truncated
+        return trace_bytes
+    except Exception as exc:
+        logger.error(
+            f"[_download_trace_file] [KAAPI] Failed to download trace file "
+            f"(code: {type(exc).__name__}): could not retrieve trace data from S3. "
+            f"Check storage credentials and that the file exists. | url={url}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"trace_download_failed: could not retrieve trace file from storage — {exc}",
+        )
 
 
 # ── helpers: LLM call ─────────────────────────────────────────────────────────
@@ -426,55 +246,45 @@ def _select_weak_categories(
 def _build_improvement_prompt(
     *,
     current_instructions: str,
-    weak_questions: list[_LowScoringQuestion],
-    weak_categories: list[_LowScoringCategory],
-    metric: str,
-    threshold: float,
+    model_name: str | None,
 ) -> str:
-    """Build the user message text sent to Claude."""
-    question_lines = "\n".join(
-        f"  {i+1}. Question: {item.question}\n"
-        f"     LLM answer: {item.llm_answer}\n"
-        f"     Ground truth: {item.ground_truth_answer}\n"
-        f"     Category: {item.category} | Mean {metric}: {item.mean_score:.3f}"
-        for i, item in enumerate(weak_questions)
-    )
-
-    category_lines = "\n".join(
-        f"  - {cat.category} (avg {metric}: {cat.avg_score:.3f})"
-        for cat in weak_categories
+    """Build the text block sent alongside the trace file document."""
+    model_context = (
+        f"\n\nThe system prompt runs on model: `{model_name}`." if model_name else ""
     )
 
     return (
-        f"You are a prompt engineer. Your task is to improve the following system prompt "
-        f"so that an AI assistant performs better on the weak areas identified by an evaluation.\n\n"
-        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
-        f"## Evaluation metric\n{metric} (threshold: {threshold})\n\n"
-        f"## Questions the assistant answered poorly (consistently below threshold)\n"
-        f"{question_lines if question_lines else '  (none)'}\n\n"
-        f"## Underperforming question categories (average score below threshold)\n"
-        f"{category_lines if category_lines else '  (none)'}\n\n"
-        "## Instructions\n"
-        "1. Rewrite the system prompt to address the weaknesses above.\n"
-        "2. Do NOT change the model, knowledge base, or any other configuration — only the prompt text.\n"
-        "3. Keep every part of the prompt that is working well.\n"
-        "4. Respond ONLY with a JSON object (no markdown fences) with exactly two keys:\n"
-        '   - "improved_instructions": the full rewritten prompt text (string)\n'
-        '   - "rationale": one short paragraph explaining what you targeted and why (string)\n'
+        "You are a prompt engineer. The attached file is a JSON array of evaluation "
+        "traces. Each trace has the fields: `question`, `ground_truth_answer`, "
+        "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
+        "`name`, `value`, and `unscoreable`).\n\n"
+        f"## Current system prompt\n```\n{current_instructions}\n```"
+        f"{model_context}\n\n"
+        "## Task\n"
+        "1. Identify the answers that performed poorly — those with low scores or "
+        "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
+        "2. Rewrite the system prompt to improve those low-performing answers while "
+        "keeping what already works well.\n"
+        "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
+        "or any other configuration.\n\n"
+        "## Response format\n"
+        "Respond ONLY with a JSON object (no markdown fences) with exactly two keys:\n"
+        '  - "improved_instructions": the full rewritten prompt string\n'
+        '  - "rationale": one short paragraph explaining what you targeted and why\n'
     )
 
 
 def _draft_improved_prompt(
     *,
+    evaluation_id: int,
     current_instructions: str,
-    weak_questions: list[_LowScoringQuestion],
-    weak_categories: list[_LowScoringCategory],
-    metric: str,
-    threshold: float,
+    model_name: str | None,
+    trace_bytes: bytes,
 ) -> tuple[str, str]:
-    """Call Claude to produce improved instructions + rationale.
+    """Upload the trace file to the Anthropic Files API, call Claude, and return
+    (improved_instructions, rationale).
 
-    Returns (improved_instructions, rationale).
+    The uploaded file is always deleted after the call, even on error.
     Raises HTTPException(502) on any LLM failure or unusable output.
     """
     api_key = settings.ANTHROPIC_API_KEY
@@ -487,30 +297,46 @@ def _draft_improved_prompt(
             ),
         )
 
-    user_message = _build_improvement_prompt(
+    user_message_text = _build_improvement_prompt(
         current_instructions=current_instructions,
-        weak_questions=weak_questions,
-        weak_categories=weak_categories,
-        metric=metric,
-        threshold=threshold,
+        model_name=model_name,
+    )
+
+    client = Anthropic(api_key=api_key)
+
+    uploaded = client.beta.files.upload(
+        file=(f"traces_{evaluation_id}.txt", trace_bytes, _TRACE_CONTENT_TYPE),
+    )
+    logger.info(
+        f"[_draft_improved_prompt] Uploaded trace file to Anthropic Files API | "
+        f"file_id={uploaded.id} evaluation_id={evaluation_id}"
     )
 
     try:
-        client = Anthropic(api_key=api_key)
-        response = client.messages.create(
+        response = client.beta.messages.create(
             model=settings.PROMPT_IMPROVEMENT_MODEL,
             max_tokens=_LLM_MAX_TOKENS,
-            messages=[{"role": "user", "content": user_message}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_message_text},
+                        {
+                            "type": "document",
+                            "source": {"type": "file", "file_id": uploaded.id},
+                        },
+                    ],
+                }
+            ],
+            betas=[_FILES_API_BETA],
         )
-        raw_text = "".join(
-            block.text for block in response.content if block.type == "text"
-        )
+        raw_text = next((b.text for b in response.content if b.type == "text"), "")
         logger.info(
             f"[_draft_improved_prompt] LLM call succeeded | "
             f"model={settings.PROMPT_IMPROVEMENT_MODEL} response_id={response.id}"
         )
 
-    except anthropic.AuthenticationError as e:
+    except anthropic.AuthenticationError:
         logger.warning(
             f"[_draft_improved_prompt] [ANTHROPIC] Authentication failed "
             f"(code: 401): Verify the ANTHROPIC_API_KEY is "
@@ -525,7 +351,7 @@ def _draft_improved_prompt(
             ),
         )
 
-    except anthropic.RateLimitError as e:
+    except anthropic.RateLimitError:
         logger.warning(
             f"[_draft_improved_prompt] [ANTHROPIC] Rate limit exceeded "
             f"(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
@@ -539,11 +365,11 @@ def _draft_improved_prompt(
             ),
         )
 
-    except anthropic.APITimeoutError as e:
+    except anthropic.APITimeoutError:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
         logger.error(
             f"[_draft_improved_prompt] [KAAPI] Anthropic request timed out "
-            f"(code: {type(e).__name__}): retry with a smaller payload.",
+            f"(code: APITimeoutError): retry with a smaller payload.",
             exc_info=True,
         )
         raise HTTPException(
@@ -554,10 +380,10 @@ def _draft_improved_prompt(
             ),
         )
 
-    except anthropic.APIConnectionError as e:
+    except anthropic.APIConnectionError:
         logger.error(
             f"[_draft_improved_prompt] [KAAPI] Anthropic connection failed "
-            f"(code: {type(e).__name__}): network or DNS issue reaching Anthropic.",
+            f"(code: APIConnectionError): network or DNS issue reaching Anthropic.",
             exc_info=True,
         )
         raise HTTPException(
@@ -568,13 +394,13 @@ def _draft_improved_prompt(
             ),
         )
 
-    except anthropic.APIStatusError as e:
-        status = e.status_code
+    except anthropic.APIStatusError as exc:
+        status = exc.status_code
         # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
         log = logger.error if status and status >= 500 else logger.warning
         log(
             f"[_draft_improved_prompt] [ANTHROPIC] API status error "
-            f"(code: {status}): {e.message}.",
+            f"(code: {status}): {exc.message}.",
             exc_info=True,
         )
         raise HTTPException(
@@ -585,10 +411,10 @@ def _draft_improved_prompt(
             ),
         )
 
-    except Exception as e:
+    except Exception as exc:
         logger.error(
             f"[_draft_improved_prompt] [KAAPI] Unexpected error during LLM call "
-            f"(code: {type(e).__name__}): not raised by the Anthropic SDK — "
+            f"(code: {type(exc).__name__}): not raised by the Anthropic SDK — "
             f"likely a Kaapi-side failure. Contact Kaapi if persistent.",
             exc_info=True,
         )
@@ -599,6 +425,15 @@ def _draft_improved_prompt(
                 "contact Kaapi if persistent"
             ),
         )
+
+    finally:
+        try:
+            client.beta.files.delete(uploaded.id)
+        except Exception:
+            logger.warning(
+                f"[_draft_improved_prompt] failed to delete uploaded trace file | "
+                f"file_id={uploaded.id}"
+            )
 
     return _parse_llm_response(raw_text)
 
