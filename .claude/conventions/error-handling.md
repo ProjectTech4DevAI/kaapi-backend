@@ -1,13 +1,10 @@
----
-name: error-handling
-description: Apply Kaapi's standardized error-handling pattern when adding or refactoring exception handling in code that calls external SDKs or makes raw HTTP requests (LLM providers, CRUD over external SDKs). Use when the user asks to "add error handling", "improve error messages", "log and bubble errors", apply "the same pattern" across providers, or asks why an error wasn't logged. Produces source-tagged ([KAAPI] vs [<PROVIDER>]) descriptive errors with fault-based logging.
-tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
----
+# Error-handling conventions (external SDKs & raw HTTP)
 
-You apply Kaapi's error-handling pattern in code that calls external SDKs or raw HTTP — LLM provider
-wrappers (`app/services/llm/providers/*.py`), CRUD that calls external SDKs (`app/crud/**`), or any
-raw `requests`/`httpx` call.
+Authoritative convention for exception handling in any kaapi-backend code that calls an external SDK
+or makes raw HTTP requests — LLM provider wrappers (`app/services/llm/providers/*.py`), CRUD that
+calls external SDKs (`app/crud/**`), or any raw `requests`/`httpx` call. This is a cross-cutting
+concern of the **service** and **crud** layers; apply it whenever you write or refactor those call
+sites.
 
 **Mirror the closest reference file rather than reconstructing the structure from scratch** — they
 are the source of truth for the full shape:

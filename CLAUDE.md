@@ -120,9 +120,8 @@ When working in a specific layer, the matching agent under `.claude/agents/` han
 | `migration-writer` | `app/alembic/versions/` |
 | `celery-task-writer` | `app/celery/tasks/` |
 | `test-writer` | `app/tests/` |
-| `error-handling` | Standardized provider/SDK exception handling + logging |
 
-Convention reviews are handled by the `/pr-review` command, not a subagent.
+Standardized provider/SDK exception handling is a cross-cutting convention (`.claude/conventions/error-handling.md`), applied by `senior-engineer` when it writes service/crud call sites — not a separate agent. Convention reviews are handled by the `/pr-review` command, also not a subagent.
 
 ### Build a feature as a 3-context pipeline
 

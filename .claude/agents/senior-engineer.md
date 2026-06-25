@@ -34,6 +34,9 @@ the task needs.
    **Lazy-load:** Read a doc only when you're about to write that layer. Skip docs for layers the
    task doesn't touch.
 
+   **Cross-cutting:** when a service or crud function wraps an external SDK or raw HTTP call, also
+   Read `.claude/conventions/error-handling.md` and apply its source-tagged, fault-based pattern.
+
 4. **Stay within the spine.** Do NOT write the migration, tests, or Celery tasks — those are
    separate agents (`migration-writer`, `test-writer`, `celery-task-writer`). If the task needs
    background/async work, note it for `celery-task-writer`; don't build it.

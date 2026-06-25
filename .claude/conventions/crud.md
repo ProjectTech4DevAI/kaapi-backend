@@ -54,6 +54,8 @@ Note: **keyword-only args** with `*` for anything more than `(session, id)`. Red
 
 ## Error surface (what to raise, what to return)
 
+For CRUD that wraps an external SDK (e.g. `OpenAIVectorStoreCrud`), follow `.claude/conventions/error-handling.md` — log the source-tagged message first, then raise carrying the same string.
+
 | Situation | Return / raise |
 |---|---|
 | Not found | `return None` |
