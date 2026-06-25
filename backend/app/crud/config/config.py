@@ -17,29 +17,6 @@ from app.models.config.config import ConfigTag
 logger = logging.getLogger(__name__)
 
 
-def get_config_by_id(
-    *,
-    session: Session,
-    config_id: UUID,
-    project_id: int,
-) -> Config | None:
-    """Return a non-deleted Config scoped to project_id, or None if absent/soft-deleted."""
-    statement = select(Config).where(
-        and_(
-            Config.id == config_id,
-            Config.project_id == project_id,
-            Config.deleted_at.is_(None),
-        )
-    )
-    config = session.exec(statement).one_or_none()
-    if not config:
-        logger.warning(
-            f"[get_config_by_id] Not found or soft-deleted | "
-            f"config_id={config_id} project_id={project_id}"
-        )
-    return config
-
-
 class ConfigCrud:
     """
     CRUD operations for configurations scoped to a project.

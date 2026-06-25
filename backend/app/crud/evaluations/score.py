@@ -13,7 +13,6 @@ DEFAULT_CATEGORY: str = "Other"
 # Canonical name/comment for the cosine-similarity score, centralized to avoid
 # import cycles.
 COSINE_SCORE_NAME: str = "Cosine Similarity"
-
 COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )

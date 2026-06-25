@@ -16,7 +16,7 @@ from sqlmodel import Session
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.config import settings
-from app.crud.config.config import get_config_by_id
+from app.crud.config.config import ConfigCrud
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.models.config.config import ConfigTag
@@ -116,11 +116,9 @@ def improve_prompt(
         trace_bytes=trace_bytes,
     )
 
-    raw_commit_message = (
-        f"{AI_GENERATED_MARKER} {rationale} "
-        f"(source_evaluation_run_id={evaluation_id})"
-    )
-    commit_message = raw_commit_message[:COMMIT_MESSAGE_MAX_LENGTH]
+    commit_message = (
+        f"{AI_GENERATED_MARKER} (source_evaluation_run_id={evaluation_id}) {rationale}"
+    )[:COMMIT_MESSAGE_MAX_LENGTH]
 
     version_crud = ConfigVersionCrud(
         session=session,
@@ -183,11 +181,7 @@ def _resolve_source_version(
     project_id: int,
 ) -> ConfigVersion:
     """Load the config + config_version referenced by the run; guard soft-deletes and tenant scope."""
-    config = get_config_by_id(
-        session=session,
-        config_id=run.config_id,
-        project_id=project_id,
-    )
+    config = ConfigCrud(session, project_id).read_one(run.config_id)
 
     if config is None:
         raise HTTPException(
@@ -236,7 +230,7 @@ def _download_trace_file(
         )
         raise HTTPException(
             status_code=502,
-            detail=f"trace_download_failed: could not retrieve trace file from storage — {exc}",
+            detail="trace_download_failed: could not retrieve trace file from storage",
         )
 
 
