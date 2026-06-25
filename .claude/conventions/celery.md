@@ -1,11 +1,10 @@
----
-name: celery-task-writer
-description: Use when adding or modifying Celery tasks under `app/celery/tasks/`. Handles queue/priority choice, retry policy, idempotency, OpenTelemetry trace propagation, and the gevent_timeout wrapper.
-tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
----
+# Celery task conventions (`app/celery/tasks/`)
 
-You write Celery tasks for kaapi-backend. Tasks live in `app/celery/tasks/`. Celery uses RabbitMQ as broker. There is a **single `default` queue** declared with `x-max-priority=10`; tasks are ordered by a per-task `priority` (higher drains first, FIFO within a band). Read `app/celery/tasks/job_execution.py` before writing — it shows the full pattern (decorator + timeout + OTel propagation + delegation to a service).
+Authoritative conventions for Celery tasks in kaapi-backend. Tasks live in `app/celery/tasks/`.
+Celery uses RabbitMQ as broker. There is a **single `default` queue** declared with
+`x-max-priority=10`; tasks are ordered by a per-task `priority` (higher drains first, FIFO within
+a band). Read `app/celery/tasks/job_execution.py` before writing — it shows the full pattern
+(decorator + timeout + OTel propagation + delegation to a service).
 
 ## Canonical decorator stack
 
@@ -28,11 +27,13 @@ def run_my_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     )
 ```
 
-`_set_trace`, `_run_with_otel_parent`, and `gevent_timeout` already exist in this module / `app/celery/utils.py` — reuse them, don't reinvent.
+`_set_trace`, `_run_with_otel_parent`, and `gevent_timeout` already exist in this module /
+`app/celery/utils.py` — reuse them, don't reinvent.
 
 ## Priority choice — be explicit
 
-All tasks share the one `default` queue; set `priority` to place the task in the right band. Match the bands already in use (see the `job_execution.py` module docstring):
+All tasks share the one `default` queue; set `priority` to place the task in the right band. Match
+the bands already in use (see the `job_execution.py` module docstring):
 
 | Priority | When |
 |---|---|
@@ -41,7 +42,9 @@ All tasks share the one `default` queue; set `priority` to place the task in the
 | `2` | Default — doctransform, collections, STT/TTS evaluation, assessment |
 | `1` | Notifications and other fire-and-forget background work |
 
-Pick the band that matches the task's user-facing urgency; document the choice in a comment if it's not obvious. `task_inherit_parent_priority=True` is set, so a task enqueued from another task inherits its priority unless you override it.
+Pick the band that matches the task's user-facing urgency; document the choice in a comment if it's
+not obvious. `task_inherit_parent_priority=True` is set, so a task enqueued from another task
+inherits its priority unless you override it.
 
 ## Hard rules
 
@@ -77,12 +80,3 @@ Pick the band that matches the task's user-facing urgency; document the choice i
 - Don't catch `Exception` and silently swallow — let it propagate so retries / failure handlers fire.
 - Don't run `.delay(...)` from another Celery task to chain — use a Celery `chain` / `chord` / `group` primitive if you need orchestration, or have the service return a result the next task picks up.
 - Don't use `time.sleep(...)` in a task to "wait for something" — schedule a follow-up task with `apply_async(countdown=...)`.
-
-## After writing
-
-Tell the user:
-1. The task name(s) and the queue / priority chosen.
-2. The service function it delegates to (path).
-3. Whether Beat schedule needs an entry.
-4. The idempotency strategy used.
-5. How to invoke it locally for a smoke test (e.g., `uv run python -c "from app.celery.tasks.foo import run_my_job; run_my_job.delay(...)"`).

@@ -1,17 +1,19 @@
----
-name: migration-writer
-description: Use when generating or hand-writing Alembic migrations under `app/alembic/versions/`. Handles --rev-id discipline, reversible downgrades, in-upgrade backfills, FK indexes, and CONCURRENTLY-built constraints.
-tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
----
+# Migration conventions (`app/alembic/versions/`)
 
-You write Alembic migrations for kaapi-backend. The DB is PostgreSQL. Migration files live in `app/alembic/versions/` and follow a strict numeric ordering.
+Authoritative conventions for Alembic migrations in kaapi-backend. The DB is PostgreSQL.
+Migration files live in `app/alembic/versions/` and follow a strict numeric ordering.
 
 ## Before writing anything
 
-1. `ls backend/app/alembic/versions/` and find the highest `NNN_*.py`. The new revision id is **that number + 1**, zero-padded to 3 digits. As of this writing the latest is `060` → next is `061`. Do not skip numbers.
-2. If the change adds/removes/renames model fields, prefer `alembic revision --autogenerate -m "..." --rev-id <NNN>` (run via `uv`, not `pip`) and then hand-edit. For data-only changes (backfills, FK additions), write the migration by hand.
-3. Read at least one recent migration (e.g., `060_v1_assorted_cleanups.py`) to match the project's docstring style and operation patterns.
+1. `ls backend/app/alembic/versions/` and find the highest `NNN_*.py`. The new revision id is
+   **that number + 1**, zero-padded to 3 digits. (At time of writing the latest is `069` → next
+   is `070`; this number moves — always recompute from the directory, don't trust this line.) Do
+   not skip numbers.
+2. If the change adds/removes/renames model fields, prefer
+   `alembic revision --autogenerate -m "..." --rev-id <NNN>` (run via `uv`, not `pip`) and then
+   hand-edit. For data-only changes (backfills, FK additions), write the migration by hand.
+3. Read a recent migration (the highest-numbered file in that dir) to match the project's
+   docstring style and operation patterns.
 
 ## Required structure
 
@@ -21,6 +23,11 @@ You write Alembic migrations for kaapi-backend. The DB is PostgreSQL. Migration 
 Revision ID: NNN
 Revises: <previous>
 Create Date: YYYY-MM-DD HH:MM:SS.000000
+
+<Short paragraph(s) on the WHY: the reason for the change and any non-obvious
+ ordering or gotcha a future reader debugging prod needs. Do NOT narrate the
+ obvious operations — the reader can see `add_column` / `create_index` in the
+ code; tell them what they can't see.>
 """
 
 import sqlalchemy as sa
@@ -49,7 +56,7 @@ def downgrade():
   - `inserted_at` (NOT `created_at`) and `updated_at` timestamps. Server default `NOW()` for backfill; the column comment should describe what the timestamp tracks.
   - `index=True` on every FK and every column commonly used in `WHERE` / `ORDER BY` / `GROUP BY`.
   - `sa.Column(..., comment="...")` for any column with a non-obvious purpose, matching the model's `sa_column_kwargs={"comment": "..."}`.
-- **Adding a non-nullable column to a populated table**: add as nullable with `server_default=sa.text("...")`, backfill, then `ALTER COLUMN ... SET NOT NULL` and optionally drop the server default if the model has a `default_factory`. See `060_v1_assorted_cleanups.py` for the exact pattern.
+- **Adding a non-nullable column to a populated table**: add as nullable with `server_default=sa.text("...")`, backfill, then `ALTER COLUMN ... SET NOT NULL` and optionally drop the server default if the model has a `default_factory`. See a recent migration for the exact pattern.
 - **Adding a unique constraint to a populated table**: dedupe first (`op.execute("DELETE ... USING ...")`), then `CREATE UNIQUE INDEX ... CONCURRENTLY` and `ALTER TABLE ... ADD CONSTRAINT ... USING INDEX` so the build doesn't take `AccessExclusiveLock`.
 - **Index builds on large tables**: use `CREATE INDEX CONCURRENTLY` via raw `op.execute(...)`. Note that CONCURRENTLY requires the migration to NOT run inside a transaction — set `transactional_ddl = False` if needed, or split the index build into its own migration.
 
@@ -63,6 +70,7 @@ def downgrade():
 ## What you DO NOT do
 
 - Don't add `HTTPException`, route handlers, business logic, or external HTTP calls in a migration.
-- Don't write `print(...)` debug statements. If a long backfill genuinely needs progress logging, use `logging.getLogger("alembic.runtime.migration")` with the standard `[<revision_id>] ...` prefix.
-- Keep the docstring to a one-line summary. Don't narrate the `op.*` calls — the reader can see them in `upgrade()`. Same for inline comments: explain only a tricky backfill or lock-avoidance trick, not `# add the column`.
+- Don't write `print(...)` debug statements — use the migration docstring. If a long backfill genuinely needs progress logging, use `logging.getLogger("alembic.runtime.migration")` with the standard `[<revision_id>] ...` prefix.
+- Don't skip the docstring. The docstring is what someone debugging at 2am will read.
+- Don't pad the docstring either — keep it to the non-obvious WHY. A step-by-step recap of the `op.*` calls (which the reader can already see in `upgrade()`) is noise. Same for inline comments: explain a tricky backfill or lock-avoidance trick, not `# add the column`.
 - Don't import from `app.models` to "save typing" — migrations must be model-independent so they still run after the model file is later renamed/deleted.

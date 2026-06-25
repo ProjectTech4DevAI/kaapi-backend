@@ -95,7 +95,7 @@ The application uses different environment files:
 
 ## Coding Conventions
 
-Layer conventions live in `.claude/conventions/{model,crud,service,route}.md` and are applied by the `senior-engineer` subagent; layer-specific writers (`migration-writer`, `celery-task-writer`, `test-writer`) carry their own conventions in `.claude/agents/*.md`. CLAUDE.md only covers rules that apply across every layer.
+Layer conventions live in `.claude/conventions/{model,crud,service,route,migration,celery}.md` and are applied by the `senior-engineer` subagent; the `test-writer` agent carries its own conventions in `.claude/agents/*.md`. CLAUDE.md only covers rules that apply across every layer.
 
 ### Cross-cutting rules
 
@@ -116,27 +116,23 @@ When working in a specific layer, the matching agent under `.claude/agents/` han
 
 | Agent | Layer |
 |---|---|
-| `senior-engineer` | `app/models/`, `app/crud/`, `app/services/`, `app/api/routes/` — any single-layer edit or a full feature walking the spine, one context |
-| `migration-writer` | `app/alembic/versions/` |
-| `celery-task-writer` | `app/celery/tasks/` |
+| `senior-engineer` | `app/models/`, `app/crud/`, `app/services/`, `app/api/routes/`, `app/alembic/versions/`, `app/celery/tasks/` — any single-layer edit or a full feature walking the spine plus its migration and Celery task, one context |
 | `test-writer` | `app/tests/` |
 
 Standardized provider/SDK exception handling is a cross-cutting convention (`.claude/conventions/error-handling.md`), applied by `senior-engineer` when it writes service/crud call sites — not a separate agent. Convention reviews are handled by the `/pr-review` command, also not a subagent.
 
-### Build a feature as a 3-context pipeline
+### Build a feature as a 2-context pipeline
 
-To keep each context window lean (heavy file I/O degrades performance), **build a multi-layer feature as sequential subagent contexts, not inline.** Launch each phase with the Agent tool — each runs in its own context and returns only a summary, so the orchestrator stays small. The phases are a dependency chain, so run them **in order**, passing only the *artifacts* forward (signatures, file paths, the next migration rev-id), never re-deriving prior reasoning:
+To keep each context window lean (heavy file I/O degrades performance), **build a multi-layer feature as sequential subagent contexts, not inline.** Launch each phase with the Agent tool — each runs in its own context and returns only a summary, so the orchestrator stays small. The phases are a dependency chain, so run them **in order**, passing only the *artifacts* forward (signatures, file paths), never re-deriving prior reasoning:
 
 | # | Context | Agent | Consumes |
 |---|---|---|---|
-| 1 | schema + code-spine | `senior-engineer` | the feature request |
-| 2 | migration | `migration-writer` | phase 1's model changes + next rev-id |
-| 3 | test | `test-writer` | phase 1's signatures (+ which HTTP boundaries to mock) |
+| 1 | schema + code-spine + migration + Celery task | `senior-engineer` | the feature request |
+| 2 | test | `test-writer` | phase 1's signatures (+ which HTTP boundaries to mock) |
 
 Then run `/pr-review` on the full diff before committing.
 
 Rules of thumb:
-- **Run them sequentially**, not in parallel — phase N depends on phase N-1's output.
+- **Run them sequentially**, not in parallel — phase 2 depends on phase 1's signatures.
 - **Single-layer change?** Skip the pipeline; let `senior-engineer` build just the one layer.
-- **No model/schema change?** Skip phase 2 (`migration-writer`).
-- `senior-engineer` reads the convention docs in `.claude/conventions/{model,crud,service,route}.md` — the single source of truth for each layer.
+- `senior-engineer` builds the model → crud → service → route spine *and* the migration a schema change needs *and* the Celery task background work needs — all in phase 1, reading the convention docs in `.claude/conventions/{model,crud,service,route,migration,celery}.md` as the single source of truth for each layer.

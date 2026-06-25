@@ -70,7 +70,7 @@ Returning `404` instead of `403` for cross-tenant access is intentional — it d
 ## Background work
 
 - Short fire-and-forget (send an email, write an audit log) → `BackgroundTasks`.
-- Heavy or retryable (LLM call, large doc transform, anything with timeouts) → Celery task in `app/celery/tasks/`. Hand off to `celery-task-writer`.
+- Heavy or retryable (LLM call, large doc transform, anything with timeouts) → Celery task in `app/celery/tasks/`, written per `.claude/conventions/celery.md`.
 
 ## Logging
 
