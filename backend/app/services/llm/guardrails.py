@@ -189,10 +189,6 @@ def run_guardrails_validation(
         f"output_len={len(output_text) if output_text else 0}, "
         f"payload_bytes={len(payload_bytes)}"
     )
-    logger.info(
-        f"[run_guardrails_validation] Request payload | job_id={job_id}, "
-        f"payload={json.dumps(payload)}"
-    )
 
     started = time.monotonic()
     try:
@@ -208,10 +204,6 @@ def run_guardrails_validation(
                 f"[run_guardrails_validation] Response received | job_id={job_id}, "
                 f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
                 f"response_bytes={len(response.content)}"
-            )
-            logger.info(
-                f"[run_guardrails_validation] Response body | job_id={job_id}, "
-                f"body={response.text}"
             )
             response.raise_for_status()
             return response.json()
@@ -285,9 +277,6 @@ def list_validators_config(
                     f"endpoint={endpoint}, ids={len(validator_ids)}, "
                     f"organization_id={organization_id}, project_id={project_id}"
                 )
-                logger.debug(
-                    f"[list_validators_config] Request params | params={params}"
-                )
                 started = time.monotonic()
                 response = client.get(endpoint, params=params, headers=headers)
                 elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -295,9 +284,6 @@ def list_validators_config(
                     f"[list_validators_config] Response received | "
                     f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
                     f"response_bytes={len(response.content)}"
-                )
-                logger.info(
-                    f"[list_validators_config] Response body | body={response.text}"
                 )
                 response.raise_for_status()
 
