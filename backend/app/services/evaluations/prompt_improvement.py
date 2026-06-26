@@ -29,8 +29,6 @@ from app.models.evaluation import EvaluationRun
 
 logger = logging.getLogger(__name__)
 
-# ── constants ─────────────────────────────────────────────────────────────────
-
 # Room for a full prompt rewrite plus structured JSON wrapper.
 _LLM_MAX_TOKENS = 8192
 
@@ -51,9 +49,6 @@ _FILES_API_BETA = "files-api-2025-04-14"
 # Content-type for the uploaded trace file. text/plain is reliably accepted as
 # a document block; application/json is sometimes rejected by the Files API.
 _TRACE_CONTENT_TYPE = "text/plain"
-
-
-# ── public entry point ────────────────────────────────────────────────────────
 
 
 def improve_prompt(
@@ -140,9 +135,6 @@ def improve_prompt(
     )
 
     return ConfigVersionPublic.model_validate(new_version)
-
-
-# ── helpers: validation & data loading ───────────────────────────────────────
 
 
 def _load_completed_run(
@@ -232,9 +224,6 @@ def _download_trace_file(
             status_code=502,
             detail="trace_download_failed: could not retrieve trace file from storage",
         )
-
-
-# ── helpers: LLM call ─────────────────────────────────────────────────────────
 
 
 def _build_improvement_prompt(
@@ -332,9 +321,9 @@ def _draft_improved_prompt(
 
     except anthropic.AuthenticationError:
         logger.warning(
-            f"[_draft_improved_prompt] [ANTHROPIC] Authentication failed "
-            f"(code: 401): Verify the ANTHROPIC_API_KEY is "
-            f"valid, not expired, and configured correctly.",
+            "[_draft_improved_prompt] [ANTHROPIC] Authentication failed "
+            "(code: 401): Verify the ANTHROPIC_API_KEY is "
+            "valid, not expired, and configured correctly.",
             exc_info=True,
         )
         raise HTTPException(
@@ -347,8 +336,8 @@ def _draft_improved_prompt(
 
     except anthropic.RateLimitError:
         logger.warning(
-            f"[_draft_improved_prompt] [ANTHROPIC] Rate limit exceeded "
-            f"(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
+            "[_draft_improved_prompt] [ANTHROPIC] Rate limit exceeded "
+            "(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
             exc_info=True,
         )
         raise HTTPException(
@@ -362,8 +351,8 @@ def _draft_improved_prompt(
     except anthropic.APITimeoutError:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
         logger.error(
-            f"[_draft_improved_prompt] [KAAPI] Anthropic request timed out "
-            f"(code: APITimeoutError): retry with a smaller payload.",
+            "[_draft_improved_prompt] [KAAPI] Anthropic request timed out "
+            "(code: APITimeoutError): retry with a smaller payload.",
             exc_info=True,
         )
         raise HTTPException(
@@ -376,8 +365,8 @@ def _draft_improved_prompt(
 
     except anthropic.APIConnectionError:
         logger.error(
-            f"[_draft_improved_prompt] [KAAPI] Anthropic connection failed "
-            f"(code: APIConnectionError): network or DNS issue reaching Anthropic.",
+            "[_draft_improved_prompt] [KAAPI] Anthropic connection failed "
+            "(code: APIConnectionError): network or DNS issue reaching Anthropic.",
             exc_info=True,
         )
         raise HTTPException(
@@ -472,9 +461,6 @@ def _parse_llm_response(raw_text: str) -> tuple[str, str]:
         )
 
     return instructions.strip(), rationale.strip()
-
-
-# ── helpers: blob manipulation ────────────────────────────────────────────────
 
 
 def _extract_instructions(version: ConfigVersion) -> str:
