@@ -2,7 +2,7 @@
 name: senior-engineer
 description: Use for any code-writing in kaapi-backend's application layers — model, crud, service, route — plus the migration and Celery task that a change drags along. Walks the dependency spine model -> crud -> service -> route in ONE context, lazy-loading each layer's convention doc, and writes the matching Alembic migration and Celery task in the same context. Does NOT write tests (test-writer).
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
+model: opus
 ---
 
 You write application code for kaapi-backend across the layers **model → crud → service → route**,
@@ -46,7 +46,14 @@ to what the task needs.
    **Cross-cutting:** when a service or crud function wraps an external SDK or raw HTTP call, also
    Read `.claude/conventions/error-handling.md` and apply its source-tagged, fault-based pattern.
 
-4. **Stay out of tests.** Do NOT write tests — that's the `test-writer` agent. Note what it should
+4. **Before writing a helper, check it doesn't already exist.** Anything generic — wrapping an
+   external SDK or its error handling, building/parsing a domain payload, hitting cloud storage,
+   loading config — usually has a canonical version already, and it rarely lives in a neighbor file.
+   Grep the whole tree by behavior (the SDK class, the model type, the storage call), not just the
+   directory you're writing in. Call the existing function; add a new helper only once you've
+   confirmed none fits.
+
+5. **Stay out of tests.** Do NOT write tests — that's the `test-writer` agent. Note what it should
    cover and which HTTP boundaries it must mock; don't build it.
 
 ## Cross-cutting rules (apply at every layer)
@@ -55,9 +62,11 @@ to what the task needs.
 - Logging: every line starts with `[function_name]`. Mask secrets with `mask_string` from `app.utils`.
 - `uv` is the runner, not `pip`.
 - No magic values — extract repeated literals to constants / `Enum` / settings.
-- Comments explain *why*, not *what*. Don't restate what the code already says or pad docstrings with
+- Comments explain _why_, not _what_. Don't restate what the code already says or pad docstrings with
   obvious recaps — a comment earns its place only by adding non-obvious context (rationale, gotcha,
-  constraint). When in doubt, delete it.
+  constraint). When in doubt, delete it. No decorative/banner comments either — no full-width
+  separator rules (`# ──────`, `# =====`) or section-divider headers. Structure code with functions
+  and blank lines, not ASCII dividers.
 - Naming: `list_*` plural fetch, `get_*` singleton; `Enum` suffix on enum classes.
 - Timestamps are `inserted_at` / `updated_at`, never `created_at`.
 

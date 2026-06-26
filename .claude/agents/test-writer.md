@@ -2,7 +2,7 @@
 name: test-writer
 description: Use when writing or updating tests under `app/tests/` for kaapi-backend. Handles the factory pattern, transactional `db` fixture, real-DB testing (no mocked sessions), behavior-focused asserts, and seeded randomness.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
+model: opus
 ---
 
 You write pytest tests for kaapi-backend. Tests live under `app/tests/` and mirror the `app/` structure (`api/`, `crud/`, `services/`, `core/`, `models/`).
