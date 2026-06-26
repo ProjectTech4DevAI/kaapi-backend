@@ -1,31 +1,28 @@
 """AI-assisted prompt improvement service.
 
-Downloads the evaluation run's stored trace file from S3, hands it to Claude
-via the Files API, and persists the rewritten system prompt as a new
-config_version.
+Loads the evaluation run's stored score traces from object storage, asks Claude
+to rewrite the system prompt, and persists the result as a new config_version.
 """
 
 import json
 import logging
-from typing import Any
 
 import anthropic
-from anthropic import Anthropic
 from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.config import settings
+from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.config import ConfigCrud
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.models.config.config import ConfigTag
 from app.models.config.version import (
-    ConfigVersion,
     ConfigVersionPublic,
     ConfigVersionUpdate,
 )
-from app.models.evaluation import EvaluationRun
+from app.services.llm.providers.claude import ClaudeProvider
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +33,25 @@ _LLM_MAX_TOKENS = 8192
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
 _LLM_KEY_RATIONALE = "rationale"
 
+# Schema handed to Anthropic structured outputs so the response is guaranteed to
+# be valid JSON carrying exactly these two string fields.
+_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        _LLM_KEY_INSTRUCTIONS: {"type": "string"},
+        _LLM_KEY_RATIONALE: {"type": "string"},
+    },
+    "required": [_LLM_KEY_INSTRUCTIONS, _LLM_KEY_RATIONALE],
+    "additionalProperties": False,
+}
+
 COMMIT_MESSAGE_MAX_LENGTH = 512
 
 # Prefix that marks a commit_message as AI-generated; used as a search token for
 # audit queries and by the test suite to assert provenance.
 AI_GENERATED_MARKER = "[AI Generated]"
 
-# Anthropic Files API beta header value — required by client.beta.files.*
-# and client.beta.messages.create(..., betas=[...]).
-_FILES_API_BETA = "files-api-2025-04-14"
-
-# Content-type for the uploaded trace file. text/plain is reliably accepted as
-# a document block; application/json is sometimes rejected by the Files API.
-_TRACE_CONTENT_TYPE = "text/plain"
+_COMPLETED_STATUS = "completed"
 
 
 def improve_prompt(
@@ -67,14 +70,24 @@ def improve_prompt(
         f"project_id={project_id}"
     )
 
-    run = _load_completed_run(
+    run = get_evaluation_run_by_id(
         session=session,
         evaluation_id=evaluation_id,
         organization_id=organization_id,
         project_id=project_id,
     )
-
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail="evaluation_not_found: no evaluation run with this id in the caller's project",
+        )
+    if run.status != _COMPLETED_STATUS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"evaluation_not_completed: run status is '{run.status}', must be '{_COMPLETED_STATUS}'",
+        )
     if not run.score_trace_url:
+        # Run exists but a precondition is unmet, so 422 rather than 404.
         raise HTTPException(
             status_code=422,
             detail=(
@@ -83,44 +96,52 @@ def improve_prompt(
             ),
         )
 
-    source_version = _resolve_source_version(
+    config = ConfigCrud(session, project_id).read_one(run.config_id)
+    if config is None:
+        raise HTTPException(
+            status_code=409,
+            detail="source_config_unavailable: the run's config is missing, soft-deleted, or outside the caller's project",
+        )
+
+    version = ConfigVersionCrud(
         session=session,
-        run=run,
+        config_id=run.config_id,
         project_id=project_id,
+        tag=ConfigTag.DEFAULT,
+    ).read_one(version_number=run.config_version)
+    if version is None:
+        raise HTTPException(
+            status_code=409,
+            detail="source_config_unavailable: the run's config_version is missing or soft-deleted",
+        )
+
+    blob = version.config_blob or {}
+    current_instructions = (
+        blob.get("completion", {}).get("params", {}).get("instructions") or ""
     )
 
-    current_instructions = _extract_instructions(source_version)
-
-    # Pull the model name from the source config blob for LLM context.
-    # It may be absent (e.g. older blobs), so treat it as optional.
-    blob: dict[str, Any] = source_version.config_blob or {}
-    model_name: str | None = (
-        blob.get("completion", {}).get("params", {}).get("model") or None
-    )
-
-    trace_bytes = _download_trace_file(
-        session=session,
-        project_id=project_id,
-        url=run.score_trace_url,
-    )
+    storage = get_cloud_storage(session=session, project_id=project_id)
+    traces = load_json_from_object_store(storage=storage, url=run.score_trace_url)
+    if traces is None:
+        raise HTTPException(
+            status_code=502,
+            detail="trace_download_failed: could not retrieve trace file from storage",
+        )
 
     improved_instructions, rationale = _draft_improved_prompt(
-        evaluation_id=evaluation_id,
         current_instructions=current_instructions,
-        model_name=model_name,
-        trace_bytes=trace_bytes,
+        traces=traces,
     )
 
     commit_message = (
         f"{AI_GENERATED_MARKER} (source_evaluation_run_id={evaluation_id}) {rationale}"
     )[:COMMIT_MESSAGE_MAX_LENGTH]
 
-    version_crud = ConfigVersionCrud(
+    new_version = ConfigVersionCrud(
         session=session,
         config_id=run.config_id,
         project_id=project_id,
-    )
-    new_version = version_crud.create_or_raise(
+    ).create_or_raise(
         ConfigVersionUpdate(
             config_blob={
                 "completion": {"params": {"instructions": improved_instructions}}
@@ -137,141 +158,18 @@ def improve_prompt(
     return ConfigVersionPublic.model_validate(new_version)
 
 
-def _load_completed_run(
-    *,
-    session: Session,
-    evaluation_id: int,
-    organization_id: int,
-    project_id: int,
-) -> EvaluationRun:
-    run = get_evaluation_run_by_id(
-        session=session,
-        evaluation_id=evaluation_id,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
-
-    if run is None:
-        raise HTTPException(
-            status_code=404,
-            detail="evaluation_not_found: no evaluation run with this id in the caller's project",
-        )
-
-    if run.status != "completed":
-        raise HTTPException(
-            status_code=409,
-            detail=f"evaluation_not_completed: run status is '{run.status}', must be 'completed'",
-        )
-
-    return run
-
-
-def _resolve_source_version(
-    *,
-    session: Session,
-    run: EvaluationRun,
-    project_id: int,
-) -> ConfigVersion:
-    """Load the config + config_version referenced by the run; guard soft-deletes and tenant scope."""
-    config = ConfigCrud(session, project_id).read_one(run.config_id)
-
-    if config is None:
-        raise HTTPException(
-            status_code=409,
-            detail="source_config_unavailable: the run's config is missing, soft-deleted, or outside the caller's project",
-        )
-
-    version_crud = ConfigVersionCrud(
-        session=session,
-        config_id=run.config_id,
-        project_id=project_id,
-        tag=ConfigTag.DEFAULT,
-    )
-    version = version_crud.read_one(version_number=run.config_version)
-
-    if version is None:
-        raise HTTPException(
-            status_code=409,
-            detail="source_config_unavailable: the run's config_version is missing or soft-deleted",
-        )
-
-    return version
-
-
-def _download_trace_file(
-    *,
-    session: Session,
-    project_id: int,
-    url: str,
-) -> bytes:
-    """Fetch the trace JSON bytes from S3. Maps storage errors to 502."""
-    try:
-        storage = get_cloud_storage(session=session, project_id=project_id)
-        trace_bytes = storage.get(url)
-        logger.info(
-            f"[_download_trace_file] Downloaded trace file | "
-            f"project_id={project_id} url={url} size_bytes={len(trace_bytes)}"
-        )
-        return trace_bytes
-    except Exception as exc:
-        logger.error(
-            f"[_download_trace_file] [KAAPI] Failed to download trace file "
-            f"(code: {type(exc).__name__}): could not retrieve trace data from S3. "
-            f"Check storage credentials and that the file exists. | url={url}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail="trace_download_failed: could not retrieve trace file from storage",
-        )
-
-
-def _build_improvement_prompt(
-    *,
-    current_instructions: str,
-    model_name: str | None,
-) -> str:
-    """Build the text block sent alongside the trace file document."""
-    model_context = (
-        f"\n\nThe system prompt runs on model: `{model_name}`." if model_name else ""
-    )
-
-    return (
-        "You are a prompt engineer. The attached file is a JSON array of evaluation "
-        "traces. Each trace has the fields: `question`, `ground_truth_answer`, "
-        "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
-        "`name`, `value`, and `unscoreable`).\n\n"
-        f"## Current system prompt\n```\n{current_instructions}\n```"
-        f"{model_context}\n\n"
-        "## Task\n"
-        "1. Identify the answers that performed poorly — those with low scores or "
-        "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
-        "2. Rewrite the system prompt to improve those low-performing answers while "
-        "keeping what already works well.\n"
-        "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
-        "or any other configuration.\n\n"
-        "## Response format\n"
-        "Respond ONLY with a JSON object (no markdown fences) with exactly two keys:\n"
-        '  - "improved_instructions": the full rewritten prompt string\n'
-        '  - "rationale": one short paragraph explaining what you targeted and why\n'
-    )
-
-
 def _draft_improved_prompt(
     *,
-    evaluation_id: int,
     current_instructions: str,
-    model_name: str | None,
-    trace_bytes: bytes,
+    traces: list | dict,
 ) -> tuple[str, str]:
-    """Upload the trace file to the Anthropic Files API, call Claude, and return
+    """Call Claude with the current prompt + score traces and return
     (improved_instructions, rationale).
 
-    The uploaded file is always deleted after the call, even on error.
-    Raises HTTPException(502) on any LLM failure or unusable output.
+    Uses structured outputs so the first text block is guaranteed-valid JSON.
+    Raises HTTPException(502) on any LLM failure.
     """
-    api_key = settings.ANTHROPIC_API_KEY
-    if not api_key:
+    if not settings.ANTHROPIC_API_KEY:
         raise HTTPException(
             status_code=502,
             detail=(
@@ -280,44 +178,34 @@ def _draft_improved_prompt(
             ),
         )
 
-    user_message_text = _build_improvement_prompt(
-        current_instructions=current_instructions,
-        model_name=model_name,
-    )
+    client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
 
-    client = Anthropic(api_key=api_key)
-
-    uploaded = client.beta.files.upload(
-        file=(f"traces_{evaluation_id}.txt", trace_bytes, _TRACE_CONTENT_TYPE),
-    )
-    logger.info(
-        f"[_draft_improved_prompt] Uploaded trace file to Anthropic Files API | "
-        f"file_id={uploaded.id} evaluation_id={evaluation_id}"
+    user_message_text = (
+        "You are a prompt engineer. Below is a JSON array of evaluation traces. "
+        "Each trace has the fields: `question`, `ground_truth_answer`, "
+        "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
+        "`name`, `value`, and `unscoreable`).\n\n"
+        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
+        "## Task\n"
+        "1. Identify the answers that performed poorly — those with low scores or "
+        "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
+        "2. Rewrite the system prompt to improve those low-performing answers while "
+        "keeping what already works well.\n"
+        "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
+        "or any other configuration."
     )
 
     try:
-        response = client.beta.messages.create(
+        response = client.messages.create(
             model=settings.PROMPT_IMPROVEMENT_MODEL,
             max_tokens=_LLM_MAX_TOKENS,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_message_text},
-                        {
-                            "type": "document",
-                            "source": {"type": "file", "file_id": uploaded.id},
-                        },
-                    ],
-                }
-            ],
-            betas=[_FILES_API_BETA],
+            messages=[{"role": "user", "content": user_message_text}],
+            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
-        raw_text = next((b.text for b in response.content if b.type == "text"), "")
-        logger.info(
-            f"[_draft_improved_prompt] LLM call succeeded | "
-            f"model={settings.PROMPT_IMPROVEMENT_MODEL} response_id={response.id}"
-        )
+        text = next(b.text for b in response.content if b.type == "text")
+        data = json.loads(text)
+        return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
 
     except anthropic.AuthenticationError:
         logger.warning(
@@ -408,62 +296,3 @@ def _draft_improved_prompt(
                 "contact Kaapi if persistent"
             ),
         )
-
-    finally:
-        try:
-            client.beta.files.delete(uploaded.id)
-        except Exception:
-            logger.warning(
-                f"[_draft_improved_prompt] failed to delete uploaded trace file | "
-                f"file_id={uploaded.id}"
-            )
-
-    return _parse_llm_response(raw_text)
-
-
-def _parse_llm_response(raw_text: str) -> tuple[str, str]:
-    """Extract improved_instructions and rationale from the LLM JSON response.
-
-    Raises HTTPException(502) when the response is not parseable or missing keys.
-    """
-    # Strip optional markdown code fences the model sometimes emits despite instructions.
-    stripped = raw_text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        inner = lines[1:]
-        if inner and inner[-1].strip() == "```":
-            inner = inner[:-1]
-        stripped = "\n".join(inner).strip()
-
-    try:
-        data = json.loads(stripped)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning(
-            f"[_parse_llm_response] Could not parse LLM JSON response | error={exc}"
-        )
-        raise HTTPException(
-            status_code=502,
-            detail="prompt_generation_failed: LLM returned a response that could not be parsed as JSON",
-        )
-
-    instructions = data.get(_LLM_KEY_INSTRUCTIONS)
-    rationale = data.get(_LLM_KEY_RATIONALE)
-
-    if not instructions or not isinstance(instructions, str):
-        raise HTTPException(
-            status_code=502,
-            detail="prompt_generation_failed: LLM response missing 'improved_instructions' field",
-        )
-    if not rationale or not isinstance(rationale, str):
-        raise HTTPException(
-            status_code=502,
-            detail="prompt_generation_failed: LLM response missing 'rationale' field",
-        )
-
-    return instructions.strip(), rationale.strip()
-
-
-def _extract_instructions(version: ConfigVersion) -> str:
-    """Read completion.params.instructions from the source config_blob."""
-    blob: dict[str, Any] = version.config_blob or {}
-    return blob.get("completion", {}).get("params", {}).get("instructions") or ""
