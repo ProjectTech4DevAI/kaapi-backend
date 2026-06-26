@@ -67,6 +67,8 @@ Delegation to `app.core.security` is the pattern — services orchestrate; primi
 
 ## External HTTP — checklist
 
+When wrapping an external SDK or raw HTTP call, follow `.claude/conventions/error-handling.md` for the full pattern (source-tagged `[KAAPI]`/`[<PROVIDER>]` messages, fault-based log levels, typed exception ladders).
+
 - **Timeout** — every `httpx`/`requests` call has an explicit timeout. The default is too long.
 - **Retry policy** — idempotent GETs can retry with backoff. Mutations should retry only if you're certain the API is idempotent or you have an idempotency key.
 - **Error mapping** — `httpx.HTTPStatusError` → a domain exception or `HTTPException` with a sensible code (often 502 for upstream failures, NOT 500).
