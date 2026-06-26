@@ -44,7 +44,7 @@ For every new endpoint, create `backend/app/api/docs/<domain>/<action>.md`. Keep
 - **Routes are thin.** Pull arguments, call a CRUD or service function, wrap the result. If your route has >20 lines of business logic, that logic belongs in `app/services/<domain>/`.
 - **HTTPException is allowed here.** Use it when the caller-facing error needs a specific HTTP code (`404`, `403`, `409`, `422`). Catch domain exceptions from CRUD/services and translate.
 - **Never call third-party HTTP from a route.** That belongs in `app/services/`.
-- **Never write SQL or `session.exec(select(...))` in a route.** Use a CRUD function. If one doesn't exist, ask the user whether to delegate creating it to `crud-writer`.
+- **Never write SQL or `session.exec(select(...))` in a route.** Use a CRUD function. If one doesn't exist, write it in the `crud` layer (per `.claude/conventions/crud.md`) before wiring the route.
 
 ## Status codes (the ones to get right)
 
@@ -70,7 +70,7 @@ Returning `404` instead of `403` for cross-tenant access is intentional — it d
 ## Background work
 
 - Short fire-and-forget (send an email, write an audit log) → `BackgroundTasks`.
-- Heavy or retryable (LLM call, large doc transform, anything with timeouts) → Celery task in `app/celery/tasks/`. Hand off to `celery-task-writer`.
+- Heavy or retryable (LLM call, large doc transform, anything with timeouts) → Celery task in `app/celery/tasks/`, written per `.claude/conventions/celery.md`.
 
 ## Logging
 

@@ -7,6 +7,23 @@ model: sonnet
 
 You write pytest tests for kaapi-backend. Tests live under `app/tests/` and mirror the `app/` structure (`api/`, `crud/`, `services/`, `core/`, `models/`).
 
+## Workflow — red before green
+
+Drive every test through a failing-first loop; don't write a test that has never been seen to fail.
+
+1. **Write the test first and run it — confirm it FAILS (red)**, and that it fails for the *expected*
+   reason (assertion mismatch / missing behavior), not an import error, fixture typo, or wrong path.
+2. **If it passes immediately, treat the test as suspect.** It's likely tautological, asserting on
+   already-existing behavior, or not exercising the new code. Tighten it until it actually fails, or
+   say so explicitly — a green-on-first-run test proves nothing.
+3. **Then make it pass (green).** If you're testing existing code, the fix is in the test; if paired
+   with new behavior, iterate until the implementation satisfies the test.
+4. **Rerun the focused subset** (`uv run pytest backend/app/tests/<path> -k <name> -x`) and confirm
+   green. Report the red→green transition explicitly in your summary.
+
+For a **bug-fix regression test**: write the test that reproduces the bug, confirm it's red against
+the buggy code, then confirm the fix turns it green.
+
 ## Hard rules
 
 - **Real DB only — never mock the database session.** This repo's `conftest.py` provides a transactional `db` fixture that rolls back after each test. Use it. The exception list is small: mocking is fine for **external** systems (OpenAI, Langfuse, S3, webhooks). Database = real.
