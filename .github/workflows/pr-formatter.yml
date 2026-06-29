@@ -1,0 +1,147 @@
+name: Format PR with OpenAI
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  format-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rewrite PR body
+        id: body
+        uses: actions/github-script@v9
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+              },
+              body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                max_tokens: 1024,
+                messages: [{
+                  role: 'user',
+                  content: `Rewrite this GitHub pull request body using the EXACT template below. Keep it short, crisp and easy to understand. Do NOT add any information that wasn't in the original PR body, title, or branch name. Output ONLY the formatted markdown, nothing else.
+
+            Rules:
+            - "## Issue" section: If the original body references an issue (e.g. "Closes #123" or a full issue URL), keep that exact reference. Otherwise output "Closes #PLEASE_TYPE_ISSUE_NUMBER".
+            - "## Summary" section: Rewrite as a clean description with these sub-points (use only the parts the original actually supports; omit a bullet if there is no information for it):
+                - How the flow worked before
+                - How it works now
+                - A few high-level bullet points on what was required to support the new flow
+            - "## Checklist" section: Keep it EXACTLY as shown in the template, preserving whether each box was checked ([x]) or unchecked ([ ]) in the original body.
+            - "## Notes" section: Keep any notes from the original body. If there are none, use the placeholder line shown in the template.
+
+            Template:
+            ## Issue
+
+            Closes #PLEASE_TYPE_ISSUE_NUMBER
+
+            ## Summary
+
+            - **Before:** (How the flow worked before)
+            - **Now:** (How it works now)
+            - (High-level bullet on what was required)
+            - (High-level bullet on what was required)
+
+            ## Checklist
+
+            Before submitting a pull request, please ensure that you mark these task.
+
+            - [ ] Ran \`fastapi run --reload app/main.py\` or \`docker compose up\` in the repository root and test.
+            - [ ] If you've fixed a bug or added code that is tested and has test cases.
+
+            ## Notes
+
+            Please add here if any other information is required for the reviewer.
+
+            Original PR title: ${pr.title}
+            Original branch: ${pr.head.ref}
+            Original PR body:
+            ${pr.body || '(empty)'}`
+                }]
+              })
+            });
+
+            const data = await response.json();
+
+            if (!data.choices || !data.choices[0]) {
+              core.setFailed(`OpenAI API error: ${JSON.stringify(data)}`);
+              return;
+            }
+
+            return data.choices[0].message.content;
+
+      - name: Rewrite PR title
+        id: title
+        uses: actions/github-script@v9
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const formattedBody = ${{ steps.body.outputs.result }};
+            const pr = context.payload.pull_request;
+
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+              },
+              body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                max_tokens: 100,
+                messages: [{
+                  role: 'user',
+                  content: `Based on the PR title, branch name and body below, generate a short title in this exact format:
+            "Module Name: 4-5 word summary"
+
+            Examples:
+            - Evaluation: Automated metrics for STT
+            - Evaluation: Refactoring CRON
+            - SRD: Enhance guide and templates
+
+            Output ONLY the title, nothing else.
+
+            Original PR title: ${pr.title}
+            Original branch: ${pr.head.ref}
+            PR body:
+            ${formattedBody}`
+                }]
+              })
+            });
+
+            const data = await response.json();
+
+            if (!data.choices || !data.choices[0]) {
+              core.setFailed(`OpenAI API error: ${JSON.stringify(data)}`);
+              return;
+            }
+
+            return data.choices[0].message.content.replace(/^["']|["']$/g, '');
+
+      - name: Update PR
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const formattedBody = ${{ steps.body.outputs.result }};
+            const formattedTitle = ${{ steps.title.outputs.result }};
+            const original = context.payload.pull_request.body || '(empty)';
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              title: formattedTitle,
+              body: `${formattedBody}\n\n<details><summary>Original PR description</summary>\n\n${original}\n\n</details>`
+            });
