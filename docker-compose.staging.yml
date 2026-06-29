@@ -8,7 +8,10 @@ services:
     build:
       context: ./backend
     env_file:
-      - .env
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
     ports:
       - "8000:80"
     healthcheck:
@@ -42,7 +45,10 @@ services:
     build:
       context: ./backend
     env_file:
-      - .env
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
     profiles: ["migrate"]
     command: ["uv", "run", "alembic", "upgrade", "head"]
 
@@ -56,7 +62,10 @@ services:
       backend:
         condition: service_healthy
     env_file:
-      - .env
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
     command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
     logging:
       driver: awslogs
