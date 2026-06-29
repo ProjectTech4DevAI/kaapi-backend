@@ -155,8 +155,8 @@ def improve_prompt(
     ] = improved_instructions
 
     commit_message = (
-        f"{AI_GENERATED_MARKER} improved from config version {run.config_version} "
-        f"(source_evaluation_run_id={evaluation_id}) {rationale}"
+        f"{AI_GENERATED_MARKER} improved from config version v{run.config_version} "
+        f"(Evaluation: {run.run_name}) {rationale}"
     )[:COMMIT_MESSAGE_MAX_LENGTH]
 
     new_version = ConfigVersionCrud(
