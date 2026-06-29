@@ -181,7 +181,7 @@ def run_guardrails_validation(
         "Content-Type": "application/json",
     }
 
-    url = f"{settings.KAAPI_GUARDRAILS_URL}"
+    url = f"{settings.KAAPI_GUARDRAILS_URL}/"
     payload_bytes = json.dumps(payload).encode()
     logger.info(
         f"[run_guardrails_validation] POST guardrails | job_id={job_id}, url={url}, "
@@ -203,7 +203,6 @@ def run_guardrails_validation(
             logger.info(
                 f"[run_guardrails_validation] Response received | job_id={job_id}, "
                 f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
-                f"response_bytes={len(response.content)}"
             )
             response.raise_for_status()
             return response.json()
