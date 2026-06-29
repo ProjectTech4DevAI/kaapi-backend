@@ -1,9 +1,11 @@
 import logging
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.open_ai import OpenAIProvider
 from app.services.llm.providers.google_aistudio import GoogleAIProvider
+from app.services.llm.providers.google_ai import GoogleVertexAIProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.claude import ClaudeProvider
@@ -15,26 +17,32 @@ class LLMProvider:
     OPENAI = "openai"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
-    GOOGLE = "google"
     ANTHROPIC = "anthropic"
+    # Google. preferably vertex
+    GOOGLE = "google"
+    GOOGLE_NATIVE = "google-native"
+    # Goole, aistudio
     GOOGLE_AISTUDIO = "google-aistudio"
     GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
+
     OPENAI_NATIVE = "openai-native"
-    GOOGLE_NATIVE = "google-native"
+
     SARVAMAI_NATIVE = "sarvamai-native"
     ELEVENLABS_NATIVE = "elevenlabs-native"
     ANTHROPIC_NATIVE = "anthropic-native"
 
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
-        GOOGLE: GoogleAIProvider,
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
+        # same as above
+        GOOGLE: GoogleAIProvider,
+        GOOGLE_NATIVE: GoogleAIProvider,
+        # same as above
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
-        GOOGLE_NATIVE: GoogleAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,
         ELEVENLABS_NATIVE: ElevenlabsAIProvider,
         ANTHROPIC_NATIVE: ClaudeProvider,
@@ -43,6 +51,14 @@ class LLMProvider:
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         """Return the provider class for a given name."""
+        if provider_type in (cls.GOOGLE, cls.GOOGLE_NATIVE):
+            route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE or "vertex"
+            if route not in ("vertex", "aistudio"):
+                raise ValueError(
+                    f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid. "
+                    f"Must be one of: vertex, aistudio"
+                )
+            return GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
         provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
@@ -73,10 +89,13 @@ def get_llm_provider(
         org_id=organization_id,
     )
 
-    if not credentials:
+    if not credentials and (provider_class is not GoogleVertexAIProvider):
         raise ValueError(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )
+
+    if not credentials:
+        credentials = {}
 
     try:
         client = provider_class.create_client(credentials=credentials)
