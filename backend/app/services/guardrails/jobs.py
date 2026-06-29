@@ -19,9 +19,10 @@ from app.models.guardrails import (
     GuardrailsOutput,
     GuardrailsOutputContent,
     GuardrailsRequest,
+    GuardrailValidator,
 )
 from app.models.llm.request import Validator
-from app.services.llm.guardrails import apply_guardrails
+from app.services.llm.guardrails import GuardrailsOutcome, apply_guardrails
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -168,15 +169,116 @@ def _send_failure_callback(
     with tracer.start_as_current_span("guardrails.send_callback") as cb_span:
         cb_span.set_attribute("callback.url", callback_url)
         cb_span.set_attribute("callback.status", "failure")
-        logger.debug(
-            f"[_send_failure_callback] Dispatching failure callback | "
-            f"callback_url={callback_url}, error={error}"
-        )
         send_callback(
             callback_url=callback_url,
             data=payload,
             webhook_secret=webhook_secret,
         )
+
+
+def _dispatch_success_callback(
+    *,
+    callback_url: str | None,
+    payload: dict[str, Any],
+    project_id: int,
+    organization_id: int,
+) -> None:
+    if not callback_url:
+        return
+    webhook_secret = get_webhook_secret(project_id, organization_id)
+    with tracer.start_as_current_span("guardrails.send_callback") as cb_span:
+        cb_span.set_attribute("callback.url", callback_url)
+        cb_span.set_attribute("callback.status", "success")
+        send_callback(
+            callback_url=callback_url,
+            data=payload,
+            webhook_secret=webhook_secret,
+        )
+
+
+def _update_job(job_uuid: UUID, **fields: Any) -> None:
+    """Persist a job-state change in its own session (Celery worker context)."""
+    with Session(engine) as session:
+        JobCrud(session=session).update(job_id=job_uuid, job_update=JobUpdate(**fields))
+
+
+def _dedupe_validators(
+    config: list[GuardrailValidator],
+) -> tuple[list[Validator], list[str]]:
+    """Drop duplicate validator IDs (preserve order) to avoid double-billing upstream.
+
+    Returns the unique validators plus any caller-facing warnings.
+    """
+    seen_ids: set[UUID] = set()
+    validators: list[Validator] = []
+    duplicates = 0
+    for g in config:
+        if g.validator_config_id in seen_ids:
+            duplicates += 1
+            continue
+        seen_ids.add(g.validator_config_id)
+        validators.append(Validator(validator_config_id=g.validator_config_id))
+
+    warnings: list[str] = []
+    if duplicates:
+        warnings.append(
+            f"Request contained {duplicates} duplicate validator_config_id "
+            "entries; duplicates were ignored before calling the guardrails service."
+        )
+    if not validators:
+        warnings.append(
+            "Request contained no usable validators after deduplication; "
+            "original text was returned unchanged."
+        )
+    return validators, warnings
+
+
+def _outcome_warnings(outcome: GuardrailsOutcome, has_validators: bool) -> list[str]:
+    """Translate a soft-pass outcome (service unreachable / no-op) into warnings."""
+    warnings: list[str] = []
+    if outcome.bypassed:
+        warnings.append(
+            "Guardrails service was unavailable; original text was returned unchanged."
+        )
+    elif not outcome.raw and has_validators:
+        warnings.append(
+            "Validators were submitted but none resolved against the guardrails "
+            "service; original text was returned unchanged."
+        )
+    if outcome.error is None and outcome.safe_text is None and has_validators:
+        warnings.append(
+            "Guardrails service did not return a sanitised text; original text "
+            "was returned unchanged."
+        )
+    return warnings
+
+
+def _fail_job(
+    *,
+    job_uuid: UUID,
+    error: str,
+    callback_url: str | None,
+    request_metadata: dict[str, Any] | None,
+    project_id: int,
+    organization_id: int,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Mark the job FAILED, fire the failure callback, return the worker result."""
+    fields: dict[str, Any] = {
+        "status": JobStatus.FAILED,
+        "error_message": error,
+    }
+    if meta is not None:
+        fields["meta"] = meta
+    _update_job(job_uuid, **fields)
+    _send_failure_callback(
+        callback_url=callback_url,
+        error=error,
+        request_metadata=request_metadata,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
+    return {"success": False, "error": error}
 
 
 def execute_job(
@@ -189,15 +291,14 @@ def execute_job(
     organization_id: int,
     **_: Any,
 ) -> dict[str, Any]:
-    """Celery worker entrypoint for /guardrails jobs."""
+    """Celery worker entrypoint for /guardrails jobs.
+
+    Stages: mark in-progress -> dedupe validators -> call guardrails ->
+    hard-block (FAILED) or success (SUCCESS + callback).
+    """
     job_uuid = UUID(job_id)
     request = GuardrailsRequest.model_validate(request_data)
     callback_url = str(request.callback_url) if request.callback_url else None
-    logger.debug(
-        f"[execute_job] Picked up job | job_id={job_id}, task_id={task_id}, "
-        f"text_len={len(request.text)}, validators={len(request.config)}, "
-        f"callback={callback_url is not None}"
-    )
 
     with log_context(
         tag="guardrails",
@@ -210,51 +311,20 @@ def execute_job(
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
 
-        with Session(engine) as session:
-            JobCrud(session=session).update(
-                job_id=job_uuid,
-                job_update=JobUpdate(status=JobStatus.PROCESSING, task_id=task_id),
-            )
+        # 1. Mark job as in-progress.
+        _update_job(job_uuid, status=JobStatus.PROCESSING, task_id=task_id)
 
-        warnings: list[str] = []
+        # 2. Deduplicate validators.
+        validators, warnings = _dedupe_validators(request.config)
 
+        # 3. Call guardrails service.
         try:
-            # Dedupe validator IDs (preserve order) to avoid double-billing upstream.
-            seen_ids: set[UUID] = set()
-            validators: list[Validator] = []
-            duplicates = 0
-            for g in request.config:
-                if g.validator_config_id in seen_ids:
-                    duplicates += 1
-                    continue
-                seen_ids.add(g.validator_config_id)
-                validators.append(Validator(validator_config_id=g.validator_config_id))
-            if duplicates:
-                warnings.append(
-                    f"Request contained {duplicates} duplicate validator_config_id "
-                    "entries; duplicates were ignored before calling the guardrails service."
-                )
-            if not validators:
-                warnings.append(
-                    "Request contained no usable validators after deduplication; "
-                    "original text was returned unchanged."
-                )
-            logger.debug(
-                f"[execute_job] Calling guardrails service | job_id={job_id}, "
-                f"unique_validators={len(validators)}, duplicates_skipped={duplicates}"
-            )
             outcome = apply_guardrails(
                 text=request.text,
                 validators=validators,
                 job_id=job_uuid,
                 project_id=project_id,
                 organization_id=organization_id,
-            )
-            logger.debug(
-                f"[execute_job] Guardrails outcome | job_id={job_id}, "
-                f"bypassed={outcome.bypassed}, has_error={outcome.error is not None}, "
-                f"safe_text_present={outcome.safe_text is not None}, "
-                f"raw_keys={list(outcome.raw.keys()) if isinstance(outcome.raw, dict) else None}"
             )
         except Exception as e:
             logger.error(
@@ -263,68 +333,32 @@ def execute_job(
             )
             span.record_exception(e)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-            with Session(engine) as session:
-                JobCrud(session=session).update(
-                    job_id=job_uuid,
-                    job_update=JobUpdate(status=JobStatus.FAILED, error_message=str(e)),
-                )
-            _send_failure_callback(
-                callback_url=callback_url,
+            return _fail_job(
+                job_uuid=job_uuid,
                 error=str(e),
-                request_metadata=request.request_metadata,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
-            return {"success": False, "error": str(e)}
-
-        if outcome.bypassed:
-            warnings.append(
-                "Guardrails service was unavailable; original text was returned unchanged."
-            )
-        elif not outcome.raw and validators:
-            # Validators submitted but none resolved — likely upstream unreachable.
-            warnings.append(
-                "Validators were submitted but none resolved against the guardrails "
-                "service; original text was returned unchanged."
-            )
-            logger.warning(
-                f"[execute_job] Validators were submitted but none resolved against "
-                f"the guardrails service; returning original text. job_id={job_id}"
-            )
-
-        if outcome.error is None and outcome.safe_text is None and validators:
-            warnings.append(
-                "Guardrails service did not return a sanitised text; original text "
-                "was returned unchanged."
-            )
-
-        # Hard block: guardrails service rejected the text.
-        if outcome.error is not None:
-            logger.info(
-                f"[execute_job] Guardrails hard-blocked | job_id={job_id}, "
-                f"error={outcome.error}"
-            )
-            with Session(engine) as session:
-                JobCrud(session=session).update(
-                    job_id=job_uuid,
-                    job_update=JobUpdate(
-                        status=JobStatus.FAILED,
-                        error_message=outcome.error,
-                        meta={
-                            "request": request.model_dump(mode="json"),
-                            "response": outcome.raw,
-                        },
-                    ),
-                )
-            _send_failure_callback(
                 callback_url=callback_url,
-                error=outcome.error,
                 request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
             )
-            return {"success": False, "error": outcome.error}
 
+        warnings += _outcome_warnings(outcome, bool(validators))
+        request_json = request.model_dump(mode="json")
+
+        # 4. Hard block: guardrails service rejected the text.
+        if outcome.error is not None:
+            logger.info(f"[execute_job] Guardrails hard-blocked | job_id={job_id}")
+            return _fail_job(
+                job_uuid=job_uuid,
+                error=outcome.error,
+                callback_url=callback_url,
+                request_metadata=request.request_metadata,
+                project_id=project_id,
+                organization_id=organization_id,
+                meta={"request": request_json, "response": outcome.raw},
+            )
+
+        # 5. Success: persist sanitised result and dispatch the success callback.
         safe_text = outcome.safe_text if outcome.safe_text is not None else request.text
         # Server-minted so callers always have a stable correlation handle.
         response_id = str(uuid4())
@@ -335,42 +369,23 @@ def execute_job(
             request_metadata=request.request_metadata,
             warnings=warnings,
         )
-
-        with Session(engine) as session:
-            JobCrud(session=session).update(
-                job_id=job_uuid,
-                job_update=JobUpdate(
-                    status=JobStatus.SUCCESS,
-                    meta={
-                        "request": request.model_dump(mode="json"),
-                        "response": outcome.raw,
-                        "callback": {
-                            "response_id": response_id,
-                            "delivered": callback_url is not None,
-                            "warnings": warnings,
-                        },
-                    },
-                ),
-            )
-
-        logger.info(
-            f"[execute_job] Job completed | job_id={job_id}, "
-            f"warnings={len(warnings)}, callback={callback_url is not None}"
+        _update_job(
+            job_uuid,
+            status=JobStatus.SUCCESS,
+            meta={
+                "request": request_json,
+                "response": outcome.raw,
+                "callback": {
+                    "response_id": response_id,
+                    "delivered": callback_url is not None,
+                    "warnings": warnings,
+                },
+            },
         )
-
-        if callback_url:
-            webhook_secret = get_webhook_secret(project_id, organization_id)
-            with tracer.start_as_current_span("guardrails.send_callback") as cb_span:
-                cb_span.set_attribute("callback.url", callback_url)
-                cb_span.set_attribute("callback.status", "success")
-                logger.debug(
-                    f"[execute_job] Dispatching success callback | job_id={job_id}, "
-                    f"callback_url={callback_url}"
-                )
-                send_callback(
-                    callback_url=callback_url,
-                    data=callback_payload,
-                    webhook_secret=webhook_secret,
-                )
-
+        _dispatch_success_callback(
+            callback_url=callback_url,
+            payload=callback_payload,
+            project_id=project_id,
+            organization_id=organization_id,
+        )
         return callback_payload
