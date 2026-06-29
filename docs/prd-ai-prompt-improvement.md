@@ -17,8 +17,8 @@ That work is slow, requires prompt-engineering skill, and doesn't scale across m
 ## Goals
 
 - Let a user generate an improved prompt iteration directly from a completed evaluation run, in a single action.
-- Ground the improvement in the evaluation's own evidence — the questions that performed poorly *consistently*, and the broader patterns across question categories.
-- Let the user control what "poor performance" means: which quality metric to judge on, and the cutoff for "too low."
+- Ground the improvement in the evaluation's own evidence — the questions that performed poorly, and the broader patterns across question categories.
+- Require no tuning from the user: the full evaluation trace (every score and every category) is handed to the model, which identifies what "poor performance" means itself — no metric to pick and no threshold to set.
 - Produce a new prompt iteration that is clearly marked as AI-generated and traceable back to the evaluation it came from.
 - Keep every prior prompt iteration intact — the new one is added alongside, never overwrites.
 - Preserve everything about the configuration except the prompt itself (same model, same knowledge base, same other settings), so the improvement is an apples-to-apples prompt change.
@@ -35,17 +35,17 @@ That work is slow, requires prompt-engineering skill, and doesn't scale across m
 
 - **Adoption:** % of completed evaluations on which users invoke the improvement action.
 - **Acceptance:** % of AI-generated prompt iterations that users keep / promote rather than discard.
-- **Quality lift:** for adopted AI-generated prompts, the change in the chosen quality metric (e.g. average similarity or correctness) when the new prompt is re-evaluated, vs. the prompt it replaced.
+- **Quality lift:** for adopted AI-generated prompts, the change in the evaluation's quality scores (e.g. average similarity or judged correctness) when the new prompt is re-evaluated, vs. the prompt it replaced.
 - **Effort saved:** reduction in time from "evaluation finished" to "improved prompt exists," vs. the manual baseline.
 
 ## User Stories / Use Cases
 
 1. As a config owner, I want to generate an improved prompt from a completed evaluation in one action, so that I don't have to hand-write a new prompt myself.
 2. As a config owner, I want the improvement to be based on the questions that scored low, so that the new prompt targets real weaknesses rather than guesses.
-3. As a config owner, I want "low scoring" to mean *consistently* low — not a one-off bad answer — so that the improvement focuses on genuine problems and ignores noise.
+3. As a config owner, I want the model to weigh the full result set rather than reacting to a single bad answer, so that the improvement focuses on genuine problems and ignores noise.
 4. As a config owner, I want the improvement to also account for whole categories of questions that underperform, so that systemic gaps in the prompt are addressed.
-5. As a config owner, I want to choose which quality metric defines "low" (similarity-based or judged), so that the analysis matches how I measure quality for this use case.
-6. As a config owner, I want to set the cutoff for "too low," so that I control how aggressive the selection of weak questions is.
+5. As a config owner, I want the model to read every score the run recorded (similarity-based and judged) together, so that the analysis reflects all the ways quality was measured — without me having to pick one.
+6. As a config owner, I want to trigger the improvement with no tuning — no metric to choose and no threshold to set — so that the action stays one click.
 7. As a non-expert builder, I want the system to write the improved prompt for me, so that I can improve quality without prompt-engineering expertise.
 8. As a config owner, I want the new prompt to keep the same model and knowledge base as the evaluated configuration, so that I'm comparing prompt-to-prompt and nothing else changed.
 9. As a config owner, I want the new prompt to appear as the next iteration in the configuration's history, so that it slots naturally into how I already manage versions.
@@ -62,22 +62,21 @@ That work is slow, requires prompt-engineering skill, and doesn't scale across m
 
 **Primary flow:**
 1. User opens a completed evaluation run and reviews its results (scores, weak questions, category breakdown).
-2. User chooses to improve the prompt. They select the quality metric to judge on and the cutoff for "low."
-3. The system analyzes the evaluation: it finds the questions that scored low consistently and the categories that underperform, considers the current prompt, and drafts an improved prompt.
+2. User chooses to improve the prompt — a single action with no parameters to set.
+3. The system hands the run's full trace (every question, score, and category) and the current prompt to the model, which finds the answers that scored low and the categories that underperform and drafts an improved prompt.
 4. A new prompt iteration is created in the configuration's history — labeled as the next iteration with an "AI Generated" marker — and presented to the user along with a short note on what it targeted and which evaluation it came from.
 5. The user reviews the new iteration, and can adopt it, edit it further, re-evaluate it, or discard it.
 
 **Key experience qualities:**
-- One clear action from the evaluation view; minimal choices (metric + threshold).
+- One clear action from the evaluation view; no choices to make (no metric or threshold).
 - The result is a normal prompt iteration the user already knows how to work with — not a separate, special object.
 - The "AI Generated" provenance and the link to the originating evaluation are visible, so trust and traceability are built in.
 
 ## Scope & Priorities
 
 **Must-have (v1)**
-- Generate an improved prompt iteration from a completed evaluation run, on explicit user action.
-- User-selectable quality metric (similarity-based or judged) and threshold.
-- Selection of weak questions based on *consistent* low performance, plus underperforming categories.
+- Generate an improved prompt iteration from a completed evaluation run, on explicit user action, with no request parameters.
+- The full evaluation trace — every score (similarity-based and judged) and every category — is handed to the model; it identifies the low-performing answers and patterns itself, with no in-code metric choice, threshold, or selection.
 - New iteration keeps model and knowledge base unchanged — prompt only.
 - New iteration added to the configuration's history, clearly marked "AI Generated," traceable to the source evaluation, with a short rationale. Prior iterations preserved.
 

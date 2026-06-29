@@ -15,14 +15,16 @@ prompt-engineering skill, and does not scale across many configurations or frequ
 evaluation cycles. This feature closes the loop — one explicit action turns a finished
 evaluation into a concrete, improved prompt iteration.
 
-Rather than selecting "weak" questions and categories in code, the feature hands the
-run's **entire** evaluation trace file to Claude via the Anthropic Files API and lets the
-model find the patterns itself. The trace file carries, per question, the assistant's
-answer, the ground-truth answer, the category, and **all** of the run's scores — the
-built-in Cosine Similarity score plus any number of Langfuse "LLM-as-judge" scores. Claude
-reads every metric and every category together to understand how the generated answers
-performed against ground truth, then rewrites the system prompt accordingly. No threshold,
-no metric selection, no caps.
+Rather than selecting "weak" questions and categories in code, the feature inlines the
+run's **entire** evaluation trace file into a single Claude message and lets the model find
+the patterns itself. The trace file carries, per question, the assistant's answer, the
+ground-truth answer, the category, and **all** of the run's scores — the built-in Cosine
+Similarity score plus any number of Langfuse "LLM-as-judge" scores. Claude reads every
+metric and every category together to understand how the generated answers performed
+against ground truth, then rewrites the system prompt accordingly. The response is returned
+through Anthropic **structured outputs** (a JSON schema), so it is guaranteed-valid JSON
+carrying exactly `improved_instructions` and `rationale`. No threshold, no metric selection,
+no caps.
 
 What the feature produces, at minimum:
 - A new `config_version` for the evaluated configuration, identical to the evaluated
@@ -80,10 +82,10 @@ overwriting prior iterations).
   location of its stored trace file, written by the evaluation pipeline). If it is empty or
   null, the request is rejected (422, `traces_not_available`) — there is nothing to analyze.
 - **Analysis is delegated to the LLM, not done in code:** The service does not group,
-  filter, score-select, or cap anything. It downloads the whole trace file and uploads it to
-  the Anthropic Files API as a document attached to the improvement request. The model
-  identifies the low-performing answers (low scores or large divergence from ground truth)
-  across the full result set and rewrites the prompt to address them.
+  filter, score-select, or cap anything. It downloads the whole trace file and inlines it
+  (as JSON, via `json.dumps`) into the single Claude request message. The model identifies
+  the low-performing answers (low scores or large divergence from ground truth) across the
+  full result set and rewrites the prompt to address them.
 - **All metrics, all categories:** Each trace in the file carries a `scores` list of
   `{name, value, unscoreable}` objects — the built-in Cosine Similarity score plus any
   number of Langfuse LLM-as-judge scores whose names are not known ahead of time. The model
@@ -92,20 +94,25 @@ overwriting prior iterations).
 - **Reuse:** No new tables and no schema changes. Reuse `evaluation_run` (read-only) and
   `config_version` (one new row, existing columns only). Provenance is recorded in the new
   row's `commit_message`. Reuse the existing version-creation CRUD path
-  (`create_or_raise`) so version numbering and soft-delete semantics stay consistent; it
-  deep-merges the prompt-only change onto the latest version's `config_blob`.
+  (`create_or_raise`) so version numbering and soft-delete semantics stay consistent.
+  `create_or_raise` deep-merges its input onto the latest active version, so the service
+  passes the **evaluated version's full blob** (with only `completion.params.instructions`
+  swapped) as that input — the evaluated version's values then win on every key it sets,
+  keeping model/knowledge base apples-to-apples with what was scored.
 - **Multi-tenancy:** `evaluation_run` carries `organization_id` + `project_id`; `config`
   and `config_version` are project-scoped (`project_id`, no `organization_id`). The run's
   `config_id` must resolve to a config in the caller's project, else the request is rejected.
-- **Trace download via cloud storage:** The trace file is fetched through the project's
-  configured cloud storage (`get_cloud_storage(...).get(url)`). A storage failure (missing
-  object, bad credentials) is mapped to `502 trace_download_failed`.
-- **Anthropic Files API:** The trace bytes are uploaded with the `files-api-2025-04-14`
-  beta and attached as a `document` content block (uploaded as `text/plain`, which the Files
-  API accepts reliably where `application/json` is sometimes rejected). The uploaded file is
-  always deleted after the call, even on error.
+- **Trace download via cloud storage:** The trace file is fetched and parsed through the
+  project's configured cloud storage helper
+  (`load_json_from_object_store(storage=get_cloud_storage(...), url=score_trace_url)`), which
+  returns the parsed JSON (a `list`/`dict`). A storage or parse failure (missing object, bad
+  credentials, unreadable JSON) is mapped to `502 trace_download_failed`.
+- **Inline trace, structured output:** The parsed trace JSON is inlined into the single
+  Claude request message (via `json.dumps`); there is no file upload and nothing to clean up.
+  The call uses Anthropic structured outputs (`output_config` with a `json_schema`), so the
+  response is guaranteed-valid JSON carrying exactly `improved_instructions` and `rationale`.
 - **Pricing:** The improvement makes one LLM call per invocation (paid). The whole trace
-  file is sent as a document, so cost scales with the run's size.
+  is inlined into the request, so cost scales with the run's size.
 - **Starting provider/model:** Claude (default `claude-opus-4-8`), configurable through
   settings (see Configuration).
 - **Credentials:** The feature uses a single platform-owned Anthropic key
@@ -128,30 +135,33 @@ overwriting prior iterations).
    run. Load that `config_version` (and parent `config`, scoped to the caller's project).
    Reject if either is missing or soft-deleted (409, `source_config_unavailable`).
 5. **Read the source context.** Extract the current prompt from the source version's
-   `config_blob.completion.params.instructions`, and (optionally) the model name from
-   `config_blob.completion.params.model` to give the LLM context.
-6. **Download the trace file.** Fetch the trace bytes from S3 via the project's cloud
-   storage (`get_cloud_storage(...).get(score_trace_url)`). On any storage error, reject
-   (502, `trace_download_failed`).
+   `config_blob.completion.params.instructions`.
+6. **Download the trace file.** Fetch and parse the trace JSON from S3 via the project's
+   cloud storage
+   (`load_json_from_object_store(storage=get_cloud_storage(...), url=score_trace_url)`). On
+   any storage or parse error, reject (502, `trace_download_failed`).
 7. **Draft the improved prompt.** Verify the platform Anthropic key is set (else 502,
-   `prompt_generation_failed`). Upload the trace bytes to the Anthropic Files API
-   (`files-api-2025-04-14` beta) as `text/plain`. Call Claude with a single user message
-   carrying (a) a text block — the current prompt, the model context, and the task: identify
-   answers that scored low or diverge from ground truth across *all* scores and categories in
-   the file, then rewrite the system prompt to address them while preserving what works — and
-   (b) a `document` content block referencing the uploaded file. The model returns a JSON
-   object with `improved_instructions` (the full rewritten prompt) and `rationale` (one
-   short paragraph). The uploaded file is deleted afterward, even on error. SDK/transport
-   failures and unparseable or incomplete responses all map to 502, `prompt_generation_failed`.
-8. **Compose the prompt-only change.** Pass a partial `config_blob` containing only
-   `completion.params.instructions = improved_instructions` to the version-creation path,
-   which deep-merges it onto the latest version's blob. Every other field (model,
-   `knowledge_base_ids`, temperature, etc.) is preserved.
+   `prompt_generation_failed`). Call Claude with a single user message whose text block
+   carries the current prompt, the inlined trace JSON (`json.dumps(traces)`), and the task:
+   identify answers that scored low or diverge from ground truth across *all* scores and
+   categories in the file, then rewrite the system prompt to address them while preserving
+   what works — changing only the prompt text. The call uses Anthropic structured outputs
+   (`output_config` with a `json_schema`), so the response is guaranteed-valid JSON with
+   `improved_instructions` (the full rewritten prompt) and `rationale` (one short paragraph).
+   `max_tokens` is 8192. SDK/transport failures and unparseable or incomplete responses all
+   map to 502, `prompt_generation_failed`.
+8. **Compose the prompt-only change.** Deep-copy the **evaluated** version's `config_blob`
+   and swap in `completion.params.instructions = improved_instructions`, then pass that whole
+   blob to the version-creation path. `create_or_raise` deep-merges onto the latest active
+   version, so the evaluated blob's values win on every field (model, `knowledge_base_ids`,
+   temperature, etc.) — the new version stays apples-to-apples with what was scored, changing
+   only the prompt.
 9. **Persist the new version.** Create a `config_version` via `create_or_raise`:
    `version = latest active version + 1`, the merged `config_blob`, and `commit_message` =
-   the provenance string (truncated to 512 chars):
-   `"[AI Generated] (source_evaluation_run_id={evaluation_id}) {rationale}"`. No new columns
-   are written.
+   the provenance string (truncated to 512 chars), which names the evaluated source version
+   for human-readable history:
+   `"[AI Generated] improved from config version {run.config_version} (source_evaluation_run_id={evaluation_id}) {rationale}"`.
+   No new columns are written.
 10. **Respond.** Return the new version (id, version number, `commit_message`, `config_blob`).
 
 > Sequence Flow Diagram: _TBD_
@@ -164,13 +174,13 @@ overwriting prior iterations).
 | FR-2 | Reject improvement on a non-completed run | Run with status `pending`/`processing`/`failed` returns 409 `evaluation_not_completed` | Not Started |
 | FR-3 | Reject when the trace file is missing | A completed run with empty/null `score_trace_url` returns 422 `traces_not_available` and creates no version | Not Started |
 | FR-4 | Reject when source config/version is unavailable | If the run's `config_version` (or parent `config`) is missing or soft-deleted, returns 409 `source_config_unavailable` | Not Started |
-| FR-5 | Full trace file drives the analysis | The run's entire trace file is downloaded from `score_trace_url` and sent to the LLM as a document — no in-code question selection, scoring, or capping | Not Started |
+| FR-5 | Full trace file drives the analysis | The run's entire trace file is downloaded from `score_trace_url` and inlined into the LLM request message — no in-code question selection, scoring, or capping | Not Started |
 | FR-6 | All scores and categories used | The model receives every trace's `scores` (Cosine Similarity plus any Langfuse scores) and `category`; no metric is chosen by the caller and no category count is bounded | Not Started |
-| FR-7 | Trace download failure surfaced | If the trace file cannot be retrieved from storage, returns 502 `trace_download_failed` and creates no version | Not Started |
-| FR-8 | Uploaded file cleaned up | The trace file uploaded to the Anthropic Files API is deleted after the LLM call, including when the call errors | Not Started |
-| FR-9 | Prompt-only change | New version's `config_blob` equals the prior blob except `completion.params.instructions`; model, `knowledge_base_ids`, and all other params are unchanged | Not Started |
+| FR-7 | Trace download failure surfaced | If the trace file cannot be retrieved or parsed from storage, returns 502 `trace_download_failed` and creates no version | Not Started |
+| FR-8 | Structured response enforced | The LLM call uses structured outputs (`json_schema`), so the response is guaranteed-valid JSON with exactly `improved_instructions` and `rationale` | Not Started |
+| FR-9 | Prompt-only change off the evaluated version | New version's `config_blob` equals the **evaluated** version's blob except `completion.params.instructions`; model, `knowledge_base_ids`, and all other params it sets are unchanged | Not Started |
 | FR-10 | New version marked AI-generated | New `config_version.commit_message` begins with the `[AI Generated]` marker | Not Started |
-| FR-11 | New version traceable to source evaluation | New `config_version.commit_message` contains `source_evaluation_run_id={the evaluation id used}` | Not Started |
+| FR-11 | New version traceable to source evaluation + version | New `config_version.commit_message` contains `source_evaluation_run_id={the evaluation id used}` and names the evaluated source version (`improved from config version {n}`) | Not Started |
 | FR-12 | Rationale recorded | New version's `commit_message` contains the LLM's improvement rationale | Not Started |
 | FR-13 | Prior iterations preserved | All pre-existing `config_version` rows for the config are unchanged and still retrievable after generation | Not Started |
 | FR-14 | LLM failure surfaced | A failed or unparseable LLM call (or an unset platform Anthropic key) returns 502 `prompt_generation_failed` and creates no version | Not Started |
@@ -201,7 +211,7 @@ LLM; there is no metric or threshold to supply.
     "id": "9f1c0b8e-3a2d-4c77-9b6a-2e5f1d7c4a10",
     "config_id": "3d2b1a09-8765-4321-fedc-ba9876543210",
     "version": 4,
-    "commit_message": "[AI Generated] (source_evaluation_run_id=812) Tightened answer scoping and added explicit grounding instructions to address the low-scoring answers, concentrated in the 'Eligibility' and 'Payments' categories.",
+    "commit_message": "[AI Generated] improved from config version 3 (source_evaluation_run_id=812) Tightened answer scoping and added explicit grounding instructions to address the low-scoring answers, concentrated in the 'Eligibility' and 'Payments' categories.",
     "config_blob": { "...": "merged blob — prompt-only change" },
     "inserted_at": "2026-06-24T10:15:00Z",
     "updated_at": "2026-06-24T10:15:00Z"
@@ -257,24 +267,28 @@ any Langfuse scores).
   later.
 - **Analysis delegated to the LLM, not done in code:** Instead of selecting "weak" questions
   by a consistency ratio, capping the set, and computing per-category averages in Python,
-  the service ships the run's entire trace file to Claude via the Files API and lets the
-  model find the patterns. This removes every tuning knob (consistency ratio, weak-question
-  cap, weak-category cap, metric choice, threshold) and the associated heuristics. The model
-  sees all answers, all scores, and all categories at once, so it can weigh signals a
+  the service inlines the run's entire trace file into one Claude message and lets the model
+  find the patterns. This removes every tuning knob (consistency ratio, weak-question cap,
+  weak-category cap, metric choice, threshold) and the associated heuristics. The model sees
+  all answers, all scores, and all categories at once, so it can weigh signals a
   single-metric threshold would miss and is not blinded by truncation. Trade-off: token cost
   scales with the run's size, and the analysis is non-deterministic — re-running may produce
   a different rewrite.
-- **Whole-file input via the Files API:** The trace bytes are uploaded once and attached as
-  a `document` block (as `text/plain`, which the Files API accepts where `application/json`
-  is sometimes rejected). The upload is always deleted in a `finally` block so transient or
-  failed runs don't leak files. This keeps the message payload small (a file reference, not
-  inlined JSON) and lets large result sets through.
+- **Whole-trace inlined into the message:** The parsed trace JSON is embedded directly in the
+  user message via `json.dumps(traces)` — no Anthropic Files API, no upload, and nothing to
+  clean up. This keeps the call a single `messages.create` with no surrounding file
+  lifecycle, at the cost of a larger inline payload (mitigated by `max_tokens=8192` on the
+  output side). The response shape is guaranteed by Anthropic structured outputs
+  (`output_config` with a `json_schema`) rather than by parsing free text, so the service
+  reads `improved_instructions` and `rationale` straight off validated JSON.
 - **New version reuses the existing version-creation path** rather than writing
   `config_version` directly, so version numbering, soft-delete, and validation stay
-  consistent with human-authored versions. The service passes only the changed
-  `completion.params.instructions`; `create_or_raise` deep-merges it onto the latest
-  version's `config_blob`, guaranteeing the prompt-only change. The AI iteration is identical
-  in shape to a human-authored one — only the `commit_message` distinguishes it.
+  consistent with human-authored versions. `create_or_raise` always deep-merges its input
+  onto the latest active version, so to keep the change apples-to-apples the service passes
+  the **evaluated version's full blob** with only `completion.params.instructions` swapped —
+  the evaluated values then win on every key, rather than inheriting an unrelated newer blob.
+  The AI iteration is identical in shape to a human-authored one — only the `commit_message`
+  distinguishes it.
 - **Provenance in `commit_message`, not dedicated columns:** Provenance ("AI Generated",
   the source run, and the rationale) is folded into the existing `commit_message` rather
   than first-class columns. This keeps the change schema-free — no migration, no enum, no
@@ -292,3 +306,13 @@ any Langfuse scores).
   the real problem. KB diagnosis is deferred to Phase 2.
 - **Known limitation — no auto re-evaluation:** The lift from the new prompt is not measured
   automatically; the user must re-run an evaluation to see whether quality improved.
+- **Derived from the evaluated version, despite merge-onto-latest:** `create_or_raise` always
+  deep-merges its input onto the **latest active** `config_version`, which need not be the one
+  the run evaluated (a later human edit may have advanced it). The service compensates by
+  passing the evaluated version's full blob (instructions swapped) rather than a prompt-only
+  partial, so the evaluated values win on every key they set and the new version stays
+  apples-to-apples with what was scored. Residual edge: a key that exists **only** on the
+  newer latest blob (e.g. a param added after the evaluation) is not in the evaluated blob, so
+  it survives the merge — the result is "the evaluated blob's values on every key it sets,"
+  not a byte-for-byte evaluated snapshot. The source version is recorded in `commit_message`
+  (`improved from config version N`) for history.
