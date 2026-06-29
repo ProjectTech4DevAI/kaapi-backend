@@ -4,6 +4,7 @@ Loads the evaluation run's stored score traces from object storage, asks Claude
 to rewrite the system prompt, and persists the result as a new config_version.
 """
 
+import copy
 import json
 import logging
 
@@ -14,7 +15,6 @@ from sqlmodel import Session
 from app.core.cloud.storage import get_cloud_storage
 from app.core.config import settings
 from app.core.storage_utils import load_json_from_object_store
-from app.crud.config.config import ConfigCrud
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.models.config.config import ConfigTag
@@ -33,13 +33,15 @@ _LLM_MAX_TOKENS = 8192
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
 _LLM_KEY_RATIONALE = "rationale"
 
-# Schema handed to Anthropic structured outputs so the response is guaranteed to
-# be valid JSON carrying exactly these two string fields.
+# Cap the rationale so it stays a one-line summary in the commit_message.
+_RATIONALE_MAX_LENGTH = 200
+
+# Structured-output schema: guarantees the response is valid JSON with these fields.
 _OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         _LLM_KEY_INSTRUCTIONS: {"type": "string"},
-        _LLM_KEY_RATIONALE: {"type": "string"},
+        _LLM_KEY_RATIONALE: {"type": "string", "maxLength": _RATIONALE_MAX_LENGTH},
     },
     "required": [_LLM_KEY_INSTRUCTIONS, _LLM_KEY_RATIONALE],
     "additionalProperties": False,
@@ -52,6 +54,14 @@ COMMIT_MESSAGE_MAX_LENGTH = 512
 AI_GENERATED_MARKER = "[AI Generated]"
 
 _COMPLETED_STATUS = "completed"
+
+# Key under config_blob["completion"]["params"] holding the system prompt text.
+# Distinct from _LLM_KEY_INSTRUCTIONS, which is the LLM's *output* field.
+_PARAMS_INSTRUCTIONS_KEY = "instructions"
+
+# Params not surfaced to the LLM as read-only context: instructions has its own
+# section; knowledge_base_ids are opaque vector-store ids the model can't use.
+_CONTEXT_EXCLUDE_KEYS = frozenset({_PARAMS_INSTRUCTIONS_KEY, "knowledge_base_ids"})
 
 
 def improve_prompt(
@@ -96,13 +106,15 @@ def improve_prompt(
             ),
         )
 
-    config = ConfigCrud(session, project_id).read_one(run.config_id)
-    if config is None:
+    if run.config_id is None or run.config_version is None:
+        # Both FKs are nullable; without them there's no version to improve.
         raise HTTPException(
-            status_code=409,
-            detail="source_config_unavailable: the run's config is missing, soft-deleted, or outside the caller's project",
+            status_code=422,
+            detail="source_config_unavailable: run has no config_id/config_version reference",
         )
 
+    # read_one() re-validates the config exists in this project before returning
+    # the version, so a separate ConfigCrud existence check would be redundant.
     version = ConfigVersionCrud(
         session=session,
         config_id=run.config_id,
@@ -116,9 +128,8 @@ def improve_prompt(
         )
 
     blob = version.config_blob or {}
-    current_instructions = (
-        blob.get("completion", {}).get("params", {}).get("instructions") or ""
-    )
+    params = blob.get("completion", {}).get("params", {}) or {}
+    current_instructions = params.get(_PARAMS_INSTRUCTIONS_KEY) or ""
 
     storage = get_cloud_storage(session=session, project_id=project_id)
     traces = load_json_from_object_store(storage=storage, url=run.score_trace_url)
@@ -130,11 +141,22 @@ def improve_prompt(
 
     improved_instructions, rationale = _draft_improved_prompt(
         current_instructions=current_instructions,
+        config_params=params,
         traces=traces,
     )
 
+    # Derive the new version from the *evaluated* version's blob (not the latest
+    # active one) so model, knowledge base, and other params stay apples-to-apples
+    # with what was actually scored — only the prompt text changes. The evaluated
+    # blob's values therefore win on every key it sets when create_or_raise merges.
+    improved_blob = copy.deepcopy(blob)
+    improved_blob.setdefault("completion", {}).setdefault("params", {})[
+        "instructions"
+    ] = improved_instructions
+
     commit_message = (
-        f"{AI_GENERATED_MARKER} (source_evaluation_run_id={evaluation_id}) {rationale}"
+        f"{AI_GENERATED_MARKER} improved from config version {run.config_version} "
+        f"(source_evaluation_run_id={evaluation_id}) {rationale}"
     )[:COMMIT_MESSAGE_MAX_LENGTH]
 
     new_version = ConfigVersionCrud(
@@ -143,9 +165,7 @@ def improve_prompt(
         project_id=project_id,
     ).create_or_raise(
         ConfigVersionUpdate(
-            config_blob={
-                "completion": {"params": {"instructions": improved_instructions}}
-            },
+            config_blob=improved_blob,
             commit_message=commit_message,
         )
     )
@@ -161,6 +181,7 @@ def improve_prompt(
 def _draft_improved_prompt(
     *,
     current_instructions: str,
+    config_params: dict,
     traces: list | dict,
 ) -> tuple[str, str]:
     """Call Claude with the current prompt + score traces and return
@@ -180,6 +201,14 @@ def _draft_improved_prompt(
 
     client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
 
+    # The prompt runs under these generation params; surface them read-only so the
+    # rewrite can tailor to the target model/settings without changing them.
+    context_params = {
+        param_name: param_value
+        for param_name, param_value in config_params.items()
+        if param_name not in _CONTEXT_EXCLUDE_KEYS
+    }
+
     user_message_text = (
         "You are a prompt engineer. Below is a JSON array of evaluation traces. "
         "Each trace has the fields: `question`, `ground_truth_answer`, "
@@ -187,13 +216,17 @@ def _draft_improved_prompt(
         "`name`, `value`, and `unscoreable`).\n\n"
         f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
+        "## Target configuration (read-only — do NOT change any of these)\n"
+        f"```\n{json.dumps(context_params)}\n```\n\n"
         "## Task\n"
         "1. Identify the answers that performed poorly — those with low scores or "
         "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
         "2. Rewrite the system prompt to improve those low-performing answers while "
         "keeping what already works well.\n"
         "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
-        "or any other configuration."
+        "or any other configuration.\n"
+        f"4. Return `{_LLM_KEY_RATIONALE}` as ONE concise sentence "
+        f"(≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
 
     try:
