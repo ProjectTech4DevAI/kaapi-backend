@@ -103,13 +103,25 @@ jobs:
                 max_tokens: 100,
                 messages: [{
                   role: 'user',
-                  content: `Based on the PR title, branch name and body below, generate a short title in this exact format:
-            "Module Name: 4-5 word summary"
+                  content: `Based on the PR title, branch name and body below, generate a Conventional Commits style title in this EXACT format:
+            "type(scope): Short summary"
+
+            Rules:
+            - "type" must be ONE of: feat, fix, chore, docs, refactor. Pick based on the nature of the change:
+                - feat: a new feature or capability (triggers a minor release)
+                - fix: a bug fix (patch release)
+                - chore: tooling, CI, deps, maintenance (patch release)
+                - docs: documentation only (patch release)
+                - refactor: code restructuring with no behavior change (patch release)
+            - "scope" is the affected module in lowercase (e.g. collection, evaluation, srd, ci, auth). Infer it from the branch name or body. Omit the parentheses entirely if no clear scope.
+            - "Short summary" is a 4-6 word description, capitalized first letter, no trailing period.
 
             Examples:
-            - Evaluation: Automated metrics for STT
-            - Evaluation: Refactoring CRON
-            - SRD: Enhance guide and templates
+            - feat(collection): Added new fields
+            - fix(auth): Correct token expiry check
+            - chore(ci): Add PR formatter workflow
+            - docs(srd): Enhance guide and templates
+            - refactor(evaluation): Simplify CRON scheduling
 
             Output ONLY the title, nothing else.
 
