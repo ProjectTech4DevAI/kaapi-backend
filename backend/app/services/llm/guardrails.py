@@ -272,19 +272,7 @@ def list_validators_config(
                     return []
 
                 params = _build_params(validator_ids)
-                logger.info(
-                    f"[list_validators_config] GET validator configs | "
-                    f"endpoint={endpoint}, ids={len(validator_ids)}, "
-                    f"organization_id={organization_id}, project_id={project_id}"
-                )
-                started = time.monotonic()
                 response = client.get(endpoint, params=params, headers=headers)
-                elapsed_ms = int((time.monotonic() - started) * 1000)
-                logger.info(
-                    f"[list_validators_config] Response received | "
-                    f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
-                    f"response_bytes={len(response.content)}"
-                )
                 response.raise_for_status()
 
                 payload = response.json()
