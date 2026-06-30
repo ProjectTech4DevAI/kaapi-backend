@@ -100,15 +100,6 @@ def deactivate_users_without_projects(
 ) -> list[int]:
     """
     Mark users inactive when they no longer belong to any *active* project.
-
-    A user counts as having access only through a mapping to an active project
-    in an active organization (see ``get_user_accessible_projects``), so this
-    correctly handles soft-deleted orgs/projects whose mappings still exist.
-
-    Users are never deleted: superusers are left untouched, and any user that
-    still has at least one accessible project keeps their active status. A user
-    left without any accessible project can no longer log in until they are
-    added to one again. Returns the list of user IDs that were deactivated.
     """
     deactivated: list[int] = []
     for user_id in set(user_ids):
@@ -134,13 +125,6 @@ def reactivate_users_with_access(
 ) -> list[int]:
     """
     Re-activate users who regained access to an active project.
-
-    The inverse of ``deactivate_users_without_projects``: when an org or project
-    is reactivated, users that had been deactivated (because they had lost all
-    access) are made active again so they can log in. Their project mappings are
-    never removed by a soft delete, so access is restored automatically once the
-    org/project is active again. Superusers and already-active users are left
-    untouched. Returns the list of user IDs that were reactivated.
     """
     reactivated: list[int] = []
     for user_id in set(user_ids):
