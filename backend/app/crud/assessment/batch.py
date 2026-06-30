@@ -29,7 +29,7 @@ from app.models.assessment import (
 )
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.evaluation import EvaluationDataset
-from app.models.llm.constants import DEFAULT_ANTHROPIC_MAX_TOKENS
+from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
     map_kaapi_to_anthropic_params,
@@ -530,7 +530,7 @@ def submit_assessment_batch(
         batch_config = {
             "model": mapped_params.get("model"),
             "max_tokens": mapped_params.get("max_tokens")
-            or DEFAULT_ANTHROPIC_MAX_TOKENS,
+            or DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS,
         }
 
         batch_job = start_batch_job(
