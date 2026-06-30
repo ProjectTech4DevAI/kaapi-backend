@@ -26,8 +26,8 @@ from app.services.llm.providers.claude import ClaudeProvider
 
 logger = logging.getLogger(__name__)
 
-# Room for a full prompt rewrite plus structured JSON wrapper.
-_LLM_MAX_TOKENS = 8192
+# Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
+_LLM_MAX_TOKENS = 16384
 
 # JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
@@ -145,8 +145,7 @@ def improve_prompt(
 
     # Derive the new version from the *evaluated* version's blob (not the latest
     # active one) so model, knowledge base, and other params stay apples-to-apples
-    # with what was actually scored — only the prompt text changes. The evaluated
-    # blob's values therefore win on every key it sets when create_or_raise merges.
+    # with what was actually scored — only the prompt text changes.
     improved_blob = copy.deepcopy(blob)
     improved_blob.setdefault("completion", {}).setdefault("params", {})[
         "instructions"
@@ -186,11 +185,14 @@ def _draft_improved_prompt(
     (improved_instructions, rationale).
 
     Uses structured outputs so the first text block is guaranteed-valid JSON.
-    Raises HTTPException(502) on any LLM failure.
+    Raises HTTPException on any LLM failure, mapping the cause to an HTTP status:
+    500 (our misconfig/bug), 502 (bad upstream response), 503 (rate limited),
+    504 (upstream timeout).
     """
     if not settings.ANTHROPIC_API_KEY:
+        # Missing platform key is a server-side misconfiguration, not an upstream fault.
         raise HTTPException(
-            status_code=502,
+            status_code=500,
             detail=(
                 "prompt_generation_failed: the platform Anthropic key "
                 "(ANTHROPIC_API_KEY) is not configured"
@@ -258,7 +260,7 @@ def _draft_improved_prompt(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=502,
+            status_code=503,
             detail=(
                 "prompt_generation_failed: Anthropic rate limit exceeded — "
                 "wait at least 1 minute and retry"
@@ -273,7 +275,7 @@ def _draft_improved_prompt(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=502,
+            status_code=504,
             detail=(
                 "prompt_generation_failed: Anthropic request timed out — "
                 "retry. If persistent, contact Kaapi"
@@ -319,7 +321,7 @@ def _draft_improved_prompt(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=502,
+            status_code=500,
             detail=(
                 "prompt_generation_failed: unexpected error during prompt generation — "
                 "contact Kaapi if persistent"

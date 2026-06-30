@@ -37,7 +37,6 @@ from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
 
-# ── constants ─────────────────────────────────────────────────────────────────
 
 IMPROVE_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt"
 
@@ -71,9 +70,6 @@ _TRACES: list[dict] = [
 
 # Sentinel: "generate a default score_trace_url from the run id after commit"
 _AUTO_URL = object()
-
-
-# ── shared helpers ─────────────────────────────────────────────────────────────
 
 
 def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
@@ -212,9 +208,6 @@ def _make_completed_run(
     return run
 
 
-# ── fixtures ──────────────────────────────────────────────────────────────────
-
-
 @pytest.fixture
 def auth(user_api_key: TestAuthContext) -> TestAuthContext:
     return user_api_key
@@ -269,9 +262,6 @@ def completed_run(
         project_id=auth.project_id,
         dataset_id=dataset.id,
     )
-
-
-# ── 1. Happy path ──────────────────────────────────────────────────────────────
 
 
 class TestHappyPath:
@@ -400,9 +390,6 @@ class TestHappyPath:
         commit_message = resp.json()["data"]["commit_message"]
         assert "metric=" not in commit_message
         assert "threshold=" not in commit_message
-
-
-# ── 2. Guard ladder ────────────────────────────────────────────────────────────
 
 
 class TestRunNotFound:
@@ -595,16 +582,16 @@ class TestSourceConfigUnavailable:
 
 
 class TestMissingAnthropicKey:
-    """502 when the platform ANTHROPIC_API_KEY is not configured."""
+    """500 when the platform ANTHROPIC_API_KEY is not configured (server misconfig)."""
 
-    def test_empty_api_key_returns_502(
+    def test_empty_api_key_returns_500(
         self,
         client: TestClient,
         headers: dict[str, str],
         completed_run: EvaluationRun,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Storage succeeds but the key check inside the LLM step fails with 502."""
+        """Storage succeeds but the key check inside the LLM step fails with 500."""
         monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
 
         with _patched_boundaries():
@@ -613,7 +600,7 @@ class TestMissingAnthropicKey:
                 headers=headers,
             )
 
-        assert resp.status_code == 502, resp.text
+        assert resp.status_code == 500, resp.text
         assert "prompt_generation_failed" in resp.json()["error"], resp.text
 
 
@@ -636,14 +623,12 @@ class TestTraceDownloadFailed:
         assert "trace_download_failed" in resp.json()["error"], resp.text
 
 
-# ── 3. Anthropic exception mappings ────────────────────────────────────────────
+def _anthropic_exceptions() -> list[tuple[str, Exception, int]]:
+    """Build one instance of each SDK error plus the HTTP status the service maps it to.
 
-
-def _anthropic_exceptions() -> list[tuple[str, Exception]]:
-    """Build one instance of each SDK error the service maps to 502.
-
-    All six branches collapse to the same 502 + prompt_generation_failed body,
-    so the only real failure mode is a constructor that errors during setup.
+    The mapping reflects who's at fault: rate limit -> 503 (upstream unavailable),
+    timeout -> 504 (upstream timeout), bad upstream response/network -> 502, and an
+    unexpected non-SDK error -> 500 (Kaapi-side bug).
     """
     return [
         (
@@ -653,6 +638,7 @@ def _anthropic_exceptions() -> list[tuple[str, Exception]]:
                 response=MagicMock(status_code=401, headers={}),
                 body={},
             ),
+            502,
         ),
         (
             "rate_limit",
@@ -661,11 +647,13 @@ def _anthropic_exceptions() -> list[tuple[str, Exception]]:
                 response=MagicMock(status_code=429, headers={}),
                 body={},
             ),
+            503,
         ),
-        ("timeout", anthropic.APITimeoutError(request=MagicMock())),
+        ("timeout", anthropic.APITimeoutError(request=MagicMock()), 504),
         (
             "connection",
             anthropic.APIConnectionError(message="conn failed", request=MagicMock()),
+            502,
         ),
         (
             "status",
@@ -674,23 +662,25 @@ def _anthropic_exceptions() -> list[tuple[str, Exception]]:
                 response=MagicMock(status_code=500, headers={}),
                 body={},
             ),
+            502,
         ),
-        ("generic", RuntimeError("something unexpected")),
+        ("generic", RuntimeError("something unexpected"), 500),
     ]
 
 
 class TestLLMFailureMapping:
-    """Every Anthropic/SDK failure from messages.create maps to 502."""
+    """Each Anthropic/SDK failure from messages.create maps to its matching HTTP status."""
 
     @pytest.mark.parametrize(
-        "name,exc",
+        "name,exc,expected_status",
         _anthropic_exceptions(),
-        ids=[name for name, _ in _anthropic_exceptions()],
+        ids=[name for name, _, _ in _anthropic_exceptions()],
     )
-    def test_llm_error_returns_502(
+    def test_llm_error_maps_to_status(
         self,
         name: str,
         exc: Exception,
+        expected_status: int,
         client: TestClient,
         headers: dict[str, str],
         completed_run: EvaluationRun,
@@ -704,16 +694,16 @@ class TestLLMFailureMapping:
                 headers=headers,
             )
 
-        assert resp.status_code == 502, resp.text
+        assert resp.status_code == expected_status, resp.text
         assert "prompt_generation_failed" in resp.json()["error"], resp.text
 
-    def test_malformed_json_response_returns_502(
+    def test_malformed_json_response_returns_500(
         self,
         client: TestClient,
         headers: dict[str, str],
         completed_run: EvaluationRun,
     ) -> None:
-        """Non-JSON text from the model falls through to the generic 502 branch."""
+        """Non-JSON text from the model falls through to the generic 500 branch."""
         fake_client = _make_fake_claude_client("this is not json")
 
         with _patched_boundaries(claude_client=fake_client):
@@ -722,11 +712,8 @@ class TestLLMFailureMapping:
                 headers=headers,
             )
 
-        assert resp.status_code == 502, resp.text
+        assert resp.status_code == 500, resp.text
         assert "prompt_generation_failed" in resp.json()["error"], resp.text
-
-
-# ── 4. Tenant isolation + iteration invariants ────────────────────────────────
 
 
 class TestTenantIsolation:

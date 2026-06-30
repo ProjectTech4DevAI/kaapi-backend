@@ -67,6 +67,15 @@ to what the task needs.
   constraint). When in doubt, delete it. No decorative/banner comments either — no full-width
   separator rules (`# ──────`, `# =====`) or section-divider headers. Structure code with functions
   and blank lines, not ASCII dividers.
+  - One line, not two, when one carries the why. Each extra sentence must add non-obvious info, not
+    restate the consequence:
+    ```python
+    # bad — second line restates what "too low" already implies
+    # Room for a full prompt rewrite plus structured JSON wrapper. A low cap risks
+    # truncating the rewrite mid-output, which yields malformed (unparseable) JSON.
+    # good
+    # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
+    ```
 - Naming: `list_*` plural fetch, `get_*` singleton; `Enum` suffix on enum classes.
 - Timestamps are `inserted_at` / `updated_at`, never `created_at`.
 
