@@ -12,14 +12,17 @@ from fastapi import (
     Query,
 )
 
+
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
 from app.crud.evaluations.core import group_traces_by_question_id
+from app.models.config.version import ConfigVersionPublic
 from app.models.evaluation import EvaluationRunPublic, RunModeEnum
 from app.services.evaluations import (
     get_evaluation_with_scores,
+    improve_prompt,
     validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
@@ -200,3 +203,31 @@ def get_evaluation_run_status(
     if error:
         return APIResponse.failure_response(error=error, data=eval_run)
     return APIResponse.success_response(data=eval_run)
+
+
+@router.post(
+    "/{evaluation_id}/improve-prompt",
+    description=load_description("evaluation/improve_prompt.md"),
+    response_model=APIResponse[ConfigVersionPublic],
+    status_code=201,
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def improve_evaluation_prompt(
+    evaluation_id: int,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[ConfigVersionPublic]:
+    """Generate an AI-improved prompt iteration from a completed evaluation run."""
+    logger.info(
+        f"[improve_evaluation_prompt] Starting | evaluation_id={evaluation_id} "
+        f"org_id={auth_context.organization_.id} project_id={auth_context.project_.id}"
+    )
+
+    new_version = improve_prompt(
+        session=session,
+        evaluation_id=evaluation_id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+
+    return APIResponse.success_response(data=new_version)
