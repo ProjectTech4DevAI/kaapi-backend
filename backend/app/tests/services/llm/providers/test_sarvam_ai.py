@@ -19,14 +19,17 @@ from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 def mock_sarvam_stt_response(
     transcript: str = "नमस्ते",
     request_id: str = "req_stt_123",
+    language_code: str | None = "hi-IN",
 ) -> SimpleNamespace:
     """Create a mock SarvamAI STT response object."""
     response = SimpleNamespace(
         transcript=transcript,
         request_id=request_id,
+        language_code=language_code,
         model_dump=lambda: {
             "transcript": transcript,
             "request_id": request_id,
+            "language_code": language_code,
         },
     )
     return response

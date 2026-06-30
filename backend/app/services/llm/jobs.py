@@ -48,6 +48,7 @@ from app.models.llm.request import (
     ImageInput,
     KaapiCompletionConfig,
     LLMCallConfig,
+    NativeCompletionConfig,
     PDFInput,
     QueryParams,
     TextContent,
@@ -63,10 +64,7 @@ from app.models.llm.response import (
     Usage,
 )
 from app.services.llm.chain.types import BlockResult
-from app.services.llm.guardrails import (
-    list_validators_config,
-    run_guardrails_validation,
-)
+from app.services.llm.guardrails import apply_guardrails
 from app.services.llm.mappers import transform_kaapi_config_to_native
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
@@ -121,7 +119,7 @@ def _execute_provider_call(
     kwargs.pop("organization_id", None)
     kwargs.pop("project_id", None)
     kwargs.pop("telemetry_span", None)
-
+    # decorated execution through langfuse
     decorated = observe_llm_execution(
         session_id=session_id,
         credentials=credentials,
@@ -370,6 +368,9 @@ def apply_input_guardrails(
 ) -> tuple[QueryParams, str | None, str | None]:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
+    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
+    ``QueryParams`` payload.
+
     Returns (query, error, guardrail_direct_response) where:
     - error is set when guardrails hard-block the request
     - guardrail_direct_response is set when rephrase_needed=True and the safe_text
@@ -386,46 +387,27 @@ def apply_input_guardrails(
         )
         return query, None, None
 
-    input_guardrails, _ = list_validators_config(
-        organization_id=organization_id,
+    outcome = apply_guardrails(
+        text=query.input.content.value,
+        validators=config_blob.input_guardrails,
+        job_id=job_id,
         project_id=project_id,
-        input_validator_configs=config_blob.input_guardrails,
-        output_validator_configs=None,
+        organization_id=organization_id,
     )
 
-    if not input_guardrails:
-        return query, None, None
+    if outcome.error is not None:
+        return query, outcome.error, None
 
-    safe = run_guardrails_validation(
-        query.input.content.value,
-        input_guardrails,
-        job_id,
-        project_id,
-        organization_id,
-        suppress_pass_logs=True,
-    )
-
-    logger.info(
-        f"[apply_input_guardrails] Validation result | success={safe['success']}, job_id={job_id}"
-    )
-
-    if safe.get("bypassed"):
+    if outcome.rephrase_needed:
         logger.info(
-            f"[apply_input_guardrails] Guardrails bypassed (service unavailable) | job_id={job_id}"
+            f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, None
+        return query, None, outcome.safe_text
 
-    if safe["success"]:
-        safe_text = safe["data"]["safe_text"]
-        if safe["data"].get("rephrase_needed"):
-            logger.info(
-                f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
-            )
-            return query, None, safe_text
-        query.input.content.value = safe_text
-        return query, None, None
-
-    return query, safe["error"], None
+    # No-op paths (no validators, bypassed) leave the query untouched.
+    if outcome.applied and outcome.safe_text is not None:
+        query.input.content.value = outcome.safe_text
+    return query, None, None
 
 
 def apply_output_guardrails(
@@ -438,6 +420,9 @@ def apply_output_guardrails(
     input_text: str | None = None,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
+
+    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
+    ``BlockResult``.
 
     Returns (modified_result, None) on success, or (result, error_string) on failure.
     """
@@ -452,42 +437,52 @@ def apply_output_guardrails(
         )
         return result, None
 
-    _, output_guardrails = list_validators_config(
-        organization_id=organization_id,
+    outcome = apply_guardrails(
+        text=input_text or "",
+        validators=config_blob.output_guardrails,
+        job_id=job_id,
         project_id=project_id,
-        input_validator_configs=None,
-        output_validator_configs=config_blob.output_guardrails,
+        organization_id=organization_id,
+        output_text=result.response.response.output.content.value,
     )
 
-    if not output_guardrails:
-        return result, None
+    if outcome.error is not None:
+        return result, outcome.error
 
-    llm_output = result.response.response.output.content.value
-    safe = run_guardrails_validation(
-        input_text or "",
-        output_guardrails,
-        job_id,
-        project_id,
-        organization_id,
-        suppress_pass_logs=True,
-        output_text=llm_output,
-    )
+    if outcome.applied and outcome.safe_text is not None:
+        result.response.response.output.content.value = outcome.safe_text
+    return result, None
 
-    logger.info(
-        f"[apply_output_guardrails] Validation result | success={safe['success']}, job_id={job_id}"
-    )
 
-    if safe.get("bypassed"):
-        logger.info(
-            f"[apply_output_guardrails] Guardrails bypassed (service unavailable) | job_id={job_id}"
-        )
-        return result, None
+DETECTED_LANGUAGE_FALLBACK = "en-IN"
+_TTS_LANGUAGE_KEYS = ("target_language_code", "language_code")
 
-    if safe["success"]:
-        result.response.response.output.content.value = safe["data"]["safe_text"]
-        return result, None
 
-    return result, safe["error"]
+def _substitute_detected_language_marker(
+    params: dict,
+    detected_language: str | None,
+    job_id: UUID,
+) -> None:
+    """Replace the `{{detected}}` sentinel in TTS language params.
+
+    Used by /llm/chain/sts to propagate the STT-detected language to TTS.
+    Falls back to en-IN when STT didn't yield a language.
+    """
+    for key in _TTS_LANGUAGE_KEYS:
+        if params.get(key) != "{{detected}}":
+            continue
+        if detected_language:
+            params[key] = detected_language
+            logger.info(
+                f"[_substitute_detected_language_marker] Using detected language for TTS: "
+                f"{detected_language} | job_id={job_id}"
+            )
+        else:
+            params[key] = DETECTED_LANGUAGE_FALLBACK
+            logger.warning(
+                f"[_substitute_detected_language_marker] No language detected, falling back "
+                f"to {DETECTED_LANGUAGE_FALLBACK} for TTS | job_id={job_id}"
+            )
 
 
 def execute_llm_call(
@@ -501,10 +496,14 @@ def execute_llm_call(
     langfuse_credentials: dict | None,
     include_provider_raw_response: bool = False,
     chain_id: UUID | None = None,
+    detected_language: str | None = None,
 ) -> BlockResult:
     """Execute a single LLM call. Shared by /llm/call and /llm/chain.
 
     Returns BlockResult with response + usage on success, or error on failure.
+
+    Args:
+        detected_language: Language code detected by STT (used to replace {{detected}} marker in TTS)
     """
 
     config_blob: ConfigBlob | None = None
@@ -622,10 +621,6 @@ def execute_llm_call(
                 client_llm_url = proxy_params.get("client_llm_url")
                 if not client_llm_url:
                     return BlockResult(error="Proxy config missing client_llm_url")
-
-                # SSRF guard: block proxy URLs that resolve to private/internal IPs.
-                # DNS resolution failures are not treated as blocks — httpx will
-                # fail the request naturally if the host is genuinely unreachable.
                 try:
                     validate_callback_url(client_llm_url)
                 except ValueError as e:
@@ -785,7 +780,7 @@ def execute_llm_call(
                         f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
                         exc_info=True,
                     )
-
+                # sentry emit metrics
                 record_llm_call_finished(
                     provider=Provider.PROXY.value,
                     model=proxy_model,
@@ -841,10 +836,20 @@ def execute_llm_call(
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session, kaapi_config=completion_config
                 )
-                if request_metadata is None:
-                    request_metadata = {}
-                request_metadata.setdefault("warnings", []).extend(warnings)
+                existing = request_metadata or {}
+                existing_warnings = list(existing.get("warnings") or [])
+                request_metadata = {
+                    **existing,
+                    "warnings": existing_warnings + list(warnings),
+                }
 
+            if (
+                isinstance(completion_config, NativeCompletionConfig)
+                and completion_config.type == "tts"
+            ):
+                _substitute_detected_language_marker(
+                    completion_config.params, detected_language, job_id
+                )
             model_name = str(completion_config.params.get("model") or "")
 
             resolved_config_blob = ConfigBlob(
@@ -941,6 +946,7 @@ def execute_llm_call(
                                 "uri": s3_url,
                             }
                         )
+                        # overwrite with s3 uri
                         update_llm_call_input(session, llm_call_id, stt_input_record)
                         logger.info(
                             f"[execute_llm_call] STT audio uploaded to S3 | llm_call_id={llm_call_id}"
@@ -954,7 +960,7 @@ def execute_llm_call(
                         f"[execute_llm_call] STT S3 upload error, continuing: {e} | llm_call_id={llm_call_id}",
                         exc_info=True,
                     )
-
+            # thirdparty llm_call begins, client init thru llm/registry.py
             try:
                 provider_instance = get_llm_provider(
                     session=session,
@@ -973,6 +979,7 @@ def execute_llm_call(
         provider_name = str(completion_config.provider)
         model_name = str(completion_config.params.get("model") or "")
         completion_type = str(completion_config.type or "")
+        # sentry emit
         record_llm_call_started(
             provider=provider_name,
             model=model_name,
@@ -984,10 +991,6 @@ def execute_llm_call(
         response = None
         error = None
 
-        # Wrap the provider call in a `chat <model>` span so Sentry's AI Insights
-        # module recognises it (op=gen_ai.chat) and surfaces tokens / model /
-        # messages on the trace. This is the span AI Insights keys off — keep it
-        # as the parent of `llm.provider.execute`.
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with tracer.start_as_current_span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
@@ -1036,7 +1039,7 @@ def execute_llm_call(
                             )
                         if model_name:
                             provider_span.set_attribute("llm.request.model", model_name)
-
+                        # real blocking network call to referenced provider
                         response, error = _execute_provider_call(
                             func=provider_instance.execute,
                             completion_config=completion_config,
@@ -1070,9 +1073,6 @@ def execute_llm_call(
                 )
 
         if response:
-            # db_content is what gets persisted — URI-only for TTS to avoid storing
-            # large base64 payloads. The in-memory response keeps base64 + uri field
-            # so existing clients continue to receive base64 unchanged.
             db_content = (
                 response.response.output.model_dump()
                 if response.response.output
@@ -1098,10 +1098,7 @@ def execute_llm_call(
                         subfolder_path,
                     )
                     if s3_url:
-                        # Keep base64 in the response object for backward-compatible clients.
-                        # Set uri so execute_job can swap it for a presigned URL.
                         tts_output.content.uri = s3_url
-                        # Store only the URI in the DB — not the full base64.
                         db_content = {
                             "type": "audio",
                             "content": {
@@ -1299,9 +1296,6 @@ def execute_job(
             )
 
             if result.success:
-                # Swap the s3:// URI in content.uri for a short-lived presigned URL.
-                # content.value (base64) is untouched — existing clients keep working.
-                # On failure, clear uri so clients don't receive a raw s3:// address.
                 if result.response:
                     tts_out = result.response.response.output
                     if isinstance(tts_out, AudioOutput) and tts_out.content.uri:

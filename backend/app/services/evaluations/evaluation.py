@@ -24,6 +24,7 @@ from app.crud.evaluations import (
     sort_traces_by_question_id,
 )
 from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import CategoryMetrics, TraceData
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.services.llm.providers import LLMProvider
@@ -454,17 +455,24 @@ def get_evaluation_with_scores(
     )
 
     if not resync_score and cached_traces:
-        # Wrap in _attach_category_metrics so cache-served responses also carry
-        # `category_metrics`. Backfills the field on read for runs whose cached
-        # score was written before the category feature shipped.
-        # Sort by question_id so caches persisted before the sort fix still come
-        # back in CSV order without needing a resync.
-        eval_run.score = _attach_category_metrics(
-            {
+        # Serve from cache, but backfill any trace missing a cosine score from
+        # per_item_scores and recompute the summary, so older caches self-heal
+        # without a resync. The step-forward merge (empty fresh side) preserves
+        # summary-only scores and sorts traces.
+        cached_score, _ = merge_scores_step_forward(
+            existing_score={
                 "summary_scores": (eval_run.score or {}).get("summary_scores", []),
-                "traces": sort_traces_by_question_id(cached_traces),
-            }
+                "traces": cached_traces,
+            },
+            fresh_score={"summary_scores": [], "traces": []},
+            per_item_scores=eval_run.per_item_scores,
         )
+        apply_cosine_breakdown(
+            cached_score["summary_scores"],
+            total_items=eval_run.total_items,
+            unscoreable=eval_run.unscoreable,
+        )
+        eval_run.score = _attach_category_metrics(cached_score)
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -522,9 +530,20 @@ def get_evaluation_with_scores(
         "summary_scores": (eval_run.score or {}).get("summary_scores", []),
         "traces": cached_traces,
     }
+    # Pass per_item_scores so any trace Langfuse is still missing a cosine for is
+    # backfilled from our source of truth, recovering computed-but-unwritten scores.
     merged_score, merge_stats = merge_scores_step_forward(
         existing_score=existing_score,
         fresh_score=langfuse_score,
+        per_item_scores=eval_run.per_item_scores,
+    )
+
+    # Re-attach the run-level denominator and unscoreable breakdown, which
+    # `compute_summary_scores` (trace-only) cannot know.
+    apply_cosine_breakdown(
+        merged_score["summary_scores"],
+        total_items=eval_run.total_items,
+        unscoreable=eval_run.unscoreable,
     )
 
     # Recompute `category_metrics` from the merged trace set so the per-category

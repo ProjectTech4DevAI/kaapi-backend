@@ -95,47 +95,44 @@ The application uses different environment files:
 
 ## Coding Conventions
 
-### Type Hints
+Layer conventions live in `.claude/conventions/{model,crud,service,route,migration,celery}.md` and are applied by the `senior-engineer` subagent; the `test-writer` agent carries its own conventions in `.claude/agents/*.md`. CLAUDE.md only covers rules that apply across every layer.
 
-Always add type hints to all function parameters and return values.
+### Cross-cutting rules
 
-### Logging Format
+- **Type hints** on every parameter and return value. `-> Any` is not an annotation — narrow it or drop it.
+- **Logging prefix:** every log line starts with the function name in square brackets.
+  ```python
+  logger.info(f"[function_name] Message | key: {value}")
+  ```
+- **`uv` is the runner**, not `pip`. Examples: `uv run pytest`, `uv run alembic ...`, `uv run pre-commit run --all-files`.
+- **No magic values** in code — extract repeated literals to constants / `Enum` / settings.
+- **Comments explain *why*, not *what*.** Don't restate what the code already says (`i += 1  # increment i`), don't narrate self-evident lines, and don't pad docstrings/migration descriptions with obvious recaps of the operations. A comment earns its place only by adding non-obvious context — rationale, a gotcha, a link, a constraint. When in doubt, delete it; clear code needs fewer comments, not more.
+- **Naming:** `list_*` for plural fetch, `get_*` for singletons; snake_case funcs/vars, PascalCase classes, UPPER_SNAKE constants; `Enum` suffix on enum classes.
+- **Timestamps** are `inserted_at` / `updated_at` (not `created_at`).
 
-Prefix all log messages with the function name in square brackets.
+## Specialist subagents
 
-```python
-logger.info(f"[function_name] Message {mask_string(sensitive_value)}")
-```
+When working in a specific layer, the matching agent under `.claude/agents/` handles the layer's conventions automatically. Pick by layer, or just describe the task and let the main agent route:
 
-### Database Column Comments
+| Agent | Layer |
+|---|---|
+| `senior-engineer` | `app/models/`, `app/crud/`, `app/services/`, `app/api/routes/`, `app/alembic/versions/`, `app/celery/tasks/` — any single-layer edit or a full feature walking the spine plus its migration and Celery task, one context |
+| `test-writer` | `app/tests/` |
 
-Use sa_column_kwargs["comment"] to describe database columns, especially when the purpose isn’t obvious. This helps non-developers understand column purposes directly from the database schema:
+Standardized provider/SDK exception handling is a cross-cutting convention (`.claude/conventions/error-handling.md`), applied by `senior-engineer` when it writes service/crud call sites — not a separate agent. Convention reviews are handled by the `/pr-review` command, also not a subagent.
 
-```python
-field_name: int = Field(
-    foreign_key="table.id",
-    nullable=False,
-    ondelete="CASCADE",
-    sa_column_kwargs={"comment": "What this column represents"}
-)
-```
+### Build a feature as a 2-context pipeline
 
-Prioritize comments for:
-- Columns with non-obvious purposes
-- Status/type fields (document valid values)
-- JSON/metadata columns (describe expected structure)
-- Foreign keys (clarify the relationship)
+To keep each context window lean (heavy file I/O degrades performance), **build a multi-layer feature as sequential subagent contexts, not inline.** Launch each phase with the Agent tool — each runs in its own context and returns only a summary, so the orchestrator stays small. The phases are a dependency chain, so run them **in order**, passing only the *artifacts* forward (signatures, file paths), never re-deriving prior reasoning:
 
-### Endpoint Documentation
+| # | Context | Agent | Consumes |
+|---|---|---|---|
+| 1 | schema + code-spine + migration + Celery task | `senior-engineer` | the feature request |
+| 2 | test | `test-writer` | phase 1's signatures (+ which HTTP boundaries to mock) |
 
-Load Swagger descriptions from external markdown files instead of inline strings:
+Then run `/pr-review` on the full diff before committing.
 
-```python
-@router.post(
-    "/endpoint",
-    description=load_description("domain/action.md"),
-    response_model=APIResponse[ResponseModel],
-)
-```
-
-Store documentation files in `backend/app/api/docs/<domain>/<action>.md`
+Rules of thumb:
+- **Run them sequentially**, not in parallel — phase 2 depends on phase 1's signatures.
+- **Single-layer change?** Skip the pipeline; let `senior-engineer` build just the one layer.
+- `senior-engineer` builds the model → crud → service → route spine *and* the migration a schema change needs *and* the Celery task background work needs — all in phase 1, reading the convention docs in `.claude/conventions/{model,crud,service,route,migration,celery}.md` as the single source of truth for each layer.

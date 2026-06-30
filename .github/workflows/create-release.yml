@@ -1,7 +1,9 @@
-name: Deploy Kaapi to ECS Staging
+name: Deploy Kaapi to ECS Production
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # Deploy only when tags like v1.0.0, v2.1.0, etc., are created
 
 jobs:
   build:
@@ -14,14 +16,12 @@ jobs:
       attestations: write
       id-token: write
 
-
     steps:
-      - name: checkout the repo
-        uses: actions/checkout@v6
+      - name: Checkout the repo
+        uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        # More information on this action can be found below in the 'AWS Credentials' section
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@v6 # More information on this action can be found below in the 'AWS Credentials' section
         with:
           role-to-assume: arn:aws:iam::024209611402:role/github-action-role
           aws-region: ap-south-1
@@ -30,20 +30,24 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-
       - name: Build and Push Docker Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-repo
+          TAG: ${{ github.ref_name }}
         run: |
-          docker build -t $REGISTRY/$REPOSITORY:latest ./backend
+          docker build \
+            -t $REGISTRY/$REPOSITORY:latest \
+            -t $REGISTRY/$REPOSITORY:$TAG \
+            ./backend
           docker push $REGISTRY/$REPOSITORY:latest
+          docker push $REGISTRY/$REPOSITORY:$TAG
 
       - name: Run database migrations
         env:
-          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
-          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
-          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-service
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-task
         run: |
           CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
 
@@ -57,7 +61,6 @@ jobs:
             --count 1 \
             --network-configuration "$NETWORK_CONFIG" \
             --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"uv\",\"run\",\"alembic\",\"upgrade\",\"head\"]}]}" \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_IDS }}],assignPublicIp=ENABLED}" \
             --query 'tasks[0].taskArn' --output text)
 
           echo "Migration task started: $TASK_ARN"
@@ -68,10 +71,16 @@ jobs:
 
           if [ "$EXIT_CODE" != "0" ]; then
             echo "Migration failed with exit code $EXIT_CODE"
+            aws ecs describe-tasks --cluster $CLUSTER --tasks "$TASK_ARN" \
+              --query "tasks[0].{stopCode:stopCode,stoppedReason:stoppedReason,containerReason:containers[?name=='$CONTAINER_NAME'].reason | [0]}" \
+              --output json
             exit 1
           fi
           echo "Migration completed successfully"
 
       - name: Deploy to ECS
         run: |
-          aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
+          aws ecs update-service \
+            --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-cluster \
+            --service ${{ vars.AWS_RESOURCE_PREFIX }}-service \
+            --force-new-deployment

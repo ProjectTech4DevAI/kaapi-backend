@@ -253,7 +253,7 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     back through `app.crud` package init.
     """
     try:
-        from app.celery.tasks.notifications import send_eval_completion_notification
+        from app.celery.tasks.job_execution import send_eval_completion_notification
 
         send_eval_completion_notification.delay(eval_run.id)
         logger.info(
@@ -351,6 +351,91 @@ def get_or_fetch_score(
     return score
 
 
+def _upload_score_traces(
+    *,
+    session: Session,
+    eval_run_id: int,
+    project_id: int,
+    traces: list[dict[str, Any]],
+) -> str | None:
+    """Upload per-trace records to S3 for an evaluation run.
+
+    Returns the object-store URL on success, ``""`` when there are no traces,
+    or ``None`` when an upload failed. Never raises.
+    """
+    if not traces:
+        return ""
+    try:
+        storage = get_cloud_storage(session=session, project_id=project_id)
+        score_trace_url = upload_jsonl_to_object_store(
+            storage=storage,
+            results=traces,
+            filename=f"traces_{eval_run_id}.json",
+            subdirectory=f"evaluations/score/{eval_run_id}",
+            format="json",
+        )
+        if score_trace_url:
+            logger.info(
+                f"[_upload_score_traces] uploaded traces to S3 | "
+                f"evaluation_id={eval_run_id} | url={score_trace_url} | "
+                f"traces_count={len(traces)}"
+            )
+        else:
+            logger.warning(
+                f"[_upload_score_traces] failed to upload traces to S3 | "
+                f"evaluation_id={eval_run_id}"
+            )
+        return score_trace_url
+    except Exception as e:
+        logger.error(
+            f"[_upload_score_traces] Error uploading traces to S3: {e} | "
+            f"evaluation_id={eval_run_id}",
+            exc_info=True,
+        )
+        return None
+
+
+def persist_score_traces(
+    eval_run_id: int,
+    organization_id: int,
+    project_id: int,
+    traces: list[dict[str, Any]],
+) -> EvaluationRun | None:
+    """Persist the Q&A trace skeleton to S3 and record the ``score_trace_url``
+    pointer, WITHOUT touching the ``score`` column (keeps the run score-less
+    until completed). The embedding stage later reloads it to build the full
+    trace unit. Uses its own DB session. Returns the run, or None if not found.
+    """
+    with Session(engine) as session:
+        eval_run = get_evaluation_run_by_id(
+            session=session,
+            evaluation_id=eval_run_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+        if not eval_run:
+            return None
+
+        score_trace_url = _upload_score_traces(
+            session=session,
+            eval_run_id=eval_run_id,
+            project_id=project_id,
+            traces=traces,
+        )
+        update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(score_trace_url=score_trace_url or None),
+        )
+
+        logger.info(
+            f"[persist_score_traces] Persisted trace pointer | "
+            f"evaluation_id={eval_run_id} | traces={len(traces)}"
+        )
+
+        return eval_run
+
+
 def save_score(
     eval_run_id: int,
     organization_id: int,
@@ -360,8 +445,11 @@ def save_score(
     """
     Save score to evaluation run with its own session.
 
-    This function creates its own database session to persist the score,
-    allowing it to be called after releasing the request's main session.
+    Uploads per-trace records to S3 and writes the ``score`` column: just the
+    summary when traces live in S3, or the full unit as a DB fallback when the
+    upload fails. Uses its own session, so it can run after the request's main
+    session is released. To persist only the skeleton without writing ``score``,
+    use ``persist_score_traces`` instead.
 
     Args:
         eval_run_id: ID of the evaluation run to update
@@ -385,35 +473,13 @@ def save_score(
 
         traces = score.get("traces", [])
         summary_score = score.get("summary_scores", [])
-        score_trace_url: str | None = "" if not traces else None
 
-        if traces:
-            try:
-                storage = get_cloud_storage(session=session, project_id=project_id)
-                score_trace_url = upload_jsonl_to_object_store(
-                    storage=storage,
-                    results=traces,
-                    filename=f"traces_{eval_run_id}.json",
-                    subdirectory=f"evaluations/score/{eval_run_id}",
-                    format="json",
-                )
-                if score_trace_url:
-                    logger.info(
-                        f"[save_score] uploaded traces to S3 | "
-                        f"evaluation_id={eval_run_id} | url={score_trace_url} | "
-                        f"traces_count={len(traces)}"
-                    )
-                else:
-                    logger.warning(
-                        f"[save_score] failed to upload traces to S3, "
-                        f"falling back to DB storage | evaluation_id={eval_run_id}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[save_score] Error uploading traces to S3: {e} | "
-                    f"evaluation_id={eval_run_id}",
-                    exc_info=True,
-                )
+        score_trace_url = _upload_score_traces(
+            session=session,
+            eval_run_id=eval_run_id,
+            project_id=project_id,
+            traces=traces,
+        )
 
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db

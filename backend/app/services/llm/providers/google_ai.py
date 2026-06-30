@@ -94,13 +94,7 @@ class VertexClient:
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
-        # The "global" location uses the unprefixed host; regional locations
-        # use the "{location}-" prefix.
-        host = (
-            "aiplatform.googleapis.com"
-            if self.location == "global"
-            else f"{self.location}-aiplatform.googleapis.com"
-        )
+        host = N
         return (
             f"https://{host}/v1"
             f"/projects/{self.project_id}/locations/{self.location}"
@@ -122,12 +116,9 @@ class GoogleVertexAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        # Fall back to platform-shared defaults from settings for any field
-        # the caller didn't provide. The SA JSON falls back to the file at
         # settings.GCP_SA_KEY; BYOK rows pass `sa_key` inline.
         credentials = credentials or {}
         api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
-        logger.info(f"Vertex API Key {api_key}")
         project_id = credentials.get("project_id") or settings.GCP_PROJECT_ID
         location = credentials.get("location") or settings.GCP_VERTEX_LOCATION
         gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
