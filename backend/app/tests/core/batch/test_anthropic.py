@@ -95,7 +95,9 @@ class TestAnthropicBatchProvider:
         result = provider.create_batch(jsonl_data, config)
 
         mock_anthropic_client.beta.messages.batches.create.assert_called_once()
-        call_kwargs = mock_anthropic_client.beta.messages.batches.create.call_args.kwargs
+        call_kwargs = (
+            mock_anthropic_client.beta.messages.batches.create.call_args.kwargs
+        )
         requests = call_kwargs["requests"]
         assert call_kwargs["betas"] == []
         assert len(requests) == 2
@@ -188,9 +190,7 @@ class TestAnthropicBatchProvider:
                 "custom_id": "req-1",
                 "params": {
                     "messages": [{"role": "user", "content": "Hello"}],
-                    "output_config": {
-                        "format": {"type": "json_schema", "schema": {}}
-                    },
+                    "output_config": {"format": {"type": "json_schema", "schema": {}}},
                 },
             }
         ]
