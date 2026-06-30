@@ -79,7 +79,9 @@ class AnthropicBatchProvider(BatchProvider):
                     needs_structured_outputs = True
                 requests.append({"custom_id": item[BATCH_KEY], "params": params})
 
-            logger.info(f"[create_batch] Anthropic batch requests jsonl: {json.dumps(requests, indent=2)}")
+            logger.info(
+                f"[create_batch] Anthropic batch requests jsonl: {json.dumps(requests, indent=2)}"
+            )
 
             betas = [STRUCTURED_OUTPUTS_BETA] if needs_structured_outputs else []
             batch = self.client.beta.messages.batches.create(
