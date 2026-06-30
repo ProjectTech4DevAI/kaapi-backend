@@ -325,7 +325,7 @@ class TestHappyPath:
         headers: dict[str, str],
         completed_run: EvaluationRun,
     ) -> None:
-        """commit_message starts with the AI marker and carries run id + rationale."""
+        """commit_message starts with the AI marker and carries run name + rationale."""
         with _patched_boundaries():
             resp = client.post(
                 IMPROVE_URL.format(evaluation_id=completed_run.id),
@@ -335,7 +335,7 @@ class TestHappyPath:
         assert resp.status_code == 201, resp.text
         commit_message = resp.json()["data"]["commit_message"]
         assert commit_message.startswith(AI_GENERATED_MARKER)
-        assert f"source_evaluation_run_id={completed_run.id}" in commit_message
+        assert f"(Evaluation: {completed_run.run_name})" in commit_message
         assert _RATIONALE in commit_message
         assert len(commit_message) <= COMMIT_MESSAGE_MAX_LENGTH
 

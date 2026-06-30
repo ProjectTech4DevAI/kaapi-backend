@@ -105,18 +105,24 @@ def improve_prompt(
             detail="source_config_unavailable: run has no config_id/config_version reference",
         )
 
-    # read_one() re-validates the config exists in this project before returning
-    # the version, so a separate ConfigCrud existence check would be redundant.
-    version = ConfigVersionCrud(
-        session=session,
-        config_id=run.config_id,
-        project_id=project_id,
-        tag=ConfigTag.DEFAULT,
-    ).read_one(version_number=run.config_version)
+    # read_one() raises 404 when the config itself is missing/soft-deleted and
+    # returns None when only the version is gone — both are 409 here, since the
+    # run referenced a config that no longer resolves.
+    try:
+        version = ConfigVersionCrud(
+            session=session,
+            config_id=run.config_id,
+            project_id=project_id,
+            tag=ConfigTag.DEFAULT,
+        ).read_one(version_number=run.config_version)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        version = None
     if version is None:
         raise HTTPException(
             status_code=409,
-            detail="source_config_unavailable: the run's config_version is missing or soft-deleted",
+            detail="source_config_unavailable: the run's config or config_version is missing or soft-deleted",
         )
 
     blob = version.config_blob or {}
