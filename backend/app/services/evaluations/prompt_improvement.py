@@ -55,14 +55,6 @@ AI_GENERATED_MARKER = "[AI Generated]"
 
 _COMPLETED_STATUS = "completed"
 
-# Key under config_blob["completion"]["params"] holding the system prompt text.
-# Distinct from _LLM_KEY_INSTRUCTIONS, which is the LLM's *output* field.
-_PARAMS_INSTRUCTIONS_KEY = "instructions"
-
-# Params not surfaced to the LLM as read-only context: instructions has its own
-# section; knowledge_base_ids are opaque vector-store ids the model can't use.
-_CONTEXT_EXCLUDE_KEYS = frozenset({_PARAMS_INSTRUCTIONS_KEY, "knowledge_base_ids"})
-
 
 def improve_prompt(
     *,
@@ -129,7 +121,7 @@ def improve_prompt(
 
     blob = version.config_blob or {}
     params = blob.get("completion", {}).get("params", {}) or {}
-    current_instructions = params.get(_PARAMS_INSTRUCTIONS_KEY) or ""
+    current_instructions = params.get("instructions") or ""
 
     storage = get_cloud_storage(session=session, project_id=project_id)
     traces = load_json_from_object_store(storage=storage, url=run.score_trace_url)
@@ -201,12 +193,10 @@ def _draft_improved_prompt(
 
     client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
 
-    # The prompt runs under these generation params; surface them read-only so the
-    # rewrite can tailor to the target model/settings without changing them.
-    context_params = {
-        param_name: param_value
-        for param_name, param_value in config_params.items()
-        if param_name not in _CONTEXT_EXCLUDE_KEYS
+    # instructions is shown above already; knowledge_base_ids are opaque ids the model can't use.
+    excluded_keys = {"instructions", "knowledge_base_ids"}
+    target_config = {
+        key: value for key, value in config_params.items() if key not in excluded_keys
     }
 
     user_message_text = (
@@ -217,7 +207,7 @@ def _draft_improved_prompt(
         f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
-        f"```\n{json.dumps(context_params)}\n```\n\n"
+        f"```\n{json.dumps(target_config)}\n```\n\n"
         "## Task\n"
         "1. Identify the answers that performed poorly — those with low scores or "
         "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
