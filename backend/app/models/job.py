@@ -1,7 +1,10 @@
 from datetime import datetime
 from enum import Enum
+from typing import Any
 from uuid import UUID, uuid4
 
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.util import now
@@ -18,6 +21,7 @@ class JobType(str, Enum):
     RESPONSE = "RESPONSE"
     LLM_API = "LLM_API"
     LLM_CHAIN = "LLM_CHAIN"
+    LLM_GUARDRAILS = "LLM_GUARDRAILS"
 
 
 class Job(SQLModel, table=True):
@@ -63,8 +67,20 @@ class Job(SQLModel, table=True):
     job_type: JobType = Field(
         description="Type of job being executed (e.g., response, ingestion).",
         sa_column_kwargs={
-            "comment": "Type of job being executed (e.g., RESPONSE, LLM_API)"
+            "comment": "Type of job being executed (e.g., RESPONSE, LLM_API, LLM_CHAIN, LLM_GUARDRAILS)"
         },
+    )
+    meta: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "Per-job-type tracking payload. For LLM_GUARDRAILS this stores "
+                "{'request': {...}, 'response': {...}} capturing the inbound "
+                "guardrails request and the upstream guardrails service response."
+            ),
+        ),
     )
 
     # Timestamps
@@ -82,3 +98,4 @@ class JobUpdate(SQLModel):
     status: JobStatus | None = None
     error_message: str | None = None
     task_id: str | None = None
+    meta: dict[str, Any] | None = None

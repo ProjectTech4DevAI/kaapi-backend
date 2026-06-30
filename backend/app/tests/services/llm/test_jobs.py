@@ -892,8 +892,12 @@ class TestExecuteJob:
                 return_value={"api_key": "tap-token"},
             ),
             patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
         ):
             mock_fetch_configs.return_value = (
                 [],
@@ -1293,8 +1297,12 @@ class TestExecuteJob:
         unsafe_input = "My credit card is 4111 1111 1111 1111"
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1342,8 +1350,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_fetch_configs.return_value = (
                 [{"type": "pii_remover", "stage": "input"}],
@@ -1390,8 +1402,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1437,8 +1453,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1486,8 +1506,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": False,
@@ -1537,8 +1561,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_fetch_configs.return_value = (
                 [],
@@ -1578,8 +1606,12 @@ class TestExecuteJob:
         unsafe_input = "4111 1111 1111 1111"
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1621,8 +1653,12 @@ class TestExecuteJob:
         env = job_env
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": False,
@@ -1662,8 +1698,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1710,8 +1750,12 @@ class TestExecuteJob:
         env = job_env
 
         with (
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
         ):
             mock_guardrails.return_value = {
                 "success": True,
@@ -1765,7 +1809,7 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with patch(
-            "app.services.llm.jobs.list_validators_config"
+            "app.services.llm.guardrails.list_validators_config"
         ) as mock_fetch_configs:
             mock_fetch_configs.return_value = ([], [])
 
@@ -1813,8 +1857,12 @@ class TestExecuteJob:
         env["provider"].execute.return_value = (env["mock_llm_response"], None)
 
         with (
-            patch("app.services.llm.jobs.list_validators_config") as mock_fetch_configs,
-            patch("app.services.llm.jobs.run_guardrails_validation") as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
         ):
             mock_fetch_configs.return_value = ([], [])
 
