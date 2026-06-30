@@ -94,7 +94,7 @@ class VertexClient:
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
-        host = N
+        host = f"{self.location}-aiplatform.googleapis.com"
         return (
             f"https://{host}/v1"
             f"/projects/{self.project_id}/locations/{self.location}"

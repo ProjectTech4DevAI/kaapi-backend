@@ -52,10 +52,10 @@ class LLMProvider:
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         """Return the provider class for a given name."""
         if provider_type in (cls.GOOGLE, cls.GOOGLE_NATIVE):
-            route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE or "vertex"
+            route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE
             if route not in ("vertex", "aistudio"):
                 raise ValueError(
-                    f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid. "
+                    f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid or set to None "
                     f"Must be one of: vertex, aistudio"
                 )
             return GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
@@ -82,6 +82,14 @@ def get_llm_provider(
 
     credential_provider = provider_type.replace("-native", "")
 
+    if (provider_type == LLMProvider.GOOGLE) or (
+        provider_type == LLMProvider.GOOGLE_NATIVE
+    ):
+        if provider_class is GoogleAIProvider:
+            credential_provider = LLMProvider.GOOGLE_AISTUDIO
+        else:
+            credential_provider = LLMProvider.GOOGLE
+
     credentials = get_provider_credential(
         session=session,
         provider=credential_provider,
@@ -94,14 +102,12 @@ def get_llm_provider(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )
 
-    if not credentials:
-        credentials = {}
+    credentials = credentials or {}
 
     try:
         client = provider_class.create_client(credentials=credentials)
         return provider_class(client=client)
     except ValueError:
-        # Re-raise ValueError for credential/configuration errors
         raise
     except Exception as e:
         logger.error(f"Failed to initialize {provider_type} client: {e}", exc_info=True)

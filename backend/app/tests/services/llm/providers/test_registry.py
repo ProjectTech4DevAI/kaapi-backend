@@ -106,13 +106,19 @@ class TestGetLLMProvider:
             assert "not configured for this project" in str(exc_info.value)
 
     def test_google_native_routes_to_aistudio(self, db: Session):
-        """``google`` / ``google-native`` currently route to GoogleAIProvider
-        (AI Studio). Vertex routing is temporarily disabled."""
+        """``google`` / ``google-native`` route to GoogleAIProvider when
+        GEMINI_DEFAULT_INFERENCE_ROUTE=aistudio. Credential row is fetched
+        under the ``google-aistudio`` key, not ``google``."""
         from app.services.llm.providers.google_aistudio import GoogleAIProvider
 
         project = get_project(db)
 
-        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
+        with patch(
+            "app.services.llm.providers.registry.settings"
+        ) as mock_settings, patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds:
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "aistudio"
             mock_get_creds.return_value = {"api_key": "test-api-key"}
 
             provider = get_llm_provider(
@@ -122,4 +128,125 @@ class TestGetLLMProvider:
                 organization_id=project.organization_id,
             )
 
-        assert isinstance(provider, GoogleAIProvider)
+            assert isinstance(provider, GoogleAIProvider)
+            mock_get_creds.assert_called_once_with(
+                session=db,
+                provider="google-aistudio",
+                project_id=project.id,
+                org_id=project.organization_id,
+            )
+
+    def test_google_routes_to_vertex_when_env_set(self, db: Session):
+        """When route=vertex, ``google`` resolves to GoogleVertexAIProvider
+        and looks up credentials under the ``google`` key."""
+        from app.services.llm.providers.google_ai import GoogleVertexAIProvider
+
+        project = get_project(db)
+
+        with patch(
+            "app.services.llm.providers.registry.settings"
+        ) as mock_settings, patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds:
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            mock_get_creds.return_value = {
+                "api_key": "byok-key",
+                "project_id": "byok-project",
+                "location": "us-central1",
+            }
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+            assert isinstance(provider, GoogleVertexAIProvider)
+            assert provider.client.api_key == "byok-key"
+            mock_get_creds.assert_called_once_with(
+                session=db,
+                provider="google",
+                project_id=project.id,
+                org_id=project.organization_id,
+            )
+
+    def test_vertex_falls_back_to_platform_defaults_when_no_creds(self, db: Session):
+        """Vertex must not raise when DB has no row for ``google``; it falls
+        back to platform defaults from settings."""
+        from app.services.llm.providers.google_ai import GoogleVertexAIProvider
+
+        project = get_project(db)
+
+        with patch(
+            "app.services.llm.providers.registry.settings"
+        ) as registry_settings, patch(
+            "app.services.llm.providers.google_ai.settings"
+        ) as google_settings, patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds:
+            registry_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            google_settings.GCP_VERTEX_API_KEY = "platform-key"
+            google_settings.GCP_PROJECT_ID = "platform-project"
+            google_settings.GCP_VERTEX_LOCATION = "us-central1"
+            google_settings.GCP_SA_KEY = ""
+            google_settings.GCS_AUDIO_BUCKET = ""
+            mock_get_creds.return_value = None
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+            assert isinstance(provider, GoogleVertexAIProvider)
+            assert provider.client.api_key == "platform-key"
+            assert provider.client.project_id == "platform-project"
+
+    def test_invalid_inference_route_raises(self, db: Session):
+        """Unknown GEMINI_DEFAULT_INFERENCE_ROUTE value raises ValueError."""
+        project = get_project(db)
+
+        with patch("app.services.llm.providers.registry.settings") as mock_settings:
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "bogus"
+
+            with pytest.raises(ValueError) as exc_info:
+                get_llm_provider(
+                    session=db,
+                    provider_type="google",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )
+
+            assert "GEMINI_DEFAULT_INFERENCE_ROUTE" in str(exc_info.value)
+
+    def test_aistudio_provider_unaffected_by_env_var(self, db: Session):
+        """``google-aistudio`` always routes to GoogleAIProvider regardless
+        of the env var."""
+        from app.services.llm.providers.google_aistudio import GoogleAIProvider
+
+        project = get_project(db)
+
+        with patch(
+            "app.services.llm.providers.registry.settings"
+        ) as mock_settings, patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds:
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            mock_get_creds.return_value = {"api_key": "test-api-key"}
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google-aistudio",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+            assert isinstance(provider, GoogleAIProvider)
+            mock_get_creds.assert_called_once_with(
+                session=db,
+                provider="google-aistudio",
+                project_id=project.id,
+                org_id=project.organization_id,
+            )
