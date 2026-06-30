@@ -16,6 +16,7 @@ from app.api.routes import (
     evaluations,
     features,
     fine_tuning,
+    guardrails,
     languages,
     llm,
     llm_chain,
@@ -55,6 +56,7 @@ api_router.include_router(fine_tuning.router)
 api_router.include_router(languages.router)
 api_router.include_router(llm.router)
 api_router.include_router(llm_chain.router)
+api_router.include_router(guardrails.router)
 api_router.include_router(llm_sts.router)
 api_router.include_router(login.router)
 api_router.include_router(model_config.router)
