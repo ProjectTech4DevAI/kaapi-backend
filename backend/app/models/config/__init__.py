@@ -10,9 +10,9 @@ from .version import (
     ConfigVersion,
     ConfigVersionBase,
     ConfigVersionCreate,
-    ConfigVersionUpdate,
-    ConfigVersionPublic,
     ConfigVersionItems,
+    ConfigVersionPublic,
+    ConfigVersionUpdate,
 )
 
 __all__ = [
@@ -24,8 +24,8 @@ __all__ = [
     "ConfigVersion",
     "ConfigVersionBase",
     "ConfigVersionCreate",
-    "ConfigVersionUpdate",
     "ConfigVersionItems",
     "ConfigVersionPublic",
+    "ConfigVersionUpdate",
     "ConfigWithVersion",
 ]
