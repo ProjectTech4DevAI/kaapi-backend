@@ -155,7 +155,9 @@ class LangfuseTracer:
                     tracing_enabled=True,  # This ensures the client is active
                 )
             except Exception as e:
-                logger.warning(f"[LangfuseTracer] Failed to initialize: {e}")
+                logger.warning(
+                    f"[LangfuseTracer] Failed to initialize: {format_langfuse_error(e)}"
+                )
                 self._failed = True
                 return
 
@@ -165,7 +167,9 @@ class LangfuseTracer:
                     if traces:
                         self.session_id = traces[0].session_id
                 except Exception as e:
-                    logger.debug(f"[LangfuseTracer] Session resume failed: {e}")
+                    logger.debug(
+                        f"[LangfuseTracer] Session resume failed: {format_langfuse_error(e)}"
+                    )
 
             logger.info(
                 f"[LangfuseTracer] Tracing enabled | session_id={self.session_id}"
@@ -180,7 +184,7 @@ class LangfuseTracer:
             return fn(*args, **kwargs)
         except Exception as e:
             logger.warning(
-                f"[LangfuseTracer] {getattr(fn, '__name__', 'operation')} failed: {e}"
+                f"[LangfuseTracer] {getattr(fn, '__name__', 'operation')} failed: {format_langfuse_error(e)}"
             )
             self._failed = True
             return None
@@ -313,7 +317,7 @@ def observe_llm_execution(
                 )
             except Exception as e:
                 logger.warning(
-                    f"[observe_llm_execution] Failed to initialize client: {e}"
+                    f"[observe_llm_execution] Failed to initialize client: {format_langfuse_error(e)}"
                 )
                 return func(completion_config, query, **kwargs)
 
@@ -327,7 +331,7 @@ def observe_llm_execution(
                     return fn(*args, **kwargs)
                 except Exception as e:
                     logger.warning(
-                        f"[observe_llm_execution] {getattr(fn, '__name__', 'operation')} failed: {e}"
+                        f"[observe_llm_execution] {getattr(fn, '__name__', 'operation')} failed: {format_langfuse_error(e)}"
                     )
                     failed = True
                     return None

@@ -14,7 +14,7 @@ from typing import Any
 
 from langfuse import Langfuse
 
-from app.core.langfuse.langfuse import set_trace_attributes
+from app.core.langfuse.langfuse import format_langfuse_error, set_trace_attributes
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
@@ -195,7 +195,7 @@ def create_langfuse_dataset_run(
             except Exception as e:
                 logger.error(
                     f"[create_langfuse_dataset_run] Failed to create trace | "
-                    f"item_id={item_id} | {e}",
+                    f"item_id={item_id} | {format_langfuse_error(e)}",
                     exc_info=True,
                 )
                 continue
@@ -211,7 +211,7 @@ def create_langfuse_dataset_run(
     except Exception as e:
         logger.error(
             f"[create_langfuse_dataset_run] Failed to create Langfuse dataset run | "
-            f"run_name={run_name} | {e}",
+            f"run_name={run_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise
@@ -263,7 +263,7 @@ def update_traces_with_cosine_scores(
         except Exception as e:
             logger.error(
                 f"[update_traces_with_cosine_scores] Failed to add score | "
-                f"trace_id={trace_id} | {e}",
+                f"trace_id={trace_id} | {format_langfuse_error(e)}",
                 exc_info=True,
             )
             failed_trace_ids.append(trace_id)
@@ -328,7 +328,7 @@ def upload_dataset_to_langfuse(
             logger.warning(
                 f"[upload_dataset_to_langfuse] Failed to upload item | "
                 f"duplicate={duplicate_num + 1} | "
-                f"question={item['question'][:50]}... | {e}"
+                f"question={item['question'][:50]}... | {format_langfuse_error(e)}"
             )
             return False
 
@@ -375,7 +375,7 @@ def upload_dataset_to_langfuse(
     except Exception as e:
         logger.error(
             f"[upload_dataset_to_langfuse] Failed to upload dataset to Langfuse | "
-            f"dataset={dataset_name} | {e}",
+            f"dataset={dataset_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise
@@ -450,7 +450,7 @@ def fetch_trace_scores_from_langfuse(
         except Exception as e:
             logger.warning(
                 f"[fetch_trace_scores_from_langfuse] Run not found in Langfuse | "
-                f"dataset={dataset_name} | run={run_name} | error={e}"
+                f"dataset={dataset_name} | run={run_name} | error={format_langfuse_error(e)}"
             )
             raise ValueError(
                 f"Run '{run_name}' not found in Langfuse dataset '{dataset_name}'"
@@ -572,7 +572,7 @@ def fetch_trace_scores_from_langfuse(
                     failed_trace_ids.append(trace_id)
                     logger.warning(
                         f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
-                        f"trace_id={trace_id} | error={e}"
+                        f"trace_id={trace_id} | error={format_langfuse_error(e)}"
                     )
 
                     if consecutive_failures >= max_consecutive_failures:
@@ -628,7 +628,7 @@ def fetch_trace_scores_from_langfuse(
     except Exception as e:
         logger.error(
             f"[fetch_trace_scores_from_langfuse] Failed to fetch trace scores | "
-            f"dataset={dataset_name} | run={run_name} | {e}",
+            f"dataset={dataset_name} | run={run_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise
