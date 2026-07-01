@@ -8,8 +8,8 @@ from app.crud.organization import (
     validate_organization,
 )
 from app.models import Organization, OrganizationCreate
-from app.tests.utils.utils import random_lower_string, get_non_existent_id
 from app.tests.utils.test_data import create_test_organization
+from app.tests.utils.utils import get_non_existent_id, random_lower_string
 
 
 def test_create_organization(db: Session) -> None:
@@ -21,6 +21,28 @@ def test_create_organization(db: Session) -> None:
     assert organization.name == name
     assert organization.id is not None
     assert organization.is_active is True
+
+
+def test_create_organization_duplicate_active_name(db: Session) -> None:
+    """Creating an org whose name is already taken by an active org is rejected."""
+    name = random_lower_string()
+    create_organization(session=db, org_create=OrganizationCreate(name=name))
+
+    with pytest.raises(HTTPException, match="already exists"):
+        create_organization(session=db, org_create=OrganizationCreate(name=name))
+
+
+def test_create_organization_duplicate_inactive_name(db: Session) -> None:
+    """Recreating a soft-deleted org name is rejected with a reactivate hint."""
+    name = random_lower_string()
+    org = create_organization(session=db, org_create=OrganizationCreate(name=name))
+
+    org.is_active = False
+    db.add(org)
+    db.flush()
+
+    with pytest.raises(HTTPException, match="inactive"):
+        create_organization(session=db, org_create=OrganizationCreate(name=name))
 
 
 def test_get_organization_by_id(db: Session) -> None:
