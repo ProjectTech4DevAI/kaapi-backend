@@ -1,14 +1,14 @@
 ---
 name: start-prd
-description: Turn the current conversation into a product-level PRD and write it to features/<feature>/PRD.md — no interview, just synthesis of what you've already discussed. The PRD covers the product spec only (why / what / for whom); technical "how" belongs in the SRD.
+description: Synthesize the current conversation into a product-level PRD (the why/what, not the how) at features/<feature>/PRD.md — no interview.
 disable-model-invocation: true
 ---
 
-This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know.
+Synthesize the PRD from the current conversation and your codebase understanding. Do NOT interview the user — use what you already know.
 
 The PRD is a **product spec**. It answers one question: *why are we doing this and what does success look like?* It is written for everyone — PM, design, engineering, stakeholders — in user and business terms.
 
-**Hard boundary — the PRD does NOT contain** databases, APIs, algorithms, infrastructure, code structure, or how anything is built. If you find yourself naming a table, an endpoint, or a module, stop: that belongs in the SRD (Software Requirements Doc), not here. The PRD says *what the product does for the user*; the SRD says *what the software must do for the PRD to be true*.
+**Hard boundary — the PRD does NOT contain** databases, APIs, algorithms, infrastructure, code structure, or how anything is built. If you find yourself naming a table, an endpoint, or a module, stop: that belongs in the SRD (Software Requirements Doc), not here.
 
 ## Process
 
@@ -16,7 +16,7 @@ The PRD is a **product spec**. It answers one question: *why are we doing this a
 
 2. Draft the PRD using the template below, keeping every section strictly product-level. Before finalizing, check with the user that the **Goals**, **Non-Goals**, and **Scope** match their expectations — these three are where misalignment hides.
 
-3. Write the finished PRD to `features/<feature-slug>/PRD.md`, where `<feature-slug>` is a short kebab-case slug for the feature (e.g. `features/account-balances/PRD.md`). Create the `features/<feature-slug>/` directory if it doesn't exist. Every feature keeps its PRD and SRD together in this one folder — if an `SRD.md` already exists for the same feature (written by the `srd-creator` skill), write the `PRD.md` alongside it in the same folder and reuse that slug exactly rather than creating a parallel folder. Giving each feature its own folder keeps prior PRDs preserved rather than overwritten. This file is the deliverable — it can be referenced later when building the SRD and Engineering Plan.
+3. Write the finished PRD to `features/<feature-slug>/PRD.md`, where `<feature-slug>` is a short kebab-case slug (e.g. `features/account-balances/PRD.md`); create the directory if it doesn't exist. If an `SRD.md` already exists for this feature (from the `srd-creator` skill), reuse its slug exactly and write `PRD.md` beside it — don't create a parallel folder. This file is the deliverable, referenced later when building the SRD and Engineering Plan.
 
 <prd-template>
 
