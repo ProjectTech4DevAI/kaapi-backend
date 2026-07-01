@@ -13,6 +13,7 @@ from app.services.auth import (
     verify_magic_link_token,
 )
 from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.test_data import add_user_to_test_project
 from app.tests.utils.user import create_random_user
 
 GOOGLE_AUTH_URL = f"{settings.API_V1_STR}/auth/google"
@@ -100,6 +101,8 @@ class TestGoogleAuth:
     ):
         """Test that inactive user is activated on first Google login."""
         user = create_random_user(db)
+        # Login requires an active project membership.
+        add_user_to_test_project(db, user)
         user.is_active = False
         db.add(user)
         db.commit()
@@ -118,10 +121,10 @@ class TestGoogleAuth:
 
     @patch("app.api.routes.auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.auth.settings")
-    def test_google_auth_success_no_projects(
+    def test_google_auth_no_projects_forbidden(
         self, mock_settings, mock_verify, db: Session, client: TestClient
     ):
-        """Test successful login for user with no projects."""
+        """A non-superuser with no active project cannot log in via Google."""
         user = create_random_user(db)
 
         mock_settings.GOOGLE_CLIENT_ID = "test-client-id"
@@ -133,15 +136,8 @@ class TestGoogleAuth:
         mock_verify.return_value = _mock_idinfo(user.email)
 
         resp = client.post(GOOGLE_AUTH_URL, json={"token": "fake"})
-        assert resp.status_code == 200
-
-        body = resp.json()
-        assert body["success"] is True
-        data = body["data"]
-        assert "access_token" in data
-        assert data["requires_project_selection"] is False
-        assert data["available_projects"] == []
-        assert "access_token" in resp.cookies
+        assert resp.status_code == 403
+        assert "not assigned to any active project" in resp.json()["error"]
 
     @patch("app.api.routes.auth.id_token.verify_oauth2_token")
     @patch("app.api.routes.auth.settings")
@@ -454,6 +450,8 @@ class TestMagicLinkVerify:
     def test_verify_activates_inactive_user(self, db: Session, client: TestClient):
         """Test magic link verify activates inactive user."""
         user = create_random_user(db)
+        # Login requires an active project membership.
+        add_user_to_test_project(db, user)
         user.is_active = False
         db.add(user)
         db.commit()
@@ -469,6 +467,8 @@ class TestMagicLinkVerify:
     def test_verify_success(self, db: Session, client: TestClient):
         """Test successful magic link verification logs user in."""
         user = create_random_user(db)
+        # Login requires an active project membership.
+        add_user_to_test_project(db, user)
         token = generate_magic_link_token(email=user.email)
 
         resp = client.get(f"{MAGIC_LINK_VERIFY_URL}?token={token}")
