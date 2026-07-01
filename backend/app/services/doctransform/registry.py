@@ -38,6 +38,7 @@ EXTENSION_TO_FORMAT: dict[str, str] = {
     ".md": "markdown",
     ".markdown": "markdown",
     ".csv": "csv",
+    ".json": "json",
 }
 
 # Map format names to file extensions
@@ -49,6 +50,7 @@ FORMAT_TO_EXTENSION: dict[str, str] = {
     "text": ".txt",
     "markdown": ".md",
     "csv": ".csv",
+    "json": ".json",
 }
 
 
