@@ -349,7 +349,7 @@ class GeminiBatchProvider(BatchProvider):
             uploaded_file = self._upload_to_gemini(
                 content=content,
                 suffix=".jsonl",
-                mime_type="jsonl",
+                mime_type="application/jsonl",
                 display_name=f"batch-input-{int(time.time())}",
             )
 

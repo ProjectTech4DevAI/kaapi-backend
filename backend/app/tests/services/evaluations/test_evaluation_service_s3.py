@@ -1,13 +1,18 @@
-"""Tests for get_evaluation_with_scores() S3 retrieval."""
+"""Tests for app.services.evaluations.evaluation service functions."""
 
 from collections.abc import Callable
 from typing import Optional
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.models import EvaluationRun
-from app.services.evaluations.evaluation import get_evaluation_with_scores
+from app.services.evaluations.evaluation import (
+    get_evaluation_with_scores,
+    validate_and_start_batch_evaluation,
+)
 
 
 class TestGetEvaluationWithScoresS3:
@@ -200,3 +205,113 @@ class TestGetEvaluationWithScoresS3:
         assert error is not None
         mock_fetch_langfuse.assert_not_called()  # did not re-fetch
         mock_save_score.assert_not_called()  # did not overwrite the cache
+
+
+_MODULE = "app.services.evaluations.evaluation"
+
+
+def _dataset() -> MagicMock:
+    dataset = MagicMock()
+    dataset.id = 1
+    dataset.name = "ds"
+    dataset.langfuse_dataset_id = "lf_ds_1"
+    dataset.object_store_url = None
+    return dataset
+
+
+def _config(provider: str) -> MagicMock:
+    config = MagicMock()
+    config.completion.provider = provider
+    config.completion.type = "text"
+    config.completion.params = {"model": "m"}
+    return config
+
+
+class TestValidateAndStartBatchEvaluation:
+    """Test validate_and_start_batch_evaluation provider gating and queueing."""
+
+    @patch(f"{_MODULE}.resolve_evaluation_config")
+    @patch(f"{_MODULE}.get_dataset_by_id")
+    def test_unsupported_provider_raises_422(
+        self, mock_get_dataset, mock_resolve
+    ) -> None:
+        mock_get_dataset.return_value = _dataset()
+        mock_resolve.return_value = (_config("anthropic"), None)
+
+        with pytest.raises(HTTPException) as exc:
+            validate_and_start_batch_evaluation(
+                session=MagicMock(),
+                dataset_id=1,
+                experiment_name="exp",
+                config_id=uuid4(),
+                config_version=1,
+                organization_id=1,
+                project_id=2,
+            )
+
+        assert exc.value.status_code == 422
+        assert "not supported" in exc.value.detail
+
+    @patch(f"{_MODULE}.update_evaluation_run")
+    @patch(f"{_MODULE}.start_evaluation_batch_submission")
+    @patch(f"{_MODULE}.create_evaluation_run_or_409")
+    @patch(f"{_MODULE}.resolve_evaluation_config")
+    @patch(f"{_MODULE}.get_dataset_by_id")
+    def test_queue_failure_marks_run_failed(
+        self,
+        mock_get_dataset,
+        mock_resolve,
+        mock_create_run,
+        mock_submit,
+        mock_update,
+    ) -> None:
+        """A failure enqueueing the celery task flips the run to failed (no raise)."""
+        mock_get_dataset.return_value = _dataset()
+        mock_resolve.return_value = (_config("openai"), None)
+
+        eval_run = MagicMock()
+        eval_run.id = 99
+        mock_create_run.return_value = eval_run
+        mock_submit.side_effect = Exception("broker down")
+        mock_update.return_value = eval_run
+
+        result = validate_and_start_batch_evaluation(
+            session=MagicMock(),
+            dataset_id=1,
+            experiment_name="exp",
+            config_id=uuid4(),
+            config_version=1,
+            organization_id=1,
+            project_id=2,
+        )
+
+        assert result is eval_run
+        update_arg = mock_update.call_args.kwargs["update"]
+        assert update_arg.status == "failed"
+        assert "Failed to queue batch submission" in update_arg.error_message
+
+    @patch(f"{_MODULE}.start_evaluation_batch_submission")
+    @patch(f"{_MODULE}.create_evaluation_run_or_409")
+    @patch(f"{_MODULE}.resolve_evaluation_config")
+    @patch(f"{_MODULE}.get_dataset_by_id")
+    def test_success_returns_run(
+        self, mock_get_dataset, mock_resolve, mock_create_run, mock_submit
+    ) -> None:
+        mock_get_dataset.return_value = _dataset()
+        mock_resolve.return_value = (_config("google-aistudio"), None)
+        eval_run = MagicMock()
+        mock_create_run.return_value = eval_run
+        mock_submit.return_value = "task-1"
+
+        result = validate_and_start_batch_evaluation(
+            session=MagicMock(),
+            dataset_id=1,
+            experiment_name="exp",
+            config_id=uuid4(),
+            config_version=1,
+            organization_id=1,
+            project_id=2,
+        )
+
+        assert result is eval_run
+        mock_submit.assert_called_once()
