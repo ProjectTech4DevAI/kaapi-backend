@@ -21,7 +21,7 @@ class LLMProvider:
     # Google. preferably vertex
     GOOGLE = "google"
     GOOGLE_NATIVE = "google-native"
-    # Goole, aistudio
+    # Google, aistudio
     GOOGLE_AISTUDIO = "google-aistudio"
     GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
 
@@ -36,10 +36,10 @@ class LLMProvider:
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
-        # same as above
-        GOOGLE: GoogleAIProvider,
-        GOOGLE_NATIVE: GoogleAIProvider,
-        # same as above
+        # Google. preferably vertex
+        GOOGLE: GoogleVertexAIProvider,
+        GOOGLE_NATIVE: GoogleVertexAIProvider,
+        # Google, aistudio
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
@@ -51,14 +51,22 @@ class LLMProvider:
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         """Return the provider class for a given name."""
-        if provider_type in (cls.GOOGLE, cls.GOOGLE_NATIVE):
+        if provider_type in (
+            cls.GOOGLE,
+            cls.GOOGLE_NATIVE,
+            cls.GOOGLE_AISTUDIO,
+            cls.GOOGLE_AISTUDIO_NATIVE,
+        ):
             route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE
-            if route not in ("vertex", "aistudio"):
-                raise ValueError(
-                    f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid or set to None "
-                    f"Must be one of: vertex, aistudio"
+            if route:
+                if route not in ("vertex", "aistudio"):
+                    raise ValueError(
+                        f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid. "
+                        f"Must be one of: vertex, aistudio"
+                    )
+                return (
+                    GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
                 )
-            return GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
         provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
@@ -82,9 +90,7 @@ def get_llm_provider(
 
     credential_provider = provider_type.replace("-native", "")
 
-    if (provider_type == LLMProvider.GOOGLE) or (
-        provider_type == LLMProvider.GOOGLE_NATIVE
-    ):
+    if provider_type in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_AISTUDIO):
         if provider_class is GoogleAIProvider:
             credential_provider = LLMProvider.GOOGLE_AISTUDIO
         else:

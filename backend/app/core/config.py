@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
-    GEMINI_DEFAULT_INFERENCE_ROUTE: str = "vertex"
+    GEMINI_DEFAULT_INFERENCE_ROUTE: str = ""
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672
