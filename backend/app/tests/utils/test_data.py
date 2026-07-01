@@ -1,43 +1,45 @@
 from sqlmodel import Session
 
-from app.models import (
-    Organization,
-    Project,
-    APIKeyCreateResponse,
-    Credential,
-    OrganizationCreate,
-    ProjectCreate,
-    ConfigBlob,
-    CredsCreate,
-    FineTuningJobCreate,
-    FineTuning,
-    ModelEvaluation,
-    ModelEvaluationBase,
-    ModelEvaluationStatus,
-    Config,
-    ConfigCreate,
-    ConfigVersion,
-    ConfigVersionUpdate,
-    EvaluationDataset,
-)
-from app.models.config.config import ConfigTag
-from app.models.llm import KaapiLLMParams, KaapiCompletionConfig, NativeCompletionConfig
+from app.core.providers import Provider
 from app.crud import (
+    APIKeyCrud,
+    create_fine_tuning_job,
+    create_model_evaluation,
     create_organization,
     create_project,
     set_creds_for_org,
-    create_fine_tuning_job,
-    create_model_evaluation,
-    APIKeyCrud,
 )
 from app.crud.config import ConfigCrud, ConfigVersionCrud
-from app.core.providers import Provider
+from app.models import (
+    APIKeyCreateResponse,
+    Config,
+    ConfigBlob,
+    ConfigCreate,
+    ConfigVersion,
+    ConfigVersionUpdate,
+    Credential,
+    CredsCreate,
+    EvaluationDataset,
+    FineTuning,
+    FineTuningJobCreate,
+    ModelEvaluation,
+    ModelEvaluationBase,
+    ModelEvaluationStatus,
+    Organization,
+    OrganizationCreate,
+    Project,
+    ProjectCreate,
+    User,
+    UserProject,
+)
+from app.models.config.config import ConfigTag
+from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.tests.utils.user import create_random_user
 from app.tests.utils.utils import (
-    random_lower_string,
     generate_random_string,
     get_document,
     get_project,
+    random_lower_string,
 )
 
 
@@ -69,6 +71,25 @@ def create_test_project(db: Session) -> Project:
         organization_id=org.id,
     )
     return create_project(session=db, project_create=project_in)
+
+
+def add_user_to_test_project(db: Session, user: User) -> Project:
+    """
+    Map a user to a fresh active organization + project.
+
+    Login requires at least one active project, so tests that create a bare
+    user and then log in must give the user a project first.
+    """
+    project = create_test_project(db)
+    db.add(
+        UserProject(
+            user_id=user.id,
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
+    )
+    db.commit()
+    return project
 
 
 def test_credential_data(db: Session) -> CredsCreate:
@@ -324,7 +345,8 @@ def create_test_version(
     """
     if config_blob is None:
         # Fetch the latest version to maintain type consistency
-        from sqlmodel import select, and_
+        from sqlmodel import and_, select
+
         from app.models import ConfigVersion
 
         stmt = (
