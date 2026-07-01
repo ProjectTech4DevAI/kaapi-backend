@@ -73,6 +73,16 @@ def pdf_scratch():
 
 
 @pytest.fixture
+def json_scratch():
+    # Legacy assistants clone .json knowledge-base files
+    with NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fp:
+        fp.write('{"name": "legacy assistant", "instructions": "be helpful"}')
+        fp.flush()
+        yield Path(fp.name)
+        Path(fp.name).unlink()
+
+
+@pytest.fixture
 def route():
     return Route("")
 
@@ -210,6 +220,47 @@ class TestDocumentRouteUpload:
         assert response.success is True
         transformation_job = response.data["transformation_job"]
         assert transformation_job["transformer"] == "zerox"
+
+    def test_upload_json_without_transformation(
+        self,
+        db: Session,
+        route: Route,
+        json_scratch: Path,
+        uploader: WebUploader,
+    ) -> None:
+        """Legacy .json knowledge-base files upload without transformation."""
+        aws = AmazonCloudStorageClient()
+        aws.create()
+
+        response = httpx_to_standard(uploader.put(route, json_scratch))
+
+        assert response.success is True
+        assert response.data["transformation_job"] is None
+
+        doc_id = response.data["id"]
+        statement = select(Document).where(Document.id == doc_id)
+        result = db.exec(statement).one()
+        assert result.fname == str(json_scratch)
+
+    def test_upload_json_with_unsupported_transformation(
+        self,
+        db: Session,
+        route: Route,
+        json_scratch: Path,
+        uploader: WebUploader,
+    ) -> None:
+        """.json has no transformer; requesting a target format is rejected."""
+        aws = AmazonCloudStorageClient()
+        aws.create()
+
+        response = uploader.put(route, json_scratch, target_format="markdown")
+
+        assert response.status_code == 400
+        error_data = response.json()
+        assert (
+            "Transformation from json to markdown is not supported"
+            in error_data["error"]
+        )
 
     def test_upload_with_unsupported_transformation(
         self,

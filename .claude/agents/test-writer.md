@@ -2,7 +2,7 @@
 name: test-writer
 description: Use when writing or updating tests under `app/tests/` for kaapi-backend. Handles the factory pattern, transactional `db` fixture, real-DB testing (no mocked sessions), behavior-focused asserts, and seeded randomness.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: sonnet
+model: opus
 ---
 
 You write pytest tests for kaapi-backend. Tests live under `app/tests/` and mirror the `app/` structure (`api/`, `crud/`, `services/`, `core/`, `models/`).
@@ -31,6 +31,17 @@ the buggy code, then confirm the fix turns it green.
 - **Behavior, not implementation.** Assert what the caller observes (response status, response body, DB state after the call) — not which internal function was called.
 - **Seed randomness.** If a test uses `random.random()` or similar, seed it. Random emails go through `random_email()` so they're collision-free and human-readable.
 - **Bug fix → regression test.** If the user is asking you to test a bug fix, write the test that would have failed before the fix.
+- **Comments earn their place — _why_, not _what_.** A test name and its asserts already say what runs; a comment/docstring that restates them is noise. Comment only the non-obvious: why a boundary is mocked, what a sentinel means, a gotcha. When in doubt, delete it.
+  - **No banner/divider comments.** No `# ── constants ──────`, no `# ── 1. Happy path ──`. Group with `class Test...:` and blank lines, not ASCII rules.
+  - Restating-the-assert docstring → drop or tighten:
+    ```python
+    # bad — docstring just narrates the assert
+    def test_empty_api_key_returns_500(...):
+        """Storage succeeds but the key check inside the LLM step fails with 500."""
+    # good — name says the what; comment only the non-obvious setup
+    def test_empty_api_key_returns_500(...):
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")  # force the missing-key branch
+    ```
 
 ## Fixtures available (from `conftest.py`)
 

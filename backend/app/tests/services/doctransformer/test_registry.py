@@ -32,6 +32,11 @@ def test_get_file_format_valid():
     assert get_file_format("file.docx") == "docx"
     assert get_file_format("file.md") == "markdown"
     assert get_file_format("file.html") == "html"
+    assert get_file_format("file.json") == "json"
+
+
+def test_get_file_format_json_case_insensitive():
+    assert get_file_format("legacy_assistant.JSON") == "json"
 
 
 def test_get_file_format_invalid():
