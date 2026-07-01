@@ -1,4 +1,3 @@
-import pytest
 from sqlmodel import Session
 
 from app.crud.user_project import (
@@ -162,8 +161,8 @@ class TestRemoveUserFromProject:
         removed = remove_user_from_project(session=db, user_id=99999, project_id=99999)
         assert removed is False
 
-    def test_remove_last_project_deletes_user(self, db: Session):
-        """Test removing user from their last project deletes the user."""
+    def test_remove_last_project_deactivates_user(self, db: Session):
+        """Test removing user from their last project deactivates (not deletes) the user."""
         project = create_test_project(db)
         email = random_email()
 
@@ -174,16 +173,23 @@ class TestRemoveUserFromProject:
             project_id=project.id,
         )
         user_id = user.id
+        # Simulate an activated user before they lose their last project.
+        user.is_active = True
+        db.add(user)
+        db.flush()
 
         remove_user_from_project(session=db, user_id=user_id, project_id=project.id)
 
-        assert db.get(User, user_id) is None
+        deactivated_user = db.get(User, user_id)
+        assert deactivated_user is not None
+        assert deactivated_user.is_active is False
 
     def test_remove_last_project_preserves_superuser(self, db: Session):
-        """Test superuser is not deleted when removed from last project."""
+        """Test superuser is not deactivated when removed from last project."""
         project = create_test_project(db)
         user = create_random_user(db)
         user.is_superuser = True
+        user.is_active = True
         db.add(user)
         db.flush()
 
@@ -197,7 +203,9 @@ class TestRemoveUserFromProject:
 
         remove_user_from_project(session=db, user_id=user.id, project_id=project.id)
 
-        assert db.get(User, user.id) is not None
+        preserved_user = db.get(User, user.id)
+        assert preserved_user is not None
+        assert preserved_user.is_active is True
 
 
 class TestGetUserProjects:
