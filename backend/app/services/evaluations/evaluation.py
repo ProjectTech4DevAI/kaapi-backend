@@ -27,6 +27,7 @@ from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import CategoryMetrics, TraceData
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
+from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client
 
@@ -213,8 +214,10 @@ def validate_and_start_batch_evaluation(
     Steps:
     1. Validate dataset exists and has Langfuse ID
     2. Resolve config from stored config management
-    3. Create evaluation run record
-    4. Start batch processing
+    3. Check the config provider is supported for batch evaluation
+    4. Check the config type is 'text'
+    5. Create evaluation run record
+    6. Start batch processing
 
     Args:
         session: Database session
@@ -286,6 +289,15 @@ def validate_and_start_batch_evaluation(
                 f"Provider '{config.completion.provider}' is not supported for "
                 f"evaluation configs. Supported providers: "
                 f"{sorted(_SUPPORTED_BATCH_PROVIDERS)}"
+            ),
+        )
+
+    if config.completion.type != CompletionType.TEXT:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Config type '{config.completion.type}' is not supported for "
+                f"evaluation configs. Only '{CompletionType.TEXT.value}' type is supported."
             ),
         )
 
