@@ -1,20 +1,20 @@
 from unittest.mock import MagicMock
 
 import pytest
-from sqlmodel import Session
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 from app.api.deps import get_auth_context
-from app.models import (
-    User,
-    AuthContext,
-)
-from app.tests.utils.auth import TestAuthContext
-from app.tests.utils.user import authentication_token_from_email, create_random_user
 from app.core.config import settings
 from app.core.security import create_access_token, create_refresh_token
-from app.tests.utils.test_data import create_test_api_key
+from app.models import (
+    AuthContext,
+    User,
+)
+from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.test_data import add_user_to_test_project, create_test_api_key
+from app.tests.utils.user import authentication_token_from_email, create_random_user
 
 
 def _mock_request(cookies: dict | None = None) -> MagicMock:
@@ -127,6 +127,8 @@ class TestGetAuthContext:
     ) -> None:
         """Test authentication fails when token belongs to inactive user"""
         user = create_random_user(db)
+        # Login requires an active project membership.
+        add_user_to_test_project(db, user)
         token_headers = authentication_token_from_email(
             client=client, email=user.email, db=db
         )
