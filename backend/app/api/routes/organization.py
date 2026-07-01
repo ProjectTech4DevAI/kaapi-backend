@@ -1,19 +1,26 @@
 import logging
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.models import (
-    Organization,
-    OrganizationCreate,
-    OrganizationUpdate,
-    OrganizationPublic,
-)
 from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud.organization import create_organization, get_organization_by_id
+from app.crud.organization import (
+    cascade_deactivate_organization,
+    create_organization,
+    get_organization_by_id,
+    get_organization_by_name,
+    hard_delete_organization,
+    soft_delete_organization,
+)
+from app.models import (
+    DeleteRequest,
+    Organization,
+    OrganizationCreate,
+    OrganizationPublic,
+    OrganizationUpdate,
+)
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -24,18 +31,30 @@ router = APIRouter(prefix="/organizations", tags=["Organizations"])
 @router.get(
     "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
-    response_model=APIResponse[List[OrganizationPublic]],
+    response_model=APIResponse[list[OrganizationPublic]],
     description=load_description("organization/list.md"),
 )
 def read_organizations(
     session: SessionDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-) -> APIResponse[List[OrganizationPublic]]:
-    count_statement = select(func.count()).select_from(Organization)
+    search: str
+    | None = Query(
+        None, description="Case-insensitive substring match on the organization name"
+    ),
+    is_active: bool = Query(
+        True,
+        description="Filter by active status. Pass false to list soft-deleted organizations.",
+    ),
+) -> APIResponse[list[OrganizationPublic]]:
+    filters = [Organization.is_active.is_(is_active)]
+    if search and search.strip():
+        filters.append(Organization.name.ilike(f"%{search.strip()}%"))
+
+    count_statement = select(func.count()).select_from(Organization).where(*filters)
     count = session.exec(count_statement).one()
 
-    statement = select(Organization).offset(skip).limit(limit)
+    statement = select(Organization).where(*filters).offset(skip).limit(limit)
     organizations = session.exec(statement).all()
 
     has_more = (skip + limit) < count
@@ -69,7 +88,7 @@ def read_organization(
     Retrieve an organization by ID.
     """
     org = get_organization_by_id(session=session, org_id=org_id)
-    if org is None:
+    if org is None or not org.is_active:
         raise HTTPException(status_code=404, detail="Organization not found")
     return APIResponse.success_response(org)
 
@@ -89,11 +108,28 @@ def update_organization(
         raise HTTPException(status_code=404, detail="Organization not found")
 
     org_data = org_in.model_dump(exclude_unset=True)
-    org = org.model_copy(update=org_data)
 
+    new_name = org_data.get("name")
+    if new_name and new_name != org.name:
+        existing = get_organization_by_name(session=session, name=new_name)
+        if existing and existing.id != org.id:
+            raise HTTPException(
+                status_code=409,
+                detail="An organization with this name already exists",
+            )
+
+    target_active = org_data.get("is_active")
+    deactivating = target_active is False and org.is_active
+
+    org.sqlmodel_update(org_data)
     session.add(org)
-    session.commit()
     session.flush()
+
+    if deactivating:
+        cascade_deactivate_organization(session=session, organization=org)
+
+    session.commit()
+    session.refresh(org)
     logger.info(
         f"[update_organization] Organization Updated Successfully | 'org_id': {org.id}"
     )
@@ -105,17 +141,25 @@ def update_organization(
     "/{org_id}",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[None],
-    include_in_schema=False,
     description=load_description("organization/delete.md"),
 )
-def delete_organization(session: SessionDep, org_id: int) -> APIResponse[None]:
+def delete_organization_endpoint(
+    session: SessionDep,
+    org_id: int,
+    body: DeleteRequest | None = None,
+) -> APIResponse[None]:
     org = get_organization_by_id(session=session, org_id=org_id)
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    session.delete(org)
-    session.commit()
+    hard_delete = body.hard_delete if body else False
+    if hard_delete:
+        hard_delete_organization(session=session, organization=org)
+    else:
+        soft_delete_organization(session=session, organization=org)
+
     logger.info(
-        f"[delete_organization] Organization Deleted Successfully | 'org_id': {org_id}"
+        f"[delete_organization_endpoint] Organization deleted | 'org_id': {org_id}, "
+        f"hard_delete: {hard_delete}"
     )
     return APIResponse.success_response(None)
