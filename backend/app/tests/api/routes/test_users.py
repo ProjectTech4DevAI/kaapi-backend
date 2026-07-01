@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -7,7 +5,8 @@ from app import crud
 from app.core.config import settings
 from app.core.security import verify_password
 from app.models import User, UserCreate
-from app.tests.utils.utils import random_email, random_lower_string, get_non_existent_id
+from app.tests.utils.test_data import add_user_to_test_project
+from app.tests.utils.utils import get_non_existent_id, random_email, random_lower_string
 
 
 def test_get_users_superuser_me(
@@ -57,6 +56,8 @@ def test_get_existing_user_current_user(client: TestClient, db: Session) -> None
     user_in = UserCreate(email=username, password=password)
     user = crud.create_user(session=db, user_create=user_in)
     user_id = user.id
+    # Login requires an active project membership.
+    add_user_to_test_project(db, user)
 
     login_data = {
         "username": username,
@@ -372,6 +373,8 @@ def test_delete_user_me(client: TestClient, db: Session) -> None:
     user_in = UserCreate(email=username, password=password)
     user = crud.create_user(session=db, user_create=user_in)
     user_id = user.id
+    # Login requires an active project membership.
+    add_user_to_test_project(db, user)
 
     login_data = {
         "username": username,
