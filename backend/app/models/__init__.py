@@ -136,7 +136,7 @@ from .llm import (
     LLMJobImmediatePublic,
     LLMJobPublic,
 )
-from .message import Message
+from .message import DeleteRequest, Message
 from .model_config import (
     ModelConfig,
     ModelConfigBase,
