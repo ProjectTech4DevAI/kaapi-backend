@@ -18,15 +18,17 @@ class LLMProvider:
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
-    # Google. preferably vertex
+
+    # Platform-routed Google. Resolved via GEMINI_DEFAULT_INFERENCE_ROUTE.
     GOOGLE = "google"
     GOOGLE_NATIVE = "google-native"
-    # Google, aistudio
+    # Explicit Google backends. Bypass env routing; use caller's own creds.
+    GOOGLE_VERTEX = "google-vertex"
+    GOOGLE_VERTEX_NATIVE = "google-vertex-native"
     GOOGLE_AISTUDIO = "google-aistudio"
     GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
 
     OPENAI_NATIVE = "openai-native"
-
     SARVAMAI_NATIVE = "sarvamai-native"
     ELEVENLABS_NATIVE = "elevenlabs-native"
     ANTHROPIC_NATIVE = "anthropic-native"
@@ -36,10 +38,10 @@ class LLMProvider:
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
-        # Google. preferably vertex
-        GOOGLE: GoogleVertexAIProvider,
+        GOOGLE: GoogleVertexAIProvider,  # placeholder; env decides at resolve time
         GOOGLE_NATIVE: GoogleVertexAIProvider,
-        # Google, aistudio
+        GOOGLE_VERTEX: GoogleVertexAIProvider,
+        GOOGLE_VERTEX_NATIVE: GoogleVertexAIProvider,
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
@@ -48,25 +50,13 @@ class LLMProvider:
         ANTHROPIC_NATIVE: ClaudeProvider,
     }
 
+    _GOOGLE_ROUTED = {GOOGLE, GOOGLE_NATIVE}
+
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
-        """Return the provider class for a given name."""
-        if provider_type in (
-            cls.GOOGLE,
-            cls.GOOGLE_NATIVE,
-            cls.GOOGLE_AISTUDIO,
-            cls.GOOGLE_AISTUDIO_NATIVE,
-        ):
+        if provider_type in cls._GOOGLE_ROUTED:
             route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE
-            if route:
-                if route not in ("vertex", "aistudio"):
-                    raise ValueError(
-                        f"GEMINI_DEFAULT_INFERENCE_ROUTE '{route}' is invalid. "
-                        f"Must be one of: vertex, aistudio"
-                    )
-                return (
-                    GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
-                )
+            return GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
         provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
@@ -77,7 +67,6 @@ class LLMProvider:
 
     @classmethod
     def supported_providers(cls) -> list[str]:
-        """Return a list of supported provider names."""
         return list(cls._registry.keys())
 
 
@@ -87,14 +76,16 @@ def get_llm_provider(
     from app.crud.credentials import get_provider_credential
 
     provider_class = LLMProvider.get_provider_class(provider_type)
+    is_platform_routed = provider_type in LLMProvider._GOOGLE_ROUTED
 
-    credential_provider = provider_type.replace("-native", "")
-
-    if provider_type in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_AISTUDIO):
-        if provider_class is GoogleAIProvider:
-            credential_provider = LLMProvider.GOOGLE_AISTUDIO
-        else:
-            credential_provider = LLMProvider.GOOGLE
+    if is_platform_routed:
+        credential_provider = (
+            LLMProvider.GOOGLE_AISTUDIO
+            if provider_class is GoogleAIProvider
+            else LLMProvider.GOOGLE_VERTEX
+        )
+    else:
+        credential_provider = provider_type.replace("-native", "")
 
     credentials = get_provider_credential(
         session=session,
@@ -103,7 +94,7 @@ def get_llm_provider(
         org_id=organization_id,
     )
 
-    if not credentials and (provider_class is not GoogleVertexAIProvider):
+    if not credentials and not is_platform_routed:
         raise ValueError(
             f"Credentials for provider '{credential_provider}' not configured for this project."
         )

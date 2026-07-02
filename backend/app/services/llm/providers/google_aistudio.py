@@ -33,6 +33,7 @@ from app.models.llm.constants import (
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
+from app.core.config import settings
 from app.core.audio_utils import (
     AudioRef,
     convert_pcm_to_mp3,
@@ -55,9 +56,10 @@ class GoogleAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        if "api_key" not in credentials:
+        api_key = credentials.get("api_key") or settings.GEMINI_API_KEY
+        if not api_key:
             raise ValueError("API Key for Google Gemini Not Set")
-        return genai.Client(api_key=credentials["api_key"])
+        return genai.Client(api_key=api_key)
 
     @staticmethod
     def format_parts(

@@ -9,6 +9,7 @@ class Provider(StrEnum):
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
+    GOOGLE_VERTEX = "google-vertex"
     PROXY = "proxy"
 
 
@@ -47,6 +48,7 @@ NativeProvider = Literal[
     "elevenlabs-native",
     "anthropic-native",
     "google-aistudio-native",
+    "google-vertex-native",
 ]
 
 

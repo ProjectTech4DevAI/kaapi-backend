@@ -115,7 +115,8 @@ class Settings(BaseSettings):
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
-    GEMINI_DEFAULT_INFERENCE_ROUTE: str = ""
+    GEMINI_API_KEY: str = ""
+    GEMINI_DEFAULT_INFERENCE_ROUTE: str = "aistudio"
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672
