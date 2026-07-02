@@ -1,5 +1,6 @@
 """Anthropic batch provider implementation."""
 
+import json
 import logging
 from enum import Enum
 from typing import Any
@@ -14,6 +15,8 @@ from app.models.llm.constants import (
 from .base import BATCH_KEY, BatchProvider
 
 logger = logging.getLogger(__name__)
+
+STRUCTURED_OUTPUTS_BETA = "structured-outputs-2025-12-15"
 
 
 class MessageBatchStatus(str, Enum):
@@ -67,13 +70,19 @@ class AnthropicBatchProvider(BatchProvider):
 
         try:
             requests = []
+            needs_structured_outputs = False
             for item in jsonl_data:
                 params = {**item.get("params", {})}
                 params["model"] = params.get("model") or default_model
                 params["max_tokens"] = params.get("max_tokens") or default_max_tokens
+                if "output_config" in params:
+                    needs_structured_outputs = True
                 requests.append({"custom_id": item[BATCH_KEY], "params": params})
 
-            batch = self.client.messages.batches.create(requests=requests)
+            betas = [STRUCTURED_OUTPUTS_BETA] if needs_structured_outputs else []
+            batch = self.client.beta.messages.batches.create(
+                requests=requests, betas=betas
+            )
 
             result = {
                 "provider_batch_id": batch.id,

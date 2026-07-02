@@ -74,7 +74,8 @@ def start_batch_job(
         logger.error(f"[start_batch_job] Failed | {e}", exc_info=True)
 
         batch_job_update = BatchJobUpdate(
-            error_message=f"Batch creation failed: {str(e)}"
+            provider_status="failed",
+            error_message=f"Batch creation failed: {str(e)}",
         )
         update_batch_job(
             session=session, batch_job=batch_job, batch_job_update=batch_job_update

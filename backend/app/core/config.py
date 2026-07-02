@@ -188,6 +188,13 @@ class Settings(BaseSettings):
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
+    # AI-assisted prompt improvement settings.
+    # See docs/srd-ai-prompt-improvement.md for the full design rationale.
+    # Platform-owned Anthropic key shared by every org/project for this feature,
+    # so prompt improvement works without per-project credentials.
+    ANTHROPIC_API_KEY: str = ""
+    PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
+
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
     EVAL_FAST_MAX_UNIQUE_ROWS: int = 10
