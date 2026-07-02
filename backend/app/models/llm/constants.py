@@ -78,6 +78,8 @@ DEFAULT_TEXT_MODELS: dict[str, str] = {
 
 DEFAULT_ANTHROPIC_MAX_TOKENS = 4096
 
+DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS = 16384
+
 # Provider-native STT/TTS defaults (used when caller omits model).
 DEFAULT_SARVAM_STT_MODEL = "saaras:v3"
 DEFAULT_SARVAM_TTS_MODEL = "bulbul:v3"
