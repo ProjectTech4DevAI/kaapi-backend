@@ -200,10 +200,10 @@ class TestFastEvaluationRoute:
         user_api_key: TestAuthContext,
         _patch_dispatch,
     ):
-        """FR-2: >10 unique rows → 422 dataset_too_large_for_fast."""
-        # default EVAL_FAST_MAX_UNIQUE_ROWS = 10; create 11 unique rows
+        """FR-2: >100 unique rows → 422 dataset_too_large_for_fast."""
+        # default EVAL_FAST_MAX_UNIQUE_ROWS = 100; create 101 unique rows
         dataset = _make_fast_eligible_dataset(
-            db=db, user_api_key=user_api_key, original_items_count=11
+            db=db, user_api_key=user_api_key, original_items_count=101
         )
         config = _make_text_openai_config(db, user_api_key.project_id)
 
@@ -223,7 +223,7 @@ class TestFastEvaluationRoute:
         # The route wraps HTTPException.detail into APIResponse.error.
         error_str = _api_error(resp.json())
         assert "dataset_too_large_for_fast" in error_str
-        assert "11" in error_str  # surfaces actual unique-row count
+        assert "101" in error_str  # surfaces actual unique-row count
         _patch_dispatch.assert_not_called()
 
     def test_fr1_rejects_non_text_config(

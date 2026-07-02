@@ -196,7 +196,7 @@ class Settings(BaseSettings):
 
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
-    EVAL_FAST_MAX_UNIQUE_ROWS: int = 10
+    EVAL_FAST_MAX_UNIQUE_ROWS: int = 100
     EVAL_FAST_FAILURE_THRESHOLD: float = 0.5
     # Capped at 4 by default: higher values (8-10) across multiple Celery
     # workers can cause memory pressure on smaller EC2 instances.
