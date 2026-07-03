@@ -285,6 +285,18 @@ def is_reasoning_model(session: Session, provider: Provider, model_name: str) ->
         return False
     return "effort" in model.config
 
+def is_summary_model(session: Session, provider: Provider, model_name: str) -> bool:
+    """Return True if the model is configured with a summary `effort` control.
+
+    A model is considered summary-capable if its `config` JSON contains an
+    `summary` key; models that instead expose a `temperature` key are treated
+    as standard chat models.
+    """
+    model = get_model_config(session=session, provider=provider, model_name=model_name)
+    if model is None or not isinstance(model.config, dict):
+        return False
+    return "summary" in model.config
+
 
 def estimate_model_cost(
     session: Session,

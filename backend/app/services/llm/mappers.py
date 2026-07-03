@@ -72,6 +72,7 @@ def map_kaapi_to_openai_params(
         - max_num_results → tools[file_search].max_num_results (fallback default)
         - effort → reasoning.effort (if reasoning supported by model else suppressed)
         - reasoning → legacy alias for effort, used only when effort is absent
+        - summary → reasoning.summary (if reasoning supported by model else suppressed)
         - temperature → temperature (if reasoning not supported by model else suppressed)
 
     Returns:
@@ -85,6 +86,7 @@ def map_kaapi_to_openai_params(
     model = kaapi_params.get("model")
     reasoning = kaapi_params.get("reasoning")
     effort = kaapi_params.get("effort")
+    summary = kaapi_params.get("summary")
     temperature = kaapi_params.get("temperature")
     instructions = kaapi_params.get("instructions")
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
@@ -100,8 +102,13 @@ def map_kaapi_to_openai_params(
 
     # Handle reasoning vs temperature mutual exclusivity
     if support_reasoning:
-        if effort_value is not None:
-            openai_params["reasoning"] = {"effort": effort_value}
+        if effort_value is not None or summary is not None:
+            openai_params["reasoning"] = {}
+            if effort_value is not None:
+                openai_params["reasoning"] = {"effort": effort_value}
+
+            if summary is not None:
+                openai_params["reasoning"]["summary"] = summary
 
         if temperature is not None:
             warnings.append(
