@@ -201,6 +201,11 @@ class Settings(BaseSettings):
     # Capped at 4 by default: higher values (8-10) across multiple Celery
     # workers can cause memory pressure on smaller EC2 instances.
     EVAL_FAST_API_CONCURRENCY: int = 4
+    # Whole-task wall for one fast-eval run (all stages, all items). Sized to the
+    # fast workload — total_items / EVAL_FAST_API_CONCURRENCY × per-call p95 + headroom —
+    # not the generic 300s Celery safety limit. Override per ECS task via env so a
+    # worker with higher celery concurrency can carry big (up to 500-item) runs.
+    EVAL_FAST_TASK_TIMEOUT: int = 1800
 
     @computed_field  # type: ignore[prop-decorator]
     @property

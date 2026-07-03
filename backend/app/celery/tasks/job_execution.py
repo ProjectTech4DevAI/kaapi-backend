@@ -332,7 +332,7 @@ def run_tts_result_processing(
 
 
 @celery_app.task(bind=True, queue="default", priority=6)
-@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast")
+@gevent_timeout(settings.EVAL_FAST_TASK_TIMEOUT, "run_evaluation_fast")
 def run_evaluation_fast(
     self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
 ) -> None:
