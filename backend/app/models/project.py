@@ -50,7 +50,6 @@ class ProjectUpdate(SQLModel):
 
 
 # Properties to receive via API when patching project settings.
-# Each field maps to a key inside the project's `settings` JSONB column.
 class ProjectSettingsUpdate(SQLModel):
     tracing: bool | None = Field(
         default=None,

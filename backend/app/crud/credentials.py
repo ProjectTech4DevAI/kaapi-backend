@@ -181,17 +181,24 @@ def get_tracing_credential(
     observe_llm_execution degrade to a no-op and evaluations (via
     get_tracing_client) fall back to cosine-only scoring.
     """
-    project = get_project_by_id(session=session, project_id=int(project_id))
-    if not project or not (project.settings or {}).get("tracing", False):
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
         logger.info(
-            f"[get_tracing_credential] Tracing disabled | project_id={project_id}"
+            f"[get_tracing_credential] Invalid project_id; tracing off | "
+            f"project_id={project_id}"
         )
+        return None
+
+    project = get_project_by_id(session=session, project_id=pid)
+    if not project or not (project.settings or {}).get("tracing", False):
+        logger.info(f"[get_tracing_credential] Tracing disabled | project_id={pid}")
         return None
 
     return get_provider_credential(
         session=session,
         org_id=org_id,
-        project_id=int(project_id),
+        project_id=pid,
         provider="langfuse",
     )
 

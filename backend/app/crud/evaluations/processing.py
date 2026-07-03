@@ -34,7 +34,7 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations.batch import (
     load_evaluation_dataset_items,
-    reconcile_tracing_client,
+    use_langfuse_client,
 )
 from app.crud.evaluations.core import (
     persist_score_traces,
@@ -343,8 +343,13 @@ def build_trace_skeleton(
     results: list[dict[str, Any]],
     trace_id_mapping: dict[str, str],
 ) -> list[TraceData]:
-    """Build per-item Q&A records (no scores yet), keyed by ref (trace_id when
-    traced, else item_id) so the results view renders on opt-out too."""
+    """
+    Build per-trace records (Q&A keyed by Langfuse trace_id, no scores yet) from
+    parsed evaluation results. Persisted at the response stage so the
+    embedding-completion step can attach cosine scores and write a complete trace
+    unit, making cosine display independent of Langfuse. Items without a trace_id
+    are skipped.
+    """
     traces: list[TraceData] = []
     for result in results:
         item_id = result.get("item_id")
@@ -887,7 +892,7 @@ async def check_and_process_evaluation(
     """
     log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
     previous_status = eval_run.status
-    langfuse = reconcile_tracing_client(
+    langfuse = use_langfuse_client(
         session=session, eval_run=eval_run, langfuse=langfuse
     )
 

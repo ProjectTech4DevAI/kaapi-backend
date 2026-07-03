@@ -92,7 +92,7 @@ def update_project_settings_route(
     session: SessionDep,
     auth_context: AuthContextDep,
     settings_in: ProjectSettingsUpdate,
-):
+) -> APIResponse[ProjectPublic]:
     settings_patch = settings_in.model_dump(exclude_unset=True)
     if not settings_patch:
         raise HTTPException(status_code=400, detail="No settings provided")

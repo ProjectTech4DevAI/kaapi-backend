@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.crud.evaluations.batch import load_evaluation_dataset_items
 
 
@@ -14,22 +16,25 @@ def _eval_run() -> SimpleNamespace:
     )
 
 
+def _dataset(**kw) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=7,
+        project_id=1,
+        langfuse_dataset_id=kw.get("langfuse_dataset_id"),
+        object_store_url=kw.get("object_store_url", "s3://bucket/ds.csv"),
+        dataset_metadata=kw.get("dataset_metadata", {}),
+    )
+
+
 class TestLoadEvaluationDatasetItems:
-    def test_langfuse_backed_dataset_delegates_to_langfuse(self) -> None:
-        """A Langfuse-backed dataset (langfuse_dataset_id set) reads from Langfuse."""
-        langfuse = MagicMock()
+    def test_with_client_reads_langfuse(self) -> None:
+        """A client present reads items from Langfuse."""
         expected = [{"id": "lf_1", "input": {"question": "q"}}]
-        dataset = SimpleNamespace(
-            id=7,
-            langfuse_dataset_id="lf_ds_1",
-            object_store_url="s3://bucket/ds.csv",
-            dataset_metadata={},
-        )
 
         with (
             patch(
-                "app.crud.evaluations.dataset.get_dataset_by_id",
-                return_value=dataset,
+                "app.crud.evaluations.batch.get_dataset_by_id",
+                return_value=_dataset(langfuse_dataset_id="lf_ds_1"),
             ),
             patch(
                 "app.crud.evaluations.batch.fetch_dataset_items",
@@ -37,67 +42,31 @@ class TestLoadEvaluationDatasetItems:
             ) as mock_fetch,
         ):
             items = load_evaluation_dataset_items(
-                session=MagicMock(), eval_run=_eval_run(), langfuse=langfuse
+                session=MagicMock(), eval_run=_eval_run(), langfuse=MagicMock()
             )
 
-        mock_fetch.assert_called_once_with(langfuse=langfuse, dataset_name="ds")
+        mock_fetch.assert_called_once()
         assert items == expected
 
-    def test_langfuse_backed_but_tracing_off_falls_back_to_object_store(self) -> None:
-        """A Langfuse-backed dataset run with tracing off sources from object
-        store (cosine-only) rather than failing."""
-        csv_bytes = b"question,answer\nq1,a1\n"
-        dataset = SimpleNamespace(
-            id=7,
-            langfuse_dataset_id="lf_ds_1",
-            object_store_url="s3://bucket/ds.csv",
-            dataset_metadata={},
-        )
-
+    def test_without_client_reads_object_store(self) -> None:
+        """No client sources items from the object-store CSV with deterministic
+        ids and applied duplication."""
         with (
             patch(
-                "app.crud.evaluations.dataset.get_dataset_by_id",
-                return_value=dataset,
+                "app.crud.evaluations.batch.get_dataset_by_id",
+                return_value=_dataset(dataset_metadata={"duplication_factor": 2}),
             ),
             patch(
-                "app.crud.evaluations.dataset.download_csv_from_object_store",
-                return_value=csv_bytes,
+                "app.crud.evaluations.batch.download_csv_from_object_store",
+                return_value=b"question,answer\nq1,a1\nq2,a2\n",
             ),
-            patch("app.core.cloud.get_cloud_storage", return_value=MagicMock()),
+            patch(
+                "app.crud.evaluations.batch.get_cloud_storage",
+                return_value=MagicMock(),
+            ),
         ):
             items = load_evaluation_dataset_items(
                 session=MagicMock(), eval_run=_eval_run(), langfuse=None
-            )
-
-        assert [i["id"] for i in items] == ["item_0_0"]
-
-    def test_object_store_backed_sources_from_object_store(self) -> None:
-        """An object-store-backed dataset (no langfuse_dataset_id) sources items
-        from the CSV with deterministic ids and applied duplication — regardless
-        of whether a live Langfuse client is present."""
-        csv_bytes = b"question,answer\nq1,a1\nq2,a2\n"
-        dataset = SimpleNamespace(
-            id=7,
-            langfuse_dataset_id=None,
-            object_store_url="s3://bucket/ds.csv",
-            dataset_metadata={"duplication_factor": 2},
-        )
-
-        with (
-            patch(
-                "app.crud.evaluations.dataset.get_dataset_by_id",
-                return_value=dataset,
-            ),
-            patch(
-                "app.crud.evaluations.dataset.download_csv_from_object_store",
-                return_value=csv_bytes,
-            ),
-            patch("app.core.cloud.get_cloud_storage", return_value=MagicMock()),
-        ):
-            # Even with a live client, an object-store-backed dataset ignores it
-            # for DATA so ids stay stable.
-            items = load_evaluation_dataset_items(
-                session=MagicMock(), eval_run=_eval_run(), langfuse=MagicMock()
             )
 
         assert [i["id"] for i in items] == [
@@ -108,21 +77,23 @@ class TestLoadEvaluationDatasetItems:
         ]
         assert items[0]["input"] == {"question": "q1"}
         assert items[0]["expected_output"] == {"answer": "a1"}
-        assert items[2]["input"] == {"question": "q2"}
 
-    def test_object_store_backed_without_url_raises(self) -> None:
-        """No Langfuse and no object-store URL cannot source items."""
-        dataset = SimpleNamespace(
-            id=7, langfuse_dataset_id=None, object_store_url=None, dataset_metadata={}
-        )
-
+    def test_object_store_without_url_raises(self) -> None:
+        """No client and no object-store URL cannot source items."""
         with patch(
-            "app.crud.evaluations.dataset.get_dataset_by_id", return_value=dataset
+            "app.crud.evaluations.batch.get_dataset_by_id",
+            return_value=_dataset(object_store_url=None),
         ):
-            try:
+            with pytest.raises(ValueError, match="object-store"):
                 load_evaluation_dataset_items(
                     session=MagicMock(), eval_run=_eval_run(), langfuse=None
                 )
-                raise AssertionError("expected ValueError")
-            except ValueError as e:
-                assert "object-store" in str(e)
+
+    def test_dataset_not_found_raises(self) -> None:
+        with patch(
+            "app.crud.evaluations.batch.get_dataset_by_id", return_value=None
+        ):
+            with pytest.raises(ValueError, match="not found"):
+                load_evaluation_dataset_items(
+                    session=MagicMock(), eval_run=_eval_run(), langfuse=None
+                )

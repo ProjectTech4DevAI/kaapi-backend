@@ -55,7 +55,10 @@ def update_project_settings(
     Only keys present in `settings_patch` are changed; existing keys are kept.
     Reassigns a new dict so SQLAlchemy detects the JSONB mutation.
     """
-    project = get_project_by_id(session=session, project_id=project_id)
+    # Lock the row so concurrent patches merge serially, not lost-update.
+    project = session.exec(
+        select(Project).where(Project.id == project_id).with_for_update()
+    ).first()
     if not project:
         logger.warning(
             f"[update_project_settings] Project not found | project_id={project_id}"

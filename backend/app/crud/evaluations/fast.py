@@ -42,7 +42,7 @@ from app.core.storage_utils import (
 )
 from app.crud.evaluations.batch import (
     load_evaluation_dataset_items,
-    reconcile_tracing_client,
+    use_langfuse_client,
 )
 from app.crud.evaluations.core import (
     resolve_model_from_config,
@@ -830,7 +830,7 @@ def run_fast_evaluation(
             update=EvaluationRunUpdate(status="processing"),
         )
 
-    langfuse = reconcile_tracing_client(
+    langfuse = use_langfuse_client(
         session=session, eval_run=eval_run, langfuse=langfuse
     )
 

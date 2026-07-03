@@ -20,6 +20,12 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.core.batch.client import GeminiClient
+from app.core.cloud import get_cloud_storage
+from app.crud.evaluations.dataset import (
+    download_csv_from_object_store,
+    get_dataset_by_id,
+)
+from app.crud.evaluations.score import DEFAULT_CATEGORY
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJobType
 from app.services.llm.mappers import (
@@ -70,7 +76,7 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
     return items
 
 
-def reconcile_tracing_client(
+def use_langfuse_client(
     session: Session,
     eval_run: EvaluationRun,
     langfuse: Langfuse | None,
@@ -79,8 +85,6 @@ def reconcile_tracing_client(
     None, so an opt-out dataset is never traced even if the flag is later on."""
     if langfuse is None:
         return None
-
-    from app.crud.evaluations.dataset import get_dataset_by_id
 
     dataset = get_dataset_by_id(
         session=session,
@@ -96,18 +100,8 @@ def load_evaluation_dataset_items(
     eval_run: EvaluationRun,
     langfuse: Langfuse | None,
 ) -> list[dict[str, Any]]:
-    """Load dataset items, sourced by the dataset's backing (Langfuse if
-    langfuse_dataset_id is set, else object store) so ids stay stable across an
-    eval's build and process even if the tracing flag is toggled in between."""
-    # Lazy imports avoid a crud -> services -> crud import cycle.
-    from app.core.cloud import get_cloud_storage
-    from app.crud.evaluations.dataset import (
-        download_csv_from_object_store,
-        get_dataset_by_id,
-    )
-    from app.crud.evaluations.score import DEFAULT_CATEGORY
-    from app.services.evaluations.validators import parse_csv_items
-
+    """Load dataset items from Langfuse when a (reconciled) client is present,
+    else from the dataset's object-store CSV."""
     dataset = get_dataset_by_id(
         session=session,
         dataset_id=eval_run.dataset_id,
@@ -115,31 +109,28 @@ def load_evaluation_dataset_items(
         project_id=eval_run.project_id,
     )
     if not dataset:
-        raise ValueError(
-            f"Cannot source dataset items for eval_run {eval_run.id}: dataset "
-            f"{eval_run.dataset_id} not found"
-        )
+        raise ValueError(f"Dataset {eval_run.dataset_id} not found")
 
-    # Langfuse only when tracing is on AND the dataset is Langfuse-backed;
-    # otherwise fall back to object store (opt-out, or a Langfuse-backed dataset
-    # run with tracing off).
-    if langfuse is not None and dataset.langfuse_dataset_id:
-        return fetch_dataset_items(
-            langfuse=langfuse, dataset_name=eval_run.dataset_name
-        )
+    if langfuse is not None:
+        return fetch_dataset_items(langfuse=langfuse, dataset_name=eval_run.dataset_name)
+
+    return _load_items_from_object_store(session=session, dataset=dataset)
+
+
+def _load_items_from_object_store(
+    session: Session, dataset: Any
+) -> list[dict[str, Any]]:
+    """Load items from the dataset's object-store CSV with deterministic ids."""
+    from app.services.evaluations.validators import parse_csv_items
 
     if not dataset.object_store_url:
-        raise ValueError(
-            f"Cannot source dataset items for eval_run {eval_run.id}: dataset "
-            f"{eval_run.dataset_id} has no object-store backing"
-        )
+        raise ValueError(f"Dataset {dataset.id} has no object-store backing")
 
-    storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
+    storage = get_cloud_storage(session=session, project_id=dataset.project_id)
     csv_content = download_csv_from_object_store(
         storage=storage, object_store_url=dataset.object_store_url
     )
     original_items = parse_csv_items(csv_content)
-    # JSONB may hand back a str/float; coerce and floor at 1 to keep range() safe.
     duplication_factor = max(
         1, int((dataset.dataset_metadata or {}).get("duplication_factor", 1))
     )
