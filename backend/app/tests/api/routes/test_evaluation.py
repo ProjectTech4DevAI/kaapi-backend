@@ -79,7 +79,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -163,7 +163,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -211,7 +211,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -255,7 +255,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -300,7 +300,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -404,7 +404,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -439,22 +439,28 @@ class TestDatasetUploadDuplication:
 class TestDatasetUploadErrors:
     """Test error handling."""
 
-    def test_upload_langfuse_configuration_fails(
+    def test_upload_succeeds_without_langfuse_when_tracing_off(
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
         valid_csv_content: str,
     ) -> None:
-        """Test when Langfuse client configuration fails."""
+        """With tracing opt-out (get_tracing_client returns None), the dataset is
+        created from object store only; no Langfuse upload, no error."""
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
-            patch("app.crud.credentials.get_provider_credential") as mock_get_cred,
+            patch(
+                "app.services.evaluations.dataset.get_tracing_client"
+            ) as mock_get_tracing_client,
+            patch(
+                "app.services.evaluations.dataset.upload_dataset_to_langfuse"
+            ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
-            mock_get_cred.return_value = None
+            mock_get_tracing_client.return_value = None
 
             filename, file_obj = create_csv_file(valid_csv_content)
 
@@ -468,17 +474,11 @@ class TestDatasetUploadErrors:
                 headers=user_api_key_header,
             )
 
-            # Accept either 400 (credentials not configured) or 500 (configuration/auth fails)
-            assert response.status_code in [400, 500]
-            response_data = response.json()
-            error_str = response_data.get(
-                "detail", response_data.get("message", str(response_data))
-            )
-            assert (
-                "langfuse" in error_str.lower()
-                or "credential" in error_str.lower()
-                or "unauthorized" in error_str.lower()
-            )
+            assert response.status_code == 200, response.text
+            data = response.json()["data"]
+            assert data["langfuse_dataset_id"] is None
+            assert data["object_store_url"] == "s3://bucket/datasets/test_dataset.csv"
+            mock_langfuse_upload.assert_not_called()
 
     def test_upload_invalid_csv_format(
         self, client: TestClient, user_api_key_header: dict[str, str]

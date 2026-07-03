@@ -1,4 +1,5 @@
 import logging
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -44,6 +45,33 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
 
 def get_project_by_id(*, session: Session, project_id: int) -> Project | None:
     return session.get(Project, project_id)
+
+
+def update_project_settings(
+    *, session: Session, project_id: int, settings_patch: dict[str, Any]
+) -> Project:
+    """Merge `settings_patch` into the project's `settings` JSONB column.
+
+    Only keys present in `settings_patch` are changed; existing keys are kept.
+    Reassigns a new dict so SQLAlchemy detects the JSONB mutation.
+    """
+    project = get_project_by_id(session=session, project_id=project_id)
+    if not project:
+        logger.warning(
+            f"[update_project_settings] Project not found | project_id={project_id}"
+        )
+        raise HTTPException(404, "Project not found")
+
+    project.settings = {**(project.settings or {}), **settings_patch}
+    project.updated_at = now()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    logger.info(
+        f"[update_project_settings] Settings updated | project_id={project_id}, "
+        f"keys={list(settings_patch.keys())}"
+    )
+    return project
 
 
 def get_project_by_name(

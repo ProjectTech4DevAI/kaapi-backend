@@ -564,7 +564,9 @@ def _fast_pipeline_mocks():
     not need a model_config row.
     """
     with (
-        patch("app.crud.evaluations.fast.fetch_dataset_items") as mock_fetch_items,
+        patch(
+            "app.crud.evaluations.fast.load_evaluation_dataset_items"
+        ) as mock_fetch_items,
         patch(
             "app.crud.evaluations.fast._upload_unit_to_s3",
             side_effect=lambda **kw: f"s3://bucket/{kw['filename']}",

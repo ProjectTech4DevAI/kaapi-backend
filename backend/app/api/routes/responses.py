@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.langfuse.langfuse import LangfuseTracer
-from app.crud.credentials import get_provider_credential
+from app.crud.credentials import get_tracing_credential
 from app.models import (
     CallbackResponse,
     Diagnostics,
@@ -97,10 +97,9 @@ async def responses_sync(
             },
         )
 
-    langfuse_credentials = get_provider_credential(
+    langfuse_credentials = get_tracing_credential(
         session=session,
         org_id=organization_id,
-        provider="langfuse",
         project_id=project_id,
     )
     tracer = LangfuseTracer(

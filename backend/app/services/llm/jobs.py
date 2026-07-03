@@ -29,7 +29,7 @@ from app.core.telemetry import (
     suppress_http_instrumentation,
 )
 from app.crud.config import ConfigVersionCrud
-from app.crud.credentials import get_provider_credential
+from app.crud.credentials import get_provider_credential, get_tracing_credential
 from app.crud.model_config import validate_blob_model_or_raise
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
@@ -1273,11 +1273,10 @@ def execute_job(
                     job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
                 )
 
-                langfuse_credentials = get_provider_credential(
+                langfuse_credentials = get_tracing_credential(
                     session=session,
                     org_id=organization_id,
                     project_id=project_id,
-                    provider="langfuse",
                 )
 
             result = execute_llm_call(
@@ -1459,11 +1458,10 @@ def execute_chain_job(
                     f"chain_id={chain_uuid}, job_id={job_uuid}"
                 )
 
-                langfuse_credentials = get_provider_credential(
+                langfuse_credentials = get_tracing_credential(
                     session=session,
                     org_id=organization_id,
                     project_id=project_id,
-                    provider="langfuse",
                 )
 
             context = ChainContext(

@@ -11,9 +11,10 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     start_evaluation_batch,
 )
+from app.crud.evaluations.batch import reconcile_tracing_client
 from app.crud.evaluations.core import update_evaluation_run
 from app.models.evaluation import EvaluationRunUpdate
-from app.utils import get_langfuse_client
+from app.utils import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,11 @@ def execute_evaluation_batch_submission(
                 )
                 return {"success": False, "error": error}
 
-            langfuse = get_langfuse_client(
+            langfuse = get_tracing_client(
                 session=session, org_id=organization_id, project_id=project_id
+            )
+            langfuse = reconcile_tracing_client(
+                session=session, eval_run=run, langfuse=langfuse
             )
             run = start_evaluation_batch(
                 langfuse=langfuse,
