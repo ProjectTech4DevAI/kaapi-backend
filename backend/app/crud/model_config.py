@@ -285,6 +285,7 @@ def is_reasoning_model(session: Session, provider: Provider, model_name: str) ->
         return False
     return "effort" in model.config
 
+
 def is_summary_model(session: Session, provider: Provider, model_name: str) -> bool:
     """Return True if the model is configured with a summary `effort` control.
 
