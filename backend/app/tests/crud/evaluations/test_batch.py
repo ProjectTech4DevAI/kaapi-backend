@@ -90,9 +90,7 @@ class TestLoadEvaluationDatasetItems:
                 )
 
     def test_dataset_not_found_raises(self) -> None:
-        with patch(
-            "app.crud.evaluations.batch.get_dataset_by_id", return_value=None
-        ):
+        with patch("app.crud.evaluations.batch.get_dataset_by_id", return_value=None):
             with pytest.raises(ValueError, match="not found"):
                 load_evaluation_dataset_items(
                     session=MagicMock(), eval_run=_eval_run(), langfuse=None

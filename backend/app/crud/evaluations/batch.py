@@ -112,7 +112,9 @@ def load_evaluation_dataset_items(
         raise ValueError(f"Dataset {eval_run.dataset_id} not found")
 
     if langfuse is not None:
-        return fetch_dataset_items(langfuse=langfuse, dataset_name=eval_run.dataset_name)
+        return fetch_dataset_items(
+            langfuse=langfuse, dataset_name=eval_run.dataset_name
+        )
 
     return _load_items_from_object_store(session=session, dataset=dataset)
 
