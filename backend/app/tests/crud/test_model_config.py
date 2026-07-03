@@ -330,3 +330,79 @@ def test_validate_blob_text_model_accepted_for_text_type(
     _patch_validators(monkeypatch, row=row, supported=True)
     blob = _make_blob("openai", "text", {"model": "gpt-4o"})
     model_config_crud.validate_blob_model_or_raise(session=None, blob=blob)  # type: ignore[arg-type]
+
+
+def _patch_model_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config: Any,
+) -> None:
+    model = SimpleNamespace(config=config)
+    monkeypatch.setattr(
+        model_config_crud,
+        "get_model_config",
+        lambda session, provider, model_name: model,
+    )
+
+
+def test_is_summary_model_true_when_summary_in_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_model_config(monkeypatch, config={"summary": "auto"})
+
+    assert (
+        model_config_crud.is_summary_model(
+            session=None,  # type: ignore[arg-type]
+            provider="openai",
+            model_name="gpt-5",
+        )
+        is True
+    )
+
+
+def test_is_summary_model_false_when_summary_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_model_config(monkeypatch, config={"temperature": 0.7})
+
+    assert (
+        model_config_crud.is_summary_model(
+            session=None,  # type: ignore[arg-type]
+            provider="openai",
+            model_name="gpt-4o",
+        )
+        is False
+    )
+
+
+def test_is_summary_model_false_for_missing_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        model_config_crud,
+        "get_model_config",
+        lambda session, provider, model_name: None,
+    )
+
+    assert (
+        model_config_crud.is_summary_model(
+            session=None,  # type: ignore[arg-type]
+            provider="openai",
+            model_name="does-not-exist",
+        )
+        is False
+    )
+
+
+def test_is_summary_model_false_for_non_dict_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_model_config(monkeypatch, config=["invalid"])
+
+    assert (
+        model_config_crud.is_summary_model(
+            session=None,  # type: ignore[arg-type]
+            provider="openai",
+            model_name="gpt-4o",
+        )
+        is False
+    )
