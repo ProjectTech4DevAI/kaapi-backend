@@ -12,9 +12,9 @@ The PRD is a **product spec**. It answers one question: *why are we doing this a
 
 ## Process
 
-1. Explore the repo to understand the current state of the codebase, if you haven't already. Use the project's domain glossary vocabulary throughout the PRD.
+1. Explore the repo to understand the current state of the codebase, if you haven't already. Use domain vocabulary from the codebase throughout the PRD.
 
-2. Draft the PRD using the template below, keeping every section strictly product-level. Before finalizing, check with the user that the **Goals**, **Non-Goals**, and **Scope** match their expectations — these three are where misalignment hides.
+2. Draft the PRD using the template below, keeping every section strictly product-level. Before finalizing, check with the user that the **Goals**, **Non-Goals**, and **which stories are must-have** match their expectations — these three are where misalignment hides.
 
 3. Write the finished PRD to `features/<feature-slug>/PRD.md`, where `<feature-slug>` is a short kebab-case slug (e.g. `features/account-balances/PRD.md`); create the directory if it doesn't exist. If an `SRD.md` already exists for this feature (from the `srd-creator` skill), reuse its slug exactly and write `PRD.md` beside it — don't create a parallel folder. This file is the deliverable, referenced later when building the SRD and Engineering Plan.
 
@@ -30,7 +30,7 @@ Who this is for — the actors who will use or be affected by the feature.
 
 ## Goals
 
-The desired outcomes, ideally measurable. What we want to be true once this ships.
+The desired outcomes — what we want to be true once this ships. State them qualitatively; the numbers live in Success Metrics.
 
 ## Non-Goals
 
@@ -42,20 +42,16 @@ How we'll know it worked — the KPIs or targets that should move if this succee
 
 ## User Stories / Use Cases
 
-A LONG, numbered list of user stories that covers all aspects of the feature. Each in the format:
+A numbered list of user stories, ordered must-have first, each tagged `[must-have]` or `[nice-to-have]`. Every Persona above should trace to at least one story, and every Goal to at least one. Format:
 
-1. As an <actor>, I want a <feature>, so that <benefit>
+1. `[must-have]` As an <actor>, I want a <feature>, so that <benefit>
 
 <user-story-example>
-1. As a mobile bank customer, I want to see balance on my accounts, so that I can make better informed decisions about my spending
+1. `[must-have]` As a mobile bank customer, I want to see balance on my accounts, so that I can make better informed decisions about my spending
 </user-story-example>
 
 ## UX / Flows
 
 The experience at a high level — key user flows, screens, and interactions. Link mockups if they exist. Describe what the user sees and does, not how it's implemented.
-
-## Scope & Priorities
-
-What is must-have vs nice-to-have for this release. Order by priority.
 
 </prd-template>
