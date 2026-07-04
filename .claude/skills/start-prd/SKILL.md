@@ -24,10 +24,6 @@ The PRD is a **product spec**. It answers one question: *why are we doing this a
 
 The user pain or business need, from the user's perspective. Why does this matter, and to whom?
 
-## Users / Personas
-
-Who this is for — the actors who will use or be affected by the feature.
-
 ## Goals
 
 The desired outcomes — what we want to be true once this ships. State them qualitatively; the numbers live in Success Metrics.
@@ -40,14 +36,24 @@ What is explicitly out of scope. Drawing this line prevents scope creep and misa
 
 How we'll know it worked — the KPIs or targets that should move if this succeeds.
 
+## Users / Personas
+
+Who this is for — the actors who will use or be affected by the feature.
+
 ## User Stories / Use Cases
 
-A numbered list of user stories, ordered must-have first, each tagged `[must-have]` or `[nice-to-have]`. Every Persona above should trace to at least one story, and every Goal to at least one. Format:
+Group stories under a **persona heading** (one per Persona above). Don't repeat "As a <actor>" on every line — the heading carries it. Order personas primary-first and, within each, must-have-first. Tag every story `[must-have]` or `[nice-to-have]`. Every Persona above should carry at least one story, and every Goal above should trace to at least one. Number stories continuously across the whole section (don't restart per persona). Format:
 
-1. `[must-have]` As an <actor>, I want a <feature>, so that <benefit>
+**As a <persona heading>:**
+
+1. `[must-have]` I want a <feature>, so that <benefit>
+2. `[nice-to-have]` I want a <feature>, so that <benefit>
 
 <user-story-example>
-1. `[must-have]` As a mobile bank customer, I want to see balance on my accounts, so that I can make better informed decisions about my spending
+**As a mobile bank customer:**
+
+1. `[must-have]` I want to see the balance on my accounts, so that I can make better informed decisions about my spending
+2. `[nice-to-have]` I want to filter transactions by category, so that I can see where my money goes
 </user-story-example>
 
 ## UX / Flows
