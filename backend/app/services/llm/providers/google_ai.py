@@ -94,7 +94,6 @@ class VertexClient:
         self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
-        host = ""
         if self.location == "global":
             host = "aiplatform.googleapis.com"
         else:
