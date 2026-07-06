@@ -116,6 +116,21 @@ class TestMapKaapiToOpenAIParams:
         assert "reasoning" in warnings[0].lower()
         assert "does not support reasoning" in warnings[0]
 
+    def test_summary_mapping_for_reasoning_models(self, db: Session):
+        """Test summary maps into reasoning block alongside effort for reasoning models."""
+        kaapi_params = TextLLMParams(
+            model="gpt-5",
+            effort="high",
+            summary="detailed",
+        )
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["model"] == "gpt-5"
+        assert result["reasoning"] == {"effort": "high", "summary": "detailed"}
+
 
 class TestMapKaapiToGoogleParams:
     """Test cases for map_kaapi_to_google_params function with completion_type."""
