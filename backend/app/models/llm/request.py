@@ -101,6 +101,13 @@ class TTSLLMParams(SQLModel):
     voice: str = DEFAULT_TTS_VOICE
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
+    instructions: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _reject_nonempty_instructions(self) -> Self:
+        if self.instructions:
+            raise ValueError("instructions is not supported for TTS completions")
+        return self
 
 
 class ProxyLLMParams(SQLModel):

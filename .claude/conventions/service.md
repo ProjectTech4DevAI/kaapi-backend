@@ -7,13 +7,13 @@ libraries for third-party APIs.
 
 ## What goes here (and what doesn't)
 
-| Belongs in `services/` | Belongs elsewhere |
-|---|---|
-| `httpx` / `openai` / `boto3` calls | DB queries → `crud/` |
-| Multi-step workflows (ingest a doc, then enqueue embedding, then notify) | Raw FastAPI deps → routes |
-| Domain validation that spans multiple records | Single-field validation → Pydantic model |
-| Cost / token accounting, retries with backoff | Long-running async work → Celery task |
-| Translating CRUD return values into domain results | Schema definitions → models |
+| Belongs in `services/`                                                   | Belongs elsewhere                        |
+| ------------------------------------------------------------------------ | ---------------------------------------- |
+| `httpx` / `openai` / `boto3` calls                                       | DB queries → `crud/`                     |
+| Multi-step workflows (ingest a doc, then enqueue embedding, then notify) | Raw FastAPI deps → routes                |
+| Domain validation that spans multiple records                            | Single-field validation → Pydantic model |
+| Cost / token accounting, retries with backoff                            | Long-running async work → Celery task    |
+| Translating CRUD return values into domain results                       | Schema definitions → models              |
 
 ## Hard rules
 
@@ -83,6 +83,12 @@ When wrapping an external SDK or raw HTTP call, follow `.claude/conventions/erro
 
 - Read from `settings` (`app.core.config`). Never read `os.environ` directly in a service.
 - Defaults should lean toward cheap/safe: smallest model, lowest token cap, shortest TTL. Aggressive defaults belong in env, not code.
+
+## Reuse existing helpers
+
+The grep-first rule applies to _functions_, not just literals. Before hand-writing a helper that does anything generic — instantiating an external SDK client, mapping that SDK's exceptions, building or parsing a domain payload, reading/writing cloud storage, loading config — grep the whole tree first. These almost always exist already, and rarely in a neighbor file, so search by behavior (the SDK class, the model type, the storage call), not by directory.
+
+Signs you're about to reinvent: instantiating a vendor client inline (`Anthropic(...)`, `OpenAI(...)`, `boto3.client(...)`); a long `except`-ladder over an SDK's error types; chains of `.get(...).get(...)` over a payload that has a typed model elsewhere. Prefer calling the existing function over reimplementing it; reach for a new helper only once you've confirmed none fits.
 
 ## Magic values
 

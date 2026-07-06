@@ -56,6 +56,24 @@ def start_llm_chain_job(
     return task_id
 
 
+def start_guardrails_job(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_guardrails_job
+
+    task_id = _enqueue_with_trace_context(
+        run_guardrails_job,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_guardrails_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
 def start_response_job(
     project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
 ) -> str:
@@ -140,6 +158,24 @@ def start_delete_collection_job(
     )
     logger.info(
         f"[start_delete_collection_job] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
+def start_evaluation_batch_submission(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs
+) -> str:
+    from app.celery.tasks.job_execution import run_evaluation_batch_submission
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_batch_submission,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_evaluation_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
     return task_id
 

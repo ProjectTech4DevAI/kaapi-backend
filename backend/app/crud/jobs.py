@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 from sqlmodel import Session
 from uuid import UUID
 
@@ -17,8 +18,14 @@ class JobCrud:
         job_type: JobType,
         trace_id: str | None = None,
         project_id: int | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> Job:
-        new_job = Job(job_type=job_type, trace_id=trace_id, project_id=project_id)
+        new_job = Job(
+            job_type=job_type,
+            trace_id=trace_id,
+            project_id=project_id,
+            meta=meta,
+        )
         self.session.add(new_job)
         self.session.commit()
         self.session.refresh(new_job)

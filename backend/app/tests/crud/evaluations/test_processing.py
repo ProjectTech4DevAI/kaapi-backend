@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,8 @@ from app.core.util import now
 from app.crud.evaluations.core import create_evaluation_run
 from app.crud.evaluations.processing import (
     _extract_batch_error_message,
+    _extract_gemini_usage,
+    _get_batch_provider,
     check_and_process_evaluation,
     parse_evaluation_output,
     poll_all_pending_evaluations,
@@ -266,6 +269,184 @@ class TestParseEvaluationOutput:
             assert result["item_id"] == f"item{i}"
             assert result["generated_output"] == f"Output {i}"
             assert result["ground_truth"] == f"A{i}"
+
+
+class TestParseEvaluationOutputGoogle:
+    """Test parsing Gemini batch output (provider_name=google-aistudio).
+
+    Gemini lines are keyed by ``key`` (not ``custom_id``) and carry a nested
+    ``response`` dict with ``candidates``/``usageMetadata`` rather than the
+    OpenAI ``response.body`` shape.
+    """
+
+    def _dataset_items(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "item1",
+                "input": {"question": "What is 2+2?"},
+                "expected_output": {"answer": "4"},
+                "metadata": {"question_id": 7},
+            }
+        ]
+
+    def test_parse_gemini_success(self) -> None:
+        """Text is pulled from candidates and usage from usageMetadata."""
+        raw_results = [
+            {
+                "key": "item1",
+                "response": {
+                    "responseId": "resp_g1",
+                    "candidates": [
+                        {"content": {"parts": [{"text": "The answer is 4"}]}}
+                    ],
+                    "usageMetadata": {
+                        "promptTokenCount": 10,
+                        "candidatesTokenCount": 5,
+                        "totalTokenCount": 15,
+                        "thoughtsTokenCount": 2,
+                    },
+                },
+            }
+        ]
+
+        results = parse_evaluation_output(
+            raw_results, self._dataset_items(), provider_name="google-aistudio"
+        )
+
+        assert len(results) == 1
+        result = results[0]
+        assert result["item_id"] == "item1"
+        assert result["generated_output"] == "The answer is 4"
+        assert result["response_id"] == "resp_g1"
+        assert result["question_id"] == 7
+        assert result["usage"] == {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "reasoning_tokens": 2,
+        }
+
+    def test_parse_gemini_error(self) -> None:
+        """An ``error`` on the line yields an ERROR: generated_output."""
+        raw_results = [{"key": "item1", "error": {"message": "quota exceeded"}}]
+
+        results = parse_evaluation_output(
+            raw_results, self._dataset_items(), provider_name="google-aistudio"
+        )
+
+        assert len(results) == 1
+        assert results[0]["generated_output"].startswith("ERROR:")
+        assert "quota exceeded" in results[0]["generated_output"]
+
+    def test_parse_gemini_native_provider(self) -> None:
+        """The -native provider variant is treated as Google too."""
+        raw_results = [
+            {
+                "key": "item1",
+                "response": {
+                    "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+                },
+            }
+        ]
+
+        results = parse_evaluation_output(
+            raw_results,
+            self._dataset_items(),
+            provider_name="google-aistudio-native",
+        )
+
+        assert results[0]["generated_output"] == "ok"
+        assert results[0]["usage"] is None
+
+
+class TestExtractGeminiUsage:
+    """Test ``_extract_gemini_usage`` mapping of Gemini usage to OpenAI shape."""
+
+    def test_camel_case(self) -> None:
+        usage = _extract_gemini_usage(
+            {
+                "usageMetadata": {
+                    "promptTokenCount": 10,
+                    "candidatesTokenCount": 5,
+                    "totalTokenCount": 15,
+                    "thoughtsTokenCount": 3,
+                }
+            }
+        )
+        assert usage == {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "reasoning_tokens": 3,
+        }
+
+    def test_snake_case(self) -> None:
+        usage = _extract_gemini_usage(
+            {
+                "usage_metadata": {
+                    "prompt_token_count": 1,
+                    "candidates_token_count": 2,
+                    "total_token_count": 3,
+                    "thoughts_token_count": 4,
+                }
+            }
+        )
+        assert usage == {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+            "reasoning_tokens": 4,
+        }
+
+    def test_missing_metadata_returns_none(self) -> None:
+        assert _extract_gemini_usage({}) is None
+        assert _extract_gemini_usage({"usageMetadata": None}) is None
+
+    def test_partial_metadata_defaults_to_zero(self) -> None:
+        usage = _extract_gemini_usage({"usageMetadata": {"promptTokenCount": 9}})
+        assert usage == {
+            "input_tokens": 9,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "reasoning_tokens": 0,
+        }
+
+
+class TestGetBatchProvider:
+    """Test _get_batch_provider dispatch by provider name."""
+
+    @patch("app.crud.evaluations.processing.OpenAIBatchProvider")
+    @patch("app.crud.evaluations.processing.get_openai_client")
+    def test_openai(self, mock_get_client, mock_provider_cls) -> None:
+        provider = _get_batch_provider(
+            session=MagicMock(),
+            provider_name="openai",
+            organization_id=1,
+            project_id=2,
+        )
+        mock_get_client.assert_called_once()
+        assert provider is mock_provider_cls.return_value
+
+    @patch("app.crud.evaluations.processing.GeminiBatchProvider")
+    @patch("app.crud.evaluations.processing.GeminiClient")
+    def test_google(self, mock_gemini_client, mock_provider_cls) -> None:
+        provider = _get_batch_provider(
+            session=MagicMock(),
+            provider_name="google-aistudio",
+            organization_id=1,
+            project_id=2,
+        )
+        mock_gemini_client.from_credentials.assert_called_once()
+        assert provider is mock_provider_cls.return_value
+
+    def test_unsupported_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported provider"):
+            _get_batch_provider(
+                session=MagicMock(),
+                provider_name="anthropic",
+                organization_id=1,
+                project_id=2,
+            )
 
 
 class TestProcessCompletedEvaluation:

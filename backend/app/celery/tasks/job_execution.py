@@ -130,6 +130,24 @@ def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs
     )
 
 
+@celery_app.task(bind=True, queue="default", priority=9)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_guardrails_job")
+def run_guardrails_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+    from app.services.guardrails.jobs import execute_job
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_job(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            task_instance=self,
+            **kwargs,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_doctransform_job")
 def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
@@ -199,6 +217,26 @@ def run_delete_collection_job(
     return _run_with_otel_parent(
         self,
         lambda: execute_job(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            task_instance=self,
+            **kwargs,
+        ),
+    )
+
+
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_batch_submission")
+def run_evaluation_batch_submission(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    from app.services.evaluations.batch_job import execute_evaluation_batch_submission
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_evaluation_batch_submission(
             project_id=project_id,
             job_id=job_id,
             task_id=current_task.request.id,
