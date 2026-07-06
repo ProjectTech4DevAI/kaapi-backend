@@ -36,7 +36,6 @@ if known.>
 - **Data assumptions:** <required input format, change frequency, etc.>
 - **Reuse:** <existing tables/services reused; "no new tables" if applicable>
 - **Pricing:** <billing notes if a paid external API is involved>
-- **Starting provider/model:** <e.g. Google Gemini 2.5 Pro, gpt-4o>
 
 ## Detailed Design (Execution Flow)
 
