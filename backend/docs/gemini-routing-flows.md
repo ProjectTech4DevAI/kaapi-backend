@@ -90,6 +90,29 @@ Caught by the outer `except Exception` in `get_llm_provider`. Logged with `exc_i
 | `google` | `aistudio` | no | aistudio, platform fallback |
 | `google` | `""` / other | — | vertex (silent) |
 
+## Code verification
+
+Manual trace of `registry.py` against each documented flow:
+
+| Flow | Routing check | Credential key check | `create_client` behavior | Match |
+|---|---|---|---|---|
+| H1 — explicit `google-vertex` + BYOK | `_registry["google-vertex"]` → `GoogleVertexAIProvider` | `"google-vertex"` lookup | `credentials.get("api_key")` is truthy → BYOK used | OK |
+| H2 — explicit `google-aistudio` + BYOK | `_registry["google-aistudio"]` → `GoogleAIProvider` | `"google-aistudio"` lookup | `credentials.get("api_key")` is truthy → BYOK used | OK |
+| H3 — platform `google`, env=vertex, BYOK | `_GOOGLE_ROUTED` hit → `GoogleVertexAIProvider` (env != aistudio) | `"google-vertex"` lookup | `credentials.get("api_key")` truthy → BYOK used | OK |
+| H4 — platform `google`, env=aistudio, BYOK | `_GOOGLE_ROUTED` hit → `GoogleAIProvider` (env == aistudio) | `"google-aistudio"` lookup | `credentials.get("api_key")` truthy → BYOK used | OK |
+| H5 — platform `google`, env=vertex, no BYOK | `_GOOGLE_ROUTED` hit → `GoogleVertexAIProvider` | no `google-vertex` row → `credentials={}` | `credentials.get("api_key")` falsy → falls back to `settings.GCP_VERTEX_API_KEY` | OK |
+| H6 — platform `google`, env=aistudio, no BYOK | `_GOOGLE_ROUTED` hit → `GoogleAIProvider` | no `google-aistudio` row → `credentials={}` | `credentials.get("api_key")` falsy → falls back to `settings.GEMINI_API_KEY` | OK |
+| H7 — non-Google (e.g. `openai-native`) | `_registry["openai-native"]` → `OpenAIProvider` | `"openai"` lookup (strip `-native`) | unchanged existing flow | OK |
+| E1 — explicit `google-vertex` no creds | `GoogleVertexAIProvider` | `get_provider_credential` returns None | `is_platform_routed=False` → `ValueError` raised | OK |
+| E2 — explicit `google-aistudio` no creds | `GoogleAIProvider` | `get_provider_credential` returns None | `is_platform_routed=False` → `ValueError` raised | OK |
+| E3 — platform `google`, no BYOK, no platform key | `GoogleAIProvider` (env=aistudio) | no `google-aistudio` row → `credentials={}` | `api_key` empty → `ValueError("API Key for Google Gemini Not Set")` | OK |
+| E4 — env unset (`""`) | `route == "aistudio"` is False → `GoogleVertexAIProvider` | — | — | OK |
+| E5 — env garbage (e.g. `"gemini-pro"`) | same as E4 | — | — | OK |
+| E6 — `-native` variants | `google-native` in `_GOOGLE_ROUTED`; others in `_registry`; `-native` stripped from lookup key | `google-vertex` / `google-aistudio` lookup key | identical to non-native peers | OK |
+| E7 — legacy `google` rows | lookup key is `google-vertex`/`google-aistudio`, not `google` | — | — | OK (requires migration) |
+| E8 — non-`ValueError` in `create_client` | — | — | caught → logged `exc_info=True` → re-raised `RuntimeError`; `ValueError` preserved | OK |
+| E9 — invalid provider name | not in `_GOOGLE_ROUTED`, not in `_registry` → `ValueError` with supported list | — | — | OK |
+
 ## Pending / not covered here
 
 - DB data migration renaming `credential.provider='google'` rows (to `'google-vertex'` per the new semantics). Tracked separately.
