@@ -23,7 +23,7 @@ from app.crud.evaluations import (
 )
 from app.crud.evaluations.core import update_evaluation_run
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
-from app.models.llm.request import TextLLMParams
+from app.models.llm.request import LLMCallConfig, TextLLMParams
 from app.services.evaluations.evaluation import create_evaluation_run_or_409
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
+# SRD error message for an unresolvable saved judge config (id/version) — also
+# covers tenant isolation, since a config from another (org, project) never resolves.
+ERR_JUDGE_CONFIG_NOT_FOUND = "No config found for the given id and version."
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -50,6 +53,7 @@ def validate_and_start_fast_evaluation(
     config_version: int,
     organization_id: int,
     project_id: int,
+    judge_config: LLMCallConfig | None = None,
     trace_id: str = "N/A",
 ) -> EvaluationRun:
     """Validate + create + dispatch a fast evaluation run.
@@ -58,8 +62,15 @@ def validate_and_start_fast_evaluation(
     1. Dataset exists and has a Langfuse id.
     2. Config resolves to a text-type OpenAI config.
     3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
-    4. (organization_id, project_id, run_name) is unique — enforced by the DB
+    4. A saved judge_config reference resolves for this (org, project) — 404 if
+       not (tenant isolation is enforced by the scoped resolution).
+    5. (organization_id, project_id, run_name) is unique — enforced by the DB
        constraint; a collision is translated to 409 by the shared helper.
+
+    `judge_config` (optional) tailors the native correctness judge for this run;
+    it never toggles judging (always on for fast runs). It is threaded to the
+    worker as a JSON-able dict Celery arg. Its one-of validation (id+version XOR
+    blob → 422) is handled by the LLMCallConfig model at request parse time.
 
     On success the function creates the EvaluationRun row with
     `run_mode="fast"`, `status="processing"`, and enqueues the orchestrator
@@ -139,7 +150,23 @@ def validate_and_start_fast_evaluation(
             ),
         )
 
-    # 4. Create the run; the shared helper translates a duplicate run_name into 409.
+    # 4. A saved judge config reference must resolve for this (org, project) BEFORE
+    #    the run starts (SRD: unknown id/version fails the request 404, not the run).
+    #    Scoped resolution also enforces tenant isolation. Ad-hoc blobs need no check.
+    if judge_config is not None and judge_config.is_stored_config:
+        judge_blob, judge_error = resolve_evaluation_config(
+            session=session,
+            config_id=judge_config.id,
+            config_version=judge_config.version,
+            project_id=project_id,
+        )
+        if judge_error or judge_blob is None:
+            raise HTTPException(
+                status_code=404,
+                detail=ERR_JUDGE_CONFIG_NOT_FOUND,
+            )
+
+    # 5. Create the run; the shared helper translates a duplicate run_name into 409.
     eval_run = create_evaluation_run_or_409(
         session=session,
         run_name=run_name,
@@ -161,10 +188,20 @@ def validate_and_start_fast_evaluation(
         update=EvaluationRunUpdate(status="processing"),
     )
 
+    # judge_config is not persisted in a table; carry it to the worker as a
+    # JSON-able Celery arg (id+version for a saved ref, or the ad-hoc blob).
+    judge_config_payload = (
+        judge_config.model_dump(mode="json") if judge_config is not None else None
+    )
+
     # Dispatch the orchestrator. If enqueue fails, mark the run as failed so it
     # doesn't linger in `processing` forever.
     try:
-        enqueue_fast_evaluation(eval_run_id=eval_run.id, trace_id=trace_id)
+        enqueue_fast_evaluation(
+            eval_run_id=eval_run.id,
+            trace_id=trace_id,
+            judge_config=judge_config_payload,
+        )
     except Exception as exc:
         logger.error(
             f"[validate_and_start_fast_evaluation] Failed to enqueue task | "
@@ -187,12 +224,18 @@ def validate_and_start_fast_evaluation(
     return eval_run
 
 
-def execute_fast_evaluation(*, eval_run_id: int) -> None:
+def execute_fast_evaluation(
+    *, eval_run_id: int, judge_config: dict | None = None
+) -> None:
     """Worker-side entry point: run the full fast-eval pipeline.
 
     Called from the `run_evaluation_fast` Celery task. Opens its own DB
     session so the task is self-contained, then resolves config + clients and
     delegates to `run_fast_evaluation` (CRUD).
+
+    `judge_config` is the JSON-able LLMCallConfig dict threaded from the route
+    (None for the zero-config default); it is re-parsed here and passed to the
+    pipeline to tailor the correctness judge.
 
     On terminal failure the run is marked `failed` with a descriptive
     error_message and the exception is re-raised so Celery records the failure
@@ -200,6 +243,10 @@ def execute_fast_evaluation(*, eval_run_id: int) -> None:
     surface).
     """
     logger.info(f"[execute_fast_evaluation] Starting | eval_run_id={eval_run_id}")
+
+    parsed_judge_config = (
+        LLMCallConfig.model_validate(judge_config) if judge_config is not None else None
+    )
 
     with Session(engine) as session:
         eval_run = session.get(EvaluationRun, eval_run_id)
@@ -256,6 +303,7 @@ def execute_fast_evaluation(*, eval_run_id: int) -> None:
                 langfuse=langfuse_client,
                 eval_run=eval_run,
                 config=text_params,
+                judge_config=parsed_judge_config,
             )
 
         except Exception as exc:

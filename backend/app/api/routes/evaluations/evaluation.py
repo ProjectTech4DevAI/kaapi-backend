@@ -12,7 +12,6 @@ from fastapi import (
     Query,
 )
 
-
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
@@ -20,6 +19,7 @@ from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_cr
 from app.crud.evaluations.core import group_traces_by_question_id
 from app.models.config.version import ConfigVersionPublic
 from app.models.evaluation import EvaluationRunPublic, RunModeEnum
+from app.models.llm.request import LLMCallConfig
 from app.services.evaluations import (
     get_evaluation_with_scores,
     improve_prompt,
@@ -58,6 +58,17 @@ def evaluate(
         default=RunModeEnum.BATCH,
         description="Execution mode: 'batch' (default) or 'fast'",
     ),
+    judge_config: LLMCallConfig
+    | None = Body(
+        default=None,
+        description=(
+            "Optional per-run tailoring for the native correctness judge (fast "
+            "mode only): a saved config reference (id + version) OR an ad-hoc "
+            "blob (completion params + optional prompt_template), exactly one of "
+            "the two. Omit to use the built-in prompt + fallback model. Never "
+            "toggles judging — judging is always on for fast runs."
+        ),
+    ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
     logger.info(
@@ -76,6 +87,7 @@ def evaluate(
             config_version=config_version,
             organization_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
+            judge_config=judge_config,
             trace_id=correlation_id.get() or "N/A",
         )
         return APIResponse.success_response(data=eval_run)

@@ -363,6 +363,20 @@ class EvaluationRun(SQLModel, table=True):
         description="Durable map of computed per-trace cosine scores keyed by trace_id",
     )
 
+    per_item_correctness: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "Durable {trace_id: correctness} map of LLM-as-a-judge scores; "
+                "source of truth used to backfill Langfuse on resync, mirroring "
+                "per_item_scores"
+            ),
+        ),
+        description="Durable map of per-trace judge correctness scores keyed by trace_id",
+    )
+
     unscoreable: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
@@ -483,6 +497,7 @@ class EvaluationRunUpdate(SQLModel):
     score_trace_url: str | None = None
     score: dict[str, Any] | None = None
     per_item_scores: dict[str, Any] | None = None
+    per_item_correctness: dict[str, Any] | None = None
     unscoreable: dict[str, Any] | None = None
     is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None

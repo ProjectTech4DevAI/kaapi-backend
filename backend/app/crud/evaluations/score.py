@@ -17,6 +17,15 @@ COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )
 
+# Canonical name for the native LLM-as-a-judge correctness score. Mirrors
+# COSINE_SCORE_NAME so it aggregates through compute_summary_scores by name; the
+# per-row reasoning rides the score's `comment`, so there is no fixed comment.
+CORRECTNESS_SCORE_NAME: str = "Correctness"
+
+# Recorded in EvaluationRun.unscoreable when the judge call fails or returns
+# malformed output for a row (isolated per row; never fails the run).
+JUDGE_FAILED_REASON: str = "judge_failed"
+
 # Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
 # "missing_trace_id" appears only in build_embedding_jsonl's internal skipped list.
 UNSCOREABLE_REASONS: tuple[str, ...] = (
@@ -24,6 +33,33 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     "empty_ground_truth",
     "embedding_failed",
     "missing_trace_id",
+    JUDGE_FAILED_REASON,
+)
+
+# Built-in reference-based grader prompt used when a run carries no judge_config
+# (or its blob sets no prompt_template). Owned in code so zero-config runs are
+# reproducible and versioned with the codebase. Kaapi appends the row's question,
+# generated answer, and ground truth after this prompt; the trailing JSON contract
+# guarantees the score + reasoning stay machine-parseable even when a caller-
+# supplied template omits output instructions.
+DEFAULT_JUDGE_PROMPT: str = (
+    "You are a strict, fair evaluator grading a chatbot's answer against a "
+    "reference (ground truth) answer to the same question.\n\n"
+    "Judge how correct the generated answer is relative to the ground truth: "
+    "does it convey the same key facts, is it free of contradictions, and does "
+    "it actually answer the question? Minor wording or extra-but-correct detail "
+    "should not be penalized; factual errors, omissions of key facts, or "
+    "contradictions should be.\n\n"
+    "Return a single correctness score between 0.0 (completely wrong or "
+    "irrelevant) and 1.0 (fully correct and complete), plus a brief reasoning."
+)
+
+# Appended to every judge request (regardless of prompt template) so the model's
+# reply is always a parseable JSON object carrying the score and reasoning.
+JUDGE_OUTPUT_INSTRUCTION: str = (
+    "Respond with ONLY a single JSON object of the form "
+    '{"score": <number between 0 and 1>, "reasoning": "<one or two sentences>"} '
+    "and nothing else."
 )
 
 

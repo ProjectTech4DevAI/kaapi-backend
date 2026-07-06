@@ -354,7 +354,10 @@ def run_tts_result_processing(
 @celery_app.task(bind=True, queue="default", priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast")
 def run_evaluation_fast(
-    self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
+    self: Task,
+    eval_run_id: int,
+    trace_id: str = DEFAULT_TRACE_ID,
+    judge_config: dict | None = None,
 ) -> None:
     """Run the fast evaluation pipeline for one EvaluationRun.
 
@@ -366,6 +369,8 @@ def run_evaluation_fast(
         eval_run_id: ID of the EvaluationRun (run_mode="fast").
         trace_id: Correlation id from the enqueueing request, propagated into
             the worker for log correlation.
+        judge_config: JSON-able LLMCallConfig dict tailoring the correctness
+            judge (None for the zero-config default), re-parsed in the service.
     """
     from app.services.evaluations.fast import execute_fast_evaluation
 
@@ -377,7 +382,9 @@ def run_evaluation_fast(
 
     return _run_with_otel_parent(
         self,
-        lambda: execute_fast_evaluation(eval_run_id=eval_run_id),
+        lambda: execute_fast_evaluation(
+            eval_run_id=eval_run_id, judge_config=judge_config
+        ),
     )
 
 

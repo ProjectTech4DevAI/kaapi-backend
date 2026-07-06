@@ -202,6 +202,13 @@ class Settings(BaseSettings):
     # workers can cause memory pressure on smaller EC2 instances.
     EVAL_FAST_API_CONCURRENCY: int = 4
 
+    # Native LLM-as-a-judge correctness scoring for fast evals. Used when a run
+    # carries no judge_config (zero-config default); a run's judge_config may
+    # override the model and its settings.
+    # See docs/llm-judge-integration.md for the full design rationale.
+    EVAL_JUDGE_FALLBACK_MODEL: str = "gpt-4o-mini"
+    EVAL_JUDGE_DEFAULT_TEMPERATURE: float = 0.0
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:

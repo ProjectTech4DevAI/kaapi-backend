@@ -2,10 +2,11 @@
 Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
-import logging
+
 import functools
-from typing import Any, Dict, TypeVar
+import logging
 from collections.abc import Callable
+from typing import Any, Dict, TypeVar
 
 from celery.result import AsyncResult
 from gevent import Timeout
@@ -252,14 +253,23 @@ def start_tts_result_processing(
     return task_id
 
 
-def start_fast_evaluation(eval_run_id: int, trace_id: str = "N/A") -> str:
-    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun."""
+def start_fast_evaluation(
+    eval_run_id: int,
+    trace_id: str = "N/A",
+    judge_config: dict[str, Any] | None = None,
+) -> str:
+    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun.
+
+    `judge_config` is the JSON-able LLMCallConfig dict tailoring the correctness
+    judge (None for the zero-config default), carried as a Celery task arg.
+    """
     from app.celery.tasks.job_execution import run_evaluation_fast
 
     task_id = _enqueue_with_trace_context(
         run_evaluation_fast,
         eval_run_id=eval_run_id,
         trace_id=trace_id,
+        judge_config=judge_config,
     )
     logger.info(
         f"[start_fast_evaluation] Enqueued fast eval | "

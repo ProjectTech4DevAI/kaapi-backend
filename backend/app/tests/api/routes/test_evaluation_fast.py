@@ -337,6 +337,112 @@ class TestFastEvaluationRoute:
         assert resp.json()["data"]["run_mode"] == "fast"
 
 
+class TestJudgeConfigRoute:
+    """Judge-config validation and threading on POST /evaluations (run_mode=fast).
+
+    Covers the LLM-as-a-judge SRD: FR-7 (invalid judge_config → 422 before the
+    run starts) and the ad-hoc happy path (accepted + dispatched).
+    """
+
+    def _adhoc_blob(self) -> dict:
+        return {
+            "blob": {
+                "completion": {
+                    "provider": "openai",
+                    "type": "text",
+                    "params": {"model": "gpt-4o", "temperature": 0.0},
+                }
+            }
+        }
+
+    def test_fr7_both_stored_ref_and_blob_rejected_422(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        _patch_dispatch,
+    ):
+        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_openai_config(db, user_api_key.project_id)
+        judge_config = self._adhoc_blob()
+        judge_config.update(
+            {"id": "9c2e4d6f-1a2b-3c4d-5e6f-7a8b9c0d1e2f", "version": 3}
+        )
+
+        resp = client.post(
+            "/api/v1/evaluations",
+            json={
+                "experiment_name": "judge-both",
+                "dataset_id": dataset.id,
+                "config_id": str(config.id),
+                "config_version": 1,
+                "run_mode": "fast",
+                "judge_config": judge_config,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert resp.status_code == 422
+        _patch_dispatch.assert_not_called()
+
+    def test_fr7_neither_stored_ref_nor_blob_rejected_422(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        _patch_dispatch,
+    ):
+        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_openai_config(db, user_api_key.project_id)
+
+        resp = client.post(
+            "/api/v1/evaluations",
+            json={
+                "experiment_name": "judge-neither",
+                "dataset_id": dataset.id,
+                "config_id": str(config.id),
+                "config_version": 1,
+                "run_mode": "fast",
+                "judge_config": {},
+            },
+            headers=user_api_key_header,
+        )
+
+        assert resp.status_code == 422
+        _patch_dispatch.assert_not_called()
+
+    def test_adhoc_judge_config_accepted_and_dispatched(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        _patch_dispatch,
+    ):
+        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_openai_config(db, user_api_key.project_id)
+
+        resp = client.post(
+            "/api/v1/evaluations",
+            json={
+                "experiment_name": "judge-adhoc-ok",
+                "dataset_id": dataset.id,
+                "config_id": str(config.id),
+                "config_version": 1,
+                "run_mode": "fast",
+                "judge_config": self._adhoc_blob(),
+            },
+            headers=user_api_key_header,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["status"] == "processing"
+        payload = _patch_dispatch.call_args.kwargs["judge_config"]
+        assert payload["blob"]["completion"]["params"]["model"] == "gpt-4o"
+
+
 # ---------------------------------------------------------------------------
 # Dataset listing eligibility filter (FR-5)
 # ---------------------------------------------------------------------------

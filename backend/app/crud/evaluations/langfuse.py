@@ -16,6 +16,7 @@ from langfuse import Langfuse
 
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import (
+    CORRECTNESS_SCORE_NAME,
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
@@ -31,6 +32,7 @@ def _write_trace_score(
     langfuse: Langfuse,
     *,
     trace_id: str,
+    name: str,
     value: float,
     comment: str,
 ) -> None:
@@ -38,7 +40,7 @@ def _write_trace_score(
     caller (no retry here)."""
     langfuse.score(
         trace_id=trace_id,
-        name=COSINE_SCORE_NAME,
+        name=name,
         value=value,
         comment=comment,
     )
@@ -246,7 +248,11 @@ def update_traces_with_cosine_scores(
 
         try:
             _write_trace_score(
-                langfuse, trace_id=trace_id, value=value, comment=comment
+                langfuse,
+                trace_id=trace_id,
+                name=COSINE_SCORE_NAME,
+                value=value,
+                comment=comment,
             )
         except Exception as e:
             logger.error(
@@ -262,6 +268,66 @@ def update_traces_with_cosine_scores(
         logger.warning(
             f"[update_traces_with_cosine_scores] Score writes failed | "
             f"failed={len(failed_trace_ids)}/{len(per_item_scores)} | "
+            f"failed_trace_ids={failed_trace_ids}"
+        )
+
+    return failed_trace_ids
+
+
+def update_traces_with_correctness_scores(
+    langfuse: Langfuse,
+    per_item_correctness: list[dict[str, Any]],
+) -> list[str]:
+    """Add a trace-level "Correctness" score (value + reasoning comment) to each trace.
+
+    Mirrors ``update_traces_with_cosine_scores`` so each evaluated row's Langfuse
+    trace shows both distinctly-named scores. Per-item failures are isolated (one
+    bad trace never aborts the batch).
+
+    Args:
+        langfuse: Configured Langfuse client
+        per_item_correctness: e.g.
+            [{"trace_id": "...", "correctness": 0.8, "reasoning": "..."}]
+
+    Returns:
+        trace_ids whose score write failed (empty on full success).
+    """
+    failed_trace_ids: list[str] = []
+
+    for score_item in per_item_correctness:
+        trace_id = score_item.get("trace_id")
+        if not trace_id:
+            logger.warning(
+                "[update_traces_with_correctness_scores] "
+                "Score item missing trace_id, skipping"
+            )
+            continue
+
+        value = score_item.get("correctness")
+        comment = score_item.get("reasoning") or ""
+
+        try:
+            _write_trace_score(
+                langfuse,
+                trace_id=trace_id,
+                name=CORRECTNESS_SCORE_NAME,
+                value=value,
+                comment=comment,
+            )
+        except Exception as e:
+            logger.error(
+                f"[update_traces_with_correctness_scores] Failed to add score | "
+                f"trace_id={trace_id} | {e}",
+                exc_info=True,
+            )
+            failed_trace_ids.append(trace_id)
+
+    langfuse.flush()
+
+    if failed_trace_ids:
+        logger.warning(
+            f"[update_traces_with_correctness_scores] Score writes failed | "
+            f"failed={len(failed_trace_ids)}/{len(per_item_correctness)} | "
             f"failed_trace_ids={failed_trace_ids}"
         )
 
