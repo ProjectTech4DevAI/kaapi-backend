@@ -4,7 +4,7 @@ All tasks share one queue (`default`, declared with `x-max-priority=10`) and are
 ordered by the per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
-    6  Fast evaluation (run_evaluation_fast)
+    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate)
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
@@ -332,32 +332,66 @@ def run_tts_result_processing(
 
 
 @celery_app.task(bind=True, queue="default", priority=6)
-@gevent_timeout(settings.EVAL_FAST_TASK_TIMEOUT, "run_evaluation_fast")
-def run_evaluation_fast(
-    self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_chunk")
+def run_evaluation_fast_chunk(
+    self: Task,
+    eval_run_id: int,
+    chunk_index: int,
+    trace_id: str = DEFAULT_TRACE_ID,
 ) -> None:
-    """Run the fast evaluation pipeline for one EvaluationRun.
+    """Run one parallel responses chunk of a fast EvaluationRun.
 
-    Idempotency: each stage is skipped on retry when its `batch_job` marker is
-    already set on the EvaluationRun, so Celery redelivery never re-calls
-    OpenAI for work that already succeeded.
+    Idempotency: the chunk is skipped when its (eval_run, chunk_index) batch_job
+    already has a raw_output_url, so Celery redelivery never re-charges OpenAI.
 
     Args:
         eval_run_id: ID of the EvaluationRun (run_mode="fast").
-        trace_id: Correlation id from the enqueueing request, propagated into
-            the worker for log correlation.
+        chunk_index: Zero-based index of this chunk's dataset-item slice.
+        trace_id: Correlation id propagated from the enqueueing request.
     """
-    from app.services.evaluations.fast import execute_fast_evaluation
+    from app.services.evaluations.fast import execute_fast_evaluation_chunk
 
     _set_trace(trace_id)
     logger.info(
-        f"[run_evaluation_fast] Starting fast evaluation task | "
+        f"[run_evaluation_fast_chunk] Starting fast eval chunk | "
+        f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | "
+        f"task_id={current_task.request.id}"
+    )
+
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_fast_evaluation_chunk(
+            eval_run_id=eval_run_id, chunk_index=chunk_index
+        ),
+    )
+
+
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_aggregate")
+def run_evaluation_fast_aggregate(
+    self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID
+) -> None:
+    """Fan-in: merge the response chunks then run embeddings + scoring.
+
+    Enqueued once by the cron barrier after every chunk has completed.
+    Idempotent: each stage is skipped on retry when its `batch_job` marker is
+    set, so redelivery never re-does completed work.
+
+    Args:
+        eval_run_id: ID of the EvaluationRun (run_mode="fast").
+        trace_id: Correlation id propagated from the enqueueing request.
+    """
+    from app.services.evaluations.fast import execute_fast_evaluation_aggregate
+
+    _set_trace(trace_id)
+    logger.info(
+        f"[run_evaluation_fast_aggregate] Starting fast eval aggregate | "
         f"eval_run_id={eval_run_id} | task_id={current_task.request.id}"
     )
 
     return _run_with_otel_parent(
         self,
-        lambda: execute_fast_evaluation(eval_run_id=eval_run_id),
+        lambda: execute_fast_evaluation_aggregate(eval_run_id=eval_run_id),
     )
 
 

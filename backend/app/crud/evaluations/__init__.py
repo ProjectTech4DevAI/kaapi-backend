@@ -28,7 +28,11 @@ from app.crud.evaluations.embeddings import (
 from app.crud.evaluations.fast import (
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
+    JOB_TYPE_EVALUATION_FAST_CHUNK,
+    list_response_chunk_jobs,
+    mark_response_chunk_failed,
     run_fast_evaluation,
+    run_response_chunk,
 )
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
@@ -77,7 +81,11 @@ __all__ = [
     # Fast eval
     "JOB_TYPE_EMBEDDING_FAST",
     "JOB_TYPE_EVALUATION_FAST",
+    "JOB_TYPE_EVALUATION_FAST_CHUNK",
+    "list_response_chunk_jobs",
+    "mark_response_chunk_failed",
     "run_fast_evaluation",
+    "run_response_chunk",
     # Processing
     "check_and_process_evaluation",
     "poll_all_pending_evaluations",

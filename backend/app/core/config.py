@@ -185,6 +185,9 @@ class Settings(BaseSettings):
     LLM_PENDING_THRESHOLD_MINUTES: int = 30
     COLLECTION_PENDING_THRESHOLD_MINUTES: int = 30
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
+    # A fast run stuck in `processing` past this with no chunk progress is stalled;
+    # the cron healer re-enqueues its missing chunk tasks.
+    EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
     # AI-assisted prompt improvement settings.
@@ -201,11 +204,10 @@ class Settings(BaseSettings):
     # Capped at 4 by default: higher values (8-10) across multiple Celery
     # workers can cause memory pressure on smaller EC2 instances.
     EVAL_FAST_API_CONCURRENCY: int = 4
-    # Whole-task wall for one fast-eval run (all stages, all items). Sized to the
-    # fast workload — total_items / EVAL_FAST_API_CONCURRENCY × per-call p95 + headroom —
-    # not the generic 300s Celery safety limit. Override per ECS task via env so a
-    # worker with higher celery concurrency can carry big (up to 500-item) runs.
-    EVAL_FAST_TASK_TIMEOUT: int = 1800
+    # Items per parallel responses chunk task. ceil(total_items / this) chunk
+    # tasks fan out across workers so the responses stage drains in parallel and
+    # each task fits the plain CELERY_TASK_SOFT_TIME_LIMIT.
+    EVAL_FAST_CHUNK_SIZE: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
     @property
