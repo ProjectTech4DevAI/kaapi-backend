@@ -6,6 +6,7 @@ from app.core.util import now
 from app.crud.evaluations.core import (
     create_evaluation_run,
     get_evaluation_run_by_id,
+    get_or_fetch_score,
     list_evaluation_runs,
 )
 from app.crud.evaluations.dataset import create_evaluation_dataset
@@ -177,6 +178,57 @@ class TestGetEvaluationRunById:
         )
 
         assert fetched is None
+
+
+class TestGetOrFetchScoreOptOut:
+    """With tracing off (langfuse=None), scores are served from the DB without
+    ever touching Langfuse."""
+
+    def _make_run(self, db: Session, score: dict | None) -> EvaluationRun:
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+        dataset = create_evaluation_dataset(
+            session=db,
+            name=f"ds_{uuid4().hex[:8]}",
+            dataset_metadata={"original_items_count": 1},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        config_id, config_version = _create_config(db, project.id)
+        eval_run = create_evaluation_run(
+            session=db,
+            run_name=f"run_{uuid4().hex[:8]}",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config_id=config_id,
+            config_version=config_version,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        eval_run.score = score
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+        return eval_run
+
+    def test_returns_existing_score_when_tracing_disabled(self, db: Session) -> None:
+        existing = {"summary_scores": [{"name": "cosine_similarity", "avg": 0.8}]}
+        eval_run = self._make_run(db, score=existing)
+
+        result = get_or_fetch_score(session=db, eval_run=eval_run, langfuse=None)
+
+        assert result == existing
+
+    def test_returns_empty_default_when_no_score_and_tracing_disabled(
+        self, db: Session
+    ) -> None:
+        eval_run = self._make_run(db, score=None)
+
+        result = get_or_fetch_score(session=db, eval_run=eval_run, langfuse=None)
+
+        assert result == {"summary_scores": [], "traces": []}
 
 
 class TestListEvaluationRuns:
