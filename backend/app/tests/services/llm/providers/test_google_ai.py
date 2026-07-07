@@ -7,9 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-# ponytail: Vertex provider is temporarily disabled in the registry; skip the
-# whole module until it is re-enabled.
-pytestmark = pytest.mark.skip(
+# ponytail: Vertex provider is temporarily disabled in the registry; skip only
+# the routing/execute tests. Pure client tests (endpoint, sa_info, credential
+# fallback) still run for coverage.
+_vertex_disabled = pytest.mark.skip(
     reason="Vertex provider disabled — routing swapped to GoogleAIProvider"
 )
 
@@ -85,6 +86,7 @@ def _mock_gcs(monkeypatch):
     )
 
 
+@_vertex_disabled
 class TestGoogleVertexAIProvider:
     @pytest.fixture
     def client(self) -> VertexClient:

@@ -271,7 +271,7 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
 def get_or_fetch_score(
     session: Session,
     eval_run: EvaluationRun,
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     force_refetch: bool = False,
 ) -> EvaluationScore:
     """
@@ -295,6 +295,15 @@ def get_or_fetch_score(
         ValueError: If the run is not found in Langfuse
         Exception: If Langfuse API calls fail
     """
+    # Tracing disabled: no Langfuse traces exist, so return whatever
+    # cosine-based summary_scores were already computed.
+    if langfuse is None:
+        logger.info(
+            f"[get_or_fetch_score] Tracing off; returning cosine-only score | "
+            f"evaluation_id={eval_run.id}"
+        )
+        return eval_run.score or {"summary_scores": [], "traces": []}
+
     # Check if score already exists with traces
     has_traces = eval_run.score is not None and "traces" in eval_run.score
     if not force_refetch and has_traces:

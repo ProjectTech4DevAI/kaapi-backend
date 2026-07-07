@@ -9,11 +9,11 @@ from typing import Optional
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.core import logging, settings
+from app.core import logging
 from app.models import OpenAIThreadCreate
 from app.crud import upsert_thread_result, get_thread_result
 from app.utils import APIResponse, mask_string
-from app.crud.credentials import get_provider_credential
+from app.crud.credentials import get_provider_credential, get_tracing_credential
 from app.core.util import configure_openai
 from app.core.langfuse.langfuse import LangfuseTracer
 
@@ -312,10 +312,9 @@ async def threads(
             error="OpenAI API key not configured for this organization."
         )
 
-    langfuse_credentials = get_provider_credential(
+    langfuse_credentials = get_tracing_credential(
         session=session,
         org_id=_current_user.organization_.id,
-        provider="langfuse",
         project_id=request.get("project_id"),
     )
 
@@ -387,10 +386,9 @@ async def threads_sync(
         )
 
     # Get Langfuse credentials
-    langfuse_credentials = get_provider_credential(
+    langfuse_credentials = get_tracing_credential(
         session=session,
         org_id=_current_user.organization_.id,
-        provider="langfuse",
         project_id=request.get("project_id"),
     )
 

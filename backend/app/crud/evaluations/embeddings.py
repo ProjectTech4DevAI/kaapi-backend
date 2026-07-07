@@ -105,26 +105,18 @@ def build_embedding_jsonl(
             logger.warning("Skipping result with no item_id")
             continue
 
-        # Get trace_id from mapping
-        trace_id = trace_id_mapping.get(item_id)
-        if not trace_id:
-            logger.warning(f"Skipping item {item_id} - no trace_id found")
-            skipped.append(
-                {"item_id": item_id, "trace_id": None, "reason": "missing_trace_id"}
-            )
-            continue
+        # ref = trace_id when traced, else item_id (opt-out).
+        ref = trace_id_mapping.get(item_id) or item_id
 
         # Empty output/ground_truth can't be embedded; record the reason.
         if not generated_output or not ground_truth:
             reason = "empty_output" if not generated_output else "empty_ground_truth"
             logger.warning(f"Skipping item {item_id} - {reason}")
-            skipped.append({"item_id": item_id, "trace_id": trace_id, "reason": reason})
+            skipped.append({"item_id": item_id, "trace_id": ref, "reason": reason})
             continue
 
-        # Build the batch request object for Embeddings API
-        # Use trace_id as BATCH_KEY for direct score updates
         batch_request = {
-            BATCH_KEY: trace_id,
+            BATCH_KEY: ref,
             "method": "POST",
             "url": "/v1/embeddings",
             "body": {
