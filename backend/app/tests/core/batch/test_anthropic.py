@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core.batch.anthropic import AnthropicBatchProvider
+from app.core.batch.anthropic import STRUCTURED_OUTPUTS_BETA, AnthropicBatchProvider
 from app.models.llm.constants import (
     DEFAULT_ANTHROPIC_MAX_TOKENS,
     DEFAULT_TEXT_MODELS,
@@ -90,14 +90,16 @@ class TestAnthropicBatchProvider:
         mock_batch = create_mock_batch(
             batch_id="msgbatch_abc123", processing_status="in_progress"
         )
-        mock_anthropic_client.messages.batches.create.return_value = mock_batch
+        mock_anthropic_client.beta.messages.batches.create.return_value = mock_batch
 
         result = provider.create_batch(jsonl_data, config)
 
-        mock_anthropic_client.messages.batches.create.assert_called_once()
-        requests = mock_anthropic_client.messages.batches.create.call_args.kwargs[
-            "requests"
-        ]
+        mock_anthropic_client.beta.messages.batches.create.assert_called_once()
+        call_kwargs = (
+            mock_anthropic_client.beta.messages.batches.create.call_args.kwargs
+        )
+        requests = call_kwargs["requests"]
+        assert call_kwargs["betas"] == []
         assert len(requests) == 2
         assert requests[0]["custom_id"] == "req-1"
         assert requests[0]["params"]["model"] == "claude-sonnet-4-6"
@@ -120,11 +122,11 @@ class TestAnthropicBatchProvider:
         config = {"model": "claude-opus-4-8", "max_tokens": 2048}
 
         mock_batch = create_mock_batch()
-        mock_anthropic_client.messages.batches.create.return_value = mock_batch
+        mock_anthropic_client.beta.messages.batches.create.return_value = mock_batch
 
         provider.create_batch(jsonl_data, config)
 
-        requests = mock_anthropic_client.messages.batches.create.call_args.kwargs[
+        requests = mock_anthropic_client.beta.messages.batches.create.call_args.kwargs[
             "requests"
         ]
         assert requests[0]["params"]["model"] == "claude-opus-4-8"
@@ -142,11 +144,11 @@ class TestAnthropicBatchProvider:
         ]
 
         mock_batch = create_mock_batch()
-        mock_anthropic_client.messages.batches.create.return_value = mock_batch
+        mock_anthropic_client.beta.messages.batches.create.return_value = mock_batch
 
         provider.create_batch(jsonl_data, {})
 
-        requests = mock_anthropic_client.messages.batches.create.call_args.kwargs[
+        requests = mock_anthropic_client.beta.messages.batches.create.call_args.kwargs[
             "requests"
         ]
         assert requests[0]["params"]["model"] == DEFAULT_TEXT_MODELS["anthropic"]
@@ -169,21 +171,46 @@ class TestAnthropicBatchProvider:
         config = {"model": "claude-opus-4-8", "max_tokens": 2048}
 
         mock_batch = create_mock_batch()
-        mock_anthropic_client.messages.batches.create.return_value = mock_batch
+        mock_anthropic_client.beta.messages.batches.create.return_value = mock_batch
 
         provider.create_batch(jsonl_data, config)
 
-        requests = mock_anthropic_client.messages.batches.create.call_args.kwargs[
+        requests = mock_anthropic_client.beta.messages.batches.create.call_args.kwargs[
             "requests"
         ]
         assert requests[0]["params"]["model"] == "claude-haiku-4-5"
         assert requests[0]["params"]["max_tokens"] == 256
 
+    def test_create_batch_enables_structured_outputs_beta(
+        self, provider, mock_anthropic_client
+    ):
+        """Test that output_config in a request opts the batch into the beta."""
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "output_config": {"format": {"type": "json_schema", "schema": {}}},
+                },
+            }
+        ]
+
+        mock_anthropic_client.beta.messages.batches.create.return_value = (
+            create_mock_batch()
+        )
+
+        provider.create_batch(jsonl_data, {})
+
+        betas = mock_anthropic_client.beta.messages.batches.create.call_args.kwargs[
+            "betas"
+        ]
+        assert betas == [STRUCTURED_OUTPUTS_BETA]
+
     def test_create_batch_error(self, provider, mock_anthropic_client):
         """Test handling of batch creation error."""
         jsonl_data = [{"custom_id": "req-1", "params": {}}]
 
-        mock_anthropic_client.messages.batches.create.side_effect = Exception(
+        mock_anthropic_client.beta.messages.batches.create.side_effect = Exception(
             "Batch creation failed"
         )
 
