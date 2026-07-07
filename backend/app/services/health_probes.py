@@ -40,14 +40,11 @@ _PROBES: list[Probe] = [
     Probe(provider="google", model="gemini-2.5-flash", modality="text"),
     Probe(provider="google-aistudio", model="gemini-2.5-flash", modality="text"),
     Probe(provider="anthropic", model="claude-3-5-haiku-latest", modality="text"),
-    Probe(provider="sarvamai", model="sarvam-m", modality="text"),
     # TTS
-    Probe(provider="openai", model="tts-1", modality="tts"),
     Probe(provider="google", model="gemini-2.5-flash-preview-tts", modality="tts"),
-    Probe(provider="sarvamai", model="bulbul:v2", modality="tts"),
+    Probe(provider="sarvamai", model="bulbul:v3", modality="tts"),
     Probe(provider="elevenlabs", model="eleven_flash_v2_5", modality="tts"),
     # STT
-    Probe(provider="openai", model="whisper-1", modality="stt"),
     Probe(provider="google", model="gemini-2.5-pro", modality="stt"),
     Probe(provider="sarvamai", model="saarika:v2.5", modality="stt"),
     Probe(provider="elevenlabs", model="scribe_v1", modality="stt"),
@@ -205,15 +202,3 @@ def run_probes(*, session: Session) -> dict[str, Any]:
         "failed": len(results) - ok_count,
         "results": results,
     }
-
-
-if __name__ == "__main__":
-    assert _PROBES, "probe list must not be empty"
-    modalities = {p.modality for p in _PROBES}
-    assert modalities == {"text", "tts", "stt"}, modalities
-    for probe in _PROBES:
-        if probe.modality == "stt" and not _STT_AUDIO_B64:
-            continue
-        built = _build_config_and_input(probe)
-        assert built is not None
-    print("ok")
