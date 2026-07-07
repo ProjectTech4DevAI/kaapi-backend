@@ -9,6 +9,7 @@ from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
 from app.services.job_monitoring import monitor_pending_jobs
+from app.services.stats import collect_daily_stats
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,16 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     # Consecutive successful check-ins required to auto-resolve the issue.
     "recovery_threshold": 1,
 }
+
+DAILY_STATS_CRON_MONITOR_CONFIG: MonitorConfig = {
+    "schedule": {"type": "crontab", "value": "0 0 * * *"},
+    "timezone": "UTC",
+    "checkin_margin": 5,
+    "max_runtime": 10,
+    "failure_issue_threshold": 1,
+    "recovery_threshold": 1,
+}
+
 
 PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {
@@ -117,6 +128,33 @@ async def evaluation_cron_job(
     except Exception as e:
         logger.error(
             f"[evaluation_cron_job] Error executing cron job: {e}",
+            exc_info=True,
+        )
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+@router.get(
+    "/cron/daily-stats",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="daily-stats-cron-job",
+    monitor_config=DAILY_STATS_CRON_MONITOR_CONFIG,
+)
+def daily_stats_cron_job(session: SessionDep) -> dict:
+    logger.info("[daily_stats_cron_job] Cron job invoked")
+    try:
+        result = collect_daily_stats(session=session)
+        logger.info(
+            "[daily_stats_cron_job] Completed | window: %s",
+            result["window"],
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[daily_stats_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
         sentry_sdk.capture_exception(e)
