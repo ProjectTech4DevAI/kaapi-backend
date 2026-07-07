@@ -1,7 +1,7 @@
 """add per_item_correctness column to evaluation_run
 
-Revision ID: 071
-Revises: 070
+Revision ID: 072
+Revises: 071
 Create Date: 2026-07-06 00:00:00.000000
 
 Native LLM-as-a-judge correctness rides the existing score/cost columns; this
@@ -16,8 +16,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "071"
-down_revision = "070"
+revision = "072"
+down_revision = "071"
 branch_labels = None
 depends_on = None
 
