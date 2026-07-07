@@ -1,5 +1,5 @@
 import logging
-from typing import Any, List, Optional
+from typing import Any
 
 from fastapi import HTTPException
 from sqlmodel import Session, select

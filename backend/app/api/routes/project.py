@@ -102,10 +102,6 @@ def update_project_settings_route(
         project_id=auth_context.project.id,
         settings_patch=settings_patch,
     )
-    logger.info(
-        f"[update_project_settings_route] Settings updated | project_id={project.id}, "
-        f"keys={list(settings_patch.keys())}"
-    )
     return APIResponse.success_response(project)
 
 

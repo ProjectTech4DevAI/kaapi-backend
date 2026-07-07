@@ -347,6 +347,15 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
         )
 
 
+def _build_langfuse_client(credentials: dict[str, Any]) -> Langfuse:
+    return Langfuse(
+        public_key=credentials["public_key"],
+        secret_key=credentials["secret_key"],
+        host=credentials["host"],
+        timeout=60,
+    )
+
+
 def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langfuse:
     """
     Fetch Langfuse credentials for the current org/project and return a configured client.
@@ -370,12 +379,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
         )
 
     try:
-        return Langfuse(
-            public_key=credentials["public_key"],
-            secret_key=credentials["secret_key"],
-            host=credentials["host"],
-            timeout=60,
-        )
+        return _build_langfuse_client(credentials)
     except Exception as e:
         logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
@@ -408,12 +412,7 @@ def get_tracing_client(
         return None
 
     try:
-        return Langfuse(
-            public_key=credentials["public_key"],
-            secret_key=credentials["secret_key"],
-            host=credentials["host"],
-            timeout=60,
-        )
+        return _build_langfuse_client(credentials)
     except Exception as e:
         logger.warning(
             f"[get_tracing_client] Failed to configure Langfuse client; "
