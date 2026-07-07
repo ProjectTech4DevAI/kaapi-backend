@@ -26,7 +26,7 @@ from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnu
 from app.models.llm.request import LLMCallConfig, TextLLMParams
 from app.services.evaluations.evaluation import create_evaluation_run_or_409
 from app.services.llm.providers import LLMProvider
-from app.utils import get_langfuse_client, get_openai_client
+from app.utils import get_openai_client, get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -97,12 +97,12 @@ def validate_and_start_fast_evaluation(
                 "organization/project"
             ),
         )
-    if not dataset.langfuse_dataset_id:
+    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
-                "evaluation."
+                f"Dataset {dataset_id} has no Langfuse nor object-store backing; "
+                "cannot run evaluation."
             ),
         )
 
@@ -291,7 +291,7 @@ def execute_fast_evaluation(
                 org_id=eval_run.organization_id,
                 project_id=eval_run.project_id,
             )
-            langfuse_client = get_langfuse_client(
+            langfuse_client = get_tracing_client(
                 session=session,
                 org_id=eval_run.organization_id,
                 project_id=eval_run.project_id,

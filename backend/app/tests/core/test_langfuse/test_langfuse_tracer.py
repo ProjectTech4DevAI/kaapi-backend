@@ -470,7 +470,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     def test_works_without_langfuse_credentials(
         self,
@@ -520,7 +520,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_works_when_langfuse_init_fails(
@@ -572,7 +572,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     @patch("app.services.response.response._fail_job")
     def test_handles_openai_error_gracefully(

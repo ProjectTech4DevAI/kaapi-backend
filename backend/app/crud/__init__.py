@@ -36,6 +36,7 @@ from .credentials import (
     update_creds_for_org,
     remove_creds_for_org,
     get_provider_credential,
+    get_tracing_credential,
     remove_provider_credential,
 )
 

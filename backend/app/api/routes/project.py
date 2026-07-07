@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.api.deps import SessionDep
+from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.organization import get_organization_by_id, validate_organization
 from app.crud.project import (
@@ -14,6 +14,7 @@ from app.crud.project import (
     get_projects_by_organization,
     hard_delete_project,
     soft_delete_project,
+    update_project_settings,
 )
 from app.crud.user_project import (
     deactivate_users_without_projects,
@@ -25,6 +26,7 @@ from app.models import (
     Project,
     ProjectCreate,
     ProjectPublic,
+    ProjectSettingsUpdate,
     ProjectUpdate,
 )
 from app.utils import APIResponse, load_description
@@ -76,6 +78,30 @@ def read_projects(
 )
 def create_new_project(*, session: SessionDep, project_in: ProjectCreate):
     project = create_project(session=session, project_create=project_in)
+    return APIResponse.success_response(project)
+
+
+@router.patch(
+    "/settings",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    response_model=APIResponse[ProjectPublic],
+    description=load_description("projects/update_settings.md"),
+)
+def update_project_settings_route(
+    *,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    settings_in: ProjectSettingsUpdate,
+) -> APIResponse[ProjectPublic]:
+    settings_patch = settings_in.model_dump(exclude_unset=True)
+    if not settings_patch:
+        raise HTTPException(status_code=400, detail="No settings provided")
+
+    project = update_project_settings(
+        session=session,
+        project_id=auth_context.project.id,
+        settings_patch=settings_patch,
+    )
     return APIResponse.success_response(project)
 
 

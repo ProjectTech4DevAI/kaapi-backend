@@ -22,6 +22,7 @@ from app.crud.evaluations.fast import (
     _is_failure_threshold_breached,
     _stage1_responses,
     _stage2_embeddings,
+    _stage3_score_and_trace,
     run_fast_evaluation,
 )
 from app.models import Config, EvaluationDataset, EvaluationRun
@@ -670,7 +671,9 @@ def _fast_pipeline_mocks():
     not need a model_config row.
     """
     with (
-        patch("app.crud.evaluations.fast.fetch_dataset_items") as mock_fetch_items,
+        patch(
+            "app.crud.evaluations.fast.load_evaluation_dataset_items"
+        ) as mock_fetch_items,
         patch(
             "app.crud.evaluations.fast._upload_unit_to_s3",
             side_effect=lambda **kw: f"s3://bucket/{kw['filename']}",
@@ -814,6 +817,108 @@ class TestFastPipelineEndToEnd:
 # ---------------------------------------------------------------------------
 # Failure-threshold short-circuit (FR-14)
 # ---------------------------------------------------------------------------
+
+
+class TestStage3OptOut:
+    """`_stage3_score_and_trace` with tracing off (langfuse=None): cosine
+    persists keyed by item_id and every unscoreable reason is classified."""
+
+    def test_opt_out_scores_and_classifies_unscoreable(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+    ):
+        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_openai_config(db, user_api_key.project_id)
+        eval_run = EvaluationRun(
+            run_name="stage3-opt-out",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config_id=config.id,
+            config_version=1,
+            status="processing",
+            run_mode=RunModeEnum.FAST.value,
+            total_items=4,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        response_results = [
+            {
+                "item_id": "ok",
+                "question": "Q",
+                "generated_output": "a",
+                "ground_truth": "a",
+                "question_id": 1,
+            },
+            {
+                "item_id": "no_out",
+                "question": "Q",
+                "generated_output": "",
+                "ground_truth": "a",
+                "question_id": 2,
+            },
+            {
+                "item_id": "no_gt",
+                "question": "Q",
+                "generated_output": "a",
+                "ground_truth": "",
+                "question_id": 3,
+            },
+            {
+                "item_id": "emb_fail",
+                "question": "Q",
+                "generated_output": "a",
+                "ground_truth": "a",
+                "question_id": 4,
+            },
+        ]
+        embedding_results = [
+            {
+                "item_id": "ok",
+                "output_embedding": [1.0, 0.0],
+                "ground_truth_embedding": [1.0, 0.0],
+                "failed": False,
+            },
+            {"item_id": "emb_fail", "failed": True},
+        ]
+
+        with (
+            patch(
+                "app.crud.evaluations.fast.resolve_model_from_config",
+                return_value="gpt-4o",
+            ),
+            patch("app.crud.evaluations.fast.attach_cost"),
+        ):
+            _, score, write_items = _stage3_score_and_trace(
+                session=db,
+                eval_run=eval_run,
+                langfuse=None,
+                response_results=response_results,
+                embedding_results=embedding_results,
+                log_prefix="[t]",
+            )
+
+        # No traces exist on opt-out, so nothing is queued for Langfuse.
+        assert write_items == []
+        # Cosine persists keyed by item_id (ref fallback), scoreable item only.
+        assert eval_run.per_item_scores == {"ok": pytest.approx(1.0, abs=1e-6)}
+        # Every unscoreable item is classified by its reason.
+        assert eval_run.unscoreable == {
+            "no_out": "empty_output",
+            "no_gt": "empty_ground_truth",
+            "emb_fail": "embedding_failed",
+        }
+        # UI records render for every item, keyed by the item_id ref.
+        by_ref = {t["trace_id"]: t for t in score["traces"]}
+        assert set(by_ref) == {"ok", "no_out", "no_gt", "emb_fail"}
+        assert (
+            by_ref["no_out"]["scores"][0]["comment"] == "Cannot compute: empty_output"
+        )
+        assert by_ref["no_out"]["scores"][0]["unscoreable"] is True
 
 
 class TestFailureThresholdInPipeline:

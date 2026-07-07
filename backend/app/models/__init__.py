@@ -180,6 +180,7 @@ from .project import (
     ProjectCreate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectSettingsUpdate,
     ProjectUpdate,
 )
 from .response import (

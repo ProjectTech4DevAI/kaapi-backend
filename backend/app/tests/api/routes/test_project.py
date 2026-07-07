@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.crud.project import create_project, get_project_by_id
 from app.main import app
 from app.models import Organization, Project, ProjectCreate
+from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_organization, create_test_project
 from app.tests.utils.utils import random_lower_string
 
@@ -320,3 +321,37 @@ def test_read_projects_by_inactive_organization(
         headers=superuser_token_headers,
     )
     assert response.status_code == 403
+
+
+def test_update_project_settings_route(
+    client: TestClient,
+    db: Session,
+    user_api_key: TestAuthContext,
+    user_api_key_header: dict[str, str],
+) -> None:
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/settings",
+        json={"tracing": True},
+        headers=user_api_key_header,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["settings"]["tracing"] is True
+
+    db.expire_all()
+    project = get_project_by_id(session=db, project_id=user_api_key.project_id)
+    assert project.settings["tracing"] is True
+
+
+def test_update_project_settings_route_empty_body_400(
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+) -> None:
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/settings",
+        json={},
+        headers=user_api_key_header,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "No settings provided"
