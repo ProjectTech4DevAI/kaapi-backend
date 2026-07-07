@@ -25,8 +25,8 @@ def get_service_name(provider: str) -> str:
     """Get the collection service name for a provider."""
     names = {
         "openai": "openai vector store",
+        "google-aistudio": "gemini file search store",
         #   "bedrock": "bedrock knowledge base",
-        #  "gemini": "gemini file search store",
     }
     return names.get(provider.lower(), "")
 
