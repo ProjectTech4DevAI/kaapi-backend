@@ -480,6 +480,48 @@ class TestDatasetUploadErrors:
             assert data["object_store_url"] == "s3://bucket/datasets/test_dataset.csv"
             mock_langfuse_upload.assert_not_called()
 
+    def test_upload_returns_500_when_langfuse_upload_raises(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        valid_csv_content: str,
+    ) -> None:
+        """Tracing enabled but the Langfuse upload fails → 500."""
+        with (
+            patch("app.core.cloud.get_cloud_storage") as _mock_storage,
+            patch(
+                "app.services.evaluations.dataset.upload_csv_to_object_store"
+            ) as mock_store_upload,
+            patch(
+                "app.services.evaluations.dataset.get_tracing_client"
+            ) as mock_get_tracing_client,
+            patch(
+                "app.services.evaluations.dataset.upload_dataset_to_langfuse"
+            ) as mock_langfuse_upload,
+        ):
+            mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
+            mock_get_tracing_client.return_value = Mock()
+            mock_langfuse_upload.side_effect = Exception("Langfuse down")
+
+            filename, file_obj = create_csv_file(valid_csv_content)
+
+            response = client.post(
+                "/api/v1/evaluations/datasets",
+                files={"file": (filename, file_obj, "text/csv")},
+                data={
+                    "dataset_name": "test_dataset",
+                    "duplication_factor": 3,
+                },
+                headers=user_api_key_header,
+            )
+
+        assert response.status_code == 500, response.text
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert "Failed to upload dataset to Langfuse" in str(error_str)
+
     def test_upload_invalid_csv_format(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:

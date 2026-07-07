@@ -396,6 +396,29 @@ class TestCreateLangfuseDatasetRun:
         assert "question_id" not in trace_call.kwargs["metadata"]
 
 
+class TestLangfuseOptOutGuards:
+    """Tracing opt-out (langfuse=None) short-circuits before any API call."""
+
+    def test_create_langfuse_dataset_run_returns_empty_when_disabled(self) -> None:
+        assert (
+            create_langfuse_dataset_run(
+                langfuse=None,
+                dataset_name="test_dataset",
+                run_name="test_run",
+                results=[{"item_id": "item_1"}],
+            )
+            == {}
+        )
+
+    def test_upload_dataset_to_langfuse_returns_none_zero_when_disabled(self) -> None:
+        assert upload_dataset_to_langfuse(
+            langfuse=None,
+            items=[{"question": "q", "answer": "a"}],
+            dataset_name="test_dataset",
+            duplication_factor=3,
+        ) == (None, 0)
+
+
 class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""
 
