@@ -325,9 +325,9 @@ def _patch_dispatch() -> Iterator[MagicMock]:
         patch(
             "app.services.evaluations.fast.start_fast_evaluation_chunk",
             return_value="fake-task-id",
-        ) as m,
+        ) as mock_start_chunk,
     ):
-        yield m
+        yield mock_start_chunk
 
 
 class TestFastEvaluationRoute:
@@ -1193,7 +1193,8 @@ class TestFanOutPartition:
         )
         # Deliberately unsorted so the deterministic sort inside the worker matters.
         items = [
-            _dataset_item(x) for x in ["item-3", "item-1", "item-5", "item-2", "item-4"]
+            _dataset_item(item_id)
+            for item_id in ["item-3", "item-1", "item-5", "item-2", "item-4"]
         ]
 
         captured: list[list[str]] = []
@@ -1228,7 +1229,7 @@ class TestFanOutPartition:
                 )
 
         assert captured == [["item-1", "item-2"], ["item-3", "item-4"], ["item-5"]]
-        union = [item_id for slice_ in captured for item_id in slice_]
+        union = [item_id for chunk_slice in captured for item_id in chunk_slice]
         assert union == sorted(union)
         assert len(union) == len(set(union)) == 5
 

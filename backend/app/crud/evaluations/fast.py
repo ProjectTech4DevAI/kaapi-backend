@@ -560,25 +560,25 @@ def _merge_response_chunks(
         return eval_run, cached
 
     chunk_jobs = list_response_chunk_jobs(session=session, eval_run_id=eval_run.id)
-    by_index: dict[int, BatchJob] = {}
+    chunk_job_by_index: dict[int, BatchJob] = {}
     for job in chunk_jobs:
-        idx = int(job.config.get(CHUNK_CONFIG_INDEX, -1))
-        if job.raw_output_url and idx not in by_index:
-            by_index[idx] = job
+        chunk_index = int(job.config.get(CHUNK_CONFIG_INDEX, -1))
+        if job.raw_output_url and chunk_index not in chunk_job_by_index:
+            chunk_job_by_index[chunk_index] = job
 
     results: list[dict[str, Any]] = []
-    for idx in sorted(by_index):
+    for chunk_index in sorted(chunk_job_by_index):
         results.extend(
             _load_unit_from_s3(
                 session=session,
                 project_id=eval_run.project_id,
-                url=by_index[idx].raw_output_url,
+                url=chunk_job_by_index[chunk_index].raw_output_url,
             )
         )
 
     logger.info(
         f"[_merge_response_chunks] {log_prefix} Merged chunks | "
-        f"chunks={len(by_index)} | items={len(results)}"
+        f"chunks={len(chunk_job_by_index)} | items={len(results)}"
     )
 
     raw_output_url = _upload_unit_to_s3(
@@ -589,7 +589,11 @@ def _merge_response_chunks(
         results=results,
     )
 
-    model = next(iter(by_index.values())).config.get("model") if by_index else None
+    model = (
+        next(iter(chunk_job_by_index.values())).config.get("model")
+        if chunk_job_by_index
+        else None
+    )
     summed_usage = _sum_usage(
         results, ("input_tokens", "output_tokens", "total_tokens")
     )
