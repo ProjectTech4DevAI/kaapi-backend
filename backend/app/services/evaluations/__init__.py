@@ -9,6 +9,7 @@ from app.services.evaluations.fast import (
     execute_fast_evaluation_aggregate,
     execute_fast_evaluation_chunk,
     is_dataset_fast_eligible,
+    resolve_default_run_mode,
     validate_and_start_fast_evaluation,
 )
 from app.services.evaluations.prompt_improvement import (

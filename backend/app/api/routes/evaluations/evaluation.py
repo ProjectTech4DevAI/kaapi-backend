@@ -23,6 +23,7 @@ from app.models.evaluation import EvaluationRunPublic, RunModeEnum
 from app.services.evaluations import (
     get_evaluation_with_scores,
     improve_prompt,
+    resolve_default_run_mode,
     validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
@@ -54,12 +55,24 @@ def evaluate(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
-    run_mode: RunModeEnum = Body(
-        default=RunModeEnum.BATCH,
-        description="Execution mode: 'batch' (default) or 'fast'",
+    run_mode: RunModeEnum
+    | None = Body(
+        default=None,
+        description=(
+            "Execution mode: 'batch' or 'fast'. Omit to auto-select fast for "
+            "datasets within the fast-mode size cap, batch otherwise."
+        ),
     ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
+    if run_mode is None:
+        run_mode = resolve_default_run_mode(
+            session=session,
+            dataset_id=dataset_id,
+            organization_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
+        )
+
     logger.info(
         f"[evaluate] Starting evaluation | run_mode={run_mode.value} | "
         f"experiment_name={experiment_name} | dataset_id={dataset_id} | "

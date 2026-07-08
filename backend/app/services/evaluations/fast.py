@@ -49,6 +49,32 @@ def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
     return original_items_count <= settings.EVAL_FAST_MAX_UNIQUE_ROWS
 
 
+def resolve_default_run_mode(
+    *,
+    session: Session,
+    dataset_id: int,
+    organization_id: int,
+    project_id: int,
+) -> RunModeEnum:
+    """Auto-pick fast when dataset within fast cap, else batch (missing dataset → batch, downstream owns 404)."""
+    dataset = get_dataset_by_id(
+        session=session,
+        dataset_id=dataset_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    original_items_count = (
+        (dataset.dataset_metadata or {}).get("original_items_count")
+        if dataset
+        else None
+    )
+    if original_items_count is not None and is_dataset_fast_eligible(
+        original_items_count=original_items_count
+    ):
+        return RunModeEnum.FAST
+    return RunModeEnum.BATCH
+
+
 def validate_and_start_fast_evaluation(
     *,
     session: Session,
