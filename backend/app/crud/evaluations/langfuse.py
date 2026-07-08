@@ -102,10 +102,10 @@ def create_langfuse_dataset_run(
         dataset = langfuse.get_dataset(dataset_name)
         dataset_items_map = {item.id: item for item in dataset.items}
 
-        trace_id_mapping = {}
-
-        # Create a trace for each result
-        for result in results:
+        def _create_single_trace(result: dict[str, Any]) -> tuple[str, str] | None:
+            """Create one trace (+ generation) for a result. Returns
+            (item_id, trace_id) or None on skip/failure — never raises so one
+            bad item can't abort the batch."""
             item_id = result["item_id"]
             question = result["question"]
             generated_output = result["generated_output"]
@@ -120,7 +120,7 @@ def create_langfuse_dataset_run(
                     f"[create_langfuse_dataset_run] Dataset item not found, skipping | "
                     f"item_id={item_id}"
                 )
-                continue
+                return None
 
             try:
                 with dataset_item.observe(run_name=run_name) as trace_id:
@@ -172,7 +172,7 @@ def create_langfuse_dataset_run(
                             usage=usage,
                         )
 
-                    trace_id_mapping[item_id] = trace_id
+                    return item_id, trace_id
 
             except Exception as e:
                 if getattr(e, "status_code", None) == 429:
@@ -186,7 +186,18 @@ def create_langfuse_dataset_run(
                         f"item_id={item_id} | {e}",
                         exc_info=True,
                     )
-                continue
+                return None
+
+        # Trace writes are IO-bound (one HTTP call each) — fan out so the
+        # aggregate stage stays under CELERY_TASK_SOFT_TIME_LIMIT at high N.
+        trace_id_mapping = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(_create_single_trace, r) for r in results]
+            for future in as_completed(futures):
+                mapping = future.result()
+                if mapping:
+                    item_id, trace_id = mapping
+                    trace_id_mapping[item_id] = trace_id
 
         langfuse.flush()
         logger.info(
