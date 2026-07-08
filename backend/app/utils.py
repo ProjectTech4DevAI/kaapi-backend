@@ -31,7 +31,7 @@ from sqlmodel import Session
 from app.core import security
 from app.core.audio_utils import AudioRef
 from app.core.config import settings
-from app.crud.credentials import get_provider_credential
+from app.crud.credentials import get_provider_credential, get_tracing_credential
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -347,6 +347,15 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
         )
 
 
+def _build_langfuse_client(credentials: dict[str, Any]) -> Langfuse:
+    return Langfuse(
+        public_key=credentials["public_key"],
+        secret_key=credentials["secret_key"],
+        host=credentials["host"],
+        timeout=60,
+    )
+
+
 def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langfuse:
     """
     Fetch Langfuse credentials for the current org/project and return a configured client.
@@ -370,12 +379,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
         )
 
     try:
-        return Langfuse(
-            public_key=credentials["public_key"],
-            secret_key=credentials["secret_key"],
-            host=credentials["host"],
-            timeout=60,
-        )
+        return _build_langfuse_client(credentials)
     except Exception as e:
         logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
@@ -385,6 +389,38 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
             status_code=500,
             detail=f"Failed to configure Langfuse client: {str(e)}",
         )
+
+
+def get_tracing_client(
+    session: Session, org_id: int, project_id: int
+) -> Langfuse | None:
+    """Return the Langfuse client when the project opted into tracing, else None
+    (never raises), so evaluations degrade to cosine-only instead of failing."""
+    credentials = get_tracing_credential(
+        session=session,
+        org_id=org_id,
+        project_id=project_id,
+    )
+
+    if not credentials or not all(
+        key in credentials for key in ["public_key", "secret_key", "host"]
+    ):
+        logger.info(
+            f"[get_tracing_client] Tracing off or credentials missing; "
+            f"skipping Langfuse | project_id: {project_id}"
+        )
+        return None
+
+    try:
+        return _build_langfuse_client(credentials)
+    except Exception as e:
+        logger.warning(
+            f"[get_tracing_client] Failed to configure Langfuse client; "
+            f"continuing without tracing | project_id: {project_id} | "
+            f"error: {str(e)}",
+            exc_info=True,
+        )
+        return None
 
 
 def handle_openai_error(e: openai.OpenAIError) -> str:
