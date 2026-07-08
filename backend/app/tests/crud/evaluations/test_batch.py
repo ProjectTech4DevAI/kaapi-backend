@@ -78,6 +78,10 @@ class TestLoadEvaluationDatasetItems:
         assert items[0]["input"] == {"question": "q1"}
         assert items[0]["expected_output"] == {"answer": "a1"}
 
+        # question_id: 1-based int (Langfuse-upload parity), shared across a
+        # row's duplicates so the Q.ID column groups numerically.
+        assert [i["metadata"]["question_id"] for i in items] == [1, 1, 2, 2]
+
     def test_object_store_without_url_raises(self) -> None:
         """No client and no object-store URL cannot source items."""
         with patch(
