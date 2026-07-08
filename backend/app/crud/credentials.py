@@ -9,6 +9,7 @@ from app.core.exception_handlers import HTTPException
 from app.core.providers import validate_provider, validate_provider_credentials
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
+from app.crud.project import get_project_by_id
 from app.models import Credential, CredsCreate, CredsUpdate
 
 
@@ -165,6 +166,41 @@ def get_provider_credential(
         return creds if full else decrypt_credentials(creds.credential)
 
     return None
+
+
+def get_tracing_credential(
+    *,
+    session: Session,
+    org_id: int,
+    project_id: int | str,
+) -> dict[str, Any] | None:
+    """Return langfuse credentials only when the project opted into tracing.
+
+    Tracing is gated by the project's `settings["tracing"]` flag (off by
+    default). When disabled, returns None so LangfuseTracer /
+    observe_llm_execution degrade to a no-op and evaluations (via
+    get_tracing_client) fall back to cosine-only scoring.
+    """
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
+        logger.info(
+            f"[get_tracing_credential] Invalid project_id; tracing off | "
+            f"project_id={project_id}"
+        )
+        return None
+
+    project = get_project_by_id(session=session, project_id=pid)
+    if not project or not (project.settings or {}).get("tracing", False):
+        logger.info(f"[get_tracing_credential] Tracing disabled | project_id={pid}")
+        return None
+
+    return get_provider_credential(
+        session=session,
+        org_id=org_id,
+        project_id=pid,
+        provider="langfuse",
+    )
 
 
 def get_providers(*, session: Session, org_id: int, project_id: int) -> list[str]:

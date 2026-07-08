@@ -24,14 +24,17 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     run_fast_evaluation,
 )
-from app.crud.evaluations.batch import fetch_dataset_items
+from app.crud.evaluations.batch import (
+    load_evaluation_dataset_items,
+    use_langfuse_client,
+)
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.fast import mark_response_chunk_failed, run_response_chunk
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.evaluations.evaluation import create_evaluation_run_or_409
 from app.services.llm.providers import LLMProvider
-from app.utils import get_langfuse_client, get_openai_client
+from app.utils import get_openai_client, get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +94,12 @@ def validate_and_start_fast_evaluation(
                 "organization/project"
             ),
         )
-    if not dataset.langfuse_dataset_id:
+    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
-                "evaluation."
+                f"Dataset {dataset_id} has no Langfuse nor object-store backing; "
+                "cannot run evaluation."
             ),
         )
 
@@ -162,13 +165,13 @@ def validate_and_start_fast_evaluation(
     # parallel chunk tasks drain the responses stage across workers. Any failure
     # here marks the run failed so it never lingers in `processing`.
     try:
-        langfuse_client = get_langfuse_client(
+        langfuse_client = get_tracing_client(
             session=session,
             org_id=organization_id,
             project_id=project_id,
         )
-        dataset_items = fetch_dataset_items(
-            langfuse=langfuse_client, dataset_name=dataset.name
+        dataset_items = load_evaluation_dataset_items(
+            session=session, eval_run=eval_run, langfuse=langfuse_client
         )
         total_items = len(dataset_items)
         if total_items == 0:
@@ -232,8 +235,11 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 
 def _resolve_config_and_clients(
     *, session: Session, eval_run: EvaluationRun
-) -> tuple[TextLLMParams, OpenAI, Langfuse]:
-    """Resolve the run's text config and build its OpenAI + Langfuse clients."""
+) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
+    """Resolve the run's text config and build its OpenAI + Langfuse clients.
+
+    The Langfuse client is None when the project opted out of tracing (#996) so
+    the run degrades to cosine-only instead of failing."""
     config_blob, error = resolve_evaluation_config(
         session=session,
         config_id=eval_run.config_id,
@@ -249,7 +255,7 @@ def _resolve_config_and_clients(
         org_id=eval_run.organization_id,
         project_id=eval_run.project_id,
     )
-    langfuse_client = get_langfuse_client(
+    langfuse_client = get_tracing_client(
         session=session,
         org_id=eval_run.organization_id,
         project_id=eval_run.project_id,
@@ -284,8 +290,8 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             text_params, openai_client, langfuse_client = _resolve_config_and_clients(
                 session=session, eval_run=eval_run
             )
-            dataset_items = fetch_dataset_items(
-                langfuse=langfuse_client, dataset_name=eval_run.dataset_name
+            dataset_items = load_evaluation_dataset_items(
+                session=session, eval_run=eval_run, langfuse=langfuse_client
             )
             # Deterministic partition: identical order across every chunk task so
             # slices never overlap or miss items.
@@ -351,6 +357,11 @@ def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
         try:
             _, openai_client, langfuse_client = _resolve_config_and_clients(
                 session=session, eval_run=eval_run
+            )
+            # Trace only a Langfuse-backed dataset — an opt-out or S3-backed run
+            # degrades to cosine-only rather than writing orphan traces.
+            langfuse_client = use_langfuse_client(
+                session=session, eval_run=eval_run, langfuse=langfuse_client
             )
             run_fast_evaluation(
                 session=session,
