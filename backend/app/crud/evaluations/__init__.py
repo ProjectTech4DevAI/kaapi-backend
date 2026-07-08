@@ -30,7 +30,6 @@ from app.crud.evaluations.fast import (
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
     list_response_chunk_jobs,
-    mark_response_chunk_failed,
     run_fast_evaluation,
     run_response_chunk,
 )
@@ -83,7 +82,6 @@ __all__ = [
     "JOB_TYPE_EVALUATION_FAST",
     "JOB_TYPE_EVALUATION_FAST_CHUNK",
     "list_response_chunk_jobs",
-    "mark_response_chunk_failed",
     "run_fast_evaluation",
     "run_response_chunk",
     # Processing

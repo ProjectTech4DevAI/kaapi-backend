@@ -67,10 +67,9 @@ from app.crud.job import (
     create_batch_job,
     delete_batch_job,
     get_batch_job,
-    update_batch_job,
 )
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.batch_job import BatchJob, BatchJobCreate, BatchJobUpdate
+from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.llm.mappers import map_kaapi_to_openai_params
@@ -409,44 +408,13 @@ def _get_chunk_job(
     return session.exec(statement).first()
 
 
-def mark_response_chunk_failed(
-    *,
-    session: Session,
-    eval_run: EvaluationRun,
-    chunk_index: int,
-    error_message: str,
-) -> None:
-    """Mark an existing chunk batch_job failed, leaving `raw_output_url` unset.
-
-    The barrier treats the chunk as not-done and the cron healer re-enqueues it.
-    A failure before the chunk row is created (the common case — the row is only
-    written after the S3 upload succeeds) is a no-op: the healer re-enqueues the
-    missing index regardless, so no placeholder row is needed.
-    """
-    existing = _get_chunk_job(
-        session=session, eval_run_id=eval_run.id, chunk_index=chunk_index
-    )
-    if existing is not None:
-        update_batch_job(
-            session=session,
-            batch_job=existing,
-            batch_job_update=BatchJobUpdate(
-                provider_status="failed", error_message=error_message
-            ),
-        )
-
-
 def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> None:
-    """Delete the per-chunk S3 files + batch_job rows after a run completes.
+    """Delete the per-chunk S3 files + batch_job rows once a run completes.
 
-    Runs once in the aggregate, after Stage 4 marks the run completed and the
-    canonical `responses_{run}.json` + canonical batch_job already hold the full
-    merged set. Leaves exactly one S3 file + one batch_job per completed run.
-
-    ponytail: best-effort. A failed delete leaves an orphan chunk file/row,
-    which is harmless (never read again — merge reloads only the canonical unit
-    via eval_run.batch_job_id) — so this never fails the run. Failed runs skip
-    this entirely (they never reach Stage 4), keeping chunks for the healer.
+    ponytail: best-effort reaper. A failed delete leaves an orphan that's
+    harmless to reads (merge reloads the canonical unit via batch_job_id); its
+    only cost is DB+S3 bloat no lifecycle rule reaps, so it never fails the run.
+    Failed runs skip this (never reach here), keeping chunks for the healer.
     """
     try:
         storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
@@ -477,19 +445,15 @@ def run_response_chunk(
     chunk_index: int,
     log_prefix: str,
 ) -> None:
-    """One responses chunk: the Stage-1 ThreadPool loop over a slice of items.
+    """Run the responses stage over one slice of dataset items.
 
-    Persists a partial unit to `responses_{eval_run_id}_{chunk_index}.json` and
-    records a chunk batch_job. Idempotent: if this (eval_run, chunk_index)
-    already has a raw_output_url, the OpenAI calls are skipped so Celery
-    redelivery (or a cron re-enqueue) never re-charges the provider. The failure
-    threshold is NOT checked here — it is decided over the merged full set at
-    aggregation, not per chunk.
+    Idempotent: skipped when this (eval_run, chunk_index) already has a
+    raw_output_url, so redelivery or a cron re-enqueue never re-charges OpenAI.
+    The failure threshold is not checked here — it's decided over the merged set
+    at aggregation.
 
-    Concurrency: mirrors `_merge_response_chunks`' single-in-flight assumption.
-    Two workers racing the same chunk_index could both pass the skip guard and
-    write two rows; the merge de-duplicates per chunk_index so the merged set
-    stays correct.
+    Concurrency: two workers racing the same chunk_index can both pass the skip
+    guard and write two rows; the merge de-duplicates per index.
     """
     existing = _get_chunk_job(
         session=session, eval_run_id=eval_run.id, chunk_index=chunk_index
@@ -575,16 +539,12 @@ def _merge_response_chunks(
     session: Session,
     eval_run: EvaluationRun,
 ) -> tuple[EvaluationRun, list[dict[str, Any]]]:
-    """Concatenate every response chunk unit into the canonical responses unit.
+    """Concatenate every response chunk into the canonical responses unit.
 
-    Skipped on retry when `eval_run.batch_job_id` is already set: the canonical
-    unit is reloaded from S3 (mirrors the old Stage-1 skip) so aggregate
-    redelivery never re-merges. Chunks are ordered by chunk_index and
-    de-duplicated per index (a healer re-enqueue may race a slow chunk) so the
-    merged order — and therefore the scores — is reproducible. Then it uploads
-    the canonical `responses_{eval_run.id}.json`, creates the canonical
-    responses batch_job, and sets `eval_run.batch_job_id` so the downstream
-    stages and retry-skip keep working unchanged.
+    Skipped on retry when `eval_run.batch_job_id` is set (canonical unit
+    reloaded from S3) so aggregate redelivery never re-merges. Chunks are
+    ordered by index and de-duplicated per index — a healer re-enqueue may race
+    a slow chunk — so the merged order, and the scores, stay reproducible.
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
@@ -975,13 +935,12 @@ def run_fast_evaluation(
     langfuse: Langfuse | None,
     eval_run: EvaluationRun,
 ) -> EvaluationRun:
-    """Aggregate a fast-eval run once its response chunks are all done.
+    """Merge the response chunks, then run embeddings + scoring + completion.
 
-    Called from the `run_evaluation_fast_aggregate` task (the cron barrier only
-    enqueues it after every chunk has a raw_output_url). Merges the chunk units
-    into the canonical responses unit, then runs the embeddings + scoring +
-    completion stages exactly as before. Stages are skipped on retry when their
-    batch_job marker is set. Raises on terminal failure (run marked failed).
+    Called from `run_evaluation_fast_aggregate` (the cron barrier enqueues it
+    only after every chunk has a raw_output_url). Stages are skipped on retry
+    when their batch_job marker is set. Raises on terminal failure (run marked
+    failed).
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
@@ -997,7 +956,7 @@ def run_fast_evaluation(
             update=EvaluationRunUpdate(status="processing"),
         )
 
-    # Stage 1 — merge the parallel response chunks into the canonical unit.
+    # Stage 1 — merge the response chunks.
     eval_run, response_results = _merge_response_chunks(
         session=session,
         eval_run=eval_run,
@@ -1045,8 +1004,6 @@ def run_fast_evaluation(
         ),
     )
 
-    # Collapse the now-redundant chunk artifacts: the canonical unit holds the
-    # full merged set, so a completed run keeps one S3 file + one batch_job.
     _cleanup_response_chunks(session=session, eval_run=eval_run)
 
     # Stage 5a — write cosine scores to Langfuse after completion (mirrors the

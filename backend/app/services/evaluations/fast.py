@@ -29,7 +29,7 @@ from app.crud.evaluations.batch import (
     use_langfuse_client,
 )
 from app.crud.evaluations.core import update_evaluation_run
-from app.crud.evaluations.fast import mark_response_chunk_failed, run_response_chunk
+from app.crud.evaluations.fast import run_response_chunk
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.evaluations.evaluation import create_evaluation_run_or_409
@@ -264,13 +264,12 @@ def _resolve_config_and_clients(
 
 
 def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None:
-    """Worker-side entry point for one responses chunk.
+    """Worker entry point for one responses chunk.
 
     Called from `run_evaluation_fast_chunk`. Slices the dataset deterministically
-    (sorted by item id so every chunk task partitions the same way) and delegates
-    to `run_response_chunk`. On failure it marks ONLY this chunk's batch_job
-    failed — the run's fate is decided at aggregation / by the cron healer — then
-    re-raises so Celery records the failure.
+    (sorted by item id so every chunk task partitions the same way), delegates to
+    `run_response_chunk`, and re-raises on failure so Celery records it — the
+    run's fate is decided at aggregation / by the cron healer.
     """
     logger.info(
         f"[execute_fast_evaluation_chunk] Starting | "
@@ -293,8 +292,7 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             dataset_items = load_evaluation_dataset_items(
                 session=session, eval_run=eval_run, langfuse=langfuse_client
             )
-            # Deterministic partition: identical order across every chunk task so
-            # slices never overlap or miss items.
+            # Same order across every chunk task, so slices never overlap or miss.
             dataset_items.sort(key=lambda item: item["id"])
             start = chunk_index * settings.EVAL_FAST_CHUNK_SIZE
             items_slice = dataset_items[start : start + settings.EVAL_FAST_CHUNK_SIZE]
@@ -315,31 +313,23 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             )
 
         except Exception as exc:
+            # No per-chunk failed marker: the cron healer re-enqueues any index
+            # without a raw_output_url, so a failed chunk is already retried.
             logger.error(
                 f"[execute_fast_evaluation_chunk] Chunk failed | "
                 f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | error={exc}",
                 exc_info=True,
             )
-            session.rollback()
-            failed_run = session.get(EvaluationRun, eval_run_id)
-            if failed_run is not None:
-                mark_response_chunk_failed(
-                    session=session,
-                    eval_run=failed_run,
-                    chunk_index=chunk_index,
-                    error_message=f"Fast eval chunk failed: {exc}",
-                )
             raise
 
 
 def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
-    """Worker-side entry point for the fan-in aggregate.
+    """Worker entry point for the fan-in aggregate.
 
-    Called from `run_evaluation_fast_aggregate`. Merges the response chunks and
-    runs embeddings + scoring + completion via `run_fast_evaluation`. This task
-    owns the run's completed/failed transition (and the notification side effect
-    via `update_evaluation_run`), so on terminal failure it marks the whole run
-    failed and re-raises.
+    Called from `run_evaluation_fast_aggregate`. Merges the chunks and runs
+    embeddings + scoring + completion via `run_fast_evaluation`. Owns the run's
+    completed/failed transition, so on terminal failure it marks the run failed
+    and re-raises.
     """
     logger.info(
         f"[execute_fast_evaluation_aggregate] Starting | eval_run_id={eval_run_id}"
@@ -355,8 +345,18 @@ def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
             return
 
         try:
-            _, openai_client, langfuse_client = _resolve_config_and_clients(
-                session=session, eval_run=eval_run
+            # No config resolve here: re-resolving a config edited/pruned since
+            # dispatch would fail a run whose chunks already succeeded. Aggregate
+            # needs only the two clients.
+            openai_client = get_openai_client(
+                session=session,
+                org_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            langfuse_client = get_tracing_client(
+                session=session,
+                org_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
             )
             # Trace only a Langfuse-backed dataset — an opt-out or S3-backed run
             # degrades to cosine-only rather than writing orphan traces.

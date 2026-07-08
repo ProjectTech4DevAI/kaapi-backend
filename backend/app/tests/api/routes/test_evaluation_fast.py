@@ -1096,45 +1096,16 @@ class TestCleanupResponseChunks:
 
 
 class TestChunkFailureIsolation:
-    def test_chunk_failure_marks_only_its_chunk_and_leaves_run_processing(
+    def test_chunk_failure_reraises_and_leaves_run_processing(
         self,
         db: Session,
         user_api_key: TestAuthContext,
-        monkeypatch,
     ):
-        # The worker's except-block rollback discards its own partial writes; in
-        # production the pre-seeded chunk row lives in a separate committed txn it
-        # can't touch. The shared single-transaction test session can't model that
-        # (a real rollback wipes the seed), and run_response_chunk raises before
-        # writing anything, so neutering rollback preserves the behavior asserted.
-        monkeypatch.setattr(db, "rollback", lambda: None)
+        # A failed chunk writes no marker: it simply leaves no raw_output_url, so
+        # the run stays `processing` and the cron healer re-enqueues the index.
         eval_run = _make_fast_run(
             db=db, user_api_key=user_api_key, status="processing", total_items=4
         )
-        # Pre-seed two chunk rows without raw_output_url so mark_response_chunk_failed
-        # has a row to flip (it is update-only).
-        chunk0 = BatchJob(
-            provider="openai",
-            job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
-            config={CHUNK_CONFIG_RUN_ID: eval_run.id, CHUNK_CONFIG_INDEX: 0},
-            total_items=0,
-            organization_id=eval_run.organization_id,
-            project_id=eval_run.project_id,
-        )
-        chunk1 = BatchJob(
-            provider="openai",
-            job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
-            config={CHUNK_CONFIG_RUN_ID: eval_run.id, CHUNK_CONFIG_INDEX: 1},
-            total_items=0,
-            organization_id=eval_run.organization_id,
-            project_id=eval_run.project_id,
-        )
-        db.add(chunk0)
-        db.add(chunk1)
-        db.commit()
-        db.refresh(chunk0)
-        db.refresh(chunk1)
-        chunk0_id, chunk1_id = chunk0.id, chunk1.id
 
         with (
             patch(
@@ -1161,11 +1132,11 @@ class TestChunkFailureIsolation:
             with pytest.raises(RuntimeError, match="boom"):
                 execute_fast_evaluation_chunk(eval_run_id=eval_run.id, chunk_index=0)
 
-        # The worker's rollback churns the savepoint; re-read fresh by id.
         db.expire_all()
-        assert db.get(BatchJob, chunk0_id).provider_status == "failed"
-        assert db.get(BatchJob, chunk1_id).provider_status is None
+        # No chunk row for the failed index, run untouched.
         assert db.get(EvaluationRun, eval_run.id).status == "processing"
+        chunk_rows = list_response_chunk_jobs(session=db, eval_run_id=eval_run.id)
+        assert chunk_rows == []
 
 
 # Fan-out partition (validate_and_start + execute_fast_evaluation_chunk)

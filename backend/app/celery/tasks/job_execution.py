@@ -359,15 +359,10 @@ def run_evaluation_fast_chunk(
     chunk_index: int,
     trace_id: str = DEFAULT_TRACE_ID,
 ) -> None:
-    """Run one parallel responses chunk of a fast EvaluationRun.
+    """Run one responses chunk of a fast EvaluationRun.
 
-    Idempotency: the chunk is skipped when its (eval_run, chunk_index) batch_job
+    Idempotent: the chunk is skipped when its (eval_run, chunk_index) batch_job
     already has a raw_output_url, so Celery redelivery never re-charges OpenAI.
-
-    Args:
-        eval_run_id: ID of the EvaluationRun (run_mode="fast").
-        chunk_index: Zero-based index of this chunk's dataset-item slice.
-        trace_id: Correlation id propagated from the enqueueing request.
     """
     from app.services.evaluations.fast import execute_fast_evaluation_chunk
 
@@ -396,10 +391,6 @@ def run_evaluation_fast_aggregate(
     Enqueued once by the cron barrier after every chunk has completed.
     Idempotent: each stage is skipped on retry when its `batch_job` marker is
     set, so redelivery never re-does completed work.
-
-    Args:
-        eval_run_id: ID of the EvaluationRun (run_mode="fast").
-        trace_id: Correlation id propagated from the enqueueing request.
     """
     from app.services.evaluations.fast import execute_fast_evaluation_aggregate
 

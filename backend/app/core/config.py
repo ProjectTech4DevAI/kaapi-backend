@@ -204,9 +204,8 @@ class Settings(BaseSettings):
     # Capped at 4 by default: higher values (8-10) across multiple Celery
     # workers can cause memory pressure on smaller EC2 instances.
     EVAL_FAST_API_CONCURRENCY: int = 4
-    # Items per parallel responses chunk task. ceil(total_items / this) chunk
-    # tasks fan out across workers so the responses stage drains in parallel and
-    # each task fits the plain CELERY_TASK_SOFT_TIME_LIMIT.
+    # Items per responses chunk task; smaller = more parallel workers and each
+    # task well under CELERY_TASK_SOFT_TIME_LIMIT.
     EVAL_FAST_CHUNK_SIZE: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
