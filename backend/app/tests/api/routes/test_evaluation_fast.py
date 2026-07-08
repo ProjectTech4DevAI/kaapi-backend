@@ -68,9 +68,7 @@ def _seeded_random() -> Iterator[None]:
     yield
 
 
-# ---------------------------------------------------------------------------
 # Pure-function helpers (no FastAPI, no DB)
-# ---------------------------------------------------------------------------
 
 
 class TestFailureThreshold:
@@ -130,9 +128,7 @@ class TestCallWithRetry:
         assert client.responses.create.call_count == 1
 
 
-# ---------------------------------------------------------------------------
 # Shared factories + mock boundaries
-# ---------------------------------------------------------------------------
 
 
 def _make_fast_eligible_dataset(
@@ -308,9 +304,7 @@ class _FakeSessionCtx:
         return False
 
 
-# ---------------------------------------------------------------------------
 # Route validation: POST /evaluations with run_mode=fast (FR-1..FR-5, FR-15)
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -502,9 +496,7 @@ class TestFastEvaluationRoute:
         assert resp.json()["data"]["run_mode"] == "fast"
 
 
-# ---------------------------------------------------------------------------
 # Dataset listing eligibility filter (FR-5)
-# ---------------------------------------------------------------------------
 
 
 class TestDatasetListEligibleForFast:
@@ -536,9 +528,7 @@ class TestDatasetListEligibleForFast:
         assert all(d["eligible_for_fast"] is True for d in data)
 
 
-# ---------------------------------------------------------------------------
 # Response fixtures for the OpenAI SDK shapes
-# ---------------------------------------------------------------------------
 
 
 def _fake_openai_response(text: str = "answer", item_id: str = "item-1"):
@@ -562,9 +552,7 @@ def _fake_embedding_response():
     )
 
 
-# ---------------------------------------------------------------------------
 # run_response_chunk: one parallel responses chunk + idempotency
-# ---------------------------------------------------------------------------
 
 
 class TestRunResponseChunk:
@@ -640,9 +628,7 @@ class TestRunResponseChunk:
         assert len([j for j in jobs if j.config[CHUNK_CONFIG_INDEX] == 0]) == 1
 
 
-# ---------------------------------------------------------------------------
 # _merge_response_chunks: concat in index order, dedup, retry-reload skip
-# ---------------------------------------------------------------------------
 
 
 class TestMergeResponseChunks:
@@ -729,9 +715,7 @@ class TestMergeResponseChunks:
         assert len(canonical_rows) == 1
 
 
-# ---------------------------------------------------------------------------
 # Stage skipping on retry (FR-7 — embeddings)
-# ---------------------------------------------------------------------------
 
 
 class TestStageSkipping:
@@ -793,9 +777,7 @@ class TestStageSkipping:
         fake_openai.embeddings.create.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
 # End-to-end aggregate pipeline with mocked externals (FR-9..FR-14)
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -910,9 +892,7 @@ class TestFastPipelineEndToEnd:
         assert sample["scores"][0]["value"] == pytest.approx(1.0, abs=0.01)
 
 
-# ---------------------------------------------------------------------------
 # Aggregate-level failure threshold (FR-14)
-# ---------------------------------------------------------------------------
 
 
 class TestAggregateFailureThreshold:
@@ -952,9 +932,166 @@ class TestAggregateFailureThreshold:
         fake_openai.embeddings.create.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
+# Post-completion chunk-artifact cleanup (_cleanup_response_chunks)
+
+
+def _persist_score_into(db: Session):
+    """save_score side_effect that mirrors its S3-success path onto the test session.
+
+    save_score opens its own Session(engine), invisible to this test's rolled-back
+    transaction; this makes the completion visible on `db` so the run keeps going.
+    """
+
+    def _fake_save_score(*, eval_run_id, score, **_):
+        run = db.get(EvaluationRun, eval_run_id)
+        run.score = {"summary_scores": score["summary_scores"]}
+        run.score_trace_url = f"s3://bucket/traces_{eval_run_id}.json"
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+    return _fake_save_score
+
+
+class TestCleanupResponseChunks:
+    """A completed run collapses its per-chunk artifacts; a failed run keeps them."""
+
+    def _run_to_completion(self, db, eval_run, fake_openai, storage):
+        with (
+            patch("app.crud.evaluations.fast.get_cloud_storage", return_value=storage),
+            patch(
+                "app.crud.evaluations.fast.save_score",
+                side_effect=_persist_score_into(db),
+            ),
+        ):
+            return run_fast_evaluation(
+                session=db,
+                openai_client=fake_openai,
+                langfuse=MagicMock(),
+                eval_run=eval_run,
+            )
+
+    def test_completed_run_deletes_chunk_rows_and_s3_files(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _fast_pipeline_mocks,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, status="pending")
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=0,
+            results=[_resp_result("item-1", "Q1", "A1", question_id=1)],
+            store=_fast_pipeline_mocks.store,
+        )
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=1,
+            results=[_resp_result("item-2", "Q2", "A2", question_id=2)],
+            store=_fast_pipeline_mocks.store,
+        )
+        chunk_urls = {
+            j.raw_output_url
+            for j in list_response_chunk_jobs(session=db, eval_run_id=eval_run.id)
+        }
+        assert len(chunk_urls) == 2
+
+        deleted: list[str] = []
+        storage = MagicMock()
+        storage.delete.side_effect = deleted.append
+
+        fake_openai = MagicMock()
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        result = self._run_to_completion(db, eval_run, fake_openai, storage)
+
+        assert result.status == "completed"
+        # Chunk rows gone, and every chunk S3 file was deleted.
+        assert list_response_chunk_jobs(session=db, eval_run_id=eval_run.id) == []
+        assert set(deleted) == chunk_urls
+        # Canonical responses job (JOB_TYPE_EVALUATION_FAST) is untouched.
+        canonical = db.get(BatchJob, result.batch_job_id)
+        assert canonical is not None
+        assert canonical.job_type == JOB_TYPE_EVALUATION_FAST
+        assert canonical.raw_output_url not in deleted
+
+    def test_failed_run_retains_chunk_artifacts(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        """A run that breaches the failure threshold never reaches Stage 4, so its
+        chunk rows/files survive for the cron healer — nothing is deleted."""
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+        # 3 of 4 failed → 0.75 > 0.5 threshold.
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=0,
+            results=[
+                _resp_result("item-0", "Q0", "A0", failed=True),
+                _resp_result("item-1", "Q1", "A1", failed=True),
+                _resp_result("item-2", "Q2", "A2", failed=True),
+                _resp_result("item-3", "Q3", "A3", failed=False),
+            ],
+            store=_s3_store,
+        )
+
+        storage = MagicMock()
+        fake_openai = MagicMock()
+        with patch("app.crud.evaluations.fast.get_cloud_storage", return_value=storage):
+            with pytest.raises(RuntimeError, match="failure threshold"):
+                run_fast_evaluation(
+                    session=db,
+                    openai_client=fake_openai,
+                    langfuse=MagicMock(),
+                    eval_run=eval_run,
+                )
+
+        assert list_response_chunk_jobs(session=db, eval_run_id=eval_run.id) != []
+        storage.delete.assert_not_called()
+
+    def test_cleanup_failure_does_not_fail_the_run(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _fast_pipeline_mocks,
+    ):
+        """storage.delete raising during cleanup is swallowed; the run still completes."""
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, status="pending")
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=0,
+            results=[_resp_result("item-1", "Q1", "A1", question_id=1)],
+            store=_fast_pipeline_mocks.store,
+        )
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=1,
+            results=[_resp_result("item-2", "Q2", "A2", question_id=2)],
+            store=_fast_pipeline_mocks.store,
+        )
+
+        storage = MagicMock()
+        storage.delete.side_effect = RuntimeError("s3 delete down")
+
+        fake_openai = MagicMock()
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        result = self._run_to_completion(db, eval_run, fake_openai, storage)
+
+        assert result.status == "completed"
+        # The swallow only counts if delete was actually attempted and raised.
+        storage.delete.assert_called()
+
+
 # Chunk failure isolation (execute_fast_evaluation_chunk)
-# ---------------------------------------------------------------------------
 
 
 class TestChunkFailureIsolation:
@@ -1030,9 +1167,7 @@ class TestChunkFailureIsolation:
         assert db.get(EvaluationRun, eval_run.id).status == "processing"
 
 
-# ---------------------------------------------------------------------------
 # Fan-out partition (validate_and_start + execute_fast_evaluation_chunk)
-# ---------------------------------------------------------------------------
 
 
 class TestFanOutPartition:
@@ -1124,9 +1259,7 @@ class TestFanOutPartition:
         assert len(union) == len(set(union)) == 5
 
 
-# ---------------------------------------------------------------------------
 # validate_and_start failure handling (dataset fetch error → 500 + failed run)
-# ---------------------------------------------------------------------------
 
 
 class TestValidateAndStartFailure:
@@ -1169,9 +1302,7 @@ class TestValidateAndStartFailure:
         assert failed.status == "failed"
 
 
-# ---------------------------------------------------------------------------
 # Cron fan-in barrier + stall healer (dispatch_fast_evaluation_barriers)
-# ---------------------------------------------------------------------------
 
 
 class TestCronBarrier:

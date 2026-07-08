@@ -63,7 +63,12 @@ from app.crud.evaluations.score import (
     TraceData,
     TraceScore,
 )
-from app.crud.job import create_batch_job, get_batch_job, update_batch_job
+from app.crud.job import (
+    create_batch_job,
+    delete_batch_job,
+    get_batch_job,
+    update_batch_job,
+)
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobCreate, BatchJobUpdate
 from app.models.evaluation import RunModeEnum
@@ -428,6 +433,37 @@ def mark_response_chunk_failed(
             batch_job_update=BatchJobUpdate(
                 provider_status="failed", error_message=error_message
             ),
+        )
+
+
+def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> None:
+    """Delete the per-chunk S3 files + batch_job rows after a run completes.
+
+    Runs once in the aggregate, after Stage 4 marks the run completed and the
+    canonical `responses_{run}.json` + canonical batch_job already hold the full
+    merged set. Leaves exactly one S3 file + one batch_job per completed run.
+
+    ponytail: best-effort. A failed delete leaves an orphan chunk file/row,
+    which is harmless (never read again — merge reloads only the canonical unit
+    via eval_run.batch_job_id) — so this never fails the run. Failed runs skip
+    this entirely (they never reach Stage 4), keeping chunks for the healer.
+    """
+    try:
+        storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
+        chunk_jobs = list_response_chunk_jobs(session=session, eval_run_id=eval_run.id)
+        for job in chunk_jobs:
+            if job.raw_output_url:
+                storage.delete(job.raw_output_url)
+            delete_batch_job(session, job)
+        logger.info(
+            f"[_cleanup_response_chunks] Removed {len(chunk_jobs)} chunk "
+            f"artifacts | eval_run_id={eval_run.id}"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[_cleanup_response_chunks] Cleanup failed (orphans harmless) | "
+            f"eval_run_id={eval_run.id} | error={exc}",
+            exc_info=True,
         )
 
 
@@ -1005,6 +1041,10 @@ def run_fast_evaluation(
             cost=eval_run.cost,
         ),
     )
+
+    # Collapse the now-redundant chunk artifacts: the canonical unit holds the
+    # full merged set, so a completed run keeps one S3 file + one batch_job.
+    _cleanup_response_chunks(session=session, eval_run=eval_run)
 
     # Stage 5a — write cosine scores to Langfuse after completion (mirrors the
     # batch path). is_score_updated tracks the outcome so a cron can retry the
