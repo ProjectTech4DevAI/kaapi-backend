@@ -4,10 +4,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from app.celery.utils import start_evaluation_batch_submission
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
@@ -20,14 +22,14 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     save_score,
     sort_traces_by_question_id,
-    start_evaluation_batch,
 )
+from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import CategoryMetrics, TraceData
-from app.models.evaluation import EvaluationRun, RunModeEnum
-from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
+from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
+from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider
-from app.utils import get_langfuse_client, get_openai_client
+from app.utils import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,16 @@ ERR_RUN_NAME_ALREADY_EXISTS = "run_name_already_exists"
 # evaluation_run. Used to distinguish a run_name collision (-> 409) from any
 # other IntegrityError (e.g. FK violations), which must not be masked.
 _RUN_NAME_UNIQUE_CONSTRAINT = "uq_evaluation_run_org_project_run_name"
+
+# Providers whose configs can run through the async batch evaluation path.
+# Mirrors app.services.assessment.service._SUPPORTED_BATCH_PROVIDERS — the
+# native variants forward raw params but still submit via the same batch API.
+_SUPPORTED_BATCH_PROVIDERS = {
+    LLMProvider.OPENAI,
+    LLMProvider.OPENAI_NATIVE,
+    LLMProvider.GOOGLE_AISTUDIO,
+    LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+}
 
 
 def _is_run_name_conflict(error: IntegrityError) -> bool:
@@ -202,8 +214,10 @@ def validate_and_start_batch_evaluation(
     Steps:
     1. Validate dataset exists and has Langfuse ID
     2. Resolve config from stored config management
-    3. Create evaluation run record
-    4. Start batch processing
+    3. Check the config provider is supported for batch evaluation
+    4. Check the config type is 'text'
+    5. Create evaluation run record
+    6. Start batch processing
 
     Args:
         session: Database session
@@ -249,11 +263,11 @@ def validate_and_start_batch_evaluation(
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
 
-    if not dataset.langfuse_dataset_id:
+    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
         raise HTTPException(
             status_code=400,
-            detail=f"Dataset {dataset_id} does not have a Langfuse dataset ID. "
-            "Please ensure Langfuse credentials were configured when the dataset was created.",
+            detail=f"Dataset {dataset_id} has no Langfuse nor object-store "
+            "backing; cannot run evaluation.",
         )
 
     # Step 2: Resolve config from stored config management
@@ -268,26 +282,27 @@ def validate_and_start_batch_evaluation(
             status_code=400,
             detail=f"Failed to resolve config from stored config: {error}",
         )
-    elif config.completion.provider != LLMProvider.OPENAI:
+    elif config.completion.provider not in _SUPPORTED_BATCH_PROVIDERS:
         raise HTTPException(
             status_code=422,
-            detail="Only 'openai' provider is supported for evaluation configs",
+            detail=(
+                f"Provider '{config.completion.provider}' is not supported for "
+                f"evaluation configs. Supported providers: "
+                f"{sorted(_SUPPORTED_BATCH_PROVIDERS)}"
+            ),
+        )
+
+    if config.completion.type != CompletionType.TEXT:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Config type '{config.completion.type}' is not supported for "
+                f"evaluation configs. Only '{CompletionType.TEXT.value}' type is supported."
+            ),
         )
 
     logger.info(
         "[validate_and_start_batch_evaluation] Successfully resolved config from config management"
-    )
-
-    # Get API clients
-    openai_client = get_openai_client(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-    )
-    langfuse = get_langfuse_client(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
     )
 
     # Step 3: Create EvaluationRun record with config references
@@ -303,39 +318,35 @@ def validate_and_start_batch_evaluation(
         log_context="validate_and_start_batch_evaluation",
     )
 
-    # Step 4: Start the batch evaluation
+    # Step 4: Queue the batch submission for asynchronous processing
+    trace_id = correlation_id.get() or "N/A"
     try:
-        # Convert params dict to appropriate model instance based on type
-        param_models = {
-            "text": TextLLMParams,
-            "stt": STTLLMParams,
-            "tts": TTSLLMParams,
-        }
-        model_class = param_models[config.completion.type]
-        validated_params = model_class.model_validate(config.completion.params)
-
-        eval_run = start_evaluation_batch(
-            langfuse=langfuse,
-            openai_client=openai_client,
-            session=session,
-            eval_run=eval_run,
-            config=validated_params,
+        celery_task_id = start_evaluation_batch_submission(
+            project_id=project_id,
+            job_id=str(eval_run.id),
+            trace_id=trace_id,
+            organization_id=organization_id,
+            config_id=str(config_id),
+            config_version=config_version,
         )
-
         logger.info(
-            f"[validate_and_start_batch_evaluation] Evaluation started successfully | "
-            f"batch_job_id={eval_run.batch_job_id} | total_items={eval_run.total_items}"
+            f"[validate_and_start_batch_evaluation] Batch submission queued | "
+            f"run_id={eval_run.id} | celery_task_id={celery_task_id}"
         )
-
         return eval_run
-
     except Exception as e:
         logger.error(
-            f"[validate_and_start_batch_evaluation] Failed to start evaluation | run_id={eval_run.id} | {e}",
+            f"[validate_and_start_batch_evaluation] Failed to queue batch submission | run_id={eval_run.id} | {e}",
             exc_info=True,
         )
-        # Error is already handled in start_evaluation_batch
-        session.refresh(eval_run)
+        eval_run = update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(
+                status="failed",
+                error_message=f"Failed to queue batch submission: {e}",
+            ),
+        )
         return eval_run
 
 
@@ -494,11 +505,35 @@ def get_evaluation_with_scores(
         )
 
     # Fetch fresh scores from Langfuse (first sync, or resync).
-    langfuse = get_langfuse_client(
+    langfuse = get_tracing_client(
         session=session,
         org_id=organization_id,
         project_id=project_id,
     )
+
+    # Opt-out: resync needs Langfuse (400); a normal read serves durable cosine.
+    if langfuse is None:
+        if resync_score:
+            raise HTTPException(
+                status_code=400,
+                detail="Tracing is disabled for this project; cannot resync "
+                "scores from Langfuse.",
+            )
+        cosine_score, _ = merge_scores_step_forward(
+            existing_score={
+                "summary_scores": (eval_run.score or {}).get("summary_scores", []),
+                "traces": cached_traces or [],
+            },
+            fresh_score={"summary_scores": [], "traces": []},
+            per_item_scores=eval_run.per_item_scores,
+        )
+        apply_cosine_breakdown(
+            cosine_score["summary_scores"],
+            total_items=eval_run.total_items,
+            unscoreable=eval_run.unscoreable,
+        )
+        eval_run.score = _attach_category_metrics(cosine_score)
+        return eval_run, None
 
     dataset_name = eval_run.dataset_name
     run_name = eval_run.run_name

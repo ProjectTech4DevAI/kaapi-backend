@@ -195,6 +195,41 @@ class TestCreateLangfuseDatasetRun:
         assert "item_1" in trace_id_mapping
         assert "item_2" not in trace_id_mapping
 
+    def test_create_langfuse_dataset_run_handles_rate_limit(self) -> None:
+        """A 429 status_code error is handled (logged distinctly) and skipped."""
+        mock_langfuse = MagicMock()
+        mock_dataset = MagicMock()
+
+        rate_limit_error = Exception("Too Many Requests")
+        rate_limit_error.status_code = 429
+
+        mock_item = MagicMock()
+        mock_item.id = "item_1"
+        mock_item.observe.side_effect = rate_limit_error
+
+        mock_dataset.items = [mock_item]
+        mock_langfuse.get_dataset.return_value = mock_dataset
+
+        results = [
+            {
+                "item_id": "item_1",
+                "question": "What is 2+2?",
+                "generated_output": "4",
+                "ground_truth": "4",
+                "response_id": "resp_123",
+                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            }
+        ]
+
+        trace_id_mapping = create_langfuse_dataset_run(
+            langfuse=mock_langfuse,
+            dataset_name="test_dataset",
+            run_name="test_run",
+            results=results,
+        )
+
+        assert trace_id_mapping == {}
+
     def test_create_langfuse_dataset_run_empty_results(self) -> None:
         """Test with empty results list."""
         mock_langfuse = MagicMock()
@@ -354,6 +389,29 @@ class TestCreateLangfuseDatasetRun:
         # Verify trace-level metadata has no question_id
         trace_attr_call = mock_set_trace_attributes.call_args
         assert "question_id" not in trace_attr_call.kwargs["metadata"]
+
+
+class TestLangfuseOptOutGuards:
+    """Tracing opt-out (langfuse=None) short-circuits before any API call."""
+
+    def test_create_langfuse_dataset_run_returns_empty_when_disabled(self) -> None:
+        assert (
+            create_langfuse_dataset_run(
+                langfuse=None,
+                dataset_name="test_dataset",
+                run_name="test_run",
+                results=[{"item_id": "item_1"}],
+            )
+            == {}
+        )
+
+    def test_upload_dataset_to_langfuse_returns_none_zero_when_disabled(self) -> None:
+        assert upload_dataset_to_langfuse(
+            langfuse=None,
+            items=[{"question": "q", "answer": "a"}],
+            dataset_name="test_dataset",
+            duplication_factor=3,
+        ) == (None, 0)
 
 
 class TestUpdateTracesWithCosineScores:

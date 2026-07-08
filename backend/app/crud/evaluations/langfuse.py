@@ -46,7 +46,7 @@ def _write_trace_score(
 
 
 def create_langfuse_dataset_run(
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     dataset_name: str,
     run_name: str,
     results: list[dict[str, Any]],
@@ -88,11 +88,15 @@ def create_langfuse_dataset_run(
         model: Model name used for evaluation (for cost calculation by Langfuse)
 
     Returns:
-        dict[str, str]: Mapping of item_id to Langfuse trace_id
+        dict[str, str]: Mapping of item_id to Langfuse trace_id. Empty when
+            tracing is disabled (langfuse is None).
 
     Raises:
         Exception: If Langfuse operations fail
     """
+    if langfuse is None:
+        return {}
+
     logger.info(
         f"[create_langfuse_dataset_run] Creating Langfuse dataset run | "
         f"run_name={run_name} | dataset={dataset_name} | items={len(results)}"
@@ -281,11 +285,11 @@ def update_traces_with_cosine_scores(
 
 
 def upload_dataset_to_langfuse(
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     items: list[dict[str, str]],
     dataset_name: str,
     duplication_factor: int,
-) -> tuple[str, int]:
+) -> tuple[str | None, int]:
     """
     Upload a dataset to Langfuse from pre-parsed items.
 
@@ -296,11 +300,15 @@ def upload_dataset_to_langfuse(
         duplication_factor: Number of times to duplicate each item
 
     Returns:
-        Tuple of (langfuse_dataset_id, total_items_uploaded)
+        Tuple of (langfuse_dataset_id, total_items_uploaded). Returns
+        (None, 0) when tracing is disabled (langfuse is None).
 
     Raises:
         Exception: If Langfuse operations fail
     """
+    if langfuse is None:
+        return None, 0
+
     logger.info(
         f"[upload_dataset_to_langfuse] Uploading dataset to Langfuse | "
         f"dataset={dataset_name} | items={len(items)} | "

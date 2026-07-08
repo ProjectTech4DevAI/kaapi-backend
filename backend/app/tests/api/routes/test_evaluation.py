@@ -1,15 +1,27 @@
 import io
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from app.crud.evaluations.batch import build_evaluation_jsonl
-from app.models import EvaluationDataset, EvaluationRun
-from app.models.llm.request import TextLLMParams
+from app.core.util import now
+from app.crud.evaluations.batch import (
+    build_google_evaluation_jsonl,
+    build_openai_evaluation_jsonl,
+    start_evaluation_batch,
+)
+from app.crud.evaluations.core import create_evaluation_run
+from app.models import (
+    BatchJob,
+    EvaluationDataset,
+    EvaluationRun,
+    Organization,
+    Project,
+)
+from app.models.batch_job import BatchJobType
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
 
@@ -67,7 +79,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -151,7 +163,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -199,7 +211,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -243,7 +255,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -288,7 +300,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -392,7 +404,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_langfuse_client"
+                "app.services.evaluations.dataset.get_tracing_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -427,22 +439,28 @@ class TestDatasetUploadDuplication:
 class TestDatasetUploadErrors:
     """Test error handling."""
 
-    def test_upload_langfuse_configuration_fails(
+    def test_upload_succeeds_without_langfuse_when_tracing_off(
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
         valid_csv_content: str,
     ) -> None:
-        """Test when Langfuse client configuration fails."""
+        """With tracing opt-out (get_tracing_client returns None), the dataset is
+        created from object store only; no Langfuse upload, no error."""
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
-            patch("app.crud.credentials.get_provider_credential") as mock_get_cred,
+            patch(
+                "app.services.evaluations.dataset.get_tracing_client"
+            ) as mock_get_tracing_client,
+            patch(
+                "app.services.evaluations.dataset.upload_dataset_to_langfuse"
+            ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
-            mock_get_cred.return_value = None
+            mock_get_tracing_client.return_value = None
 
             filename, file_obj = create_csv_file(valid_csv_content)
 
@@ -456,17 +474,53 @@ class TestDatasetUploadErrors:
                 headers=user_api_key_header,
             )
 
-            # Accept either 400 (credentials not configured) or 500 (configuration/auth fails)
-            assert response.status_code in [400, 500]
-            response_data = response.json()
-            error_str = response_data.get(
-                "detail", response_data.get("message", str(response_data))
+            assert response.status_code == 200, response.text
+            data = response.json()["data"]
+            assert data["langfuse_dataset_id"] is None
+            assert data["object_store_url"] == "s3://bucket/datasets/test_dataset.csv"
+            mock_langfuse_upload.assert_not_called()
+
+    def test_upload_returns_500_when_langfuse_upload_raises(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        valid_csv_content: str,
+    ) -> None:
+        """Tracing enabled but the Langfuse upload fails → 500."""
+        with (
+            patch("app.core.cloud.get_cloud_storage") as _mock_storage,
+            patch(
+                "app.services.evaluations.dataset.upload_csv_to_object_store"
+            ) as mock_store_upload,
+            patch(
+                "app.services.evaluations.dataset.get_tracing_client"
+            ) as mock_get_tracing_client,
+            patch(
+                "app.services.evaluations.dataset.upload_dataset_to_langfuse"
+            ) as mock_langfuse_upload,
+        ):
+            mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
+            mock_get_tracing_client.return_value = Mock()
+            mock_langfuse_upload.side_effect = Exception("Langfuse down")
+
+            filename, file_obj = create_csv_file(valid_csv_content)
+
+            response = client.post(
+                "/api/v1/evaluations/datasets",
+                files={"file": (filename, file_obj, "text/csv")},
+                data={
+                    "dataset_name": "test_dataset",
+                    "duplication_factor": 3,
+                },
+                headers=user_api_key_header,
             )
-            assert (
-                "langfuse" in error_str.lower()
-                or "credential" in error_str.lower()
-                or "unauthorized" in error_str.lower()
-            )
+
+        assert response.status_code == 500, response.text
+        response_data = response.json()
+        error_str = response_data.get(
+            "detail", response_data.get("error", str(response_data))
+        )
+        assert "Failed to upload dataset to Langfuse" in str(error_str)
 
     def test_upload_invalid_csv_format(
         self, client: TestClient, user_api_key_header: dict[str, str]
@@ -597,10 +651,18 @@ class TestBatchEvaluation:
 
 
 class TestBatchEvaluationJSONLBuilding:
-    """Test JSONL building logic for batch evaluation."""
+    """Test JSONL building logic for batch evaluation.
+
+    ``build_openai_evaluation_jsonl`` wraps an already-mapped ``openai_params``
+    dict (the output of ``map_kaapi_to_openai_params``) into Responses API batch
+    lines: ``body`` is the params dict plus the per-item ``input``. Param shaping
+    (temperature inclusion, knowledge_base_ids -> tools) is the mapper's job and
+    is covered in tests/services/llm/test_mappers.py, so these tests pass plain
+    pre-mapped dicts and assert faithful pass-through.
+    """
 
     def test_build_batch_jsonl_basic(self) -> None:
-        """Test basic JSONL building with minimal config."""
+        """Test basic JSONL building with a fully populated params dict."""
         dataset_items = [
             {
                 "id": "item1",
@@ -610,13 +672,13 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o",
-            temperature=0.2,
-            instructions="You are a helpful assistant",
-        )
+        openai_params = {
+            "model": "gpt-4o",
+            "temperature": 0.2,
+            "instructions": "You are a helpful assistant",
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert isinstance(jsonl_data[0], dict)
@@ -631,7 +693,7 @@ class TestBatchEvaluationJSONLBuilding:
         assert request["body"]["input"] == "What is 2+2?"
 
     def test_build_batch_jsonl_with_tools(self) -> None:
-        """Test JSONL building with tools configuration."""
+        """Tools present in the params dict are passed through to the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -641,13 +703,19 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o-mini",
-            instructions="Search documents",
-            knowledge_base_ids=["vs_abc123"],
-        )
+        openai_params = {
+            "model": "gpt-4o-mini",
+            "instructions": "Search documents",
+            "tools": [
+                {
+                    "type": "file_search",
+                    "vector_store_ids": ["vs_abc123"],
+                    "max_num_results": 20,
+                }
+            ],
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         request = jsonl_data[0]
@@ -655,7 +723,7 @@ class TestBatchEvaluationJSONLBuilding:
         assert "vs_abc123" in request["body"]["tools"][0]["vector_store_ids"]
 
     def test_build_batch_jsonl_minimal_config(self) -> None:
-        """Test JSONL building with minimal config (only model required)."""
+        """Test JSONL building with minimal params (only model)."""
         dataset_items = [
             {
                 "id": "item1",
@@ -665,9 +733,9 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o")  # Only model provided
+        openai_params = {"model": "gpt-4o"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         request = jsonl_data[0]
@@ -697,9 +765,9 @@ class TestBatchEvaluationJSONLBuilding:
             },
         ]
 
-        config = TextLLMParams(model="gpt-4o", instructions="Test")
+        openai_params = {"model": "gpt-4o", "instructions": "Test"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         # Should only have 1 valid item
         assert len(jsonl_data) == 1
@@ -717,12 +785,12 @@ class TestBatchEvaluationJSONLBuilding:
             for i in range(5)
         ]
 
-        config = TextLLMParams(
-            model="gpt-4o",
-            instructions="Answer questions",
-        )
+        openai_params = {
+            "model": "gpt-4o",
+            "instructions": "Answer questions",
+        }
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 5
 
@@ -732,7 +800,7 @@ class TestBatchEvaluationJSONLBuilding:
             assert request_dict["body"]["model"] == "gpt-4o"
 
     def test_build_batch_jsonl_temperature_included_when_explicitly_set(self) -> None:
-        """When temperature is explicitly set, it should appear in the JSONL body."""
+        """A temperature present in the params dict appears in the JSONL body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -742,16 +810,16 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o", temperature=0.5)
+        openai_params = {"model": "gpt-4o", "temperature": 0.5}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" in jsonl_data[0]["body"]
         assert jsonl_data[0]["body"]["temperature"] == 0.5
 
     def test_build_batch_jsonl_temperature_excluded_when_not_set(self) -> None:
-        """When temperature is not explicitly set, it should NOT appear in the JSONL body."""
+        """A temperature absent from the params dict stays absent from the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -761,10 +829,10 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        # Only model provided — temperature not in model_fields_set
-        config = TextLLMParams(model="gpt-4o")
+        # Mapper omits temperature when it was never set, so it isn't in the dict.
+        openai_params = {"model": "gpt-4o"}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" not in jsonl_data[0]["body"]
@@ -772,7 +840,7 @@ class TestBatchEvaluationJSONLBuilding:
     def test_build_batch_jsonl_temperature_zero_included_when_explicitly_set(
         self,
     ) -> None:
-        """When temperature is explicitly set to 0.0, it should still appear in the body."""
+        """A temperature of 0.0 in the params dict is preserved in the body."""
         dataset_items = [
             {
                 "id": "item1",
@@ -782,13 +850,341 @@ class TestBatchEvaluationJSONLBuilding:
             }
         ]
 
-        config = TextLLMParams(model="gpt-4o", temperature=0.0)
+        openai_params = {"model": "gpt-4o", "temperature": 0.0}
 
-        jsonl_data = build_evaluation_jsonl(dataset_items, config)
+        jsonl_data = build_openai_evaluation_jsonl(dataset_items, openai_params)
 
         assert len(jsonl_data) == 1
         assert "temperature" in jsonl_data[0]["body"]
         assert jsonl_data[0]["body"]["temperature"] == 0.0
+
+
+class TestBuildGoogleEvaluationJSONL:
+    """Test JSONL building for Gemini batch evaluation.
+
+    ``build_google_evaluation_jsonl`` wraps an already-mapped ``google_params``
+    dict (output of ``map_kaapi_to_google_params``) into Gemini batch lines:
+    ``{"key": <item_id>, "request": {...}}``. The request always carries the
+    per-item question in ``contents``; ``instructions``/``temperature``/
+    ``reasoning`` are folded into ``systemInstruction``/``generationConfig`` only
+    when present, so these tests pass pre-mapped dicts and assert that shaping.
+    """
+
+    def _items(self, *questions: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"item{i}",
+                "input": {"question": q},
+                "expected_output": {"answer": "a"},
+                "metadata": {},
+            }
+            for i, q in enumerate(questions)
+        ]
+
+    def test_basic_question_only(self) -> None:
+        """A bare params dict produces contents but no system/generation config."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("What is 2+2?"), {"model": "gemini-2.5-pro"}
+        )
+
+        assert len(jsonl_data) == 1
+        line = jsonl_data[0]
+        assert line["key"] == "item0"
+        request = line["request"]
+        assert request["contents"] == [
+            {"parts": [{"text": "What is 2+2?"}], "role": "user"}
+        ]
+        assert "systemInstruction" not in request
+        assert "generationConfig" not in request
+
+    def test_instructions_become_system_instruction(self) -> None:
+        """``instructions`` are mapped into ``systemInstruction``."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"),
+            {"model": "gemini-2.5-pro", "instructions": "Be concise"},
+        )
+
+        request = jsonl_data[0]["request"]
+        assert request["systemInstruction"] == {"parts": [{"text": "Be concise"}]}
+
+    def test_temperature_in_generation_config(self) -> None:
+        """``temperature`` goes into ``generationConfig``."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"), {"model": "gemini-2.5-pro", "temperature": 0.3}
+        )
+
+        assert jsonl_data[0]["request"]["generationConfig"]["temperature"] == 0.3
+
+    def test_temperature_zero_included(self) -> None:
+        """A temperature of 0.0 is preserved (not treated as absent)."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"), {"model": "gemini-2.5-pro", "temperature": 0.0}
+        )
+
+        assert jsonl_data[0]["request"]["generationConfig"]["temperature"] == 0.0
+
+    def test_reasoning_becomes_thinking_config(self) -> None:
+        """``reasoning`` is mapped into ``thinkingConfig``."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"), {"model": "gemini-2.5-pro", "reasoning": "high"}
+        )
+
+        thinking = jsonl_data[0]["request"]["generationConfig"]["thinkingConfig"]
+        assert thinking == {"includeThoughts": False, "thinkingLevel": "high"}
+
+    def test_full_params(self) -> None:
+        """All optional fields together populate both config blocks."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"),
+            {
+                "model": "gemini-2.5-pro",
+                "instructions": "sys",
+                "temperature": 0.7,
+                "reasoning": "low",
+            },
+        )
+
+        request = jsonl_data[0]["request"]
+        assert request["systemInstruction"] == {"parts": [{"text": "sys"}]}
+        assert request["generationConfig"]["temperature"] == 0.7
+        assert request["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "low"
+
+    def test_skips_empty_and_missing_questions(self) -> None:
+        """Items with empty or missing questions are dropped."""
+        dataset_items = [
+            {
+                "id": "ok",
+                "input": {"question": "Real"},
+                "expected_output": {},
+                "metadata": {},
+            },
+            {
+                "id": "empty",
+                "input": {"question": ""},
+                "expected_output": {},
+                "metadata": {},
+            },
+            {"id": "missing", "input": {}, "expected_output": {}, "metadata": {}},
+        ]
+
+        jsonl_data = build_google_evaluation_jsonl(
+            dataset_items, {"model": "gemini-2.5-pro"}
+        )
+
+        assert len(jsonl_data) == 1
+        assert jsonl_data[0]["key"] == "ok"
+
+    def test_multiple_items(self) -> None:
+        """Each item yields one line keyed by its id."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q0", "Q1", "Q2"), {"model": "gemini-2.5-pro"}
+        )
+
+        assert [line["key"] for line in jsonl_data] == ["item0", "item1", "item2"]
+        assert jsonl_data[1]["request"]["contents"][0]["parts"][0]["text"] == "Q1"
+
+
+_BATCH_DATASET_ITEMS = [
+    {
+        "id": "item1",
+        "input": {"question": "What is 2+2?"},
+        "expected_output": {"answer": "4"},
+        "metadata": {},
+    }
+]
+
+
+class TestStartEvaluationBatch:
+    """Test start_evaluation_batch, the provider-dispatching orchestrator."""
+
+    @pytest.fixture
+    def eval_run(self, db: Session) -> EvaluationRun:
+        """A persisted EvaluationRun in the default (pending) state."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+        dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=org.id,
+            project_id=project.id,
+            name="test_dataset_start_batch",
+            description="Test dataset",
+            original_items_count=1,
+            duplication_factor=1,
+        )
+        config = create_test_config(db, project_id=project.id, use_kaapi_schema=True)
+        return create_evaluation_run(
+            session=db,
+            run_name="start_batch_run",
+            dataset_name=dataset.name,
+            dataset_id=dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=org.id,
+            project_id=project.id,
+        )
+
+    def _make_batch_job(
+        self, db: Session, eval_run: EvaluationRun, provider: str
+    ) -> BatchJob:
+        """Persist a BatchJob to stand in for start_batch_job's return value."""
+        batch_job = BatchJob(
+            provider=provider,
+            provider_batch_id="batch_xyz",
+            provider_status="submitted",
+            job_type=BatchJobType.EVALUATION,
+            total_items=1,
+            status="submitted",
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+            inserted_at=now(),
+            updated_at=now(),
+        )
+        db.add(batch_job)
+        db.commit()
+        db.refresh(batch_job)
+        return batch_job
+
+    @patch("app.crud.evaluations.batch.start_batch_job")
+    @patch("app.crud.evaluations.batch.OpenAIBatchProvider")
+    @patch("app.crud.evaluations.batch.get_openai_client")
+    @patch("app.crud.evaluations.batch.map_kaapi_to_openai_params")
+    @patch("app.crud.evaluations.batch.fetch_dataset_items")
+    def test_openai_branch(
+        self,
+        mock_fetch,
+        mock_map,
+        mock_get_client,
+        mock_provider_cls,
+        mock_start_batch,
+        db: Session,
+        eval_run: EvaluationRun,
+    ) -> None:
+        mock_fetch.return_value = _BATCH_DATASET_ITEMS
+        mock_map.return_value = ({"model": "gpt-4o"}, [])
+        batch_job = self._make_batch_job(db, eval_run, "openai")
+        mock_start_batch.return_value = batch_job
+
+        result = start_evaluation_batch(
+            langfuse=MagicMock(),
+            session=db,
+            eval_run=eval_run,
+            params={"model": "gpt-4o"},
+            provider="openai",
+        )
+
+        assert result.status == "processing"
+        assert result.batch_job_id == batch_job.id
+        assert result.total_items == 1
+        assert mock_start_batch.call_args.kwargs["provider_name"] == "openai"
+        mock_get_client.assert_called_once()
+
+    @patch("app.crud.evaluations.batch.start_batch_job")
+    @patch("app.crud.evaluations.batch.OpenAIBatchProvider")
+    @patch("app.crud.evaluations.batch.get_openai_client")
+    @patch("app.crud.evaluations.batch.map_kaapi_to_openai_params")
+    @patch("app.crud.evaluations.batch.fetch_dataset_items")
+    def test_native_suffix_resolves_to_base_provider(
+        self,
+        mock_fetch,
+        mock_map,
+        mock_get_client,
+        mock_provider_cls,
+        mock_start_batch,
+        db: Session,
+        eval_run: EvaluationRun,
+    ) -> None:
+        """An 'openai-native' provider runs through the OpenAI branch."""
+        mock_fetch.return_value = _BATCH_DATASET_ITEMS
+        mock_map.return_value = ({"model": "gpt-4o"}, ["warn"])
+        mock_start_batch.return_value = self._make_batch_job(db, eval_run, "openai")
+
+        result = start_evaluation_batch(
+            langfuse=MagicMock(),
+            session=db,
+            eval_run=eval_run,
+            params={"model": "gpt-4o"},
+            provider="openai-native",
+        )
+
+        assert result.status == "processing"
+        assert mock_start_batch.call_args.kwargs["provider_name"] == "openai"
+
+    @patch("app.crud.evaluations.batch.start_batch_job")
+    @patch("app.crud.evaluations.batch.GeminiBatchProvider")
+    @patch("app.crud.evaluations.batch.GeminiClient")
+    @patch("app.crud.evaluations.batch.map_kaapi_to_google_params")
+    @patch("app.crud.evaluations.batch.fetch_dataset_items")
+    def test_google_branch(
+        self,
+        mock_fetch,
+        mock_map,
+        mock_gemini_client,
+        mock_provider_cls,
+        mock_start_batch,
+        db: Session,
+        eval_run: EvaluationRun,
+    ) -> None:
+        mock_fetch.return_value = _BATCH_DATASET_ITEMS
+        mock_map.return_value = ({"model": "gemini-2.5-pro"}, [])
+        batch_job = self._make_batch_job(db, eval_run, "google-aistudio")
+        mock_start_batch.return_value = batch_job
+
+        result = start_evaluation_batch(
+            langfuse=MagicMock(),
+            session=db,
+            eval_run=eval_run,
+            params={"model": "gemini-2.5-pro"},
+            provider="google-aistudio",
+        )
+
+        assert result.status == "processing"
+        assert result.batch_job_id == batch_job.id
+        assert mock_start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
+        mock_gemini_client.from_credentials.assert_called_once()
+
+    @patch("app.crud.evaluations.batch.fetch_dataset_items")
+    def test_unsupported_provider_marks_failed(
+        self, mock_fetch, db: Session, eval_run: EvaluationRun
+    ) -> None:
+        mock_fetch.return_value = _BATCH_DATASET_ITEMS
+
+        with pytest.raises(ValueError, match="Unsupported provider"):
+            start_evaluation_batch(
+                langfuse=MagicMock(),
+                session=db,
+                eval_run=eval_run,
+                params={"model": "claude"},
+                provider="anthropic",
+            )
+
+        db.refresh(eval_run)
+        assert eval_run.status == "failed"
+        assert eval_run.error_message
+
+    @patch("app.crud.evaluations.batch.map_kaapi_to_openai_params")
+    @patch("app.crud.evaluations.batch.fetch_dataset_items")
+    def test_empty_jsonl_marks_failed(
+        self, mock_fetch, mock_map, db: Session, eval_run: EvaluationRun
+    ) -> None:
+        """No questions in the dataset -> empty JSONL -> failure."""
+        mock_fetch.return_value = [
+            {"id": "x", "input": {}, "expected_output": {}, "metadata": {}}
+        ]
+        mock_map.return_value = ({"model": "gpt-4o"}, [])
+
+        with pytest.raises(ValueError, match="did not produce any JSONL"):
+            start_evaluation_batch(
+                langfuse=MagicMock(),
+                session=db,
+                eval_run=eval_run,
+                params={"model": "gpt-4o"},
+                provider="openai",
+            )
+
+        db.refresh(eval_run)
+        assert eval_run.status == "failed"
 
 
 class TestGetEvaluationRunStatus:

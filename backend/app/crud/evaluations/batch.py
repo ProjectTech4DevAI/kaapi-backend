@@ -11,15 +11,29 @@ import logging
 from typing import Any
 
 from langfuse import Langfuse
-from openai import OpenAI
 from sqlmodel import Session
 
-from app.core.batch.base import BATCH_KEY
-
-from app.core.batch import OpenAIBatchProvider, start_batch_job
+from app.core.batch import (
+    BATCH_KEY,
+    GeminiBatchProvider,
+    OpenAIBatchProvider,
+    start_batch_job,
+)
+from app.core.batch.client import GeminiClient
+from app.core.cloud import get_cloud_storage
+from app.crud.evaluations.dataset import (
+    download_csv_from_object_store,
+    get_dataset_by_id,
+)
+from app.crud.evaluations.score import DEFAULT_CATEGORY
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJobType
-from app.models.llm.request import KaapiLLMParams
+from app.services.llm.mappers import (
+    map_kaapi_to_google_params,
+    map_kaapi_to_openai_params,
+)
+from app.services.llm.providers.registry import LLMProvider
+from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -62,149 +76,280 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
     return items
 
 
-def build_evaluation_jsonl(
-    dataset_items: list[dict[str, Any]], config: KaapiLLMParams
+def use_langfuse_client(
+    session: Session,
+    eval_run: EvaluationRun,
+    langfuse: Langfuse | None,
+) -> Langfuse | None:
+    """Return the live client only if the run's dataset is Langfuse-backed, else
+    None, so an opt-out dataset is never traced even if the flag is later on."""
+    if langfuse is None:
+        return None
+
+    dataset = get_dataset_by_id(
+        session=session,
+        dataset_id=eval_run.dataset_id,
+        organization_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+    )
+    return langfuse if (dataset and dataset.langfuse_dataset_id) else None
+
+
+def load_evaluation_dataset_items(
+    session: Session,
+    eval_run: EvaluationRun,
+    langfuse: Langfuse | None,
 ) -> list[dict[str, Any]]:
+    """Load dataset items from Langfuse when a (reconciled) client is present,
+    else from the dataset's object-store CSV."""
+    dataset = get_dataset_by_id(
+        session=session,
+        dataset_id=eval_run.dataset_id,
+        organization_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+    )
+    if not dataset:
+        raise ValueError(f"Dataset {eval_run.dataset_id} not found")
+
+    if langfuse is not None:
+        return fetch_dataset_items(
+            langfuse=langfuse, dataset_name=eval_run.dataset_name
+        )
+
+    return _load_items_from_object_store(session=session, dataset=dataset)
+
+
+def _load_items_from_object_store(
+    session: Session, dataset: Any
+) -> list[dict[str, Any]]:
+    """Load items from the dataset's object-store CSV with deterministic ids."""
+    from app.services.evaluations.validators import parse_csv_items
+
+    if not dataset.object_store_url:
+        raise ValueError(f"Dataset {dataset.id} has no object-store backing")
+
+    storage = get_cloud_storage(session=session, project_id=dataset.project_id)
+    csv_content = download_csv_from_object_store(
+        storage=storage, object_store_url=dataset.object_store_url
+    )
+    original_items = parse_csv_items(csv_content)
+    duplication_factor = max(
+        1, int((dataset.dataset_metadata or {}).get("duplication_factor", 1))
+    )
+
+    items: list[dict[str, Any]] = []
+    for row_idx, item in enumerate(original_items):
+        for dup_idx in range(duplication_factor):
+            items.append(
+                {
+                    "id": f"item_{row_idx}_{dup_idx}",
+                    "input": {"question": item["question"]},
+                    "expected_output": {"answer": item["answer"]},
+                    "metadata": {
+                        "category": item.get("category") or DEFAULT_CATEGORY,
+                        "question_id": f"item_{row_idx}",
+                    },
+                }
+            )
+    return items
+
+
+def build_openai_evaluation_jsonl(
+    dataset_items: list[dict[str, Any]], openai_params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Build OpenAI Responses API batch JSONL from Langfuse dataset items.
+
+    Each line:
+    {
+        BATCH_KEY: <dataset_item_id>,
+        "method": "POST",
+        "url": "/v1/responses",
+        "body": { ...openai_params, "input": <question> }
+    }
     """
-    Build JSONL data for evaluation batch using OpenAI Responses API.
-
-    Each line is a dict with:
-    - BATCH_KEY: Unique identifier for the request (dataset item ID)
-    - method: POST
-    - url: /v1/responses
-    - body: Response request using config as-is with input from dataset
-
-    Args:
-        dataset_items: List of dataset items from Langfuse
-        config: Evaluation configuration dict with OpenAI Responses API parameters.
-            This config is used as-is in the body, with only "input" being added
-            from the dataset. Config can include any fields like:
-            - model (required)
-            - instructions
-            - tools
-            - reasoning
-            - text
-            - temperature
-            - include
-            etc.
-
-    Returns:
-        List of dictionaries (JSONL data)
-    """
-    jsonl_data = []
+    jsonl_data: list[dict[str, Any]] = []
     for item in dataset_items:
-        # Extract question from input
         question = item["input"].get("question", "")
         if not question:
             logger.warning(
-                f"[build_evaluation_jsonl] Skipping item - no question found | item_id={item['id']}"
+                f"[build_openai_evaluation_jsonl] Skipping item - no question found | item_id={item['id']}"
             )
             continue
 
-        # Build the batch request object for Responses API
-        # Use config as-is and only add the input field
-        body: dict[str, Any] = {
-            "model": config.model,
-            "instructions": config.instructions,
-            "input": question,  # Add input from dataset
+        body = dict(openai_params)
+        body["input"] = question
+
+        jsonl_data.append(
+            {
+                BATCH_KEY: item["id"],
+                "method": "POST",
+                "url": "/v1/responses",
+                "body": body,
+            }
+        )
+    return jsonl_data
+
+
+def build_google_evaluation_jsonl(
+    dataset_items: list[dict[str, Any]], google_params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Build Gemini batch JSONL from Langfuse dataset items.
+
+    Each line:
+    {
+        "key": <dataset_item_id>,
+        "request": { contents, systemInstruction?, generationConfig? }
+    }
+    """
+    jsonl_data: list[dict[str, Any]] = []
+    system_instruction = google_params.get("instructions")
+
+    generation_config: dict[str, Any] = {}
+    temperature = google_params.get("temperature")
+    if temperature is not None:
+        generation_config["temperature"] = temperature
+    reasoning = google_params.get("reasoning")
+    if reasoning:
+        generation_config["thinkingConfig"] = {
+            "includeThoughts": False,
+            "thinkingLevel": reasoning,
         }
 
-        if "temperature" in config.model_fields_set:
-            body["temperature"] = config.temperature
+    for item in dataset_items:
+        question = item["input"].get("question", "")
+        if not question:
+            logger.warning(
+                f"[build_google_evaluation_jsonl] Skipping item - no question found | item_id={item['id']}"
+            )
+            continue
 
-        # Add reasoning only if provided
-        if config.reasoning:
-            body["reasoning"] = {"effort": config.reasoning}
-
-        # Add tools only if knowledge_base_ids are provided
-        if config.knowledge_base_ids:
-            body["tools"] = [
-                {
-                    "type": "file_search",
-                    "vector_store_ids": config.knowledge_base_ids,
-                    "max_num_results": config.max_num_results or 20,
-                }
-            ]
-
-        batch_request = {
-            BATCH_KEY: item["id"],
-            "method": "POST",
-            "url": "/v1/responses",
-            "body": body,
+        request: dict[str, Any] = {
+            "contents": [{"parts": [{"text": question}], "role": "user"}],
         }
+        if system_instruction:
+            request["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+        if generation_config:
+            request["generationConfig"] = generation_config
 
-        jsonl_data.append(batch_request)
+        jsonl_data.append({"key": item["id"], "request": request})
+
     return jsonl_data
 
 
 def start_evaluation_batch(
-    langfuse: Langfuse,
-    openai_client: OpenAI,
+    langfuse: Langfuse | None,
     session: Session,
     eval_run: EvaluationRun,
-    config: KaapiLLMParams,
+    params: dict[str, Any],
+    provider: str,
 ) -> EvaluationRun:
     """
-    Fetch data, build JSONL, and start evaluation batch.
-
-    This function orchestrates the evaluation-specific logic and delegates
-    to the generic batch infrastructure for actual batch creation.
+    Fetch dataset, build JSONL, submit batch via the appropriate provider.
 
     Args:
         langfuse: Configured Langfuse client
-        openai_client: Configured OpenAI client
         session: Database session
-        eval_run: EvaluationRun database object (with run_name, dataset_name, config)
-        config: KaapiLLMParams with model, instructions, knowledge_base_ids, etc.
+        eval_run: EvaluationRun database object
+        params: Kaapi-standardized completion params (dict)
+        provider: Completion provider ("openai" or "google-aistudio", with optional "-native" suffix)
 
     Returns:
         Updated EvaluationRun with batch_job_id populated
-
-    Raises:
-        Exception: If any step fails
     """
     try:
-        # Step 1: Fetch dataset items from Langfuse
         logger.info(
-            f"[start_evaluation_batch] Starting evaluation batch | run={eval_run.run_name}"
+            f"[start_evaluation_batch] Starting evaluation batch | run={eval_run.run_name} | provider={provider}"
         )
-        dataset_items = fetch_dataset_items(
-            langfuse=langfuse, dataset_name=eval_run.dataset_name
+        dataset_items = load_evaluation_dataset_items(
+            session=session, eval_run=eval_run, langfuse=langfuse
         )
 
-        # Step 2: Build evaluation-specific JSONL
-        jsonl_data = build_evaluation_jsonl(dataset_items=dataset_items, config=config)
+        base_provider = provider.replace("-native", "")
 
-        if not jsonl_data:
-            raise ValueError(
-                "Evaluation dataset did not produce any JSONL entries (missing questions?)."
+        if base_provider == LLMProvider.OPENAI:
+            mapped_params, warnings = map_kaapi_to_openai_params(
+                session=session, kaapi_params=params
+            )
+            if warnings:
+                logger.info("[start_evaluation_batch] Mapper warnings: %s", warnings)
+
+            jsonl_data = build_openai_evaluation_jsonl(
+                dataset_items=dataset_items, openai_params=mapped_params
+            )
+            if not jsonl_data:
+                raise ValueError(
+                    "Evaluation dataset did not produce any JSONL entries (missing questions?)."
+                )
+
+            openai_client = get_openai_client(
+                session=session,
+                org_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            batch_provider = OpenAIBatchProvider(client=openai_client)
+
+            batch_config = {
+                "endpoint": "/v1/responses",
+                "description": f"Evaluation: {eval_run.run_name}",
+                "completion_window": "24h",
+                "evaluation_config": params,
+            }
+
+            batch_job = start_batch_job(
+                session=session,
+                provider=batch_provider,
+                provider_name="openai",
+                job_type=BatchJobType.EVALUATION,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+                jsonl_data=jsonl_data,
+                config=batch_config,
             )
 
-        # Step 3: Create batch provider
-        provider = OpenAIBatchProvider(client=openai_client)
+        elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
+            mapped_params, warnings = map_kaapi_to_google_params(
+                kaapi_params=params, completion_type="text"
+            )
+            if warnings:
+                logger.info("[start_evaluation_batch] Mapper warnings: %s", warnings)
 
-        # Step 4: Prepare batch configuration
-        batch_config = {
-            "endpoint": "/v1/responses",
-            "description": f"Evaluation: {eval_run.run_name}",
-            "completion_window": "24h",
-            # Store complete config for reference
-            "evaluation_config": config.model_dump(exclude_unset=True),
-        }
+            jsonl_data = build_google_evaluation_jsonl(
+                dataset_items=dataset_items, google_params=mapped_params
+            )
+            if not jsonl_data:
+                raise ValueError(
+                    "Evaluation dataset did not produce any JSONL entries (missing questions?)."
+                )
 
-        # Step 5: Start batch job using generic infrastructure
-        batch_job = start_batch_job(
-            session=session,
-            provider=provider,
-            provider_name="openai",
-            job_type=BatchJobType.EVALUATION,
-            organization_id=eval_run.organization_id,
-            project_id=eval_run.project_id,
-            jsonl_data=jsonl_data,
-            config=batch_config,
-        )
+            gemini_client = GeminiClient.from_credentials(
+                session=session,
+                org_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            model_name = mapped_params.get("model", "gemini-2.5-pro")
+            batch_provider = GeminiBatchProvider(
+                client=gemini_client.client, model=model_name
+            )
 
-        # Step 6: Link batch_job to evaluation_run
+            batch_config = {
+                "display_name": f"evaluation-{eval_run.run_name}",
+                "model": f"models/{model_name}",
+            }
+
+            batch_job = start_batch_job(
+                session=session,
+                provider=batch_provider,
+                provider_name="google-aistudio",
+                job_type=BatchJobType.EVALUATION,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+                jsonl_data=jsonl_data,
+                config=batch_config,
+            )
+
+        else:
+            raise ValueError(f"Unsupported provider for evaluation batches: {provider}")
+
         eval_run.batch_job_id = batch_job.id
         eval_run.status = "processing"
         eval_run.total_items = batch_job.total_items
@@ -217,7 +362,8 @@ def start_evaluation_batch(
             f"[start_evaluation_batch] Successfully started evaluation batch | "
             f"batch_job_id={batch_job.id} | "
             f"provider_batch_id={batch_job.provider_batch_id} | "
-            f"run={eval_run.run_name} | items={batch_job.total_items}"
+            f"run={eval_run.run_name} | items={batch_job.total_items} | "
+            f"provider={base_provider}"
         )
 
         return eval_run

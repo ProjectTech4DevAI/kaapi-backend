@@ -12,7 +12,7 @@ from app.core.langfuse.langfuse import LangfuseTracer
 from app.crud import (
     JobCrud,
     get_assistant_by_id,
-    get_provider_credential,
+    get_tracing_credential,
     create_conversation,
     get_ancestor_id_from_response,
     get_conversation_by_ancestor_id,
@@ -241,10 +241,9 @@ def process_response(
             except HTTPException as e:
                 return _fail_job(job_id, str(e.detail))
 
-            langfuse_credentials = get_provider_credential(
+            langfuse_credentials = get_tracing_credential(
                 session=session,
                 org_id=organization_id,
-                provider="langfuse",
                 project_id=project_id,
             )
 
