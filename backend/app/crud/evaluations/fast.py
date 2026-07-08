@@ -411,10 +411,8 @@ def _get_chunk_job(
 def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> None:
     """Delete the per-chunk S3 files + batch_job rows once a run completes.
 
-    ponytail: best-effort reaper. A failed delete leaves an orphan that's
-    harmless to reads (merge reloads the canonical unit via batch_job_id); its
-    only cost is DB+S3 bloat no lifecycle rule reaps, so it never fails the run.
-    Failed runs skip this (never reach here), keeping chunks for the healer.
+    Best-effort: a failed delete only leaks DB+S3 bloat, so it never fails the
+    run. Failed runs skip this and keep their chunks for the healer.
     """
     try:
         storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
