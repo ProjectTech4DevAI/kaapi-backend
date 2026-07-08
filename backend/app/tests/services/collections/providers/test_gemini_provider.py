@@ -91,6 +91,71 @@ class TestUploadFiles:
 
         client.files.upload.assert_not_called()
 
+    def test_cached_active_file_skips_upload(self, db: Session) -> None:
+        project = get_project(db)
+        store = DocumentStore(db=db, project_id=project.id)
+        doc = store.put()
+        doc.fname = "report.pdf"
+        doc.file_id = {GOOGLE_AISTUDIO_PROVIDER: "files/cached-1"}
+
+        client = MagicMock()
+        client.files.get.return_value = _uploaded(
+            state=FileState.ACTIVE, name="files/cached-1"
+        )
+        provider = GeminiAIStudioProvider(client=client)
+
+        provider.upload_files(_storage(), [doc], project_id=project.id)
+
+        client.files.get.assert_called_once_with(name="files/cached-1")
+        client.files.upload.assert_not_called()
+        assert doc.file_id[GOOGLE_AISTUDIO_PROVIDER] == "files/cached-1"
+
+    def test_expired_cached_file_falls_back_to_reupload(self, db: Session) -> None:
+        project = get_project(db)
+        store = DocumentStore(db=db, project_id=project.id)
+        doc = store.put()
+        doc.fname = "report.pdf"
+        doc.file_id = {GOOGLE_AISTUDIO_PROVIDER: "files/expired-1"}
+
+        client = MagicMock()
+        client.files.get.side_effect = RuntimeError("404 file not found")
+        client.files.upload.return_value = _uploaded()
+        provider = GeminiAIStudioProvider(client=client)
+
+        patcher = _patch_session(db)
+        try:
+            provider.upload_files(_storage(), [doc], project_id=project.id)
+        finally:
+            patcher.stop()
+
+        client.files.upload.assert_called_once()
+        persisted = DocumentCrud(db, project.id).read_one(doc.id)
+        assert persisted.file_id[GOOGLE_AISTUDIO_PROVIDER] == UPLOADED_NAME
+
+    def test_non_active_cached_file_falls_back_to_reupload(self, db: Session) -> None:
+        project = get_project(db)
+        store = DocumentStore(db=db, project_id=project.id)
+        doc = store.put()
+        doc.fname = "report.pdf"
+        doc.file_id = {GOOGLE_AISTUDIO_PROVIDER: "files/stale-1"}
+
+        client = MagicMock()
+        client.files.get.return_value = _uploaded(
+            state=FileState.FAILED, name="files/stale-1"
+        )
+        client.files.upload.return_value = _uploaded()
+        provider = GeminiAIStudioProvider(client=client)
+
+        patcher = _patch_session(db)
+        try:
+            provider.upload_files(_storage(), [doc], project_id=project.id)
+        finally:
+            patcher.stop()
+
+        client.files.upload.assert_called_once()
+        persisted = DocumentCrud(db, project.id).read_one(doc.id)
+        assert persisted.file_id[GOOGLE_AISTUDIO_PROVIDER] == UPLOADED_NAME
+
     def test_db_persist_failure_rolls_back_gemini_file(self, db: Session) -> None:
         project = get_project(db)
         store = DocumentStore(db=db, project_id=project.id)

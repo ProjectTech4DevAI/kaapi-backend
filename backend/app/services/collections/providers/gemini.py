@@ -35,15 +35,53 @@ class GeminiAIStudioProvider(BaseProvider):
         super().__init__(client)
         self.client = client
 
+    def get_existing_file_id(self, doc: Document) -> str | None:
+        """Return the cached Files API name only if it is still ACTIVE upstream.
+
+        Files API objects expire after 48h, so the cache is validated against
+        the API rather than trusted; any failure falls back to a re-upload.
+        """
+        cached = (doc.file_id or {}).get(GOOGLE_AISTUDIO_PROVIDER)
+        if not cached:
+            return None
+        try:
+            remote = self.client.files.get(name=cached)
+            if remote.state == FileState.ACTIVE:
+                logger.info(
+                    "[GeminiAIStudioProvider.get_existing_file_id] Reusing cached file | "
+                    "doc_id=%s, file_name=%s",
+                    doc.id,
+                    cached,
+                )
+                return cached
+            logger.info(
+                "[GeminiAIStudioProvider.get_existing_file_id] Cached file not ACTIVE (state=%s), re-uploading | "
+                "doc_id=%s, file_name=%s",
+                remote.state,
+                doc.id,
+                cached,
+            )
+        except Exception as err:
+            # Expired (48h) or deleted upstream — expected cache miss, not an error.
+            logger.info(
+                "[GeminiAIStudioProvider.get_existing_file_id] Cached file invalid, re-uploading | "
+                "doc_id=%s, file_name=%s, reason=%s",
+                doc.id,
+                cached,
+                str(err),
+            )
+        return None
+
     def upload_files(
         self,
         storage: CloudStorage,
         docs: list[Document],
         project_id: int,
     ) -> None:
-        # get_existing_file_id is intentionally NOT overridden: Gemini Files API
-        # objects expire after 48h, so every create job re-uploads. No dedup.
         for doc in docs:
+            if self.get_existing_file_id(doc):
+                continue
+
             try:
                 # The temp file path has no extension, so the SDK cannot guess
                 # the mimetype; derive it from the original filename instead.
