@@ -197,18 +197,11 @@ class TestCreateLangfuseDatasetRun:
 
     def test_create_langfuse_dataset_run_handles_rate_limit(self) -> None:
         """A 429 status_code error is handled (logged distinctly) and skipped."""
-        mock_langfuse = MagicMock()
-        mock_dataset = MagicMock()
+        mock_langfuse, _, _ = make_dataset_run_mocks(["trace_id_1"])
 
         rate_limit_error = Exception("Too Many Requests")
         rate_limit_error.status_code = 429
-
-        mock_item = MagicMock()
-        mock_item.id = "item_1"
-        mock_item.observe.side_effect = rate_limit_error
-
-        mock_dataset.items = [mock_item]
-        mock_langfuse.get_dataset.return_value = mock_dataset
+        mock_langfuse.start_observation.side_effect = rate_limit_error
 
         results = [
             {
