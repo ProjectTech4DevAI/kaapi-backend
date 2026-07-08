@@ -159,14 +159,6 @@ class GoogleVertexAIProvider(BaseProvider):
     ) -> tuple[dict | None, str | None]:
         """POST to Vertex generateContent and return parsed JSON or a
         descriptive, pre-logged error message.
-
-        Maps:
-        - ``requests.Timeout`` / ``ConnectionError`` / ``RequestException``
-          → ``[KAAPI]`` network-side errors
-        - HTTP 4xx/5xx → ``[VERTEX]`` errors, branched by status code, with
-          Google's ``error.message`` / ``error.status`` surfaced when the
-          response body is the standard error envelope.
-        - Non-JSON 200 body → ``[VERTEX]`` malformed-response error
         """
         url = self.client.endpoint(model)
         logger.debug(f"[_post] vertex url={url}")
@@ -356,7 +348,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 "[KAAPI] Vertex STT staging failed: ``google`` sa_key is "
                 "not configured on this project's credentials, so audio "
                 "cannot be uploaded to GCS for transcription. Add the "
-                "service-account key to the project's ``google`` credentials."
+                "service-account key to the project's ``google-vertex`` credentials."
             )
             logger.warning(
                 f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"

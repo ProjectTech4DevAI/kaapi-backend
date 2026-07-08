@@ -606,6 +606,26 @@ def transform_kaapi_config_to_native(
             warnings,
         )
 
+    # for google vertex
+    if kaapi_config.provider == Provider.GOOGLE_VERTEX:
+        if kaapi_config.type not in (CompletionType.STT, CompletionType.TTS):
+            raise ValueError(
+                f"google provider does not support completion type '{kaapi_config.type}'. "
+                "Use the 'google-vertex' provider for text completions."
+            )
+        # Kaapi STT/TTS param shape is identical to Google's; reuse the Google mapper.
+        mapped_params, warnings = map_kaapi_to_google_params(
+            kaapi_config.params, kaapi_config.type
+        )
+        return (
+            NativeCompletionConfig(
+                provider="google-vertex-native",
+                params=mapped_params,
+                type=kaapi_config.type,
+            ),
+            warnings,
+        )
+
     if kaapi_config.provider == Provider.ANTHROPIC:
         if kaapi_config.type != CompletionType.TEXT:
             raise ValueError(

@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
 
+    # google aistudio api key
     GEMINI_API_KEY: str = ""
     GEMINI_DEFAULT_INFERENCE_ROUTE: str = "aistudio"
     # RabbitMQ configuration for Celery broker
