@@ -1,4 +1,4 @@
-"""Unit tests for LangfuseTracer class."""
+"""Unit tests for LangfuseTracer class (Langfuse v4 SDK)."""
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -22,6 +22,24 @@ def valid_credentials() -> dict:
         return {**defaults, **overrides}
 
     return _create()
+
+
+def make_langfuse_mock() -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Build a mock v4 Langfuse client plus its root span and generation.
+
+    v4 flow: ``client.start_observation(as_type="span")`` -> root span;
+    ``root.start_observation(as_type="generation")`` -> generation. Trace-level
+    attributes are written via ``root._otel_span.set_attributes(...)`` (auto-mocked).
+    """
+    client = MagicMock()
+    root_span = MagicMock()
+    root_span.trace_id = "trace-abc123"
+    generation = MagicMock()
+    root_span.start_observation.return_value = generation
+    client.start_observation.return_value = root_span
+    # No prior traces by default (session resume returns empty)
+    client.api.trace.list.return_value.data = []
+    return client, root_span, generation
 
 
 @pytest.fixture
@@ -82,18 +100,16 @@ class TestLangfuseTracerInit:
         assert tracer.langfuse is None
 
     @patch("app.core.langfuse.langfuse.Langfuse")
-    def test_fetch_traces_failure_keeps_tracer_enabled(
+    def test_session_resume_failure_keeps_tracer_enabled(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.fetch_traces.side_effect = Exception("Network error")
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, _ = make_langfuse_mock()
+        client.api.trace.list.side_effect = Exception("Network error")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials, response_id="resp-123")
 
         assert tracer.langfuse is not None
-        assert tracer.langfuse.enabled is True
 
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_resumes_session_from_existing_traces(
@@ -102,14 +118,14 @@ class TestLangfuseTracerInit:
         existing_trace = MagicMock()
         existing_trace.session_id = "existing-session-456"
 
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.fetch_traces.return_value.data = [existing_trace]
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, _ = make_langfuse_mock()
+        client.api.trace.list.return_value.data = [existing_trace]
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials, response_id="resp-123")
 
         assert tracer.session_id == "existing-session-456"
+        client.api.trace.list.assert_called_once_with(tags="resp-123")
 
 
 class TestLangfuseTracerMethodsDisabled:
@@ -149,10 +165,9 @@ class TestLangfuseTracerMethodsFailure:
     def test_start_trace_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.side_effect = Exception("Trace creation failed")
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, _ = make_langfuse_mock()
+        client.start_observation.side_effect = Exception("Trace creation failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -163,12 +178,9 @@ class TestLangfuseTracerMethodsFailure:
     def test_start_generation_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.side_effect = Exception("Generation failed")
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, _ = make_langfuse_mock()
+        root_span.start_observation.side_effect = Exception("Generation failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -180,15 +192,9 @@ class TestLangfuseTracerMethodsFailure:
     def test_end_generation_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_generation = MagicMock()
-        mock_generation.end.side_effect = Exception("End failed")
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.return_value = mock_generation
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, generation = make_langfuse_mock()
+        generation.update.side_effect = Exception("End failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -199,13 +205,9 @@ class TestLangfuseTracerMethodsFailure:
     def test_update_trace_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_trace.update.side_effect = Exception("Update failed")
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, _ = make_langfuse_mock()
+        root_span.end.side_effect = Exception("Update failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -215,10 +217,9 @@ class TestLangfuseTracerMethodsFailure:
     def test_flush_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.flush.side_effect = Exception("Flush failed")
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, _ = make_langfuse_mock()
+        client.flush.side_effect = Exception("Flush failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.flush()
@@ -227,16 +228,10 @@ class TestLangfuseTracerMethodsFailure:
     def test_log_error_exception_is_caught(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_trace.update.side_effect = Exception("Log error failed")
-        mock_generation = MagicMock()
-        mock_generation.end.side_effect = Exception("End failed")
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.return_value = mock_generation
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, generation = make_langfuse_mock()
+        generation.update.side_effect = Exception("End failed")
+        root_span.end.side_effect = Exception("Log error failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -311,14 +306,8 @@ class TestLangfuseTracerSuccess:
     def test_full_tracing_flow(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_generation = MagicMock()
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.return_value = mock_generation
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, generation = make_langfuse_mock()
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -331,20 +320,41 @@ class TestLangfuseTracerSuccess:
         tracer.update_trace(tags=["resp-123"], output={"status": "success"})
         tracer.flush()
 
-        enabled_mock.trace.assert_called_once()
-        enabled_mock.generation.assert_called_once()
-        mock_generation.end.assert_called_once()
-        mock_trace.update.assert_called_once()
-        enabled_mock.flush.assert_called_once()
+        client.start_observation.assert_called_once()
+        root_span.start_observation.assert_called_once()
+        generation.update.assert_called_once()
+        generation.end.assert_called_once()
+        root_span.end.assert_called_once()
+        client.flush.assert_called_once()
+
+    @patch("app.core.langfuse.langfuse.Langfuse")
+    def test_end_generation_converts_usage_to_usage_details(
+        self, mock_langfuse_class: MagicMock, valid_credentials: dict
+    ) -> None:
+        client, _, generation = make_langfuse_mock()
+        mock_langfuse_class.return_value = client
+
+        tracer = LangfuseTracer(credentials=valid_credentials)
+        tracer.start_trace(name="test", input={"q": "hello"})
+        tracer.start_generation(name="gen", input={"q": "hello"})
+        tracer.end_generation(
+            output={"response": "world"},
+            usage={"input": 10, "output": 20, "total": 30, "unit": "TOKENS"},
+            model="gpt-4",
+        )
+
+        # v4 uses usage_details (int-only) and drops the v2 "unit" string field
+        _, kwargs = generation.update.call_args
+        assert kwargs["usage_details"] == {"input": 10, "output": 20, "total": 30}
+        assert kwargs["model"] == "gpt-4"
 
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_start_generation_without_trace_is_noop(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.side_effect = Exception("Trace failed")
-        mock_langfuse_class.return_value = enabled_mock
+        client, _, _ = make_langfuse_mock()
+        client.start_observation.side_effect = Exception("Trace failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})  # Fails
@@ -352,19 +362,14 @@ class TestLangfuseTracerSuccess:
 
         tracer.start_generation(name="gen", input={"q": "hello"})
         assert tracer.generation is None
-        enabled_mock.generation.assert_not_called()
 
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_end_generation_without_generation_is_noop(
         self, mock_langfuse_class: MagicMock, valid_credentials: dict
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.side_effect = Exception("Generation failed")
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, _ = make_langfuse_mock()
+        root_span.start_observation.side_effect = Exception("Generation failed")
+        mock_langfuse_class.return_value = client
 
         tracer = LangfuseTracer(credentials=valid_credentials)
         tracer.start_trace(name="test", input={"q": "hello"})
@@ -384,14 +389,8 @@ class TestGenerateResponseWithEnabledTracer:
         valid_credentials: dict,
         assistant_mock: Assistant,
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_generation = MagicMock()
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.return_value = mock_generation
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, generation = make_langfuse_mock()
+        mock_langfuse_class.return_value = client
 
         mock_client = MagicMock()
         mock_client.responses.create.side_effect = OpenAIError("API failed")
@@ -411,8 +410,8 @@ class TestGenerateResponseWithEnabledTracer:
 
         assert response is None
         assert "API failed" in error
-        enabled_mock.trace.assert_called_once()
-        enabled_mock.generation.assert_called_once()
+        client.start_observation.assert_called_once()
+        root_span.start_observation.assert_called_once()
 
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_success_calls_all_tracer_methods(
@@ -421,14 +420,8 @@ class TestGenerateResponseWithEnabledTracer:
         valid_credentials: dict,
         assistant_mock: Assistant,
     ) -> None:
-        mock_trace = MagicMock(id="trace-123")
-        mock_generation = MagicMock()
-
-        enabled_mock = MagicMock()
-        enabled_mock.enabled = True
-        enabled_mock.trace.return_value = mock_trace
-        enabled_mock.generation.return_value = mock_generation
-        mock_langfuse_class.return_value = enabled_mock
+        client, root_span, generation = make_langfuse_mock()
+        mock_langfuse_class.return_value = client
 
         mock_response = MagicMock()
         mock_response.id = "resp-456"
@@ -456,10 +449,11 @@ class TestGenerateResponseWithEnabledTracer:
 
         assert response is not None
         assert error is None
-        enabled_mock.trace.assert_called_once()
-        enabled_mock.generation.assert_called_once()
-        mock_generation.end.assert_called_once()
-        mock_trace.update.assert_called_once()
+        client.start_observation.assert_called_once()
+        root_span.start_observation.assert_called_once()
+        generation.update.assert_called_once()
+        generation.end.assert_called_once()
+        root_span.end.assert_called_once()
 
 
 class TestProcessResponseIntegration:
@@ -470,7 +464,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     def test_works_without_langfuse_credentials(
         self,
@@ -520,7 +514,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     @patch("app.core.langfuse.langfuse.Langfuse")
     def test_works_when_langfuse_init_fails(
@@ -572,7 +566,7 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
-    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.get_tracing_credential")
     @patch("app.services.response.response.JobCrud")
     @patch("app.services.response.response._fail_job")
     def test_handles_openai_error_gracefully(

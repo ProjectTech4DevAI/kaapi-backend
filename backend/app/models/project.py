@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 
 from app.core.util import now
@@ -47,6 +49,14 @@ class ProjectUpdate(SQLModel):
     is_active: bool | None = Field(default=None)
 
 
+# Properties to receive via API when patching project settings.
+class ProjectSettingsUpdate(SQLModel):
+    tracing: bool | None = Field(
+        default=None,
+        description="Enable/disable Langfuse tracing for this project.",
+    )
+
+
 # Database model for Project
 class Project(ProjectBase, table=True):
     """Database model for projects."""
@@ -65,6 +75,19 @@ class Project(ProjectBase, table=True):
         nullable=False,
         unique=True,
         sa_column_kwargs={"comment": "Unique UUID used for cloud storage path"},
+    )
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+            comment=(
+                "Project-level settings (JSONB). Keys: 'tracing' (bool) — "
+                "Langfuse tracing opt-in, off by default to conserve Langfuse "
+                "rate-limit/credit budget. Gates tracing for both the response "
+                "path and evaluations (which fall back to cosine-only scoring)."
+            ),
+        ),
     )
 
     # Foreign keys
@@ -111,6 +134,7 @@ class Project(ProjectBase, table=True):
 class ProjectPublic(ProjectBase):
     id: int
     organization_id: int
+    settings: dict[str, Any] = {}
     inserted_at: datetime
     updated_at: datetime
 

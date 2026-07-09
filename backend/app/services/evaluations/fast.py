@@ -1,19 +1,22 @@
 """Fast evaluation orchestration service.
 
 This is the only place that decides whether a /evaluations request enters the
-fast-eval path. It also hosts the worker-side entry point invoked by the
-`run_evaluation_fast` Celery task.
+fast-eval path. It also hosts the worker-side entry points invoked by the
+`run_evaluation_fast_chunk` and `run_evaluation_fast_aggregate` Celery tasks.
 
 See `Fast Evaluation SRD.md` for the full design.
 """
 
 import logging
+import math
 from uuid import UUID
 
 from fastapi import HTTPException
+from langfuse import Langfuse
+from openai import OpenAI
 from sqlmodel import Session
 
-from app.celery.utils import start_fast_evaluation as enqueue_fast_evaluation
+from app.celery.utils import start_fast_evaluation_chunk
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.evaluations import (
@@ -21,12 +24,17 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     run_fast_evaluation,
 )
+from app.crud.evaluations.batch import (
+    load_evaluation_dataset_items,
+    use_langfuse_client,
+)
 from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.fast import run_response_chunk
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.evaluations.evaluation import create_evaluation_run_or_409
 from app.services.llm.providers import LLMProvider
-from app.utils import get_langfuse_client, get_openai_client
+from app.utils import get_openai_client, get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +94,12 @@ def validate_and_start_fast_evaluation(
                 "organization/project"
             ),
         )
-    if not dataset.langfuse_dataset_id:
+    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
-                "evaluation."
+                f"Dataset {dataset_id} has no Langfuse nor object-store backing; "
+                "cannot run evaluation."
             ),
         )
 
@@ -153,21 +161,46 @@ def validate_and_start_fast_evaluation(
         log_context="validate_and_start_fast_evaluation",
     )
 
-    # Flip to processing before dispatching the task so the GET endpoint
-    # reflects the correct state immediately.
-    eval_run = update_evaluation_run(
-        session=session,
-        eval_run=eval_run,
-        update=EvaluationRunUpdate(status="processing"),
-    )
-
-    # Dispatch the orchestrator. If enqueue fails, mark the run as failed so it
-    # doesn't linger in `processing` forever.
+    # Fetch the dataset items now to size the fan-out: ceil(total / chunk_size)
+    # parallel chunk tasks drain the responses stage across workers. Any failure
+    # here marks the run failed so it never lingers in `processing`.
     try:
-        enqueue_fast_evaluation(eval_run_id=eval_run.id, trace_id=trace_id)
+        langfuse_client = get_tracing_client(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
+        dataset_items = load_evaluation_dataset_items(
+            session=session, eval_run=eval_run, langfuse=langfuse_client
+        )
+        total_items = len(dataset_items)
+        if total_items == 0:
+            raise ValueError(f"Dataset '{dataset.name}' returned no items")
+        n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
+
+        # total_items isn't on EvaluationRunUpdate; set it directly, then flip to
+        # processing so the GET endpoint reflects state before dispatch.
+        eval_run.total_items = total_items
+        eval_run = update_evaluation_run(
+            session=session,
+            eval_run=eval_run,
+            update=EvaluationRunUpdate(status="processing"),
+        )
+
+        for chunk_index in range(n_chunks):
+            start_fast_evaluation_chunk(
+                eval_run_id=eval_run.id,
+                chunk_index=chunk_index,
+                trace_id=trace_id,
+            )
+        logger.info(
+            f"[validate_and_start_fast_evaluation] Dispatched chunk tasks | "
+            f"eval_run_id={eval_run.id} | total_items={total_items} | "
+            f"n_chunks={n_chunks}"
+        )
     except Exception as exc:
         logger.error(
-            f"[validate_and_start_fast_evaluation] Failed to enqueue task | "
+            f"[validate_and_start_fast_evaluation] Failed to start run | "
             f"eval_run_id={eval_run.id} | error={exc}",
             exc_info=True,
         )
@@ -176,91 +209,170 @@ def validate_and_start_fast_evaluation(
             eval_run=eval_run,
             update=EvaluationRunUpdate(
                 status="failed",
-                error_message=f"Failed to enqueue fast eval task: {exc}",
+                error_message=f"Failed to start fast eval: {exc}",
             ),
         )
         raise HTTPException(
             status_code=500,
-            detail="Failed to enqueue fast evaluation task",
+            detail="Failed to start fast evaluation",
         )
 
     return eval_run
 
 
-def execute_fast_evaluation(*, eval_run_id: int) -> None:
-    """Worker-side entry point: run the full fast-eval pipeline.
+def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
+    """Load a fast-mode EvaluationRun, raising if missing or wrong run_mode."""
+    eval_run = session.get(EvaluationRun, eval_run_id)
+    if eval_run is None:
+        raise ValueError(f"EvaluationRun {eval_run_id} not found")
+    if eval_run.run_mode != RunModeEnum.FAST:
+        raise ValueError(
+            f"EvaluationRun {eval_run_id} has run_mode={eval_run.run_mode.value}, "
+            f"expected 'fast'"
+        )
+    return eval_run
 
-    Called from the `run_evaluation_fast` Celery task. Opens its own DB
-    session so the task is self-contained, then resolves config + clients and
-    delegates to `run_fast_evaluation` (CRUD).
 
-    On terminal failure the run is marked `failed` with a descriptive
-    error_message and the exception is re-raised so Celery records the failure
-    (no automatic retry for this task — stage-level idempotency is the retry
-    surface).
+def _resolve_config_and_clients(
+    *, session: Session, eval_run: EvaluationRun
+) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
+    """Resolve the run's text config and build its OpenAI + Langfuse clients.
+
+    The Langfuse client is None when the project opted out of tracing (#996) so
+    the run degrades to cosine-only instead of failing."""
+    config_blob, error = resolve_evaluation_config(
+        session=session,
+        config_id=eval_run.config_id,
+        config_version=eval_run.config_version,
+        project_id=eval_run.project_id,
+    )
+    if error or config_blob is None:
+        raise ValueError(f"Failed to resolve config: {error}")
+
+    text_params = TextLLMParams.model_validate(config_blob.completion.params)
+    openai_client = get_openai_client(
+        session=session,
+        org_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+    )
+    langfuse_client = get_tracing_client(
+        session=session,
+        org_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+    )
+    return text_params, openai_client, langfuse_client
+
+
+def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None:
+    """Worker entry point for one responses chunk.
+
+    Called from `run_evaluation_fast_chunk`. Slices the dataset deterministically
+    (sorted by item id so every chunk task partitions the same way), delegates to
+    `run_response_chunk`, and re-raises on failure so Celery records it — the
+    run's fate is decided at aggregation / by the cron healer.
     """
-    logger.info(f"[execute_fast_evaluation] Starting | eval_run_id={eval_run_id}")
+    logger.info(
+        f"[execute_fast_evaluation_chunk] Starting | "
+        f"eval_run_id={eval_run_id} | chunk_index={chunk_index}"
+    )
 
     with Session(engine) as session:
-        eval_run = session.get(EvaluationRun, eval_run_id)
-        if eval_run is None:
-            logger.error(
-                f"[execute_fast_evaluation] EvaluationRun not found | "
-                f"eval_run_id={eval_run_id}"
-            )
-            raise ValueError(f"EvaluationRun {eval_run_id} not found")
-
-        if eval_run.run_mode != RunModeEnum.FAST:
-            logger.error(
-                f"[execute_fast_evaluation] Wrong run_mode for fast task | "
-                f"eval_run_id={eval_run_id} | run_mode={eval_run.run_mode.value}"
-            )
-            raise ValueError(
-                f"EvaluationRun {eval_run_id} has run_mode={eval_run.run_mode.value}, "
-                f"expected 'fast'"
-            )
-
+        eval_run = _get_fast_run(session=session, eval_run_id=eval_run_id)
         if eval_run.status == "completed":
             logger.info(
-                f"[execute_fast_evaluation] Run already completed, skipping | "
-                f"eval_run_id={eval_run_id}"
+                f"[execute_fast_evaluation_chunk] Run already completed, skipping | "
+                f"eval_run_id={eval_run_id} | chunk_index={chunk_index}"
             )
             return
 
         try:
-            config_blob, error = resolve_evaluation_config(
-                session=session,
-                config_id=eval_run.config_id,
-                config_version=eval_run.config_version,
-                project_id=eval_run.project_id,
+            text_params, openai_client, langfuse_client = _resolve_config_and_clients(
+                session=session, eval_run=eval_run
             )
-            if error or config_blob is None:
-                raise ValueError(f"Failed to resolve config: {error}")
+            dataset_items = load_evaluation_dataset_items(
+                session=session, eval_run=eval_run, langfuse=langfuse_client
+            )
+            # Same order across every chunk task, so slices never overlap or miss.
+            dataset_items.sort(key=lambda item: item["id"])
+            start = chunk_index * settings.EVAL_FAST_CHUNK_SIZE
+            items_slice = dataset_items[start : start + settings.EVAL_FAST_CHUNK_SIZE]
 
-            text_params = TextLLMParams.model_validate(config_blob.completion.params)
+            log_prefix = (
+                f"[org={eval_run.organization_id}]"
+                f"[project={eval_run.project_id}]"
+                f"[eval={eval_run.id}]"
+            )
+            run_response_chunk(
+                session=session,
+                openai_client=openai_client,
+                eval_run=eval_run,
+                config=text_params,
+                dataset_items_slice=items_slice,
+                chunk_index=chunk_index,
+                log_prefix=log_prefix,
+            )
 
+        except Exception as exc:
+            # No per-chunk failed marker: the cron healer re-enqueues any index
+            # without a raw_output_url, so a failed chunk is already retried.
+            logger.error(
+                f"[execute_fast_evaluation_chunk] Chunk failed | "
+                f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | error={exc}",
+                exc_info=True,
+            )
+            raise
+
+
+def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
+    """Worker entry point for the fan-in aggregate.
+
+    Called from `run_evaluation_fast_aggregate`. Merges the chunks and runs
+    embeddings + scoring + completion via `run_fast_evaluation`. Owns the run's
+    completed/failed transition, so on terminal failure it marks the run failed
+    and re-raises.
+    """
+    logger.info(
+        f"[execute_fast_evaluation_aggregate] Starting | eval_run_id={eval_run_id}"
+    )
+
+    with Session(engine) as session:
+        eval_run = _get_fast_run(session=session, eval_run_id=eval_run_id)
+        if eval_run.status == "completed":
+            logger.info(
+                f"[execute_fast_evaluation_aggregate] Run already completed, "
+                f"skipping | eval_run_id={eval_run_id}"
+            )
+            return
+
+        try:
+            # No config resolve here: re-resolving a config edited/pruned since
+            # dispatch would fail a run whose chunks already succeeded. Aggregate
+            # needs only the two clients.
             openai_client = get_openai_client(
                 session=session,
                 org_id=eval_run.organization_id,
                 project_id=eval_run.project_id,
             )
-            langfuse_client = get_langfuse_client(
+            langfuse_client = get_tracing_client(
                 session=session,
                 org_id=eval_run.organization_id,
                 project_id=eval_run.project_id,
             )
-
+            # Trace only a Langfuse-backed dataset — an opt-out or S3-backed run
+            # degrades to cosine-only rather than writing orphan traces.
+            langfuse_client = use_langfuse_client(
+                session=session, eval_run=eval_run, langfuse=langfuse_client
+            )
             run_fast_evaluation(
                 session=session,
                 openai_client=openai_client,
                 langfuse=langfuse_client,
                 eval_run=eval_run,
-                config=text_params,
             )
 
         except Exception as exc:
             logger.error(
-                f"[execute_fast_evaluation] Run failed | "
+                f"[execute_fast_evaluation_aggregate] Run failed | "
                 f"eval_run_id={eval_run_id} | error={exc}",
                 exc_info=True,
             )
