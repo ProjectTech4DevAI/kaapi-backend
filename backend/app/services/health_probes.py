@@ -65,7 +65,7 @@ def _build_provider(
             organization_id=org_id,
         )
     except (ValueError, RuntimeError) as e:
-        logger.error(
+        logger.warning(
             f"[_build_provider] Client init failed | provider: {probe.provider}, "
             f"modality: {probe.modality}, error: {e}"
         )
