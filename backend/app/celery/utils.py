@@ -253,26 +253,43 @@ def start_tts_result_processing(
     return task_id
 
 
-def start_fast_evaluation(
-    eval_run_id: int,
-    trace_id: str = "N/A",
-    judge_config: dict[str, Any] | None = None,
+def start_fast_evaluation_chunk(
+    eval_run_id: int, chunk_index: int, trace_id: str = "N/A"
 ) -> str:
-    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun.
+    """Enqueue one parallel responses-chunk task for a fast EvaluationRun.
 
-    `judge_config` is the JSON-able LLMCallConfig dict tailoring the correctness
-    judge (None for the zero-config default), carried as a Celery task arg.
+    judge_config is not carried here: the chunk stage only generates responses.
+    The judge runs in the aggregate, which reads judge_config off the run row.
     """
-    from app.celery.tasks.job_execution import run_evaluation_fast
+    from app.celery.tasks.job_execution import run_evaluation_fast_chunk
 
     task_id = _enqueue_with_trace_context(
-        run_evaluation_fast,
+        run_evaluation_fast_chunk,
         eval_run_id=eval_run_id,
+        chunk_index=chunk_index,
         trace_id=trace_id,
-        judge_config=judge_config,
     )
     logger.info(
-        f"[start_fast_evaluation] Enqueued fast eval | "
+        f"[start_fast_evaluation_chunk] Enqueued fast eval chunk | "
+        f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | task_id={task_id}"
+    )
+    return task_id
+
+
+def start_fast_evaluation_aggregate(eval_run_id: int, trace_id: str = "N/A") -> str:
+    """Enqueue the fan-in aggregate task once a fast run's chunks are all done.
+
+    No judge_config arg: the aggregate reads it off the persisted run row.
+    """
+    from app.celery.tasks.job_execution import run_evaluation_fast_aggregate
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_fast_aggregate,
+        eval_run_id=eval_run_id,
+        trace_id=trace_id,
+    )
+    logger.info(
+        f"[start_fast_evaluation_aggregate] Enqueued fast eval aggregate | "
         f"eval_run_id={eval_run_id} | task_id={task_id}"
     )
     return task_id

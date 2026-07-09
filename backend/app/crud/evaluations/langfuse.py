@@ -14,6 +14,7 @@ from typing import Any
 
 from langfuse import Langfuse
 
+from app.core.langfuse.langfuse import format_langfuse_error, set_trace_attributes
 from app.crud.evaluations.merge import compute_summary_scores
 from app.crud.evaluations.score import (
     CORRECTNESS_SCORE_NAME,
@@ -38,7 +39,7 @@ def _write_trace_score(
 ) -> None:
     """Write a single trace-level score to Langfuse. Failures propagate to the
     caller (no retry here)."""
-    langfuse.score(
+    langfuse.create_score(
         trace_id=trace_id,
         name=name,
         value=value,
@@ -108,10 +109,10 @@ def create_langfuse_dataset_run(
         dataset = langfuse.get_dataset(dataset_name)
         dataset_items_map = {item.id: item for item in dataset.items}
 
-        trace_id_mapping = {}
-
-        # Create a trace for each result
-        for result in results:
+        def _create_single_trace(result: dict[str, Any]) -> tuple[str, str] | None:
+            """Create one trace (+ generation) for a result. Returns
+            (item_id, trace_id) or None on skip/failure — never raises so one
+            bad item can't abort the batch."""
             item_id = result["item_id"]
             question = result["question"]
             generated_output = result["generated_output"]
@@ -126,59 +127,76 @@ def create_langfuse_dataset_run(
                     f"[create_langfuse_dataset_run] Dataset item not found, skipping | "
                     f"item_id={item_id}"
                 )
-                continue
+                return None
 
             try:
-                with dataset_item.observe(run_name=run_name) as trace_id:
-                    metadata = {
-                        "ground_truth": ground_truth,
-                        "item_id": item_id,
+                metadata = {
+                    "ground_truth": ground_truth,
+                    "item_id": item_id,
+                }
+                if response_id:
+                    metadata["response_id"] = response_id
+                if question_id:
+                    metadata["question_id"] = question_id
+
+                item_metadata = getattr(dataset_item, "metadata", None)
+                if isinstance(item_metadata, dict):
+                    item_category = item_metadata.get("category")
+                    if item_category:
+                        metadata["category"] = item_category
+
+                # In v4 the root span is the trace. langfuse generates the trace id,
+                # which we read back to link the dataset run item below (v4 has no
+                # dataset_item.observe() context manager).
+                root = langfuse.start_observation(
+                    as_type="span",
+                    name="evaluation-item",
+                    input={"question": question},
+                )
+                trace_id = root.trace_id
+                set_trace_attributes(
+                    root,
+                    name="evaluation-item",
+                    input={"question": question},
+                    output={"answer": generated_output},
+                    metadata=metadata,
+                )
+
+                # Convert usage to v4 usage_details (int token counts only; v4 has
+                # no "unit" field). Cost tracking happens at the generation level.
+                usage = None
+                if usage_raw:
+                    usage = {
+                        "input": usage_raw.get("input_tokens", 0),
+                        "output": usage_raw.get("output_tokens", 0),
+                        "total": usage_raw.get("total_tokens", 0),
                     }
-                    if response_id:
-                        metadata["response_id"] = response_id
-                    if question_id:
-                        metadata["question_id"] = question_id
 
-                    item_metadata = getattr(dataset_item, "metadata", None)
-                    if isinstance(item_metadata, dict):
-                        item_category = item_metadata.get("category")
-                        if item_category:
-                            metadata["category"] = item_category
-
-                    # Create trace with basic info
-                    langfuse.trace(
-                        id=trace_id,
+                if usage and model:
+                    generation = root.start_observation(
+                        as_type="generation",
+                        name="evaluation-response",
                         input={"question": question},
-                        output={"answer": generated_output},
                         metadata=metadata,
                     )
+                    generation.update(
+                        output={"answer": generated_output},
+                        model=model,
+                        usage_details=usage,
+                    )
+                    generation.end()
 
-                    # Convert usage to Langfuse format
-                    usage = None
-                    if usage_raw:
-                        usage = {
-                            "input": usage_raw.get("input_tokens", 0),
-                            "output": usage_raw.get("output_tokens", 0),
-                            "total": usage_raw.get("total_tokens", 0),
-                            "unit": "TOKENS",
-                        }
+                root.end()
 
-                    # Create a generation within the trace for cost tracking
-                    # Cost tracking happens at generation level, not trace level
-                    if usage and model:
-                        generation = langfuse.generation(
-                            name="evaluation-response",
-                            trace_id=trace_id,
-                            input={"question": question},
-                            metadata=metadata,
-                        )
-                        generation.end(
-                            output={"answer": generated_output},
-                            model=model,
-                            usage=usage,
-                        )
+                # Link the trace to the dataset item under this run (replaces the
+                # removed dataset_item.observe() context manager).
+                langfuse.api.dataset_run_items.create(
+                    run_name=run_name,
+                    dataset_item_id=item_id,
+                    trace_id=trace_id,
+                )
 
-                    trace_id_mapping[item_id] = trace_id
+                return item_id, trace_id
 
             except Exception as e:
                 if getattr(e, "status_code", None) == 429:
@@ -189,10 +207,21 @@ def create_langfuse_dataset_run(
                 else:
                     logger.error(
                         f"[create_langfuse_dataset_run] Failed to create trace | "
-                        f"item_id={item_id} | {e}",
+                        f"item_id={item_id} | {format_langfuse_error(e)}",
                         exc_info=True,
                     )
-                continue
+                return None
+
+        # Trace writes are IO-bound (one HTTP call each) — fan out so the
+        # aggregate stage stays under CELERY_TASK_SOFT_TIME_LIMIT at high N.
+        trace_id_mapping = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(_create_single_trace, r) for r in results]
+            for future in as_completed(futures):
+                mapping = future.result()
+                if mapping:
+                    item_id, trace_id = mapping
+                    trace_id_mapping[item_id] = trace_id
 
         langfuse.flush()
         logger.info(
@@ -205,7 +234,7 @@ def create_langfuse_dataset_run(
     except Exception as e:
         logger.error(
             f"[create_langfuse_dataset_run] Failed to create Langfuse dataset run | "
-            f"run_name={run_name} | {e}",
+            f"run_name={run_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise
@@ -261,7 +290,7 @@ def update_traces_with_cosine_scores(
         except Exception as e:
             logger.error(
                 f"[update_traces_with_cosine_scores] Failed to add score | "
-                f"trace_id={trace_id} | {e}",
+                f"trace_id={trace_id} | {format_langfuse_error(e)}",
                 exc_info=True,
             )
             failed_trace_ids.append(trace_id)
@@ -390,7 +419,7 @@ def upload_dataset_to_langfuse(
             logger.warning(
                 f"[upload_dataset_to_langfuse] Failed to upload item | "
                 f"duplicate={duplicate_num + 1} | "
-                f"question={item['question'][:50]}... | {e}"
+                f"question={item['question'][:50]}... | {format_langfuse_error(e)}"
             )
             return False
 
@@ -437,7 +466,7 @@ def upload_dataset_to_langfuse(
     except Exception as e:
         logger.error(
             f"[upload_dataset_to_langfuse] Failed to upload dataset to Langfuse | "
-            f"dataset={dataset_name} | {e}",
+            f"dataset={dataset_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise
@@ -512,7 +541,7 @@ def fetch_trace_scores_from_langfuse(
         except Exception as e:
             logger.warning(
                 f"[fetch_trace_scores_from_langfuse] Run not found in Langfuse | "
-                f"dataset={dataset_name} | run={run_name} | error={e}"
+                f"dataset={dataset_name} | run={run_name} | error={format_langfuse_error(e)}"
             )
             raise ValueError(
                 f"Run '{run_name}' not found in Langfuse dataset '{dataset_name}'"
@@ -543,7 +572,11 @@ def fetch_trace_scores_from_langfuse(
 
         def _fetch_single_trace(trace_id: str) -> TraceData | None:
             """Fetch a single trace from Langfuse and extract its data."""
-            trace = langfuse.api.trace.get(trace_id)
+            # v4: request only the field groups we consume. Without `fields`, the
+            # API returns the full trace (every observation + metrics), which makes
+            # each per-trace read large enough to hit the client timeout. `core` is
+            # always included; we add `io` (input/output/metadata) and `scores`.
+            trace = langfuse.api.trace.get(trace_id, fields="core,io,scores")
             trace_data: TraceData = {
                 "trace_id": trace_id,
                 "question": "",
@@ -630,7 +663,7 @@ def fetch_trace_scores_from_langfuse(
                     failed_trace_ids.append(trace_id)
                     logger.warning(
                         f"[fetch_trace_scores_from_langfuse] Failed to fetch trace | "
-                        f"trace_id={trace_id} | error={e}"
+                        f"trace_id={trace_id} | error={format_langfuse_error(e)}"
                     )
 
                     if consecutive_failures >= max_consecutive_failures:
@@ -686,7 +719,7 @@ def fetch_trace_scores_from_langfuse(
     except Exception as e:
         logger.error(
             f"[fetch_trace_scores_from_langfuse] Failed to fetch trace scores | "
-            f"dataset={dataset_name} | run={run_name} | {e}",
+            f"dataset={dataset_name} | run={run_name} | {format_langfuse_error(e)}",
             exc_info=True,
         )
         raise

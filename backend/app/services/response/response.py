@@ -153,6 +153,11 @@ def generate_response(
         if tracer:
             tracer.log_error(error_message, response_id=request.response_id)
 
+    finally:
+        # Async path runs in a Celery worker; flush so spans aren't lost if the
+        # worker is killed before the OTel batch processor's timer fires.
+        tracer.flush()
+
     return response, error_message
 
 

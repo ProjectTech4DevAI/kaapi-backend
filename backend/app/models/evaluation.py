@@ -273,6 +273,20 @@ class EvaluationRun(SQLModel, table=True):
         description="Version of the config used for this evaluation",
         sa_column_kwargs={"comment": "Version of the config used"},
     )
+    judge_config: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "Per-run LLMCallConfig payload tailoring the correctness judge "
+                "(saved id+version ref or ad-hoc blob); NULL = zero-config default "
+                "judge. Persisted here because the cron barrier enqueues the "
+                "aggregate with only eval_run_id, so it can't ride a Celery arg"
+            ),
+        ),
+        description="Per-run judge LLMCallConfig payload; NULL = zero-config default",
+    )
 
     # Dataset reference
     dataset_id: int = SQLField(
@@ -502,6 +516,7 @@ class EvaluationRunUpdate(SQLModel):
     is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
+    judge_config: dict[str, Any] | None = None
 
 
 class EvaluationRunPublic(SQLModel):

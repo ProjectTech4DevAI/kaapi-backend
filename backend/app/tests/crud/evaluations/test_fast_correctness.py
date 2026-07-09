@@ -338,8 +338,8 @@ class TestUpdateTracesWithCorrectnessScores:
         )
 
         assert failed == []
-        assert langfuse.score.call_count == 2
-        calls = langfuse.score.call_args_list
+        assert langfuse.create_score.call_count == 2
+        calls = langfuse.create_score.call_args_list
         assert calls[0].kwargs["name"] == CORRECTNESS_SCORE_NAME
         assert calls[0].kwargs["trace_id"] == "trace_1"
         assert calls[0].kwargs["value"] == 0.9
@@ -353,7 +353,7 @@ class TestUpdateTracesWithCorrectnessScores:
             if kwargs.get("trace_id") == "trace_2":
                 raise Exception("write failed")
 
-        langfuse.score.side_effect = _score_side_effect
+        langfuse.create_score.side_effect = _score_side_effect
         per_item = [
             {"trace_id": "trace_1", "correctness": 0.9, "reasoning": "ok"},
             {"trace_id": "trace_2", "correctness": 0.4, "reasoning": "bad"},
@@ -366,4 +366,4 @@ class TestUpdateTracesWithCorrectnessScores:
 
         # Only the bad trace is reported; siblings still written.
         assert failed == ["trace_2"]
-        assert langfuse.score.call_count == 3
+        assert langfuse.create_score.call_count == 3
