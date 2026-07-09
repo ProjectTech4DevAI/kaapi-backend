@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlmodel import Field as SQLField, Relationship, SQLModel
 
 from app.core.util import now
+from app.models.config.version import ConfigVersionPublic
 
 if TYPE_CHECKING:
     from .batch_job import BatchJob
@@ -549,3 +550,12 @@ class EvaluationDatasetPublic(SQLModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
+
+
+class PromptImprovementJobPublic(SQLModel):
+    """Poll response: the new config_version once the job succeeds."""
+
+    job_id: UUID
+    status: str
+    config_version: ConfigVersionPublic | None = None
+    error_message: str | None = None

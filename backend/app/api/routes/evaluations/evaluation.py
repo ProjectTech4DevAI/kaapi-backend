@@ -16,13 +16,24 @@ from fastapi import (
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
+from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
-from app.crud.evaluations.core import group_traces_by_question_id
+from app.crud.evaluations.core import (
+    get_evaluation_run_by_id,
+    group_traces_by_question_id,
+)
+from app.crud.jobs import JobCrud
 from app.models.config.version import ConfigVersionPublic
-from app.models.evaluation import EvaluationRunPublic, RunModeEnum
+from app.models.evaluation import (
+    EvaluationRunPublic,
+    PromptImprovementJobPublic,
+    RunModeEnum,
+)
+from app.models.job import JobStatus
+from app.models.llm.response import LLMJobImmediatePublic
 from app.services.evaluations import (
     get_evaluation_with_scores,
-    improve_prompt,
+    start_prompt_improvement_job,
     validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
@@ -208,26 +219,80 @@ def get_evaluation_run_status(
 @router.post(
     "/{evaluation_id}/improve-prompt",
     description=load_description("evaluation/improve_prompt.md"),
-    response_model=APIResponse[ConfigVersionPublic],
-    status_code=201,
+    response_model=APIResponse[LLMJobImmediatePublic],
+    status_code=202,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def improve_evaluation_prompt(
     evaluation_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[ConfigVersionPublic]:
-    """Generate an AI-improved prompt iteration from a completed evaluation run."""
+) -> APIResponse[LLMJobImmediatePublic]:
+    """Enqueue an AI prompt-improvement job for a completed evaluation run."""
     logger.info(
         f"[improve_evaluation_prompt] Starting | evaluation_id={evaluation_id} "
         f"org_id={auth_context.organization_.id} project_id={auth_context.project_.id}"
     )
 
-    new_version = improve_prompt(
+    job = start_prompt_improvement_job(
         session=session,
         evaluation_id=evaluation_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 
-    return APIResponse.success_response(data=new_version)
+    return APIResponse.success_response(
+        data=LLMJobImmediatePublic(
+            job_id=job.id,
+            status=job.status.value,
+            message="Prompt improvement is running; poll the status endpoint for the result.",
+            job_inserted_at=job.inserted_at,
+            job_updated_at=job.updated_at,
+        )
+    )
+
+
+@router.get(
+    "/{evaluation_id}/improve-prompt/{job_id}",
+    description=load_description("evaluation/get_improve_prompt_status.md"),
+    response_model=APIResponse[PromptImprovementJobPublic],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def get_improve_prompt_status(
+    evaluation_id: int,
+    job_id: UUID,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[PromptImprovementJobPublic]:
+    """Poll a prompt-improvement job; returns the new config_version once complete."""
+    project_id = auth_context.project_.id
+    job = JobCrud(session=session).get(job_id=job_id, project_id=project_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    config_version = None
+    if job.status == JobStatus.SUCCESS:
+        run = get_evaluation_run_by_id(
+            session=session,
+            evaluation_id=evaluation_id,
+            organization_id=auth_context.organization_.id,
+            project_id=project_id,
+        )
+        version_number = (job.meta or {}).get("version")
+        if run and run.config_id and version_number is not None:
+            version = ConfigVersionCrud(
+                session=session,
+                config_id=run.config_id,
+                project_id=project_id,
+            ).read_one(version_number=version_number)
+            if version:
+                config_version = ConfigVersionPublic.model_validate(version)
+
+    return APIResponse.success_response(
+        data=PromptImprovementJobPublic(
+            job_id=job.id,
+            status=job.status.value,
+            config_version=config_version,
+            error_message=job.error_message,
+        )
+    )
