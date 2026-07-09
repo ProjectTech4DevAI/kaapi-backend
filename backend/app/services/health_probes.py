@@ -36,14 +36,14 @@ class Probe:
 
 _PROBES: list[Probe] = [
     # Text
-    Probe(provider="openai", model="gpt-4o-mini", modality="text"),
+    Probe(provider="openai", model="gpt-4o-1-mini", modality="text"),
     Probe(provider="google", model="gemini-2.5-flash", modality="text"),
     Probe(provider="google-aistudio", model="gemini-2.5-flash", modality="text"),
     Probe(provider="anthropic", model="claude-3-5-haiku-latest", modality="text"),
     Probe(provider="sarvamai", model="sarvam-m", modality="text"),
     # TTS
     Probe(provider="openai", model="tts-1", modality="tts"),
-    Probe(provider="google", model="gemini-2.5-flash-preview-tts", modality="tts"),
+    Probe(provider="google", model="gemini-2.5-flash-preview-ttsss", modality="tts"),
     Probe(provider="sarvamai", model="bulbul:v2", modality="tts"),
     Probe(provider="elevenlabs", model="eleven_flash_v2_5", modality="tts"),
     # STT
@@ -65,7 +65,7 @@ def _build_provider(
             organization_id=org_id,
         )
     except (ValueError, RuntimeError) as e:
-        logger.warning(
+        logger.error(
             f"[_build_provider] Client init failed | provider: {probe.provider}, "
             f"modality: {probe.modality}, error: {e}"
         )
@@ -147,7 +147,7 @@ def _run_probe(provider: BaseProvider | None, probe: Probe) -> dict[str, Any]:
     except Exception as e:
         result["latency_ms"] = int((time.perf_counter() - started) * 1000)
         result["error"] = f"{type(e).__name__}: {e}"
-        logger.warning(
+        logger.error(
             f"[_run_probe] Raised | provider: {probe.provider}, "
             f"modality: {probe.modality}, error: {result['error']}"
         )
@@ -156,7 +156,7 @@ def _run_probe(provider: BaseProvider | None, probe: Probe) -> dict[str, Any]:
     result["latency_ms"] = int((time.perf_counter() - started) * 1000)
     if response is None:
         result["error"] = error or "no_response"
-        logger.warning(
+        logger.error(
             f"[_run_probe] Failed | provider: {probe.provider}, "
             f"modality: {probe.modality}, error: {result['error']}"
         )

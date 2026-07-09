@@ -190,11 +190,15 @@ def setup_telemetry(service_name: str | None = None) -> None:
     resource = _build_resource(service_name)
     tracer_provider = TracerProvider(resource=resource)
 
-    # Bridge OTel spans into Sentry as Sentry transactions and spans, with full attribute and error capture.
     if settings.SENTRY_DSN:
-        from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
+        from opentelemetry.propagate import set_global_textmap
+        from sentry_sdk.integrations.opentelemetry import (
+            SentryPropagator,
+            SentrySpanProcessor,
+        )
 
         tracer_provider.add_span_processor(SentrySpanProcessor())
+        set_global_textmap(SentryPropagator())
 
     trace.set_tracer_provider(tracer_provider)
 
