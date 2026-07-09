@@ -147,7 +147,10 @@ def _load_items_from_object_store(
                     "expected_output": {"answer": item["answer"]},
                     "metadata": {
                         "category": item.get("category") or DEFAULT_CATEGORY,
-                        "question_id": f"item_{row_idx}",
+                        # 1-based int, matching the Langfuse upload path
+                        # (langfuse.py upload_dataset_to_langfuse) so the Q.ID
+                        # column groups numerically, not by the item id string.
+                        "question_id": row_idx + 1,
                     },
                 }
             )
