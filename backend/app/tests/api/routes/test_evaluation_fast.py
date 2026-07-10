@@ -317,9 +317,9 @@ def _patch_dispatch() -> Iterator[MagicMock]:
     enqueue. Yields the chunk-enqueue mock (call count == number of chunks).
     """
     with (
-        patch("app.services.evaluations.fast.get_tracing_client"),
+        patch("app.services.evaluations.fast.get_langfuse_client"),
         patch(
-            "app.services.evaluations.fast.load_evaluation_dataset_items",
+            "app.services.evaluations.fast.fetch_dataset_items",
             return_value=[_dataset_item(f"item-{i}") for i in range(3)],
         ),
         patch(
@@ -1121,7 +1121,7 @@ class TestChunkFailureIsolation:
                 ),
             ),
             patch(
-                "app.services.evaluations.fast.load_evaluation_dataset_items",
+                "app.services.evaluations.fast.fetch_dataset_items",
                 return_value=[_dataset_item(f"item-{i}") for i in range(4)],
             ),
             patch(
@@ -1155,9 +1155,9 @@ class TestFanOutPartition:
         items = [_dataset_item(f"item-{i}") for i in range(5)]
 
         with (
-            patch("app.services.evaluations.fast.get_tracing_client"),
+            patch("app.services.evaluations.fast.get_langfuse_client"),
             patch(
-                "app.services.evaluations.fast.load_evaluation_dataset_items",
+                "app.services.evaluations.fast.fetch_dataset_items",
                 return_value=items,
             ),
             patch(
@@ -1216,7 +1216,7 @@ class TestFanOutPartition:
                 ),
             ),
             patch(
-                "app.services.evaluations.fast.load_evaluation_dataset_items",
+                "app.services.evaluations.fast.fetch_dataset_items",
                 return_value=items,
             ),
             patch(
@@ -1248,9 +1248,9 @@ class TestValidateAndStartFailure:
         run_name = f"fetch-fail-{random_lower_string()}"
 
         with (
-            patch("app.services.evaluations.fast.get_tracing_client"),
+            patch("app.services.evaluations.fast.get_langfuse_client"),
             patch(
-                "app.services.evaluations.fast.load_evaluation_dataset_items",
+                "app.services.evaluations.fast.fetch_dataset_items",
                 side_effect=RuntimeError("langfuse down"),
             ),
             patch(
@@ -1388,105 +1388,3 @@ class TestCronBarrier:
         assert summary["total"] >= 1
         assert summary["aggregates_dispatched"] == 0
         assert summary["chunks_reenqueued"] == 0
-
-
-class TestStage3OptOut:
-    """`_stage3_score_and_trace` with tracing off (langfuse=None): cosine
-    persists keyed by item_id and every unscoreable reason is classified."""
-
-    def test_opt_out_scores_and_classifies_unscoreable(
-        self,
-        db: Session,
-        user_api_key: TestAuthContext,
-    ):
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
-        config = _make_text_openai_config(db, user_api_key.project_id)
-        eval_run = EvaluationRun(
-            run_name="stage3-opt-out",
-            dataset_name=dataset.name,
-            dataset_id=dataset.id,
-            config_id=config.id,
-            config_version=1,
-            status="processing",
-            run_mode=RunModeEnum.FAST.value,
-            total_items=4,
-            organization_id=user_api_key.organization_id,
-            project_id=user_api_key.project_id,
-        )
-        db.add(eval_run)
-        db.commit()
-        db.refresh(eval_run)
-
-        response_results = [
-            {
-                "item_id": "ok",
-                "question": "Q",
-                "generated_output": "a",
-                "ground_truth": "a",
-                "question_id": 1,
-            },
-            {
-                "item_id": "no_out",
-                "question": "Q",
-                "generated_output": "",
-                "ground_truth": "a",
-                "question_id": 2,
-            },
-            {
-                "item_id": "no_gt",
-                "question": "Q",
-                "generated_output": "a",
-                "ground_truth": "",
-                "question_id": 3,
-            },
-            {
-                "item_id": "emb_fail",
-                "question": "Q",
-                "generated_output": "a",
-                "ground_truth": "a",
-                "question_id": 4,
-            },
-        ]
-        embedding_results = [
-            {
-                "item_id": "ok",
-                "output_embedding": [1.0, 0.0],
-                "ground_truth_embedding": [1.0, 0.0],
-                "failed": False,
-            },
-            {"item_id": "emb_fail", "failed": True},
-        ]
-
-        with (
-            patch(
-                "app.crud.evaluations.fast.resolve_model_from_config",
-                return_value="gpt-4o",
-            ),
-            patch("app.crud.evaluations.fast.attach_cost"),
-        ):
-            _, score, write_items = _stage3_score_and_trace(
-                session=db,
-                eval_run=eval_run,
-                langfuse=None,
-                response_results=response_results,
-                embedding_results=embedding_results,
-                log_prefix="[t]",
-            )
-
-        # No traces exist on opt-out, so nothing is queued for Langfuse.
-        assert write_items == []
-        # Cosine persists keyed by item_id (ref fallback), scoreable item only.
-        assert eval_run.per_item_scores == {"ok": pytest.approx(1.0, abs=1e-6)}
-        # Every unscoreable item is classified by its reason.
-        assert eval_run.unscoreable == {
-            "no_out": "empty_output",
-            "no_gt": "empty_ground_truth",
-            "emb_fail": "embedding_failed",
-        }
-        # UI records render for every item, keyed by the item_id ref.
-        by_ref = {t["trace_id"]: t for t in score["traces"]}
-        assert set(by_ref) == {"ok", "no_out", "no_gt", "emb_fail"}
-        assert (
-            by_ref["no_out"]["scores"][0]["comment"] == "Cannot compute: empty_output"
-        )
-        assert by_ref["no_out"]["scores"][0]["unscoreable"] is True

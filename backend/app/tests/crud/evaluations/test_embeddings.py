@@ -132,32 +132,6 @@ class TestBuildEmbeddingJsonl:
         # Item with no item_id is dropped silently (cannot be keyed at all).
         assert skipped == []
 
-    def test_build_embedding_jsonl_falls_back_to_item_id(self) -> None:
-        """Items with no mapped trace_id use item_id as the key (opt-out), so
-        they are still embedded rather than skipped."""
-        results = [
-            {
-                "item_id": "item_1",
-                "question": "Test?",
-                "generated_output": "Output",
-                "ground_truth": "Truth",
-            },
-            {
-                "item_id": "item_2",
-                "question": "Test?",
-                "generated_output": "Output",
-                "ground_truth": "Truth",
-            },
-        ]
-
-        trace_id_mapping = {"item_2": "trace_2"}
-
-        jsonl_data, skipped = build_embedding_jsonl(results, trace_id_mapping)
-
-        assert len(jsonl_data) == 2
-        assert {j["custom_id"] for j in jsonl_data} == {"item_1", "trace_2"}
-        assert skipped == []
-
 
 class TestParseEmbeddingResults:
     """Tests for parse_embedding_results function."""

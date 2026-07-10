@@ -731,7 +731,7 @@ def _stage3_score_and_trace(
     *,
     session: Session,
     eval_run: EvaluationRun,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     response_results: list[dict[str, Any]],
     embedding_results: list[dict[str, Any]],
     log_prefix: str,
@@ -764,16 +764,15 @@ def _stage3_score_and_trace(
     # Per-item cosine scores, keyed by trace_id (Langfuse) and item_id (persisted
     # records). Items with a trace but no computable score are flagged unscoreable
     # so they're kept out of avg/std/total_pairs.
-    # ref = trace_id when traced, else item_id, so cosine persists on opt-out.
     per_item_scores: list[dict[str, Any]] = []
     item_id_to_score: dict[str, float] = {}
-    item_id_to_ref: dict[str, str] = {}
     similarities: list[float] = []
-    unscoreable: dict[str, str] = {}  # {ref: reason}
+    unscoreable: dict[str, str] = {}  # {trace_id: reason}
     for response in response_results:
         item_id = response["item_id"]
-        ref = trace_id_mapping.get(item_id) or item_id
-        item_id_to_ref[item_id] = ref
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
+            continue
         embedding_pair = item_id_to_pair.get(item_id)
         has_embeddings = (
             embedding_pair is not None
@@ -783,11 +782,11 @@ def _stage3_score_and_trace(
         if not has_embeddings:
             # Classify why this item cannot be scored, for the UI flag.
             if not response.get("generated_output"):
-                unscoreable[ref] = "empty_output"
+                unscoreable[trace_id] = "empty_output"
             elif not response.get("ground_truth"):
-                unscoreable[ref] = "empty_ground_truth"
+                unscoreable[trace_id] = "empty_ground_truth"
             else:
-                unscoreable[ref] = "embedding_failed"
+                unscoreable[trace_id] = "embedding_failed"
             continue
         cosine = calculate_cosine_similarity(
             embedding_pair["output_embedding"],
@@ -795,27 +794,21 @@ def _stage3_score_and_trace(
         )
         similarities.append(cosine)
         item_id_to_score[item_id] = cosine
-        per_item_scores.append(
-            {
-                "trace_id": trace_id_mapping.get(item_id),
-                "cosine_similarity": cosine,
-            }
-        )
+        per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
 
-    # Langfuse write list, filtered to real trace_ids (empty on opt-out).
+    # Langfuse write list (cosine + 0-scores for unscoreable items); written
+    # after completion in run_fast_evaluation.
     unscoreable_writes = [
-        {"trace_id": trace_id_mapping[item_id], "unscoreable": True, "reason": reason}
-        for item_id, ref in item_id_to_ref.items()
-        if item_id in trace_id_mapping and (reason := unscoreable.get(ref)) is not None
+        {"trace_id": trace_id, "unscoreable": True, "reason": reason}
+        for trace_id, reason in unscoreable.items()
     ]
-    scored_writes = [w for w in per_item_scores if w["trace_id"] is not None]
-    write_items = scored_writes + unscoreable_writes
+    write_items = per_item_scores + unscoreable_writes
 
-    # Durable source of truth, persisted by the commit below. Keyed by ref
-    # (trace_id when traced, item_id otherwise) so the read path is consistent.
+    # Durable source of truth, persisted by the commit below.
     eval_run.per_item_scores = {
-        item_id_to_ref[item_id]: round(float(score), 6)
+        trace_id_mapping[item_id]: round(float(score), 6)
         for item_id, score in item_id_to_score.items()
+        if item_id in trace_id_mapping
     }
     eval_run.unscoreable = unscoreable or None
 
@@ -877,11 +870,15 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # Per-item UI records, keyed by ref, so results render on opt-out too.
+    # Build the per-trace records in the same shape the batch path persists (via
+    # fetch_trace_scores_from_langfuse). One record per response that has a
+    # Langfuse trace; the cosine score is attached when its embedding succeeded.
     traces: list[TraceData] = []
     for response in response_results:
         item_id = response["item_id"]
-        ref = item_id_to_ref.get(item_id, item_id)
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
+            continue
         trace_scores: list[TraceScore] = []
         cosine = item_id_to_score.get(item_id)
         if cosine is not None:
@@ -893,20 +890,20 @@ def _stage3_score_and_trace(
                     "comment": COSINE_SCORE_COMMENT,
                 }
             )
-        elif ref in unscoreable:
+        elif trace_id in unscoreable:
             # Placeholder 0-score, excluded from summary stats via the marker.
             trace_scores.append(
                 {
                     "name": COSINE_SCORE_NAME,
                     "value": 0,
                     "data_type": "NUMERIC",
-                    "comment": f"Cannot compute: {unscoreable[ref]}",
+                    "comment": f"Cannot compute: {unscoreable[trace_id]}",
                     "unscoreable": True,
                 }
             )
         traces.append(
             {
-                "trace_id": ref,
+                "trace_id": trace_id,
                 "question": response.get("question", ""),
                 "llm_answer": response.get("generated_output", ""),
                 "ground_truth_answer": response.get("ground_truth", ""),
@@ -934,7 +931,7 @@ def run_fast_evaluation(
     *,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     eval_run: EvaluationRun,
 ) -> EvaluationRun:
     """Merge the response chunks, then run embeddings + scoring + completion.
@@ -1012,7 +1009,7 @@ def run_fast_evaluation(
     # batch path). is_score_updated tracks the outcome so a cron can retry the
     # gap from per_item_scores.
     is_score_updated = True
-    if langfuse is not None and write_items:
+    if write_items:
         try:
             failed_trace_ids = update_traces_with_cosine_scores(
                 langfuse=langfuse, per_item_scores=write_items

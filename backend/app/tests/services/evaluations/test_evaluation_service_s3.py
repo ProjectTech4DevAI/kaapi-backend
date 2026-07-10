@@ -113,7 +113,7 @@ class TestGetEvaluationWithScoresS3:
 
     @patch("app.services.evaluations.evaluation.save_score")
     @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
-    @patch("app.services.evaluations.evaluation.get_tracing_client")
+    @patch("app.services.evaluations.evaluation.get_langfuse_client")
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
     @patch("app.services.evaluations.evaluation.load_json_from_object_store")
     @patch("app.services.evaluations.evaluation.get_cloud_storage")
@@ -166,100 +166,7 @@ class TestGetEvaluationWithScoresS3:
 
     @patch("app.services.evaluations.evaluation.save_score")
     @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
-    @patch("app.services.evaluations.evaluation.get_tracing_client")
-    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
-    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
-    @patch("app.services.evaluations.evaluation.get_cloud_storage")
-    def test_resync_opt_out_raises(
-        self,
-        mock_get_storage: MagicMock,
-        mock_load: MagicMock,
-        mock_get_eval: MagicMock,
-        mock_get_langfuse: MagicMock,
-        mock_fetch_langfuse: MagicMock,
-        mock_save_score: MagicMock,
-        eval_run_factory: Callable[..., MagicMock],
-    ) -> None:
-        """resync=True with tracing off returns 400 (nothing to resync from)."""
-        eval_run = eval_run_factory(
-            id=101,
-            status="completed",
-            score={"summary_scores": [{"name": "cosine_similarity", "avg": 0.8}]},
-            score_trace_url="s3://bucket/traces.json",
-            dataset_name="test_dataset",
-            run_name="test_run",
-        )
-        eval_run.per_item_scores = {"item_0_0": 0.8}
-        eval_run.total_items = 1
-        eval_run.unscoreable = None
-        mock_get_eval.return_value = eval_run
-        mock_get_storage.return_value = MagicMock()
-        mock_load.return_value = [{"trace_id": "item_0_0", "scores": []}]
-        mock_get_langfuse.return_value = None
-
-        with pytest.raises(HTTPException) as exc:
-            get_evaluation_with_scores(
-                session=MagicMock(),
-                evaluation_id=101,
-                organization_id=1,
-                project_id=1,
-                get_trace_info=True,
-                resync_score=True,
-            )
-
-        assert exc.value.status_code == 400
-        mock_fetch_langfuse.assert_not_called()
-        mock_save_score.assert_not_called()
-
-    @patch("app.services.evaluations.evaluation.save_score")
-    @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
-    @patch("app.services.evaluations.evaluation.get_tracing_client")
-    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
-    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
-    @patch("app.services.evaluations.evaluation.get_cloud_storage")
-    def test_read_opt_out_serves_cosine_without_langfuse(
-        self,
-        mock_get_storage: MagicMock,
-        mock_load: MagicMock,
-        mock_get_eval: MagicMock,
-        mock_get_langfuse: MagicMock,
-        mock_fetch_langfuse: MagicMock,
-        mock_save_score: MagicMock,
-        eval_run_factory: Callable[..., MagicMock],
-    ) -> None:
-        """Non-resync read with tracing off serves durable cosine from cache."""
-        eval_run = eval_run_factory(
-            id=102,
-            status="completed",
-            score={"summary_scores": [{"name": "cosine_similarity", "avg": 0.8}]},
-            score_trace_url=None,
-            dataset_name="test_dataset",
-            run_name="test_run",
-        )
-        eval_run.per_item_scores = {"item_0_0": 0.8}
-        eval_run.total_items = 1
-        eval_run.unscoreable = None
-        mock_get_eval.return_value = eval_run
-        mock_get_storage.return_value = MagicMock()
-        mock_load.return_value = None
-        mock_get_langfuse.return_value = None
-
-        result, error = get_evaluation_with_scores(
-            session=MagicMock(),
-            evaluation_id=102,
-            organization_id=1,
-            project_id=1,
-            get_trace_info=True,
-            resync_score=False,
-        )
-
-        assert error is None
-        mock_fetch_langfuse.assert_not_called()
-        assert result.score["summary_scores"][0]["name"] == "cosine_similarity"
-
-    @patch("app.services.evaluations.evaluation.save_score")
-    @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
-    @patch("app.services.evaluations.evaluation.get_tracing_client")
+    @patch("app.services.evaluations.evaluation.get_langfuse_client")
     @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
     @patch("app.services.evaluations.evaluation.load_json_from_object_store")
     @patch("app.services.evaluations.evaluation.get_cloud_storage")

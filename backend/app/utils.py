@@ -31,7 +31,7 @@ from sqlmodel import Session
 from app.core import security
 from app.core.audio_utils import AudioRef
 from app.core.config import settings
-from app.crud.credentials import get_provider_credential, get_tracing_credential
+from app.crud.credentials import get_provider_credential
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -394,19 +394,20 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
 def get_tracing_client(
     session: Session, org_id: int, project_id: int
 ) -> Langfuse | None:
-    """Return the Langfuse client when the project opted into tracing, else None
-    (never raises), so evaluations degrade to cosine-only instead of failing."""
-    credentials = get_tracing_credential(
+    """Return the Langfuse client when credentials exist, else None (never
+    raises), so evaluations degrade to cosine-only instead of failing."""
+    credentials = get_provider_credential(
         session=session,
         org_id=org_id,
         project_id=project_id,
+        provider="langfuse",
     )
 
     if not credentials or not all(
         key in credentials for key in ["public_key", "secret_key", "host"]
     ):
         logger.info(
-            f"[get_tracing_client] Tracing off or credentials missing; "
+            f"[get_tracing_client] Langfuse credentials missing; "
             f"skipping Langfuse | project_id: {project_id}"
         )
         return None
