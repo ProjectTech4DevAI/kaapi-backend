@@ -747,15 +747,17 @@ def _judge_rows(
 ) -> tuple[dict[str, JudgeResult], set[str], str | None]:
     """Run one judge completion per judgeable row, isolated per row.
 
-    `judgeable` is a list of (item_id, trace_id, response). Returns
-    ``{item_id: JudgeResult}`` for rows that scored, the set of trace_ids whose
-    judge failed (to be flagged ``judge_failed`` by the caller), and the resolved
-    judge model (for cost). A judge failure never fails a sibling row or the run.
+    `judgeable` is a list of (item_id, ref, response), where ``ref`` is the
+    cosine-style identity (trace_id when traced, else item_id) — the judge is
+    Langfuse-independent, so it never needs a real trace_id. Returns
+    ``{item_id: JudgeResult}`` for rows that scored, the set of refs whose judge
+    failed (to be flagged ``judge_failed`` by the caller), and the resolved judge
+    model (for cost). A judge failure never fails a sibling row or the run.
     """
     results: dict[str, JudgeResult] = {}
-    failed_trace_ids: set[str] = set()
+    failed_refs: set[str] = set()
     if not judgeable:
-        return results, failed_trace_ids, None
+        return results, failed_refs, None
 
     # Resolve the judge config once per run; a setup failure isolates every row
     # (cosine is already computed) rather than failing the run.
@@ -770,7 +772,7 @@ def _judge_rows(
             f"unjudged | error={exc}",
             exc_info=True,
         )
-        return results, {trace_id for _item_id, trace_id, _r in judgeable}, None
+        return results, {ref for _item_id, ref, _r in judgeable}, None
 
     judge_model = base_params.get("model")
     logger.info(
@@ -788,26 +790,26 @@ def _judge_rows(
                 question=response.get("question", ""),
                 generated_answer=response.get("generated_output", ""),
                 ground_truth=response.get("ground_truth", ""),
-            ): (item_id, trace_id)
-            for item_id, trace_id, response in judgeable
+            ): (item_id, ref)
+            for item_id, ref, response in judgeable
         }
         for future in as_completed(future_map):
-            item_id, trace_id = future_map[future]
+            item_id, ref = future_map[future]
             try:
                 results[item_id] = future.result()
             except Exception as exc:
-                failed_trace_ids.add(trace_id)
+                failed_refs.add(ref)
                 logger.warning(
                     f"[_judge_rows] {log_prefix} Judge failed for row; flagged "
-                    f"unscoreable | item_id={item_id} | trace_id={trace_id} | "
+                    f"unscoreable | item_id={item_id} | ref={ref} | "
                     f"error={exc}"
                 )
 
     logger.info(
         f"[_judge_rows] {log_prefix} Judge finished | scored={len(results)} | "
-        f"failed={len(failed_trace_ids)}"
+        f"failed={len(failed_refs)}"
     )
-    return results, failed_trace_ids, judge_model
+    return results, failed_refs, judge_model
 
 
 def _stage3_score_and_trace(
@@ -966,20 +968,20 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # Correctness judge — runs after cosine, once per judgeable row (a row with a
-    # trace and both a generated answer and a ground truth to compare). Judging is
-    # always on for fast runs; judge_config only tailors it. Per-row isolation lives
-    # in _judge_rows: a failure flags that row judge_failed and never touches cosine.
+    # Correctness judge — runs after cosine, once per judgeable row (a row with
+    # both a generated answer and a ground truth to compare). The judge is
+    # Langfuse-independent, so rows are keyed by ref (trace_id when traced, else
+    # item_id) exactly like cosine — judging still runs with tracing off. Judging
+    # is always on for fast runs; judge_config only tailors it. Per-row isolation
+    # lives in _judge_rows: a failure flags that row judge_failed, never cosine.
     judgeable: list[tuple[str, str, dict[str, Any]]] = []
     for response in response_results:
         item_id = response["item_id"]
-        trace_id = trace_id_mapping.get(item_id)
-        if not trace_id:
-            continue
+        ref = item_id_to_ref[item_id]
         if response.get("generated_output") and response.get("ground_truth"):
-            judgeable.append((item_id, trace_id, response))
+            judgeable.append((item_id, ref, response))
 
-    correctness_by_item, judge_failed_trace_ids, judge_model = _judge_rows(
+    correctness_by_item, judge_failed_refs, judge_model = _judge_rows(
         session=session,
         openai_client=openai_client,
         judge_config=judge_config,
@@ -990,16 +992,17 @@ def _stage3_score_and_trace(
 
     # Flag judge-failed rows unscoreable WITHOUT clobbering an existing cosine
     # reason (setdefault): a row whose cosine already failed keeps that reason.
-    for trace_id in judge_failed_trace_ids:
-        unscoreable.setdefault(trace_id, JUDGE_FAILED_REASON)
+    # Keyed by ref, consistent with the cosine unscoreable reasons above.
+    for ref in judge_failed_refs:
+        unscoreable.setdefault(ref, JUDGE_FAILED_REASON)
     eval_run.unscoreable = unscoreable or None
 
-    # Durable {trace_id: correctness} map — source of truth for Langfuse resync,
-    # mirroring per_item_scores.
+    # Durable {ref: correctness} map — source of truth for Langfuse resync,
+    # keyed by ref exactly like per_item_scores so correctness persists with
+    # tracing off (ref falls back to item_id).
     eval_run.per_item_correctness = {
-        trace_id_mapping[item_id]: round(float(result.score), 6)
+        item_id_to_ref[item_id]: round(float(result.score), 6)
         for item_id, result in correctness_by_item.items()
-        if item_id in trace_id_mapping
     } or None
 
     # Langfuse write list carries the reasoning that the durable value-only map
@@ -1222,8 +1225,10 @@ def run_fast_evaluation(
 
     # Correctness scores are written from the durable per_item_correctness source
     # of truth; a failure here is recoverable on resync and does not gate the run
-    # or the cosine is_score_updated flag (a separate score family).
-    if correctness_write_items:
+    # or the cosine is_score_updated flag (a separate score family). Gated on
+    # tracing like the cosine push above — with tracing off, correctness_write_items
+    # is empty and the durable per_item_correctness carries the data for later resync.
+    if langfuse is not None and correctness_write_items:
         try:
             failed_correctness_ids = update_traces_with_correctness_scores(
                 langfuse=langfuse, per_item_correctness=correctness_write_items

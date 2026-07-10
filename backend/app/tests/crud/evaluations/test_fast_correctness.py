@@ -21,7 +21,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session, select
 
-from app.crud.evaluations.fast import _stage3_score_and_trace
+from app.crud.evaluations.fast import (
+    CHUNK_CONFIG_INDEX,
+    CHUNK_CONFIG_RUN_ID,
+    JOB_TYPE_EVALUATION_FAST_CHUNK,
+    _stage3_score_and_trace,
+    run_fast_evaluation,
+)
 from app.crud.evaluations.langfuse import update_traces_with_correctness_scores
 from app.crud.evaluations.score import (
     CORRECTNESS_SCORE_NAME,
@@ -29,6 +35,7 @@ from app.crud.evaluations.score import (
     JUDGE_FAILED_REASON,
 )
 from app.models import EvaluationRun, Organization, Project
+from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.tests.utils.test_data import (
     create_test_config,
@@ -367,3 +374,301 @@ class TestUpdateTracesWithCorrectnessScores:
         # Only the bad trace is reported; siblings still written.
         assert failed == ["trace_2"]
         assert langfuse.create_score.call_count == 3
+
+
+class TestStage3CorrectnessTracingOff:
+    """Stage 3 with tracing off (`langfuse=None`, empty trace map): the judge is
+    Langfuse-independent, so correctness still runs and persists keyed by the
+    item_id fallback ref exactly like cosine."""
+
+    def test_judge_runs_and_keys_correctness_by_item_id(self, db: Session) -> None:
+        eval_run = _make_eval_run(db, total_items=2)
+        response_results = [
+            _response_row("item-1", "Q1", "A1", "GT1"),
+            _response_row("item-2", "Q2", "A2", "GT2"),
+        ]
+        embedding_results = [_embedding_row("item-1"), _embedding_row("item-2")]
+
+        openai_client = MagicMock()
+        openai_client.responses.create.return_value = _judge_reply(0.8, "correct")
+
+        # Empty trace_map mirrors create_langfuse_dataset_run's opt-out return.
+        with _Stage3Harness(
+            trace_map={},
+            estimate={"input_cost": 0.01, "output_cost": 0.02},
+        ):
+            run, score, write_items, correctness_writes = _stage3_score_and_trace(
+                session=db,
+                openai_client=openai_client,
+                eval_run=eval_run,
+                langfuse=None,
+                response_results=response_results,
+                embedding_results=embedding_results,
+                judge_config=None,
+                log_prefix="[t]",
+            )
+
+        # Judge ran for both rows; the durable map is populated, keyed by item_id.
+        assert run.per_item_correctness == {"item-1": 0.8, "item-2": 0.8}
+
+        # Correctness summary sits alongside cosine with avg/std/total_pairs.
+        correctness_summary = next(
+            s for s in score["summary_scores"] if s["name"] == CORRECTNESS_SCORE_NAME
+        )
+        assert correctness_summary["avg"] == 0.8
+        assert correctness_summary["std"] == 0.0
+        assert correctness_summary["total_pairs"] == 2
+
+        # Per-trace records keyed by ref (= item_id) each carry a Correctness score.
+        by_ref = {t["trace_id"]: t for t in score["traces"]}
+        assert set(by_ref) == {"item-1", "item-2"}
+        for ref in ("item-1", "item-2"):
+            names = {s["name"] for s in by_ref[ref]["scores"]}
+            assert CORRECTNESS_SCORE_NAME in names
+            assert COSINE_SCORE_NAME in names
+
+        # Nothing is queued for Langfuse when tracing is off.
+        assert write_items == []
+        assert correctness_writes == []
+
+    def test_judge_failure_isolated_per_row_by_item_id(self, db: Session) -> None:
+        eval_run = _make_eval_run(db, total_items=2)
+        response_results = [
+            _response_row("item-1", "Q1", "A1", "GT1"),
+            _response_row("item-2", "Q2", "A2", "GT2"),
+        ]
+        embedding_results = [_embedding_row("item-1"), _embedding_row("item-2")]
+
+        def _judge_side_effect(**kwargs: Any):
+            if "Q2" in kwargs["input"]:
+                return SimpleNamespace(
+                    output_text="not json at all",
+                    output=[],
+                    usage=SimpleNamespace(
+                        input_tokens=1, output_tokens=1, total_tokens=2
+                    ),
+                )
+            return _judge_reply(0.9, "great")
+
+        openai_client = MagicMock()
+        openai_client.responses.create.side_effect = _judge_side_effect
+
+        with _Stage3Harness(
+            trace_map={},
+            estimate={"input_cost": 0.01, "output_cost": 0.02},
+        ):
+            run, score, _writes, correctness_writes = _stage3_score_and_trace(
+                session=db,
+                openai_client=openai_client,
+                eval_run=eval_run,
+                langfuse=None,
+                response_results=response_results,
+                embedding_results=embedding_results,
+                judge_config=None,
+                log_prefix="[t]",
+            )
+
+        # Only the failed row is flagged, keyed by its item_id ref; sibling scored.
+        assert run.unscoreable["item-2"] == JUDGE_FAILED_REASON
+        assert "item-1" not in (run.unscoreable or {})
+        assert run.per_item_correctness == {"item-1": 0.9}
+
+        # Judge failure never touches cosine: the failed row keeps its real score.
+        by_ref = {t["trace_id"]: t for t in score["traces"]}
+        cosine = next(
+            s for s in by_ref["item-2"]["scores"] if s["name"] == COSINE_SCORE_NAME
+        )
+        assert cosine["value"] == pytest.approx(1.0, abs=0.01)
+        assert not cosine.get("unscoreable")
+        assert CORRECTNESS_SCORE_NAME not in {
+            s["name"] for s in by_ref["item-2"]["scores"]
+        }
+        assert correctness_writes == []
+
+
+def _fake_embedding_response() -> SimpleNamespace:
+    return SimpleNamespace(
+        data=[
+            SimpleNamespace(index=0, embedding=list(_IDENTICAL_VEC)),
+            SimpleNamespace(index=1, embedding=list(_IDENTICAL_VEC)),
+        ],
+        usage=SimpleNamespace(prompt_tokens=5, total_tokens=5),
+    )
+
+
+def _seed_chunk(
+    db: Session,
+    eval_run: EvaluationRun,
+    results: list[dict[str, Any]],
+    store: dict[str, list[dict[str, Any]]],
+    *,
+    chunk_index: int = 0,
+) -> None:
+    url = f"s3://bucket/responses_{eval_run.id}_{chunk_index}.json"
+    store[url] = results
+    job = BatchJob(
+        provider="openai",
+        job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
+        config={
+            "model": "gpt-4o",
+            CHUNK_CONFIG_RUN_ID: eval_run.id,
+            CHUNK_CONFIG_INDEX: chunk_index,
+        },
+        raw_output_url=url,
+        total_items=len(results),
+        organization_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+    )
+    db.add(job)
+    db.commit()
+
+
+class _FastPipelineTracingOff:
+    """Drives `run_fast_evaluation` with `langfuse=None`, S3 backed by an in-memory
+    store, and the two Langfuse score-write functions patched so a test can assert
+    they are never called on the opt-out path."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.store: dict[str, list[dict[str, Any]]] = {}
+
+    def __enter__(self):
+        def _upload(*, filename, results, **_):
+            url = f"s3://bucket/{filename}"
+            self.store[url] = list(results)
+            return url
+
+        def _load(*, url, **_):
+            return self.store[url]
+
+        def _fake_save_score(*, eval_run_id, score, **_):
+            run = self.db.get(EvaluationRun, eval_run_id)
+            run.score = {"summary_scores": score["summary_scores"]}
+            run.score_trace_url = f"s3://bucket/traces_{eval_run_id}.json"
+            self.db.add(run)
+            self.db.commit()
+            self.db.refresh(run)
+            return run
+
+        self._patches = [
+            patch("app.crud.evaluations.fast._upload_unit_to_s3", side_effect=_upload),
+            patch("app.crud.evaluations.fast._load_unit_from_s3", side_effect=_load),
+            patch(
+                "app.crud.evaluations.fast.resolve_model_from_config",
+                return_value="gpt-4o",
+            ),
+            patch("app.crud.evaluations.fast.attach_cost"),
+            patch("app.crud.evaluations.fast.save_score", side_effect=_fake_save_score),
+        ]
+        self.cosine_write = patch(
+            "app.crud.evaluations.fast.update_traces_with_cosine_scores"
+        ).start()
+        self.correctness_write = patch(
+            "app.crud.evaluations.fast.update_traces_with_correctness_scores"
+        ).start()
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in self._patches:
+            p.stop()
+        patch.stopall()
+        return False
+
+
+class TestFastPipelineTracingOff:
+    """`run_fast_evaluation` end-to-end with tracing disabled: the run completes
+    with correctness scored, and neither Langfuse score-write is invoked."""
+
+    def test_completes_with_correctness_and_no_langfuse_writes(
+        self, db: Session
+    ) -> None:
+        eval_run = _make_eval_run(db, total_items=0)
+        eval_run.status = "pending"
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        openai_client = MagicMock()
+        openai_client.embeddings.create.return_value = _fake_embedding_response()
+        openai_client.responses.create.return_value = _judge_reply(0.75, "accurate")
+
+        with _FastPipelineTracingOff(db) as harness:
+            _seed_chunk(
+                db,
+                eval_run,
+                [
+                    _response_row("item-1", "Q1", "A1", "GT1"),
+                    _response_row("item-2", "Q2", "A2", "GT2"),
+                ],
+                harness.store,
+            )
+            result = run_fast_evaluation(
+                session=db,
+                openai_client=openai_client,
+                langfuse=None,
+                eval_run=eval_run,
+            )
+
+            harness.cosine_write.assert_not_called()
+            harness.correctness_write.assert_not_called()
+
+        assert result.status == "completed"
+        assert result.per_item_correctness == {"item-1": 0.75, "item-2": 0.75}
+        summary_names = {s["name"] for s in result.score["summary_scores"]}
+        assert CORRECTNESS_SCORE_NAME in summary_names
+        assert COSINE_SCORE_NAME in summary_names
+
+    def test_judge_failure_isolated_and_run_still_completes(self, db: Session) -> None:
+        eval_run = _make_eval_run(db, total_items=0)
+        eval_run.status = "pending"
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+
+        def _judge_side_effect(**kwargs: Any):
+            if "Q2" in kwargs["input"]:
+                return SimpleNamespace(
+                    output_text="not json",
+                    output=[],
+                    usage=SimpleNamespace(
+                        input_tokens=1, output_tokens=1, total_tokens=2
+                    ),
+                )
+            return _judge_reply(0.9, "great")
+
+        openai_client = MagicMock()
+        openai_client.embeddings.create.return_value = _fake_embedding_response()
+        openai_client.responses.create.side_effect = _judge_side_effect
+
+        with _FastPipelineTracingOff(db) as harness:
+            _seed_chunk(
+                db,
+                eval_run,
+                [
+                    _response_row("item-1", "Q1", "A1", "GT1"),
+                    _response_row("item-2", "Q2", "A2", "GT2"),
+                ],
+                harness.store,
+            )
+            result = run_fast_evaluation(
+                session=db,
+                openai_client=openai_client,
+                langfuse=None,
+                eval_run=eval_run,
+            )
+
+            harness.cosine_write.assert_not_called()
+            harness.correctness_write.assert_not_called()
+
+        # One judge failure marks only that row and never fails the run.
+        assert result.status == "completed"
+        assert result.unscoreable["item-2"] == JUDGE_FAILED_REASON
+        assert "item-1" not in (result.unscoreable or {})
+        assert result.per_item_correctness == {"item-1": 0.9}
+        # Cosine is untouched by the judge failure: both rows scored.
+        cosine_summary = next(
+            s for s in result.score["summary_scores"] if s["name"] == COSINE_SCORE_NAME
+        )
+        assert cosine_summary["total_pairs"] == 2
