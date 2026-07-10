@@ -38,7 +38,6 @@ _PROBES: list[Probe] = [
     # Text
     Probe(provider="openai", model="gpt-4o-mini", modality="text"),
     Probe(provider="google", model="gemini-2.5-flash", modality="text"),
-    Probe(provider="google", model="gemini-2.5-flash", modality="text"),
     Probe(provider="google", model="gemini-2.5-pro", modality="text"),
     # TTS
     Probe(provider="google", model="gemini-2.5-flash-preview-tts", modality="tts"),
