@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
     SENTRY_DSN: HttpUrl | None = None
+    DISCORD_STATS_WEBHOOK_URL: HttpUrl | None = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
@@ -189,10 +190,6 @@ class Settings(BaseSettings):
     # the cron healer re-enqueues its missing chunk tasks.
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
-
-    HEALTH_PROBE_ORG_ID: int | None = None
-    HEALTH_PROBE_PROJECT_ID: int | None = None
-    HEALTH_PROBE_INTERVAL_MINUTES: int = 5
 
     # AI-assisted prompt improvement settings.
     # See docs/srd-ai-prompt-improvement.md for the full design rationale.

@@ -13,15 +13,27 @@ _LLM_TOKEN_SUMMARY_SQL = text(
     SELECT
         o.name AS organization_name,
         l.model AS model,
-        COALESCE(SUM((l.usage->>'total_tokens')::INTEGER), 0) AS sum_total_tokens,
-        COALESCE(SUM((l.usage->>'input_tokens')::INTEGER), 0) AS sum_input_tokens,
-        COALESCE(SUM((l.usage->>'output_tokens')::INTEGER), 0) AS sum_output_tokens
+        COALESCE(SUM((l.usage->>'total_tokens')::INTEGER), 0) AS sum_total_tokens
     FROM llm_call l
     INNER JOIN organization o ON l.organization_id = o.id
     WHERE l.inserted_at BETWEEN :start_at AND :end_at
       AND l.deleted_at IS NULL
     GROUP BY o.name, l.model
     ORDER BY sum_total_tokens DESC
+    """
+)
+
+_LLM_CALL_COUNTS_SQL = text(
+    """
+    SELECT
+        o.name AS organization_name,
+        COUNT(*) AS call_count
+    FROM llm_call l
+    INNER JOIN organization o ON l.organization_id = o.id
+    WHERE l.inserted_at BETWEEN :start_at AND :end_at
+      AND l.deleted_at IS NULL
+    GROUP BY o.name
+    ORDER BY call_count DESC
     """
 )
 
@@ -95,6 +107,7 @@ def get_daily_stats(
         f"end_at: {end_at.isoformat()}"
     )
     return {
+        "llm_call_counts": _rows(session, _LLM_CALL_COUNTS_SQL, params),
         "llm_call_token_summary": _rows(session, _LLM_TOKEN_SUMMARY_SQL, params),
         "llm_call_modality_counts": _rows(session, _LLM_MODALITY_COUNTS_SQL, params),
         "job_type_counts": _rows(session, _JOB_COUNTS_SQL, params),

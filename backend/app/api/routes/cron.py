@@ -9,8 +9,11 @@ from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
 from app.services.job_monitoring import monitor_pending_jobs
-from app.services.health_probes import run_probes
-from app.services.stats import collect_daily_stats
+from app.services.stats import (
+    collect_daily_stats,
+    format_daily_stats_message,
+    post_daily_stats_to_discord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +37,6 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     # Consecutive successful check-ins required to auto-resolve the issue.
     "recovery_threshold": 1,
 }
-
-HEALTH_PROBES_CRON_MONITOR_CONFIG: MonitorConfig = {
-    "schedule": {
-        "type": "interval",
-        "value": settings.HEALTH_PROBE_INTERVAL_MINUTES,
-        "unit": "minute",
-    },
-    "timezone": "UTC",
-    "checkin_margin": 2,
-    "max_runtime": 2 * settings.HEALTH_PROBE_INTERVAL_MINUTES,
-    "failure_issue_threshold": 1,
-    "recovery_threshold": 1,
-}
-
 
 DAILY_STATS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {"type": "crontab", "value": "0 0 * * *"},
@@ -158,10 +147,11 @@ async def evaluation_cron_job(
     monitor_slug="daily-stats-cron-job",
     monitor_config=DAILY_STATS_CRON_MONITOR_CONFIG,
 )
-def daily_stats_cron_job(session: SessionDep) -> dict:
-    logger.info("[daily_stats_cron_job] Cron job invoked")
+def daily_stats_cron_job(session: SessionDep, hours: int | None = None) -> dict:
+    logger.info(f"[daily_stats_cron_job] Cron job invoked | hours={hours}")
     try:
-        result = collect_daily_stats(session=session)
+        result = collect_daily_stats(session=session, window_hours=hours)
+        post_daily_stats_to_discord(format_daily_stats_message(result))
         logger.info(
             "[daily_stats_cron_job] Completed | window: %s",
             result["window"],
@@ -170,34 +160,6 @@ def daily_stats_cron_job(session: SessionDep) -> dict:
     except Exception as e:
         logger.error(
             f"[daily_stats_cron_job] Error executing cron job: {e}",
-            exc_info=True,
-        )
-        sentry_sdk.capture_exception(e)
-        raise
-
-
-@router.get(
-    "/cron/health-probes",
-    include_in_schema=False,
-    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
-)
-@sentry_sdk.monitor(
-    monitor_slug="health-probes-cron-job",
-    monitor_config=HEALTH_PROBES_CRON_MONITOR_CONFIG,
-)
-def health_probes_cron_job(session: SessionDep) -> dict:
-    logger.info("[health_probes_cron_job] Cron job invoked")
-    try:
-        result = run_probes(session=session)
-        logger.info(
-            "[health_probes_cron_job] Completed | ok: %s, failed: %s",
-            result.get("ok"),
-            result.get("failed"),
-        )
-        return result
-    except Exception as e:
-        logger.error(
-            f"[health_probes_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
         sentry_sdk.capture_exception(e)
