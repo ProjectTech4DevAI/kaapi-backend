@@ -130,7 +130,19 @@ def _run_probe(provider: BaseProvider | None, probe: Probe) -> dict[str, Any]:
         result["error"] = "client_init_failed"
         return result
 
-    built = _build_config_and_input(probe)
+    if provider is None:
+        result["error"] = "client_init_failed"
+        return result
+
+    try:
+        built = _build_config_and_input(probe)
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"
+        logger.error(
+            f"[_run_probe] Config build failed | provider: {probe.provider}, "
+            f"modality: {probe.modality}, error: {result['error']}"
+        )
+        return result
     if built is None:
         result["error"] = "stt_audio_not_configured"
         return result
