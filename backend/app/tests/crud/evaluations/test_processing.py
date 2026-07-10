@@ -1,10 +1,12 @@
 import json
+from datetime import timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.core import create_evaluation_run
 from app.crud.evaluations.processing import (
@@ -21,6 +23,7 @@ from app.models import BatchJob, EvaluationDataset, EvaluationRun, Organization,
 from app.models.batch_job import BatchJobType
 from app.models.evaluation import RunModeEnum
 from app.tests.utils.test_data import create_test_config, create_test_evaluation_dataset
+from app.tests.utils.utils import random_lower_string
 
 
 class TestParseEvaluationOutput:
@@ -1641,11 +1644,18 @@ class TestExtractBatchErrorMessage:
 
 
 class TestPollAllPendingEvaluations:
-    """Test polling all pending evaluations."""
+    """Dispatch guard for the batch-text result-processing fan-out.
+
+    ``poll_all_pending_evaluations`` is now dispatch-only: it fans eligible runs
+    out to a Celery worker and builds no OpenAI/Langfuse client itself. The
+    enqueue boundary (``start_evaluation_batch_result_processing``, a late import
+    from ``app.celery.utils``) is mocked so no broker is touched.
+    """
+
+    ENQUEUE_PATH = "app.celery.utils.start_evaluation_batch_result_processing"
 
     @pytest.fixture
     def test_dataset(self, db: Session) -> EvaluationDataset:
-        """Create a test dataset."""
         org = db.exec(select(Organization)).first()
         project = db.exec(
             select(Project).where(Project.organization_id == org.id)
@@ -1661,120 +1671,132 @@ class TestPollAllPendingEvaluations:
             duplication_factor=1,
         )
 
+    def _make_run(
+        self,
+        db: Session,
+        test_dataset,
+        *,
+        status: str = "processing",
+        run_mode: RunModeEnum = RunModeEnum.BATCH,
+        run_type: str = "text",
+        age_minutes: float = 0.0,
+    ) -> EvaluationRun:
+        """Seed one run; ``age_minutes`` back-dates ``updated_at`` past the stall."""
+        config = create_test_config(
+            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+        )
+        eval_run = create_evaluation_run(
+            session=db,
+            run_name=random_lower_string(),
+            dataset_name=test_dataset.name,
+            dataset_id=test_dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=test_dataset.organization_id,
+            project_id=test_dataset.project_id,
+            run_mode=run_mode,
+        )
+        eval_run.status = status
+        eval_run.type = run_type
+        # Set updated_at directly (not via update_evaluation_run, which bumps it).
+        eval_run.updated_at = now() - timedelta(minutes=age_minutes)
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+        return eval_run
+
+    @property
+    def _stale(self) -> float:
+        return settings.EVAL_BATCH_STALL_THRESHOLD_MINUTES + 5
+
     @pytest.mark.asyncio
-    async def test_poll_all_pending_evaluations_no_pending(
-        self, db: Session, test_dataset
-    ):
-        """Test polling with no pending evaluations."""
+    async def test_no_pending_returns_empty_summary(self, db: Session, test_dataset):
         result = await poll_all_pending_evaluations(session=db)
 
         assert result["total"] == 0
         assert result["processed"] == 0
         assert result["failed"] == 0
         assert result["still_processing"] == 0
+        assert result["details"] == []
 
     @pytest.mark.asyncio
-    @patch("app.crud.evaluations.processing.check_and_process_evaluation")
-    @patch("app.crud.evaluations.processing.get_openai_client")
-    @patch("app.crud.evaluations.processing.get_tracing_client")
-    async def test_poll_all_pending_evaluations_with_runs(
-        self,
-        mock_langfuse_client,
-        mock_openai_client,
-        mock_check,
-        db: Session,
-        test_dataset,
-    ):
-        """Test polling with pending evaluations."""
-        # Create a config for the evaluation run
-        config = create_test_config(
-            db, project_id=test_dataset.project_id, use_kaapi_schema=True
+    async def test_stale_batch_text_run_is_dispatched(self, db: Session, test_dataset):
+        run = self._make_run(db, test_dataset, age_minutes=self._stale)
+        old_updated_at = run.updated_at
+
+        # No OpenAI client may be built on the dispatch path.
+        with (
+            patch(self.ENQUEUE_PATH, return_value="task-123") as mock_enqueue,
+            patch("app.crud.evaluations.processing.get_openai_client") as mock_openai,
+        ):
+            result = await poll_all_pending_evaluations(session=db)
+
+        mock_enqueue.assert_called_once_with(
+            project_id=run.project_id,
+            job_id=str(run.id),
+            eval_run_id=run.id,
         )
-
-        # Create batch job
-        batch_job = BatchJob(
-            provider="openai",
-            provider_batch_id="batch_test",
-            provider_status="in_progress",
-            job_type=BatchJobType.EVALUATION,
-            total_items=2,
-            status="submitted",
-            organization_id=test_dataset.organization_id,
-            project_id=test_dataset.project_id,
-            inserted_at=now(),
-            updated_at=now(),
-        )
-        db.add(batch_job)
-        db.commit()
-        db.refresh(batch_job)
-
-        # Create pending evaluation run
-        eval_run = create_evaluation_run(
-            session=db,
-            run_name="test_pending_run",
-            dataset_name=test_dataset.name,
-            dataset_id=test_dataset.id,
-            config_id=config.id,
-            config_version=1,
-            organization_id=test_dataset.organization_id,
-            project_id=test_dataset.project_id,
-        )
-        eval_run.batch_job_id = batch_job.id
-        eval_run.status = "processing"
-        db.add(eval_run)
-        db.commit()
-        db.refresh(eval_run)
-
-        mock_openai_client.return_value = MagicMock()
-        mock_langfuse_client.return_value = MagicMock()
-        mock_check.return_value = {
-            "run_id": eval_run.id,
-            "run_name": eval_run.run_name,
-            "action": "no_change",
-        }
-
-        result = await poll_all_pending_evaluations(session=db)
+        mock_openai.assert_not_called()
 
         assert result["total"] == 1
         assert result["still_processing"] == 1
-        mock_check.assert_called_once()
+        assert result["processed"] == 0
+        assert result["failed"] == 0
+        assert len(result["details"]) == 1
+        detail = result["details"][0]
+        assert detail["action"] == "dispatched"
+        assert detail["run_id"] == run.id
+        assert detail["run_name"] == run.run_name
+        assert detail["task_id"] == "task-123"
+
+        # The dispatch lease bumped updated_at so the next tick won't re-dispatch.
+        db.refresh(run)
+        assert run.updated_at > old_updated_at
 
     @pytest.mark.asyncio
-    @patch("app.crud.evaluations.processing.check_and_process_evaluation")
-    async def test_poll_all_pending_evaluations_excludes_fast_runs(
-        self,
-        mock_check,
-        db: Session,
-        test_dataset,
+    async def test_fresh_run_within_lease_window_not_dispatched(
+        self, db: Session, test_dataset
     ):
-        """Fast-mode runs are handled synchronously and have no provider batch
-        job, so the batch poller must skip them. Otherwise it picks up an
-        in-flight fast run (status='processing', no batch_job_id yet) and wrongly
-        marks it 'Checking failed: ... has no batch_job_id'."""
-        config = create_test_config(
-            db, project_id=test_dataset.project_id, use_kaapi_schema=True
-        )
+        self._make_run(db, test_dataset, age_minutes=0.0)
 
-        eval_run = create_evaluation_run(
-            session=db,
-            run_name="test_fast_run",
-            dataset_name=test_dataset.name,
-            dataset_id=test_dataset.id,
-            config_id=config.id,
-            config_version=1,
-            organization_id=test_dataset.organization_id,
-            project_id=test_dataset.project_id,
-            run_mode=RunModeEnum.FAST,
-        )
-        eval_run.status = "processing"
-        db.add(eval_run)
-        db.commit()
-        db.refresh(eval_run)
+        with patch(self.ENQUEUE_PATH) as mock_enqueue:
+            result = await poll_all_pending_evaluations(session=db)
 
-        result = await poll_all_pending_evaluations(session=db)
-
+        mock_enqueue.assert_not_called()
         assert result["total"] == 0
-        mock_check.assert_not_called()
-        db.refresh(eval_run)
-        assert eval_run.status == "processing"
-        assert eval_run.error_message is None
+        assert result["still_processing"] == 0
+
+    @pytest.mark.asyncio
+    async def test_fast_mode_run_ignored(self, db: Session, test_dataset):
+        run = self._make_run(
+            db, test_dataset, run_mode=RunModeEnum.FAST, age_minutes=self._stale
+        )
+
+        with patch(self.ENQUEUE_PATH) as mock_enqueue:
+            result = await poll_all_pending_evaluations(session=db)
+
+        mock_enqueue.assert_not_called()
+        assert result["total"] == 0
+        db.refresh(run)
+        assert run.status == "processing"
+        assert run.error_message is None
+
+    @pytest.mark.asyncio
+    async def test_non_text_run_ignored(self, db: Session, test_dataset):
+        self._make_run(db, test_dataset, run_type="tts", age_minutes=self._stale)
+
+        with patch(self.ENQUEUE_PATH) as mock_enqueue:
+            result = await poll_all_pending_evaluations(session=db)
+
+        mock_enqueue.assert_not_called()
+        assert result["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_non_processing_run_ignored(self, db: Session, test_dataset):
+        self._make_run(db, test_dataset, status="completed", age_minutes=self._stale)
+
+        with patch(self.ENQUEUE_PATH) as mock_enqueue:
+            result = await poll_all_pending_evaluations(session=db)
+
+        mock_enqueue.assert_not_called()
+        assert result["total"] == 0

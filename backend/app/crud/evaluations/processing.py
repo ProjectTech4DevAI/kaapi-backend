@@ -12,10 +12,9 @@ import ast
 import asyncio
 import json
 import logging
-from collections import defaultdict
+from datetime import timedelta
 from typing import Any
 
-from fastapi import HTTPException
 from langfuse import Langfuse
 from openai import OpenAI
 from sqlmodel import Session, select
@@ -31,7 +30,9 @@ from app.core.batch.base import BATCH_KEY, BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.core.cloud.storage import get_cloud_storage
+from app.core.config import settings
 from app.core.storage_utils import load_json_from_object_store
+from app.core.util import now
 from app.crud.evaluations.batch import (
     load_evaluation_dataset_items,
     use_langfuse_client,
@@ -64,7 +65,7 @@ from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.models.evaluation import RunModeEnum
-from app.utils import get_openai_client, get_tracing_client
+from app.utils import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -1137,187 +1138,71 @@ async def check_and_process_evaluation(
 
 async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
     """
-    Poll all pending evaluations across all organizations.
+    Dispatch batch-mode text evaluation result-processing to Celery workers.
 
-    Fetches all evaluation runs with status='processing' in a single query,
-    groups them by project_id, and processes each project with its own
-    OpenAI/Langfuse clients.
+    Formerly ran the heavy download/parse/embedding/cosine work inline on the
+    non-recycling web process (leaking a Langfuse client per cron run). Now it is
+    dispatch-only: it fans each eligible run out to a Celery worker (prefork
+    children recycle, reclaiming that memory) and builds NO OpenAI or Langfuse
+    client itself.
 
-    Args:
-        session: Database session
+    Eligibility is `status='processing' AND type='text' AND run_mode=BATCH` and
+    untouched past EVAL_BATCH_STALL_THRESHOLD_MINUTES. Bumping `updated_at` before
+    each enqueue is the dispatch lease: an in-flight run's row stays fresh, so the
+    next cron tick won't re-dispatch it until the worker (or a real stall) lets it
+    age past the threshold again. Redelivery is safe — see
+    `execute_evaluation_batch_result_processing`.
 
-    Returns:
-        Summary dict:
-        {
-            "total": 5,
-            "processed": 2,
-            "failed": 1,
-            "still_processing": 2,
-            "details": [...]
-        }
+    Kept `async` for the awaiting caller. Return keys mirror the old summary so
+    `process_all_pending_evaluations` merges them unchanged; dispatched runs count
+    as `still_processing` (the worker owns the terminal transition, not this call).
     """
-    # Only batch-mode text runs are polled here; fast-mode runs complete
-    # synchronously and have no batch_job_id, and STT/TTS poll separately.
+    from app.celery.utils import start_evaluation_batch_result_processing
+
+    stall_cutoff = now() - timedelta(
+        minutes=settings.EVAL_BATCH_STALL_THRESHOLD_MINUTES
+    )
     statement = select(EvaluationRun).where(
         EvaluationRun.status == "processing",
         EvaluationRun.type == "text",
         EvaluationRun.run_mode == RunModeEnum.BATCH.value,
+        EvaluationRun.updated_at < stall_cutoff,
     )
     pending_runs = session.exec(statement).all()
 
-    if not pending_runs:
-        return {
-            "total": 0,
-            "processed": 0,
-            "failed": 0,
-            "still_processing": 0,
-            "details": [],
-        }
-
-    logger.info(
-        f"[poll_all_pending_evaluations] Found {len(pending_runs)} pending evaluation runs"
-    )
-
-    # Group evaluations by project_id since credentials are per project
-    evaluations_by_project: dict[int, list[EvaluationRun]] = defaultdict(list)
+    details: list[dict[str, Any]] = []
     for run in pending_runs:
-        evaluations_by_project[run.project_id].append(run)
+        # Lease first so a mid-flight dispatch can't be double-enqueued next tick.
+        update_evaluation_run(
+            session=session, eval_run=run, update=EvaluationRunUpdate()
+        )
+        task_id = start_evaluation_batch_result_processing(
+            project_id=run.project_id,
+            job_id=str(run.id),
+            eval_run_id=run.id,
+        )
+        details.append(
+            {
+                "run_id": run.id,
+                "run_name": run.run_name,
+                "action": "dispatched",
+                "task_id": task_id,
+            }
+        )
+        logger.info(
+            f"[poll_all_pending_evaluations] Dispatched batch result processing | "
+            f"run_id={run.id} | project_id={run.project_id} | task_id={task_id}"
+        )
 
-    # Process each project separately
-    all_results = []
-    total_processed_count = 0
-    total_failed_count = 0
-    total_still_processing_count = 0
-
-    for project_id, project_runs in evaluations_by_project.items():
-        # All runs in a project share the same org_id
-        org_id = project_runs[0].organization_id
-        try:
-            # Get API clients for this project
-            try:
-                openai_client = get_openai_client(
-                    session=session,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-                langfuse = get_tracing_client(
-                    session=session,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-            except HTTPException as http_exc:
-                logger.error(
-                    f"[poll_all_pending_evaluations] Failed to get API clients | org_id={org_id} | project_id={project_id} | error={http_exc.detail}"
-                )
-                # Mark all runs in this project as failed due to client configuration error
-                for eval_run in project_runs:
-                    update_evaluation_run(
-                        session=session,
-                        eval_run=eval_run,
-                        update=EvaluationRunUpdate(
-                            status="failed",
-                            error_message=http_exc.detail,
-                        ),
-                    )
-
-                    all_results.append(
-                        {
-                            "run_id": eval_run.id,
-                            "run_name": eval_run.run_name,
-                            "action": "failed",
-                            "error": http_exc.detail,
-                        }
-                    )
-                    total_failed_count += 1
-                continue
-
-            # Process each evaluation in this project
-            for eval_run in project_runs:
-                try:
-                    result = await check_and_process_evaluation(
-                        eval_run=eval_run,
-                        session=session,
-                        openai_client=openai_client,
-                        langfuse=langfuse,
-                    )
-                    all_results.append(result)
-
-                    if result["action"] == "processed":
-                        total_processed_count += 1
-                    elif result["action"] == "failed":
-                        total_failed_count += 1
-                    else:
-                        total_still_processing_count += 1
-
-                except Exception as e:
-                    logger.error(
-                        f"[poll_all_pending_evaluations] Failed to check evaluation run | run_id={eval_run.id} | {e}",
-                        exc_info=True,
-                    )
-                    update_evaluation_run(
-                        session=session,
-                        eval_run=eval_run,
-                        update=EvaluationRunUpdate(
-                            status="failed",
-                            error_message=f"Check failed: {str(e)}",
-                        ),
-                    )
-
-                    all_results.append(
-                        {
-                            "run_id": eval_run.id,
-                            "run_name": eval_run.run_name,
-                            "action": "failed",
-                            "error": str(e),
-                        }
-                    )
-                    total_failed_count += 1
-
-            # Flush background ingestion threads before discarding this client.
-            # Each Langfuse() instance spawns TaskManager threads; without flush,
-            # they accumulate across cron runs and pile up concurrent API calls.
-            try:
-                langfuse.flush()
-            except Exception as flush_err:
-                logger.warning(
-                    f"[poll_all_pending_evaluations] Langfuse flush failed | project_id={project_id} | {flush_err}"
-                )
-
-        except Exception as e:
-            logger.error(
-                f"[poll_all_pending_evaluations] Failed to process project | project_id={project_id} | {e}",
-                exc_info=True,
-            )
-            for eval_run in project_runs:
-                update_evaluation_run(
-                    session=session,
-                    eval_run=eval_run,
-                    update=EvaluationRunUpdate(
-                        status="failed",
-                        error_message=f"Project processing failed: {str(e)}",
-                    ),
-                )
-
-                all_results.append(
-                    {
-                        "run_id": eval_run.id,
-                        "run_name": eval_run.run_name,
-                        "action": "failed",
-                        "error": f"Project processing failed: {str(e)}",
-                    }
-                )
-                total_failed_count += 1
-
-    summary = {
-        "total": len(pending_runs),
-        "processed": total_processed_count,
-        "failed": total_failed_count,
-        "still_processing": total_still_processing_count,
-        "details": all_results,
-    }
-
+    dispatched = len(details)
     logger.info(
-        f"[poll_all_pending_evaluations] Polling summary | processed={total_processed_count} | failed={total_failed_count} | still_processing={total_still_processing_count}"
+        f"[poll_all_pending_evaluations] Dispatch summary | dispatched={dispatched}"
     )
 
-    return summary
+    return {
+        "total": dispatched,
+        "processed": 0,
+        "failed": 0,
+        "still_processing": dispatched,
+        "details": details,
+    }

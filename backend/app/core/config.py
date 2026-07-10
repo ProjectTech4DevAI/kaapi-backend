@@ -188,6 +188,9 @@ class Settings(BaseSettings):
     # A fast run stuck in `processing` past this with no chunk progress is stalled;
     # the cron healer re-enqueues its missing chunk tasks.
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
+    # A batch-mode text run in `processing` untouched past this is (re-)dispatched
+    # to a Celery worker; the per-run updated_at bump is the dispatch lease.
+    EVAL_BATCH_STALL_THRESHOLD_MINUTES: int = 10
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
     # AI-assisted prompt improvement settings.
