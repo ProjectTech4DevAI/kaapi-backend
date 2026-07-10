@@ -256,11 +256,7 @@ def start_tts_result_processing(
 def start_fast_evaluation_chunk(
     eval_run_id: int, chunk_index: int, trace_id: str = "N/A"
 ) -> str:
-    """Enqueue one parallel responses-chunk task for a fast EvaluationRun.
-
-    judge_config is not carried here: the chunk stage only generates responses.
-    The judge runs in the aggregate, which reads judge_config off the run row.
-    """
+    """Enqueue one parallel responses-chunk task for a fast EvaluationRun."""
     from app.celery.tasks.job_execution import run_evaluation_fast_chunk
 
     task_id = _enqueue_with_trace_context(
@@ -277,10 +273,7 @@ def start_fast_evaluation_chunk(
 
 
 def start_fast_evaluation_aggregate(eval_run_id: int, trace_id: str = "N/A") -> str:
-    """Enqueue the fan-in aggregate task once a fast run's chunks are all done.
-
-    No judge_config arg: the aggregate reads it off the persisted run row.
-    """
+    """Enqueue the final aggregation task for a fast EvaluationRun."""
     from app.celery.tasks.job_execution import run_evaluation_fast_aggregate
 
     task_id = _enqueue_with_trace_context(

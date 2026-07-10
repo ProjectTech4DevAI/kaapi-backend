@@ -63,10 +63,7 @@ def evaluate(
         default=None,
         description=(
             "Optional per-run tailoring for the native correctness judge (fast "
-            "mode only): a saved config reference (id + version) OR an ad-hoc "
-            "blob (completion params + optional prompt_template), exactly one of "
-            "the two. Omit to use the built-in prompt + fallback model. Never "
-            "toggles judging — judging is always on for fast runs."
+            "mode only). If omitted, the default judge prompt is used."
         ),
     ),
 ) -> APIResponse[EvaluationRunPublic]:

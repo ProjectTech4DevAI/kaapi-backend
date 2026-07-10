@@ -745,15 +745,7 @@ def _judge_rows(
     judgeable: list[tuple[str, str, dict[str, Any]]],
     log_prefix: str,
 ) -> tuple[dict[str, JudgeResult], set[str], str | None]:
-    """Run one judge completion per judgeable row, isolated per row.
-
-    `judgeable` is a list of (item_id, ref, response), where ``ref`` is the
-    cosine-style identity (trace_id when traced, else item_id) — the judge is
-    Langfuse-independent, so it never needs a real trace_id. Returns
-    ``{item_id: JudgeResult}`` for rows that scored, the set of refs whose judge
-    failed (to be flagged ``judge_failed`` by the caller), and the resolved judge
-    model (for cost). A judge failure never fails a sibling row or the run.
-    """
+    """Run one judge completion per judgeable row, isolated per row."""
     results: dict[str, JudgeResult] = {}
     failed_refs: set[str] = set()
     if not judgeable:
@@ -775,10 +767,6 @@ def _judge_rows(
         return results, {ref for _item_id, ref, _r in judgeable}, None
 
     judge_model = base_params.get("model")
-    logger.info(
-        f"[_judge_rows] {log_prefix} Running judge | rows={len(judgeable)} | "
-        f"model={judge_model} | concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
-    )
 
     max_workers = max(1, min(settings.EVAL_FAST_API_CONCURRENCY, len(judgeable)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -805,10 +793,6 @@ def _judge_rows(
                     f"error={exc}"
                 )
 
-    logger.info(
-        f"[_judge_rows] {log_prefix} Judge finished | scored={len(results)} | "
-        f"failed={len(failed_refs)}"
-    )
     return results, failed_refs, judge_model
 
 
@@ -827,13 +811,6 @@ def _stage3_score_and_trace(
 
     The judge runs AFTER cosine (so a judge failure can never block the cosine
     score) with one OpenAI completion per judgeable row, isolated per row.
-
-    Returns the run, the full score unit (summary_scores + per-trace records, in
-    the batch path's shape), the Langfuse cosine `write_items` (per-item cosine +
-    unscoreable placeholders), and the Langfuse `correctness_write_items`
-    (per-item correctness value + reasoning). The caller completes the run before
-    writing those items, so completion is not gated on Langfuse calls. Idempotent,
-    no stage marker.
     """
     logger.info(
         f"[_stage3_score_and_trace] {log_prefix} Computing cosine + creating traces"
@@ -968,12 +945,8 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # Correctness judge — runs after cosine, once per judgeable row (a row with
-    # both a generated answer and a ground truth to compare). The judge is
-    # Langfuse-independent, so rows are keyed by ref (trace_id when traced, else
-    # item_id) exactly like cosine — judging still runs with tracing off. Judging
-    # is always on for fast runs; judge_config only tailors it. Per-row isolation
-    # lives in _judge_rows: a failure flags that row judge_failed, never cosine.
+    # Runs after cosine for rows with both a generated answer and ground truth, independent of Langfuse (uses trace_id or item_id) and always enabled for fast runs.
+    # Failures are isolated per row in _judge_rows and never affect cosine scoring.
     judgeable: list[tuple[str, str, dict[str, Any]]] = []
     for response in response_results:
         item_id = response["item_id"]
@@ -992,7 +965,6 @@ def _stage3_score_and_trace(
 
     # Flag judge-failed rows unscoreable WITHOUT clobbering an existing cosine
     # reason (setdefault): a row whose cosine already failed keeps that reason.
-    # Keyed by ref, consistent with the cosine unscoreable reasons above.
     for ref in judge_failed_refs:
         unscoreable.setdefault(ref, JUDGE_FAILED_REASON)
     eval_run.unscoreable = unscoreable or None
@@ -1005,8 +977,6 @@ def _stage3_score_and_trace(
         for item_id, result in correctness_by_item.items()
     } or None
 
-    # Langfuse write list carries the reasoning that the durable value-only map
-    # does not, mirroring how cosine's write_items differ from per_item_scores.
     correctness_write_items = [
         {
             "trace_id": trace_id_mapping[item_id],
@@ -1017,8 +987,6 @@ def _stage3_score_and_trace(
         if item_id in trace_id_mapping
     ]
 
-    # Correctness summary aggregates next to Cosine Similarity; on resync it is
-    # recomputed from the per-trace scores by compute_summary_scores.
     correctness_values = [result.score for result in correctness_by_item.values()]
     if correctness_values:
         correctness_array = np.array(correctness_values)
@@ -1043,9 +1011,6 @@ def _stage3_score_and_trace(
             ],
         )
 
-    # Build the per-trace records in the same shape the batch path persists (via
-    # fetch_trace_scores_from_langfuse). One record per response that has a
-    # Langfuse trace; the cosine score is attached when its embedding succeeded.
     traces: list[TraceData] = []
     for response in response_results:
         item_id = response["item_id"]
@@ -1075,8 +1040,6 @@ def _stage3_score_and_trace(
                 }
             )
 
-        # Attach the correctness score (value + reasoning) when the judge scored
-        # this row; judge_failed rows simply carry no Correctness entry.
         judge_result = correctness_by_item.get(item_id)
         if judge_result is not None:
             trace_scores.append(
@@ -1121,23 +1084,14 @@ def run_fast_evaluation(
     eval_run: EvaluationRun,
     judge_config: LLMCallConfig | None = None,
 ) -> EvaluationRun:
-    """Merge the response chunks, then run embeddings + scoring + completion.
-
-    Called from `run_evaluation_fast_aggregate` (the cron barrier enqueues it
-    only after every chunk has a raw_output_url). Stages are skipped on retry
-    when their batch_job marker is set. Raises on terminal failure (run marked
-    failed).
-
-    `judge_config` tailors the native correctness judge for this run (model,
-    settings, prompt); None uses the built-in prompt + fallback model. It never
-    toggles judging — judging is always on for fast runs.
+    """Merges chunk responses and runs embeddings, scoring, and completion.
+    Runs after all chunks are ready. `judge_config` customizes the correctness judge; judging is always enabled.
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
         f"[project={eval_run.project_id}]"
         f"[eval={eval_run.id}]"
     )
-    logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast eval aggregation")
 
     if eval_run.status == "pending":
         eval_run = update_evaluation_run(
@@ -1223,11 +1177,8 @@ def run_fast_evaluation(
                 exc_info=True,
             )
 
-    # Correctness scores are written from the durable per_item_correctness source
-    # of truth; a failure here is recoverable on resync and does not gate the run
-    # or the cosine is_score_updated flag (a separate score family). Gated on
-    # tracing like the cosine push above — with tracing off, correctness_write_items
-    # is empty and the durable per_item_correctness carries the data for later resync.
+    # Correctness scores are saved from per_item_correctness and can be recovered during resync if writing fails.
+    # This is independent of cosine scoring, and when tracing is off, scores remain available for later sync.
     if langfuse is not None and correctness_write_items:
         try:
             failed_correctness_ids = update_traces_with_correctness_scores(

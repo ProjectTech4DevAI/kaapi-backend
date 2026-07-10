@@ -279,10 +279,7 @@ class EvaluationRun(SQLModel, table=True):
             JSONB,
             nullable=True,
             comment=(
-                "Per-run LLMCallConfig payload tailoring the correctness judge "
-                "(saved id+version ref or ad-hoc blob); NULL = zero-config default "
-                "judge. Persisted here because the cron barrier enqueues the "
-                "aggregate with only eval_run_id, so it can't ride a Celery arg"
+                "Optional correctness judge config; NULL uses defaults. Stored because the aggregate job only receives eval_run_id."
             ),
         ),
         description="Per-run judge LLMCallConfig payload; NULL = zero-config default",

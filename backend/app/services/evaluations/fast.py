@@ -42,8 +42,6 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
-# SRD error message for an unresolvable saved judge config (id/version) — also
-# covers tenant isolation, since a config from another (org, project) never resolves.
 ERR_JUDGE_CONFIG_NOT_FOUND = "No config found for the given id and version."
 
 

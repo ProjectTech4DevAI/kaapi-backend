@@ -6,8 +6,6 @@ inside the fast-eval pipeline AFTER cosine similarity, so a judge failure can
 never block the cosine score. Per-row isolation is the caller's job: this module
 raises on any failure/malformed output so the caller can flag that single row
 unscoreable and continue.
-
-See docs/llm-judge-integration.md for the full design.
 """
 
 import json
