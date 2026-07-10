@@ -6,9 +6,6 @@ from app.celery.tasks import job_execution
 
 
 class _NonClosingSession:
-    """Wrapper so the task's `with Session(engine)` uses the transactional
-    conftest session and doesn't close it."""
-
     def __init__(self, session: Session):
         self._session = session
 
@@ -65,7 +62,6 @@ def test_run_health_probes_task_returns_run_probes_result(db: Session):
 
 
 def test_run_health_probes_task_skipped_when_settings_unset(db: Session):
-    """When run_probes reports skipped, the task returns the skip payload verbatim."""
     skipped = {
         "skipped": True,
         "reason": "health_probe_org_or_project_not_set",

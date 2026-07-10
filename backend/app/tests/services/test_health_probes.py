@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, patch
-
 import pytest
 from sqlmodel import Session
 
@@ -9,8 +7,6 @@ from app.services.health_probes import _PROBES, run_probes
 
 
 class _FakeProvider:
-    """Minimal BaseProvider stand-in whose execute() returns a canned tuple."""
-
     def __init__(self, response=None, error=None, raise_exc: Exception | None = None):
         self._response = response
         self._error = error

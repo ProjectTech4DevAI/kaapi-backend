@@ -130,10 +130,6 @@ def _run_probe(provider: BaseProvider | None, probe: Probe) -> dict[str, Any]:
         result["error"] = "client_init_failed"
         return result
 
-    if provider is None:
-        result["error"] = "client_init_failed"
-        return result
-
     try:
         built = _build_config_and_input(probe)
     except Exception as e:
@@ -217,15 +213,3 @@ def run_probes(*, session: Session) -> dict[str, Any]:
         "failed": len(results) - ok_count,
         "results": results,
     }
-
-
-if __name__ == "__main__":
-    assert _PROBES, "probe list must not be empty"
-    modalities = {p.modality for p in _PROBES}
-    assert modalities == {"text", "tts", "stt"}, modalities
-    for probe in _PROBES:
-        if probe.modality == "stt" and not _STT_AUDIO_B64:
-            continue
-        built = _build_config_and_input(probe)
-        assert built is not None
-    print("ok")
