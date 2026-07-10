@@ -351,6 +351,34 @@ def run_tts_result_processing(
     )
 
 
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(
+    settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_batch_result_processing"
+)
+def run_evaluation_batch_result_processing(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    """Process one batch-mode text EvaluationRun's completed results off the web process.
+
+    Idempotent: the dispatch lease (updated_at bump) plus check_and_process_evaluation's
+    own stage branching mean a redelivery re-checks provider status rather than
+    re-charging OpenAI.
+    """
+    from app.services.evaluations.batch_result_processing import (
+        execute_evaluation_batch_result_processing,
+    )
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_evaluation_batch_result_processing(
+            project_id=project_id,
+            eval_run_id=kwargs["eval_run_id"],
+            trace_id=trace_id,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_chunk")
 def run_evaluation_fast_chunk(
