@@ -36,21 +36,22 @@ class Probe:
 
 _PROBES: list[Probe] = [
     # Text
-    Probe(provider="openai", model="gpt-4o-1-mini", modality="text"),
+    Probe(provider="openai", model="gpt-4o-mini", modality="text"),
     Probe(provider="google", model="gemini-2.5-flash", modality="text"),
-    Probe(provider="google-aistudio", model="gemini-2.5-flash", modality="text"),
-    Probe(provider="anthropic", model="claude-3-5-haiku-latest", modality="text"),
-    Probe(provider="sarvamai", model="sarvam-m", modality="text"),
+    Probe(provider="google", model="gemini-2.5-flash", modality="text"),
+    Probe(provider="google", model="gemini-2.5-pro", modality="text"),
     # TTS
-    Probe(provider="openai", model="tts-1", modality="tts"),
-    Probe(provider="google", model="gemini-2.5-flash-preview-ttsss", modality="tts"),
-    Probe(provider="sarvamai", model="bulbul:v2", modality="tts"),
-    Probe(provider="elevenlabs", model="eleven_flash_v2_5", modality="tts"),
+    Probe(provider="google", model="gemini-2.5-flash-preview-tts", modality="tts"),
+    Probe(provider="google", model="gemini-3.1-flash-preview-tts", modality="tts"),
+    Probe(provider="google", model="gemini-2.5-pro-preview-tts", modality="tts"),
+    Probe(provider="sarvamai", model="bulbul:v3", modality="tts"),
+    Probe(provider="elevenlabs", model="eleven_v3", modality="tts"),
     # STT
-    Probe(provider="openai", model="whisper-1", modality="stt"),
     Probe(provider="google", model="gemini-2.5-pro", modality="stt"),
-    Probe(provider="sarvamai", model="saarika:v2.5", modality="stt"),
-    Probe(provider="elevenlabs", model="scribe_v1", modality="stt"),
+    Probe(provider="google", model="gemini-2.5-flash", modality="stt"),
+    Probe(provider="google", model="gemini-3.1-pro-preview", modality="stt"),
+    Probe(provider="sarvamai", model="saaras:v3", modality="stt"),
+    Probe(provider="elevenlabs", model="scribe_v2", modality="stt"),
 ]
 
 
