@@ -30,6 +30,7 @@ from app.core.telemetry import (
 )
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
+from app.crud.project import is_tracing_enabled
 from app.crud.model_config import validate_blob_model_or_raise
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
@@ -1273,12 +1274,14 @@ def execute_job(
                     job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
                 )
 
-                langfuse_credentials = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    provider="langfuse",
-                    project_id=project_id,
-                )
+                langfuse_credentials = None
+                if is_tracing_enabled(session=session, project_id=project_id):
+                    langfuse_credentials = get_provider_credential(
+                        session=session,
+                        org_id=organization_id,
+                        provider="langfuse",
+                        project_id=project_id,
+                    )
 
             result = execute_llm_call(
                 config=request.config,
@@ -1459,12 +1462,14 @@ def execute_chain_job(
                     f"chain_id={chain_uuid}, job_id={job_uuid}"
                 )
 
-                langfuse_credentials = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    provider="langfuse",
-                    project_id=project_id,
-                )
+                langfuse_credentials = None
+                if is_tracing_enabled(session=session, project_id=project_id):
+                    langfuse_credentials = get_provider_credential(
+                        session=session,
+                        org_id=organization_id,
+                        provider="langfuse",
+                        project_id=project_id,
+                    )
 
             context = ChainContext(
                 job_id=job_uuid,

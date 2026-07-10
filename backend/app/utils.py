@@ -391,39 +391,6 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
         )
 
 
-def get_tracing_client(
-    session: Session, org_id: int, project_id: int
-) -> Langfuse | None:
-    """Return the Langfuse client when credentials exist, else None (never
-    raises), so evaluations degrade to cosine-only instead of failing."""
-    credentials = get_provider_credential(
-        session=session,
-        org_id=org_id,
-        project_id=project_id,
-        provider="langfuse",
-    )
-
-    if not credentials or not all(
-        key in credentials for key in ["public_key", "secret_key", "host"]
-    ):
-        logger.info(
-            f"[get_tracing_client] Langfuse credentials missing; "
-            f"skipping Langfuse | project_id: {project_id}"
-        )
-        return None
-
-    try:
-        return _build_langfuse_client(credentials)
-    except Exception as e:
-        logger.warning(
-            f"[get_tracing_client] Failed to configure Langfuse client; "
-            f"continuing without tracing | project_id: {project_id} | "
-            f"error: {str(e)}",
-            exc_info=True,
-        )
-        return None
-
-
 def handle_openai_error(e: openai.OpenAIError) -> str:
     if hasattr(e, "body") and isinstance(e.body, dict) and "message" in e.body:
         return e.body["message"]

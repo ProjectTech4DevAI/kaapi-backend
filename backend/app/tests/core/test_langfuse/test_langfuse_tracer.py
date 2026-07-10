@@ -514,6 +514,59 @@ class TestProcessResponseIntegration:
     @patch("app.services.response.response.Session")
     @patch("app.services.response.response.get_openai_client")
     @patch("app.services.response.response.get_assistant_by_id")
+    @patch("app.services.response.response.is_tracing_enabled")
+    @patch("app.services.response.response.get_provider_credential")
+    @patch("app.services.response.response.JobCrud")
+    def test_skips_langfuse_when_tracing_disabled(
+        self,
+        mock_job_crud: MagicMock,
+        mock_get_credential: MagicMock,
+        mock_is_tracing_enabled: MagicMock,
+        mock_get_assistant: MagicMock,
+        mock_get_client: MagicMock,
+        mock_session: MagicMock,
+        mock_get_conversation: MagicMock,
+        mock_persist: MagicMock,
+        assistant_mock: Assistant,
+    ) -> None:
+        # Tracing off => credentials are never fetched, so no trace is created.
+        mock_is_tracing_enabled.return_value = False
+        mock_get_assistant.return_value = assistant_mock
+        mock_get_conversation.return_value = None
+
+        mock_response = MagicMock()
+        mock_response.id = "resp-123"
+        mock_response.output_text = "Answer"
+        mock_response.model = "gpt-4"
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 5
+        mock_response.usage.total_tokens = 15
+        mock_response.previous_response_id = None
+
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        request = ResponsesAPIRequest(
+            assistant_id="asst_test123", question="Test question"
+        )
+        result = process_response(
+            request=request,
+            project_id=1,
+            organization_id=1,
+            job_id=uuid4(),
+            task_id="task-123",
+            task_instance=None,
+        )
+
+        assert result.success is True
+        mock_get_credential.assert_not_called()
+
+    @patch("app.services.response.response.persist_conversation")
+    @patch("app.services.response.response.get_conversation_by_ancestor_id")
+    @patch("app.services.response.response.Session")
+    @patch("app.services.response.response.get_openai_client")
+    @patch("app.services.response.response.get_assistant_by_id")
     @patch("app.services.response.response.get_provider_credential")
     @patch("app.services.response.response.JobCrud")
     @patch("app.core.langfuse.langfuse.Langfuse")
