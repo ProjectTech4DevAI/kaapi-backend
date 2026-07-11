@@ -379,11 +379,7 @@ class EvaluationRun(SQLModel, table=True):
         sa_column=Column(
             JSONB,
             nullable=True,
-            comment=(
-                "Durable {trace_id: correctness} map of LLM-as-a-judge scores; "
-                "source of truth used to backfill Langfuse on resync, mirroring "
-                "per_item_scores"
-            ),
+            comment=("Durable {trace_id: correctness} map of LLM-as-a-judge scores; "),
         ),
         description="Durable map of per-trace judge correctness scores keyed by trace_id",
     )

@@ -29,11 +29,7 @@ def upgrade():
             "per_item_correctness",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
-            comment=(
-                "Durable {trace_id: correctness} map of LLM-as-a-judge scores; "
-                "source of truth used to backfill Langfuse on resync, mirroring "
-                "per_item_scores"
-            ),
+            comment=("Durable {trace_id: correctness} map of LLM-as-a-judge scores; "),
         ),
     )
 
