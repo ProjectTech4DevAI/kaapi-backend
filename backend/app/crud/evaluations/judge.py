@@ -1,11 +1,9 @@
 """Native LLM-as-a-judge correctness scoring for fast evaluations.
 
-One OpenAI completion per evaluated row grades the generated answer against the
-ground truth and returns a 0..1 correctness score plus a short reasoning. Runs
-inside the fast-eval pipeline AFTER cosine similarity, so a judge failure can
-never block the cosine score. Per-row isolation is the caller's job: this module
-raises on any failure/malformed output so the caller can flag that single row
-unscoreable and continue.
+Grades each evaluated row against the ground truth using a single OpenAI call,
+returning a 0..1 correctness score and brief reasoning. Runs after cosine
+similarity, so judge failures never block cosine scoring. Raises on failures or
+invalid output; callers handle per-row isolation.
 """
 
 import json
@@ -36,7 +34,7 @@ from app.services.llm.mappers import map_kaapi_to_openai_params
 logger = logging.getLogger(__name__)
 
 
-# Per-call retry policy (mirrors the fast-eval Responses/Embeddings stages).
+# Per-call retry mechanism (mirrors the fast-eval Responses/Embeddings stages).
 _RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRY_MAX_DELAY_SECONDS = 30.0
@@ -75,15 +73,11 @@ def resolve_judge_blob(
     judge_config: LLMCallConfig | None,
     project_id: int,
 ) -> ConfigBlob | None:
-    """Resolve a run's judge_config to a ConfigBlob, or None for the zero-config default.
+    """Resolve a run's judge_config to a ConfigBlob, or None for the default config.
 
-    A stored reference (id + version) is resolved through the existing scoped
-    config flow (tenant isolation is enforced there — a config from another
-    (org, project) is never resolvable); an ad-hoc blob is used directly; absent
-    config returns None so the caller falls back to the built-in prompt + model.
-
-    Raises ValueError if a stored reference cannot be resolved (the route already
-    validated resolvability, so this only fires on an unexpected worker-time gap).
+    Stored references are resolved through the scoped config flow, ad-hoc blobs are
+    used directly, and missing config falls back to the built-in prompt and model.
+    Raises ValueError if a stored reference cannot be resolved.
     """
     if judge_config is None:
         return None

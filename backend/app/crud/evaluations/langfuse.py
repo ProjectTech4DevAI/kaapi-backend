@@ -311,19 +311,16 @@ def update_traces_with_correctness_scores(
     langfuse: Langfuse,
     per_item_correctness: list[dict[str, Any]],
 ) -> list[str]:
-    """Add a trace-level "Correctness" score (value + reasoning comment) to each trace.
+    """Add a "Correctness" score (value + reasoning) to each Langfuse trace.
 
-    Mirrors ``update_traces_with_cosine_scores`` so each evaluated row's Langfuse
-    trace shows both distinctly-named scores. Per-item failures are isolated (one
-    bad trace never aborts the batch).
+    Mirrors cosine score updates and isolates per-item failures.
 
     Args:
-        langfuse: Configured Langfuse client
-        per_item_correctness: e.g.
-            [{"trace_id": "...", "correctness": 0.8, "reasoning": "..."}]
+        langfuse: Configured Langfuse client.
+        per_item_correctness: List of trace correctness results.
 
     Returns:
-        trace_ids whose score write failed (empty on full success).
+        Trace IDs whose score update failed.
     """
     failed_trace_ids: list[str] = []
 

@@ -186,9 +186,8 @@ def validate_and_start_fast_evaluation(
         log_context="validate_and_start_fast_evaluation",
     )
 
-    # The cron barrier enqueues the aggregate (the actual judge) with only
-    # eval_run_id, so judge_config can't ride a Celery arg — persist it on the row
-    # for execute_fast_evaluation_aggregate to read back. NULL = zero-config default.
+    # Persist judge_config on the evaluation run since the cron barrier only
+    # enqueues eval_run_id. NULL indicates the default (zero-config) judge.
     judge_config_payload = (
         judge_config.model_dump(mode="json") if judge_config is not None else None
     )
