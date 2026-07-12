@@ -38,9 +38,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 1
     # 60 minutes * 24 hours * 7 days = 7 days
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
-    ENVIRONMENT: Literal["development", "testing", "staging", "production"] = (
-        "development"
-    )
+    ENVIRONMENT: Literal[
+        "development", "testing", "staging", "production"
+    ] = "development"
 
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
