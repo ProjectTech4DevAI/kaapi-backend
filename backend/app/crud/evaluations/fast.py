@@ -482,7 +482,7 @@ def run_response_chunk(
         session=session, kaapi_params=config.model_dump(exclude_unset=True)
     )
     if mapper_warnings:
-        logger.info(
+        logger.warning(
             f"[run_response_chunk] {log_prefix} Mapper warnings: {mapper_warnings}"
         )
 

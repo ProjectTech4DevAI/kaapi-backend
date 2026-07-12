@@ -134,7 +134,7 @@ def build_judge_params(
         session=session, kaapi_params=judge_params
     )
     if mapper_warnings:
-        logger.info(f"[build_judge_params] Mapper warnings: {mapper_warnings}")
+        logger.warning(f"[build_judge_params] Mapper warnings: {mapper_warnings}")
 
     # The judge prompt IS the instructions; overwrite anything the mapper carried.
     base_params["instructions"] = _judge_prompt(blob)
