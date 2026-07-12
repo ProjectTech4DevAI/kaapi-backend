@@ -1,9 +1,11 @@
 import logging
 
+from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.celery.tasks.job_execution import run_credential_reencrypt
 from app.core.exception_handlers import HTTPException
 from app.core.providers import mask_credential_fields, validate_provider
 from app.crud.credentials import (
@@ -19,6 +21,21 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/credentials", tags=["Credentials"])
+
+
+@router.post(
+    "/re-encrypt",
+    response_model=APIResponse[dict],
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def trigger_credential_reencrypt(
+    *,
+    _current_user: AuthContextDep,
+):
+    """Enqueue a platform-wide credential re-encryption backfill."""
+    task = run_credential_reencrypt.delay(trace_id=correlation_id.get() or "")
+    logger.info(f"[trigger_credential_reencrypt] Enqueued | task_id: {task.id}")
+    return APIResponse.success_response({"task_id": task.id, "status": "queued"})
 
 
 @router.post(

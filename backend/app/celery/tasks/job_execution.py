@@ -399,3 +399,18 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
     )
 
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
+
+
+@celery_app.task(bind=True, queue="default", priority=1)
+def run_credential_reencrypt(self, trace_id: str) -> dict:
+    """Admin backfill: re-encrypt all credentials through the current scheme."""
+    from app.services.credentials.reencrypt import execute_credential_reencrypt
+
+    _set_trace(trace_id)
+    logger.info(
+        f"[run_credential_reencrypt] Starting | task_id: {current_task.request.id}"
+    )
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_credential_reencrypt(task_instance=self),
+    )
