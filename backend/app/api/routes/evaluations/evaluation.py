@@ -55,8 +55,8 @@ def evaluate(
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
     run_mode: RunModeEnum = Body(
-        default=RunModeEnum.BATCH,
-        description="Execution mode: 'batch' (default) or 'fast'",
+        default=RunModeEnum.FAST,
+        description="Execution mode: 'batch' or 'fast'. Omit to default to 'fast'.",
     ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
