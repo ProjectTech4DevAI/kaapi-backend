@@ -201,7 +201,7 @@ def build_google_evaluation_jsonl(
     Each line:
     {
         "key": <dataset_item_id>,
-        "request": { contents, systemInstruction?, generationConfig? }
+        "request": { contents, systemInstruction?, generationConfig?, tools? }
     }
     """
     jsonl_data: list[dict[str, Any]] = []
@@ -218,6 +218,11 @@ def build_google_evaluation_jsonl(
             "thinkingLevel": reasoning,
         }
 
+    tools: list[dict[str, Any]] = []
+    knowledge_base_ids = google_params.get("knowledge_base_ids")
+    if knowledge_base_ids:
+        tools.append({"fileSearch": {"fileSearchStoreNames": knowledge_base_ids}})
+
     for item in dataset_items:
         question = item["input"].get("question", "")
         if not question:
@@ -233,6 +238,8 @@ def build_google_evaluation_jsonl(
             request["systemInstruction"] = {"parts": [{"text": system_instruction}]}
         if generation_config:
             request["generationConfig"] = generation_config
+        if tools:
+            request["tools"] = tools
 
         jsonl_data.append({"key": item["id"], "request": request})
 
