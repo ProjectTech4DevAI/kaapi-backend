@@ -891,6 +891,30 @@ class TestBuildGoogleEvaluationJSONL:
         thinking = jsonl_data[0]["request"]["generationConfig"]["thinkingConfig"]
         assert thinking == {"includeThoughts": False, "thinkingLevel": "high"}
 
+    def test_knowledge_base_ids_become_file_search_tool(self) -> None:
+        """``knowledge_base_ids`` are mapped into the FileSearch tool on every line."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q1", "Q2"),
+            {
+                "model": "gemini-2.5-pro",
+                "knowledge_base_ids": ["fileSearchStores/abc123"],
+            },
+        )
+
+        assert len(jsonl_data) == 2
+        for line in jsonl_data:
+            assert line["request"]["tools"] == [
+                {"fileSearch": {"fileSearchStoreNames": ["fileSearchStores/abc123"]}}
+            ]
+
+    def test_no_knowledge_base_ids_no_tools(self) -> None:
+        """Without ``knowledge_base_ids`` the request carries no ``tools`` key."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"), {"model": "gemini-2.5-pro"}
+        )
+
+        assert "tools" not in jsonl_data[0]["request"]
+
     def test_full_params(self) -> None:
         """All optional fields together populate both config blocks."""
         jsonl_data = build_google_evaluation_jsonl(
