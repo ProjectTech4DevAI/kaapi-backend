@@ -12,11 +12,12 @@ from app.core.langfuse.langfuse import LangfuseTracer
 from app.crud import (
     JobCrud,
     get_assistant_by_id,
-    get_tracing_credential,
+    get_provider_credential,
     create_conversation,
     get_ancestor_id_from_response,
     get_conversation_by_ancestor_id,
 )
+from app.crud.project import is_tracing_enabled
 from app.models import (
     CallbackResponse,
     Diagnostics,
@@ -241,11 +242,14 @@ def process_response(
             except HTTPException as e:
                 return _fail_job(job_id, str(e.detail))
 
-            langfuse_credentials = get_tracing_credential(
-                session=session,
-                org_id=organization_id,
-                project_id=project_id,
-            )
+            langfuse_credentials = None
+            if is_tracing_enabled(session=session, project_id=project_id):
+                langfuse_credentials = get_provider_credential(
+                    session=session,
+                    org_id=organization_id,
+                    provider="langfuse",
+                    project_id=project_id,
+                )
 
             ancestor_id = request.response_id
             if ancestor_id:
