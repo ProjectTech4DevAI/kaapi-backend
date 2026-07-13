@@ -1,7 +1,7 @@
 """add judge_config column to evaluation_run
 
-Revision ID: 073
-Revises: 072
+Revision ID: 074
+Revises: 073
 Create Date: 2026-07-09 00:00:00.000000
 
 The chunked fast-eval pipeline enqueues the aggregate task from the cron barrier
@@ -16,8 +16,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "073"
-down_revision = "072"
+revision = "074"
+down_revision = "073"
 branch_labels = None
 depends_on = None
 
