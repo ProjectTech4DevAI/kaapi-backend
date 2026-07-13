@@ -161,10 +161,11 @@ class TestMapKaapiToGoogleParams:
         assert result["temperature"] == 0.5
         assert warnings == []
 
-    def test_text_completion_knowledge_base_unsupported(self):
-        """Test that knowledge_base_ids generate warning for Google AI."""
+    def test_text_completion_knowledge_base_passthrough(self):
+        """knowledge_base_ids pass through for the Gemini FileSearch tool."""
         kaapi_params = TextLLMParams(
-            model="gemini-2.5-pro", knowledge_base_ids=["vs_abc123"]
+            model="gemini-2.5-pro",
+            knowledge_base_ids=["fileSearchStores/abc123"],
         )
 
         result, warnings = map_kaapi_to_google_params(
@@ -172,10 +173,24 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "knowledge_base_ids" not in result
+        assert result["knowledge_base_ids"] == ["fileSearchStores/abc123"]
+        assert warnings == []
+
+    def test_text_completion_max_num_results_unsupported(self):
+        """max_num_results is OpenAI-only and warned-then-ignored for Gemini."""
+        kaapi_params = TextLLMParams(
+            model="gemini-2.5-pro",
+            knowledge_base_ids=["fileSearchStores/abc123"],
+            max_num_results=5,
+        )
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="text"
+        )
+
+        assert "max_num_results" not in result
         assert len(warnings) == 1
-        assert "knowledge_base_ids" in warnings[0].lower()
-        assert "not supported" in warnings[0]
+        assert "max_num_results" in warnings[0]
 
     def test_stt_completion_with_instructions(self):
         """Test STT completion with instructions parameter."""
