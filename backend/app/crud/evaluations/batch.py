@@ -20,12 +20,6 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.core.batch.client import GeminiClient
-from app.core.cloud import get_cloud_storage
-from app.crud.evaluations.dataset import (
-    download_csv_from_object_store,
-    get_dataset_by_id,
-)
-from app.crud.evaluations.score import DEFAULT_CATEGORY
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJobType
 from app.services.llm.mappers import (
@@ -76,84 +70,6 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
     return items
 
 
-def use_langfuse_client(
-    session: Session,
-    eval_run: EvaluationRun,
-    langfuse: Langfuse | None,
-) -> Langfuse | None:
-    """Return the live client only if the run's dataset is Langfuse-backed, else
-    None, so an opt-out dataset is never traced even if the flag is later on."""
-    if langfuse is None:
-        return None
-
-    dataset = get_dataset_by_id(
-        session=session,
-        dataset_id=eval_run.dataset_id,
-        organization_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
-    return langfuse if (dataset and dataset.langfuse_dataset_id) else None
-
-
-def load_evaluation_dataset_items(
-    session: Session,
-    eval_run: EvaluationRun,
-    langfuse: Langfuse | None,
-) -> list[dict[str, Any]]:
-    """Load dataset items from Langfuse when a (reconciled) client is present,
-    else from the dataset's object-store CSV."""
-    dataset = get_dataset_by_id(
-        session=session,
-        dataset_id=eval_run.dataset_id,
-        organization_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
-    if not dataset:
-        raise ValueError(f"Dataset {eval_run.dataset_id} not found")
-
-    if langfuse is not None:
-        return fetch_dataset_items(
-            langfuse=langfuse, dataset_name=eval_run.dataset_name
-        )
-
-    return _load_items_from_object_store(session=session, dataset=dataset)
-
-
-def _load_items_from_object_store(
-    session: Session, dataset: Any
-) -> list[dict[str, Any]]:
-    """Load items from the dataset's object-store CSV with deterministic ids."""
-    from app.services.evaluations.validators import parse_csv_items
-
-    if not dataset.object_store_url:
-        raise ValueError(f"Dataset {dataset.id} has no object-store backing")
-
-    storage = get_cloud_storage(session=session, project_id=dataset.project_id)
-    csv_content = download_csv_from_object_store(
-        storage=storage, object_store_url=dataset.object_store_url
-    )
-    original_items = parse_csv_items(csv_content)
-    duplication_factor = max(
-        1, int((dataset.dataset_metadata or {}).get("duplication_factor", 1))
-    )
-
-    items: list[dict[str, Any]] = []
-    for row_idx, item in enumerate(original_items):
-        for dup_idx in range(duplication_factor):
-            items.append(
-                {
-                    "id": f"item_{row_idx}_{dup_idx}",
-                    "input": {"question": item["question"]},
-                    "expected_output": {"answer": item["answer"]},
-                    "metadata": {
-                        "category": item.get("category") or DEFAULT_CATEGORY,
-                        "question_id": f"item_{row_idx}",
-                    },
-                }
-            )
-    return items
-
-
 def build_openai_evaluation_jsonl(
     dataset_items: list[dict[str, Any]], openai_params: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -198,7 +114,7 @@ def build_google_evaluation_jsonl(
     Each line:
     {
         "key": <dataset_item_id>,
-        "request": { contents, systemInstruction?, generationConfig? }
+        "request": { contents, systemInstruction?, generationConfig?, tools? }
     }
     """
     jsonl_data: list[dict[str, Any]] = []
@@ -215,6 +131,11 @@ def build_google_evaluation_jsonl(
             "thinkingLevel": reasoning,
         }
 
+    tools: list[dict[str, Any]] = []
+    knowledge_base_ids = google_params.get("knowledge_base_ids")
+    if knowledge_base_ids:
+        tools.append({"fileSearch": {"fileSearchStoreNames": knowledge_base_ids}})
+
     for item in dataset_items:
         question = item["input"].get("question", "")
         if not question:
@@ -230,6 +151,8 @@ def build_google_evaluation_jsonl(
             request["systemInstruction"] = {"parts": [{"text": system_instruction}]}
         if generation_config:
             request["generationConfig"] = generation_config
+        if tools:
+            request["tools"] = tools
 
         jsonl_data.append({"key": item["id"], "request": request})
 
@@ -237,7 +160,7 @@ def build_google_evaluation_jsonl(
 
 
 def start_evaluation_batch(
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     session: Session,
     eval_run: EvaluationRun,
     params: dict[str, Any],
@@ -260,8 +183,8 @@ def start_evaluation_batch(
         logger.info(
             f"[start_evaluation_batch] Starting evaluation batch | run={eval_run.run_name} | provider={provider}"
         )
-        dataset_items = load_evaluation_dataset_items(
-            session=session, eval_run=eval_run, langfuse=langfuse
+        dataset_items = fetch_dataset_items(
+            langfuse=langfuse, dataset_name=eval_run.dataset_name
         )
 
         base_provider = provider.replace("-native", "")

@@ -252,17 +252,36 @@ def start_tts_result_processing(
     return task_id
 
 
-def start_fast_evaluation(eval_run_id: int, trace_id: str = "N/A") -> str:
-    """Enqueue the run_evaluation_fast orchestrator task for one EvaluationRun."""
-    from app.celery.tasks.job_execution import run_evaluation_fast
+def start_fast_evaluation_chunk(
+    eval_run_id: int, chunk_index: int, trace_id: str = "N/A"
+) -> str:
+    """Enqueue one parallel responses-chunk task for a fast EvaluationRun."""
+    from app.celery.tasks.job_execution import run_evaluation_fast_chunk
 
     task_id = _enqueue_with_trace_context(
-        run_evaluation_fast,
+        run_evaluation_fast_chunk,
+        eval_run_id=eval_run_id,
+        chunk_index=chunk_index,
+        trace_id=trace_id,
+    )
+    logger.info(
+        f"[start_fast_evaluation_chunk] Enqueued fast eval chunk | "
+        f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | task_id={task_id}"
+    )
+    return task_id
+
+
+def start_fast_evaluation_aggregate(eval_run_id: int, trace_id: str = "N/A") -> str:
+    """Enqueue the fan-in aggregate task once a fast run's chunks are all done."""
+    from app.celery.tasks.job_execution import run_evaluation_fast_aggregate
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_fast_aggregate,
         eval_run_id=eval_run_id,
         trace_id=trace_id,
     )
     logger.info(
-        f"[start_fast_evaluation] Enqueued fast eval | "
+        f"[start_fast_evaluation_aggregate] Enqueued fast eval aggregate | "
         f"eval_run_id={eval_run_id} | task_id={task_id}"
     )
     return task_id
