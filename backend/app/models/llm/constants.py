@@ -27,7 +27,7 @@ TTSProvider = Literal[
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
 ]
-RAGProvider = Literal[Provider.OPENAI]
+RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
 KaapiProvider = Literal[
     Provider.OPENAI,
