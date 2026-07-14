@@ -31,15 +31,22 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
 )
 
 DEFAULT_JUDGE_PROMPT: str = (
-    "You are a strict, fair evaluator grading a chatbot's answer against a "
-    "reference (ground truth) answer to the same question.\n\n"
-    "Judge how correct the generated answer is relative to the ground truth: "
-    "does it convey the same key facts, is it free of contradictions, and does "
-    "it actually answer the question? Minor wording or extra-but-correct detail "
-    "should not be penalized; factual errors, omissions of key facts, or "
-    "contradictions should be.\n\n"
-    "Return a single correctness score between 0.0 (completely wrong or "
-    "irrelevant) and 1.0 (fully correct and complete), plus a brief reasoning."
+    "You are a strict evaluator of factual correctness. You are given a question, a "
+    "reference (golden) answer that is known to be correct, and an answer produced by "
+    "an assistant. Judge ONLY whether the assistant's answer conveys the same correct "
+    "information as the golden answer.\n\n"
+    "Rules:\n"
+    "- Judge meaning, not wording. A correct paraphrase, a different order, or extra "
+    "detail that is also correct must score high.\n"
+    "- Lower the score for information that is missing, incomplete, or contradicts the "
+    "golden answer. An answer that states something the golden answer does not, and "
+    "that would be wrong, is a factual error.\n"
+    "- Do NOT reward or penalize style, tone, length, or language.\n"
+    "- Do NOT use any outside knowledge; the golden answer is the source of truth.\n"
+    "- Do NOT answer the question yourself.\n\n"
+    "Return ONLY this JSON, nothing else:\n"
+    '{"score": <float 0.0-1.0>, "reasoning": "<one or two sentences naming what was '
+    'correct or what was missing/contradicted>"}'
 )
 
 JUDGE_OUTPUT_INSTRUCTION: str = (
