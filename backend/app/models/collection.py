@@ -16,8 +16,8 @@ class ProviderType(str, Enum):
     """Supported LLM providers for collections."""
 
     openai = "openai"
+    google_aistudio = "google-aistudio"
     # BEDROCK = "bedrock"
-    # GEMINI = "gemini"
 
 
 class Collection(SQLModel, table=True):
@@ -123,7 +123,7 @@ class CallbackRequest(SQLModel):
 class ProviderOptions(SQLModel):
     """LLM provider configuration."""
 
-    provider: Literal["openai"] = Field(
+    provider: Literal["openai", "google-aistudio"] = Field(
         default="openai", description="LLM provider to use for this collection"
     )
 
