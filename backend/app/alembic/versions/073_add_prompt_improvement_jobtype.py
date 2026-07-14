@@ -1,7 +1,7 @@
 """add PROMPT_IMPROVEMENT jobtype enum value
 
-Revision ID: 072
-Revises: 071
+Revision ID: 073
+Revises: 072
 Create Date: 2026-07-09 00:00:00.000000
 
 Prompt improvement moved from a synchronous request to a Celery job, so its runs
@@ -11,8 +11,8 @@ must run outside a transaction, hence the autocommit block.
 
 from alembic import op
 
-revision = "072"
-down_revision = "071"
+revision = "073"
+down_revision = "072"
 branch_labels = None
 depends_on = None
 
