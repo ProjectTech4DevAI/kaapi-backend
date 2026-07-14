@@ -1,8 +1,8 @@
 # Domain Map
 
-Entities and their edges. Use for blast-radius analysis: when a feature changes an entity, walk its `consumed by` edges 1-hop and 2-hop, and confirm scope for every surface the spec does not mention.
+Entities and their edges. Use for **blast-radius** analysis (procedure at bottom).
 
-FK edges below are generated from `foreign_key=` declarations in `backend/app/models/`. Logical edges (no FK) are marked `(logical)`.
+Edges are generated from `foreign_key=` declarations in `backend/app/models/`; edges with no FK are marked `(logical)`.
 
 ## Tenancy spine
 

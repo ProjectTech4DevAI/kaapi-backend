@@ -9,8 +9,8 @@ This guide describes each section, derived from the Kaapi Evaluation, Fast Evalu
 and STT Evaluation SRDs. Use `srd-template.md` as the fill-in skeleton.
 
 This guide covers *section semantics only* — what belongs in each section. The
-process, rules (no redundancy, reuse, naming, ripple), and quality checklist live
-in `SKILL.md` and are not repeated here.
+process and the Rules (no redundancy, reuse, naming, ripple) live in `SKILL.md` and
+are not repeated here.
 
 ---
 
@@ -51,18 +51,10 @@ Cover:
 
 ## 5. Detailed Design (Execution Flow)  *(required)*
 
-How it runs, with brief supporting text, not a long numbered paragraph. Render each
-flow's diagram to a png in `assets/`, but do **not** embed it inline: where each
-diagram belongs, leave a horizontal-rule-fenced band naming the asset file the author
-pastes there (no mermaid, no HTML, no emoji). **Exactly one image per SRD: the primary
-execution flow.** A second flow (e.g. plain config CRUD) is prose plus the Endpoints
-section, not another image, and the DB schema is always column tables, never a diagram.
-Keep the text to what a diagram can't carry: failure isolation, idempotency,
-resolution rules.
-
-Stay high-level, actors and behavior, not internal function or variable names.
-Pipeline *stages* named by behavior are fine; private helpers and field names
-are not.
+How it runs, with brief supporting text, not a long numbered paragraph. Keep the
+text to what the diagram can't carry: failure isolation, idempotency, resolution
+rules. Diagram mechanics (one image, placeholder band, no HTML/emoji) are in
+`SKILL.md`.
 
 ## 6. Functional Requirements (Testing)  *(required, the core)*
 
@@ -80,8 +72,7 @@ A table, one row per user-facing behavior. Columns:
   implementation starts, and `/pr-review` (or the reviewer) flips it to `Done` only
   after verifying the acceptance criterion against the diff.
 
-If you cannot write a crisp acceptance criterion, the requirement is too vague;
-split or sharpen it. This table is what QA and review run against.
+This table is what QA and review run against.
 
 ## 7. Endpoints  *(required when the feature has an API)*
 
@@ -99,19 +90,15 @@ optional field").
 
 ## 8. Database Schema / Tables  *(required when there's a data model)*
 
-Always column tables, never a diagram or image (the one SRD image is the execution
-flow). For each table, a column table:
+Per table, a column table:
 
 | Column | Type | Nullable | Default | Description |
 
 Then a **Constraints** list: primary key, unique constraints (name them,
-`uq_<table>_<cols>` pattern), foreign keys, indexes.
-
-Kaapi DB conventions (id PK, tenant columns, timestamps, JSONB usage) are in
-`SKILL.md`'s rules and checklist. Two guide-level notes:
-- Filterable data as first-class columns; bag-of-attributes as `JSONB`.
-- Prefer reusing existing tables; if so, state "No new tables" and list only the
-  added columns / constraints, with the backfill plan for new non-null columns.
+`uq_<table>_<cols>` pattern), foreign keys, indexes. Conventions and reuse rules are
+in `SKILL.md`. One guide-level note: when reusing a table, state "No new tables" and
+list only the added columns / constraints, with the backfill plan for new non-null
+columns.
 
 ## 9. Configuration  *(optional)*
 
@@ -132,4 +119,4 @@ Required: Introduction & Purpose · Goals · Assumptions & Constraints ·
 Detailed Design · Functional Requirements · Endpoints (if API) · DB Schema (if data).
 Optional: Resources · Configuration · Design Decisions / Known Limitations.
 
-Before output, verify the full **Quality Checklist** in `SKILL.md`.
+Before output, verify every **Rule** in `SKILL.md`.
