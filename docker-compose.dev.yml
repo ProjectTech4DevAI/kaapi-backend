@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  backend:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
+    container_name: backend
+    restart: always
+    build:
+      context: ./backend
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
+    ports:
+      - "8000:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/api/v1/utils/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      uv run uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+    develop:
+      watch:
+        # Sync backend source code into container immediately on change
+        - action: sync
+          path: ./backend/app
+          target: /app/app
+        # Rebuild image if dependencies change
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ap-south-1
+        awslogs-group: /ec2/kaapi-dev
+        awslogs-stream: backend
+        awslogs-create-group: "true"
+
+  migrate:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
+    build:
+      context: ./backend
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
+    profiles: ["migrate"]
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+
+  celery_worker:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
+    container_name: celery-worker
+    restart: always
+    build:
+      context: ./backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
+    command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ap-south-1
+        awslogs-group: /ec2/kaapi-dev
+        awslogs-stream: celery-worker
+        awslogs-create-group: "true"
