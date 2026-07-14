@@ -12,7 +12,7 @@ The PRD is a **product spec**. It answers one question: *why are we doing this a
 
 ## Process
 
-1. Explore the repo to understand the current state of the codebase, if you haven't already. Use domain vocabulary from the codebase throughout the PRD.
+1. Understand the current state of the codebase, if you haven't already: start with `docs/wiki/INDEX.md` + `docs/wiki/domain-map.md` and the relevant `docs/wiki/modules/*.md` page(s) — they carry the domain vocabulary the PRD should use. Explore the repo directly only for what the wiki doesn't answer.
 
 2. Draft the PRD using the template below, keeping every section strictly product-level. Before finalizing, check with the user that the **Goals**, **Non-Goals**, and **which stories are must-have** match their expectations — these three are where misalignment hides.
 
