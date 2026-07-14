@@ -515,7 +515,7 @@ class TestProcessCompletedEvaluation:
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
-    @patch("app.crud.evaluations.processing.load_evaluation_dataset_items")
+    @patch("app.crud.evaluations.processing.fetch_dataset_items")
     @patch("app.crud.evaluations.processing.create_langfuse_dataset_run")
     @patch("app.crud.evaluations.processing.start_embedding_batch")
     @patch("app.crud.evaluations.processing.upload_batch_results_to_object_store")
@@ -599,7 +599,7 @@ class TestProcessCompletedEvaluation:
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.persist_score_traces")
     @patch("app.crud.evaluations.processing.download_batch_results")
-    @patch("app.crud.evaluations.processing.load_evaluation_dataset_items")
+    @patch("app.crud.evaluations.processing.fetch_dataset_items")
     @patch("app.crud.evaluations.processing.create_langfuse_dataset_run")
     @patch("app.crud.evaluations.processing.start_embedding_batch")
     @patch("app.crud.evaluations.processing.upload_batch_results_to_object_store")
@@ -667,7 +667,7 @@ class TestProcessCompletedEvaluation:
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.download_batch_results")
-    @patch("app.crud.evaluations.processing.load_evaluation_dataset_items")
+    @patch("app.crud.evaluations.processing.fetch_dataset_items")
     async def test_process_completed_evaluation_no_results(
         self,
         mock_fetch_dataset,
@@ -1676,7 +1676,7 @@ class TestPollAllPendingEvaluations:
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.check_and_process_evaluation")
     @patch("app.crud.evaluations.processing.get_openai_client")
-    @patch("app.crud.evaluations.processing.get_tracing_client")
+    @patch("app.crud.evaluations.processing.get_langfuse_client")
     async def test_poll_all_pending_evaluations_with_runs(
         self,
         mock_langfuse_client,
