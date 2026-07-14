@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
@@ -32,13 +30,6 @@ services:
           path: ./backend/pyproject.toml
         - action: rebuild
           path: ./backend/uv.lock
-    logging:
-      driver: awslogs
-      options:
-        awslogs-region: ap-south-1
-        awslogs-group: /ec2/kaapi-dev
-        awslogs-stream: backend
-        awslogs-create-group: "true"
 
   migrate:
     image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
@@ -67,10 +58,3 @@ services:
       - path: .env.secrets
         required: false
     command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
-    logging:
-      driver: awslogs
-      options:
-        awslogs-region: ap-south-1
-        awslogs-group: /ec2/kaapi-dev
-        awslogs-stream: celery-worker
-        awslogs-create-group: "true"
