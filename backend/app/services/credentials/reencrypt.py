@@ -8,8 +8,9 @@ import logging
 
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.core.db import engine
-from app.core.security import decrypt_credentials, encrypt_credentials
+from app.core.security import _use_kms, decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.crud.credentials import list_all_credentials
 
@@ -24,6 +25,13 @@ def execute_credential_reencrypt(*, session: Session | None = None) -> dict[str,
 
 
 def _reencrypt(session: Session) -> dict[str, int]:
+    if not _use_kms():
+        logger.info(
+            f"[execute_credential_reencrypt] Skipped, KMS inactive | "
+            f"environment: {settings.ENVIRONMENT}"
+        )
+        return {"total": 0, "converted": 0}
+
     rows = list_all_credentials(session=session)
     total = len(rows)
     logger.info(f"[execute_credential_reencrypt] Starting | total: {total}")
