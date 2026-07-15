@@ -1,12 +1,10 @@
 """Re-encrypt every stored credential through the current encryption scheme.
 
-Atomic: all rows are re-encrypted in a single transaction and committed once. Any
-failure rolls the whole thing back and re-raises, so the Celery task fails and
-Sentry reports it. Nothing is ever left half-converted.
+Atomic: one transaction, all-or-nothing — any failure rolls back and re-raises.
+Sole caller is the one-shot Alembic migration 073; no route/CRUD/Celery path.
 """
 
 import logging
-from typing import Any
 
 from sqlmodel import Session
 
@@ -18,18 +16,14 @@ from app.crud.credentials import list_all_credentials
 logger = logging.getLogger(__name__)
 
 
-def execute_credential_reencrypt(
-    *,
-    session: Session | None = None,
-    task_instance: Any | None = None,
-) -> dict[str, int]:
+def execute_credential_reencrypt(*, session: Session | None = None) -> dict[str, int]:
     if session is not None:
-        return _reencrypt(session, task_instance)
+        return _reencrypt(session)
     with Session(engine) as owned_session:
-        return _reencrypt(owned_session, task_instance)
+        return _reencrypt(owned_session)
 
 
-def _reencrypt(session: Session, task_instance: Any | None) -> dict[str, int]:
+def _reencrypt(session: Session) -> dict[str, int]:
     rows = list_all_credentials(session=session)
     total = len(rows)
     logger.info(f"[execute_credential_reencrypt] Starting | total: {total}")
@@ -46,12 +40,6 @@ def _reencrypt(session: Session, task_instance: Any | None) -> dict[str, int]:
             row.updated_at = now()
             session.add(row)
             converted += 1
-
-            if task_instance is not None:
-                task_instance.update_state(
-                    state="PROGRESS",
-                    meta={"total": total, "converted": converted},
-                )
 
         session.commit()
     except Exception as e:
