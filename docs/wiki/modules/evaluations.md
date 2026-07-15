@@ -28,6 +28,7 @@ Key `EvaluationRun` JSONB fields: `score` (per-trace `scores` + `summary_scores`
 
 ## Async
 - Provider batches polled by cron (`crud/evaluations/cron.py`); no long-lived Celery task per run.
+- Prompt improvement is job-based: `POST /evaluations/{id}/improve-prompt` enqueues a `Job` (`JobType.PROMPT_IMPROVEMENT`, `models/job.py`) run by Celery task `run_prompt_improvement` (`celery/tasks/job_execution.py`); `GET /evaluations/{id}/improve-prompt/{job_id}` polls and returns `PromptImprovementJobPublic` (`models/evaluation.py`) with the new `ConfigVersion` on success.
 
 ## External
 - OpenAI Batch + embeddings, Gemini Batch, Langfuse (per-trace scores + summary), object storage (datasets/audio), kaapi-frontend console (results + annotation).
