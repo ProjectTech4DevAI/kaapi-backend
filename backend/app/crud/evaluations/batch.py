@@ -247,7 +247,7 @@ def build_google_evaluation_jsonl(
 
 
 def start_evaluation_batch(
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     session: Session,
     eval_run: EvaluationRun,
     params: dict[str, Any],
@@ -270,8 +270,8 @@ def start_evaluation_batch(
         logger.info(
             f"[start_evaluation_batch] Starting evaluation batch | run={eval_run.run_name} | provider={provider}"
         )
-        dataset_items = load_evaluation_dataset_items(
-            session=session, eval_run=eval_run, langfuse=langfuse
+        dataset_items = fetch_dataset_items(
+            langfuse=langfuse, dataset_name=eval_run.dataset_name
         )
 
         base_provider = provider.replace("-native", "")

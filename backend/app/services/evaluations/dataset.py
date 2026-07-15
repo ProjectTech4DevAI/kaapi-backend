@@ -16,7 +16,7 @@ from app.services.evaluations.validators import (
     parse_csv_items,
     sanitize_dataset_name,
 )
-from app.utils import get_tracing_client
+from app.utils import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -107,36 +107,35 @@ def upload_dataset(
         )
         object_store_url = None
 
-    # Step 4: Upload to Langfuse when tracing is enabled. On opt-out the dataset
-    # lives only in object store; evaluations source items from there.
+    # Step 4: Upload to Langfuse
     langfuse_dataset_id = None
-    langfuse = get_tracing_client(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-    )
-    if langfuse is not None:
-        try:
-            langfuse_dataset_id, _ = upload_dataset_to_langfuse(
-                langfuse=langfuse,
-                items=original_items,
-                dataset_name=dataset_name,
-                duplication_factor=duplication_factor,
-            )
+    try:
+        langfuse = get_langfuse_client(
+            session=session,
+            org_id=organization_id,
+            project_id=project_id,
+        )
 
-            logger.info(
-                f"[upload_dataset] Successfully uploaded dataset to Langfuse | "
-                f"dataset={dataset_name} | id={langfuse_dataset_id}"
-            )
+        langfuse_dataset_id, _ = upload_dataset_to_langfuse(
+            langfuse=langfuse,
+            items=original_items,
+            dataset_name=dataset_name,
+            duplication_factor=duplication_factor,
+        )
 
-        except Exception as e:
-            logger.error(
-                f"[upload_dataset] Failed to upload dataset to Langfuse | {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500, detail=f"Failed to upload dataset to Langfuse: {e}"
-            )
+        logger.info(
+            f"[upload_dataset] Successfully uploaded dataset to Langfuse | "
+            f"dataset={dataset_name} | id={langfuse_dataset_id}"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"[upload_dataset] Failed to upload dataset to Langfuse | {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Failed to upload dataset to Langfuse: {e}"
+        )
 
     # Step 5: Store metadata in database
     metadata = {

@@ -103,12 +103,12 @@ def validate_and_start_fast_evaluation(
                 "organization/project"
             ),
         )
-    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
+    if not dataset.langfuse_dataset_id:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Dataset {dataset_id} has no Langfuse nor object-store backing; "
-                "cannot run evaluation."
+                f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
+                "evaluation."
             ),
         )
 
@@ -276,7 +276,7 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 
 def _resolve_config_and_clients(
     *, session: Session, eval_run: EvaluationRun
-) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
+) -> tuple[TextLLMParams, OpenAI, Langfuse]:
     """Resolve the run's text config and build its OpenAI + Langfuse clients.
 
     The Langfuse client is None when the project opted out of tracing (#996) so
