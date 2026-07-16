@@ -99,6 +99,12 @@ def get_key_by_org(
     return None
 
 
+def list_all_credentials(*, session: Session) -> list[Credential]:
+    """Fetch every credential row across all orgs/projects. Admin-only use
+    (re-encryption backfill); never expose through a tenant-scoped route."""
+    return list(session.exec(select(Credential)).all())
+
+
 def get_creds_by_org(
     *, session: Session, org_id: int, project_id: int
 ) -> list[Credential]:

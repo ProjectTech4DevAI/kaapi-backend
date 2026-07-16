@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
+    # KMS key (ID, ARN, or alias) for credential encryption
+    AWS_KMS_KEY_ID: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
     # its own ``google`` credential row (BYOK is all-or-nothing — see the

@@ -10,21 +10,23 @@ This module provides utilities for:
 import base64
 import json
 import logging
+import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Tuple
 
+import boto3
 import jwt
 from jwt.exceptions import InvalidTokenError
+from botocore.client import BaseClient
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from passlib.context import CryptContext
 from sqlmodel import Session, and_, select
 
-from app.models import APIKey, User, Organization, Project, AuthContext
 from app.core.config import settings
-
+from app.models import APIKey, User, Organization, Project, AuthContext
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,35 @@ ALGORITHM = "HS256"
 
 # Fernet instance for encryption/decryption
 _fernet = None
+
+# Marks KMS-encrypted credentials; rows without it are legacy Fernet.
+KMS_CIPHERTEXT_PREFIX = "kms.v1:"
+
+_kms_client: BaseClient | None = None
+
+
+def _use_kms() -> bool:
+    """KMS is used everywhere except development, and only when a key is set."""
+    return settings.ENVIRONMENT != "development" and bool(settings.AWS_KMS_KEY_ID)
+
+
+def get_kms_client() -> BaseClient:
+    """Singleton boto3 KMS client. Empty AWS_* settings are omitted so boto3
+    falls back to the task role / instance profile credential chain."""
+    global _kms_client
+    if _kms_client is None:
+        cred_params = (
+            ("aws_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("region_name", "AWS_DEFAULT_REGION"),
+        )
+        kwargs = {}
+        for param, env_var in cred_params:
+            value = os.environ.get(env_var, getattr(settings, env_var))
+            if value:
+                kwargs[param] = value
+        _kms_client = boto3.client("kms", **kwargs)
+    return _kms_client
 
 
 def get_encryption_key() -> bytes:
@@ -79,7 +110,7 @@ def encode_jwt_token(
     Any additional claims (e.g. `org_id`, `project_id`) can be passed via
     `extra_claims` and are merged into the payload before signing.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     to_encode: dict[str, Any] = {
         "exp": now + expires_delta,
         "nbf": now,
@@ -164,44 +195,45 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def encrypt_credentials(credentials: dict) -> str:
-    """
-    Encrypt the entire credentials object before storage.
+def encrypt_credentials(credentials: dict[str, Any]) -> str:
+    """Encrypt credentials for storage. KMS outside dev, Fernet otherwise.
 
-    Args:
-        credentials: Dictionary containing credentials to encrypt
-
-    Returns:
-        str: The encrypted credentials
-
-    Raises:
-        ValueError: If encryption fails
+    KMS Encrypt caps plaintext at 4096 bytes, so payloads must stay under that.
     """
     try:
         credentials_str = json.dumps(credentials)
+        if _use_kms():
+            response = get_kms_client().encrypt(
+                KeyId=settings.AWS_KMS_KEY_ID,
+                Plaintext=credentials_str.encode(),
+            )
+            encoded = base64.b64encode(response["CiphertextBlob"]).decode()
+            return f"{KMS_CIPHERTEXT_PREFIX}{encoded}"
         return get_fernet().encrypt(credentials_str.encode()).decode()
     except Exception as e:
-        raise ValueError(f"Failed to encrypt credentials: {e}")
+        # Log the real cause (may carry AWS ARNs); never surface it to callers.
+        logger.error(f"[encrypt_credentials] Encryption failed | error: {e}")
+        raise ValueError("Failed to encrypt credentials")
 
 
-def decrypt_credentials(encrypted_credentials: str) -> dict:
-    """
-    Decrypt the entire credentials object when retrieving it.
-
-    Args:
-        encrypted_credentials: The encrypted credentials string to decrypt
-
-    Returns:
-        dict: The decrypted credentials dictionary
-
-    Raises:
-        ValueError: If decryption fails
+def decrypt_credentials(encrypted_credentials: str) -> dict[str, Any]:
+    """Decrypt stored credentials. Routing is by ciphertext prefix, not the
+    active mode, so legacy Fernet rows always decrypt even after KMS cutover.
     """
     try:
-        decrypted_str = get_fernet().decrypt(encrypted_credentials.encode()).decode()
+        if encrypted_credentials.startswith(KMS_CIPHERTEXT_PREFIX):
+            blob = base64.b64decode(encrypted_credentials[len(KMS_CIPHERTEXT_PREFIX) :])
+            response = get_kms_client().decrypt(CiphertextBlob=blob)
+            decrypted_str = response["Plaintext"].decode()
+        else:
+            decrypted_str = (
+                get_fernet().decrypt(encrypted_credentials.encode()).decode()
+            )
         return json.loads(decrypted_str)
     except Exception as e:
-        raise ValueError(f"Failed to decrypt credentials: {e}")
+        # Log the real cause (may carry AWS ARNs); never surface it to callers.
+        logger.error(f"[decrypt_credentials] Decryption failed | error: {e}")
+        raise ValueError("Failed to decrypt credentials")
 
 
 class APIKeyManager:
