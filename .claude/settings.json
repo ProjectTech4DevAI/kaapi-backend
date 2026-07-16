@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/wiki-update.sh",
+            "timeout": 15,
+            "statusMessage": "Checking wiki freshness"
+          }
+        ]
+      }
+    ]
+  }
+}
