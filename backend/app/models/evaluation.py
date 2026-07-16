@@ -6,7 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
-from sqlmodel import Field as SQLField, Relationship, SQLModel
+from sqlmodel import Field as SQLField
+from sqlmodel import Relationship, SQLModel
 
 from app.core.util import now
 
@@ -370,10 +371,37 @@ class EvaluationRun(SQLModel, table=True):
             nullable=True,
             comment=(
                 "{trace_id: reason} for items that cannot be scored "
-                "(empty_output / empty_ground_truth / embedding_failed)"
+                "(empty_output / empty_ground_truth / embedding_failed / judge_failed)"
             ),
         ),
         description="Map of trace_id to the reason the item cannot be scored",
+    )
+
+    # LLM-as-judge (v2 native) fields. Null on v1 and pre-feature runs; a judge
+    # never syncs to Langfuse, so these two columns are Kaapi's own store.
+    is_judge_run: bool | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Boolean,
+            nullable=True,
+            comment=(
+                "True for v2 runs that run the native LLM-as-judge (and skip the "
+                "Langfuse score sync). NULL/False = v1 run, cosine-only, Langfuse-synced"
+            ),
+        ),
+        description="Marks a v2 judged run; gates judging and the Langfuse-sync skip",
+    )
+    per_item_ground_truth: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment=(
+                "Durable {ref: score} map of the Adherence to Ground Truth judge "
+                "scores (ref = trace_id when traced, else item_id); Kaapi's own store"
+            ),
+        ),
+        description="Durable map of per-row ground-truth judge scores keyed by ref",
     )
 
     is_score_updated: bool | None = SQLField(
@@ -487,6 +515,8 @@ class EvaluationRunUpdate(SQLModel):
     is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
+    is_judge_run: bool | None = None
+    per_item_ground_truth: dict[str, Any] | None = None
 
 
 class EvaluationRunPublic(SQLModel):
@@ -508,6 +538,8 @@ class EvaluationRunPublic(SQLModel):
     score: dict[str, Any] | None
     unscoreable: dict[str, Any] | None = None
     is_score_updated: bool | None = None
+    is_judge_run: bool | None = None
+    per_item_ground_truth: dict[str, Any] | None = None
     cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int

@@ -7,7 +7,6 @@ used throughout the evaluation system.
 
 from typing import NotRequired, TypedDict
 
-
 DEFAULT_CATEGORY: str = "Other"
 
 # Canonical name/comment for the cosine-similarity score, centralized to avoid
@@ -17,6 +16,11 @@ COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )
 
+# Native LLM-as-judge (v2). The combined judge grades one metric per JSON key;
+# these are the ground-truth metric's public score name and its failure reason.
+GROUND_TRUTH_SCORE_NAME: str = "Adherence to Ground Truth"
+JUDGE_FAILED_REASON: str = "judge_failed"
+
 # Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
 # "missing_trace_id" appears only in build_embedding_jsonl's internal skipped list.
 UNSCOREABLE_REASONS: tuple[str, ...] = (
@@ -24,6 +28,45 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     "empty_ground_truth",
     "embedding_failed",
     "missing_trace_id",
+    JUDGE_FAILED_REASON,
+)
+
+# Shared preamble for the single combined judge call. Metric-specific rubric
+# fragments (below, one per registry entry) are appended after it, then the
+# output contract listing the JSON keys the judge must return.
+JUDGE_SYSTEM_PREAMBLE: str = (
+    "You are a strict, impartial evaluator. You score an assistant's answer on the "
+    "independent metrics listed below in a single pass. Each metric is a float in "
+    "[0.0, 1.0] with one or two sentences of reasoning. The metrics are independent "
+    "— judge each only against its own inputs and rules; do not let one metric's "
+    "verdict bleed into another."
+)
+
+# Built-in rubric fragment for the Adherence to Ground Truth metric. Self-contained
+# (its own rules), carries no interpolation placeholder — the judge appends the
+# row's inputs at call time. Each metric owns its full rubric block like this.
+GROUND_TRUTH_JUDGE_PROMPT: str = (
+    'Adherence to Ground Truth (score key "ground_truth"):\n'
+    "Judge ONLY whether the assistant's answer conveys the same correct information "
+    "as the golden answer.\n"
+    "- Judge meaning, not wording. A correct paraphrase, a different order, or extra "
+    "detail that is also correct must score high.\n"
+    "- Lower the score for information that is missing, incomplete, or contradicts "
+    "the golden answer. An answer that states something the golden answer does not, "
+    "and that would be wrong, is a factual error.\n"
+    "- Do NOT reward or penalize style, tone, length, or language.\n"
+    "- Do NOT use any outside knowledge; the golden answer is the source of truth.\n"
+    "- Do NOT answer the question yourself.\n"
+    "Reasoning: name what was correct or what was missing/contradicted."
+)
+
+# Output contract for the combined call; `{metric_keys}` is filled with the
+# enabled metric keys at build time so parsing stays N-metric shaped.
+JUDGE_OUTPUT_INSTRUCTION: str = (
+    "Respond with ONLY a single JSON object mapping each metric key to its result, of "
+    'the form {{"<metric_key>": {{"score": <float between 0 and 1>, "reasoning": '
+    '"<one or two sentences>"}}}}. Include exactly these metric keys: {metric_keys}. '
+    "Output nothing else."
 )
 
 

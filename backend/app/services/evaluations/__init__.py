@@ -1,6 +1,6 @@
 """Evaluation services."""
 
-from app.services.evaluations.dataset import upload_dataset
+from app.services.evaluations.dataset import upload_dataset, upload_dataset_v2
 from app.services.evaluations.evaluation import (
     get_evaluation_with_scores,
     validate_and_start_batch_evaluation,
@@ -22,3 +22,21 @@ from app.services.evaluations.validators import (
     sanitize_dataset_name,
     validate_csv_file,
 )
+
+__all__ = [
+    "ALLOWED_EXTENSIONS",
+    "ALLOWED_MIME_TYPES",
+    "MAX_FILE_SIZE",
+    "execute_fast_evaluation_aggregate",
+    "execute_fast_evaluation_chunk",
+    "get_evaluation_with_scores",
+    "improve_prompt",
+    "is_dataset_fast_eligible",
+    "parse_csv_items",
+    "sanitize_dataset_name",
+    "upload_dataset",
+    "upload_dataset_v2",
+    "validate_and_start_batch_evaluation",
+    "validate_and_start_fast_evaluation",
+    "validate_csv_file",
+]

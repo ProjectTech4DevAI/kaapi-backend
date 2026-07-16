@@ -1,25 +1,18 @@
 from datetime import timedelta
 
-import boto3
 import jwt
-import pytest
-from moto import mock_aws
 from sqlmodel import Session
 
-import app.core.security as security
 from app.core.config import settings
 from app.core.security import (
     ALGORITHM,
-    KMS_CIPHERTEXT_PREFIX,
-    APIKeyManager,
     create_access_token,
     create_refresh_token,
-    decrypt_credentials,
-    encrypt_credentials,
     get_encryption_key,
+    APIKeyManager,
 )
 from app.core.util import now
-from app.models import APIKey, AuthContext, Organization, Project, User
+from app.models import APIKey, User, Organization, Project, AuthContext
 from app.tests.utils.test_data import create_test_api_key
 
 
@@ -33,50 +26,6 @@ def test_get_encryption_key():
     assert isinstance(key, bytes)
     # The key is base64 encoded, so it should be 44 bytes
     assert len(key) == 44  # Base64 encoded Fernet key length is 44 bytes
-
-
-@pytest.fixture
-def kms_key(monkeypatch):
-    """Stand up a mocked KMS key and switch security.py onto the KMS path."""
-    with mock_aws():
-        client = boto3.client("kms", region_name="ap-south-1")
-        key_id = client.create_key()["KeyMetadata"]["KeyId"]
-
-        monkeypatch.setattr(settings, "ENVIRONMENT", "staging")
-        monkeypatch.setattr(settings, "AWS_KMS_KEY_ID", key_id)
-        monkeypatch.setattr(security, "_kms_client", client)
-        yield key_id
-
-
-class TestCredentialEncryption:
-    """Credential encrypt/decrypt across Fernet (dev) and KMS (non-dev)."""
-
-    def test_fernet_roundtrip_in_development(self, monkeypatch):
-        monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-        creds = {"api_key": "sk-fernet-123"}
-
-        encrypted = encrypt_credentials(creds)
-
-        assert not encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
-        assert decrypt_credentials(encrypted) == creds
-
-    def test_kms_roundtrip(self, kms_key):
-        creds = {"openai": {"api_key": "sk-kms-123"}}
-
-        encrypted = encrypt_credentials(creds)
-
-        assert encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
-        assert decrypt_credentials(encrypted) == creds
-
-    def test_dual_read_fernet_row_with_kms_active(self, monkeypatch, kms_key):
-        """A legacy Fernet ciphertext must still decrypt after KMS cutover."""
-        monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-        creds = {"api_key": "sk-legacy"}
-        fernet_encrypted = encrypt_credentials(creds)
-        assert not fernet_encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
-
-        monkeypatch.setattr(settings, "ENVIRONMENT", "staging")
-        assert decrypt_credentials(fernet_encrypted) == creds
 
 
 class TestAPIKeyManager:

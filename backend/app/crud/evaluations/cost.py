@@ -9,12 +9,15 @@ exceptions and logs a warning.
 Persisted shape on `eval_run.cost`:
 
     {
-        "response":  {model, input_tokens, output_tokens, total_tokens, cost_usd},
-        "embedding": {model, input_tokens, output_tokens, total_tokens, cost_usd},
+        "response":          {model, input_tokens, output_tokens, total_tokens, cost_usd},
+        "embedding":         {model, input_tokens, output_tokens, total_tokens, cost_usd},
+        "ground_truth_judge": {model, input_tokens, output_tokens, total_tokens, cost_usd},
         "total_cost_usd": float,
     }
 
-Either stage entry is optional. Embedding entries use output_tokens=0.
+Any stage entry is optional. Embedding entries use output_tokens=0. Judge stages
+(one per metric, keyed by the metric's cost_stage) are priced like the response
+stage from per-row usage.
 """
 
 import logging
@@ -112,9 +115,29 @@ def _build_embedding_cost_entry(
     return _build_cost_entry(session=session, model=model, totals=totals)
 
 
+# Fixed top-level keys on eval_run.cost that are NOT per-metric judge stages;
+# everything else at the top level is a judge stage preserved across partial updates.
+_NON_JUDGE_COST_KEYS: frozenset[str] = frozenset(
+    {"response", "embedding", "total_cost_usd"}
+)
+
+
+def _build_judge_cost_entry(
+    session: Session, model: str, results: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build a judge-stage cost entry from per-row judge usage results."""
+    totals = _sum_tokens(
+        items=results,
+        usage_extractor=lambda r: r.get("usage"),
+        input_key="input_tokens",
+    )
+    return _build_cost_entry(session=session, model=model, totals=totals)
+
+
 def _build_cost_dict(
     response_entry: dict[str, Any] | None,
     embedding_entry: dict[str, Any] | None,
+    judge_entries: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Combine per-stage entries into the `eval_run.cost` payload with a grand total."""
     cost: dict[str, Any] = {}
@@ -127,6 +150,11 @@ def _build_cost_dict(
     if embedding_entry:
         cost["embedding"] = embedding_entry
         total += embedding_entry.get("cost_usd", 0.0)
+
+    for stage, entry in judge_entries.items():
+        if entry:
+            cost[stage] = entry
+            total += entry.get("cost_usd", 0.0)
 
     cost["total_cost_usd"] = round(total, COST_USD_DECIMALS)
     return cost
@@ -141,12 +169,16 @@ def attach_cost(
     response_results: list[dict[str, Any]] | None = None,
     embedding_model: str | None = None,
     embedding_raw_results: list[dict[str, Any]] | None = None,
+    judge_stage: str | None = None,
+    judge_model: str | None = None,
+    judge_results: list[dict[str, Any]] | None = None,
 ) -> None:
     """Compute cost for the given stage(s) and attach to `eval_run.cost`, never raising.
 
-    Caller is responsible for persisting `eval_run` afterwards. Either stage's
+    Caller is responsible for persisting `eval_run` afterwards. Any stage's
     previously-computed entry on `eval_run.cost` is preserved when that stage's
-    inputs are not supplied, so partial updates never clobber prior data.
+    inputs are not supplied, so partial updates never clobber prior data — including
+    prior per-metric judge stages, which are carried forward untouched.
     """
     try:
         existing_cost = eval_run.cost or {}
@@ -167,9 +199,25 @@ def attach_cost(
         else:
             embedding_entry = existing_cost.get("embedding")
 
+        # Carry forward prior judge stages; recompute only the one supplied this call.
+        judge_entries: dict[str, dict[str, Any]] = {
+            k: v
+            for k, v in existing_cost.items()
+            if k not in _NON_JUDGE_COST_KEYS and isinstance(v, dict)
+        }
+        if (
+            judge_stage is not None
+            and judge_model is not None
+            and judge_results is not None
+        ):
+            judge_entries[judge_stage] = _build_judge_cost_entry(
+                session=session, model=judge_model, results=judge_results
+            )
+
         eval_run.cost = _build_cost_dict(
             response_entry=response_entry,
             embedding_entry=embedding_entry,
+            judge_entries=judge_entries,
         )
     except Exception as cost_err:
         logger.warning(

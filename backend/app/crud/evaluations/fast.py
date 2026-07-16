@@ -51,6 +51,13 @@ from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
     calculate_cosine_similarity,
 )
+from app.crud.evaluations.judge import (
+    JudgeMetricSpec,
+    JudgeResult,
+    build_judge_params,
+    enabled_metric_specs,
+    judge_row,
+)
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
@@ -59,6 +66,7 @@ from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
+    JUDGE_FAILED_REASON,
     EvaluationScore,
     TraceData,
     TraceScore,
@@ -86,6 +94,12 @@ JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 # batch_job.config keys tying a chunk row back to its run + slice.
 CHUNK_CONFIG_RUN_ID = "eval_run_id"
 CHUNK_CONFIG_INDEX = "chunk_index"
+
+# Reasons a row cannot be scored, surfaced to the UI. embedding_failed is v1-only
+# (cosine); v2 judged runs never embed, so only the empty-side reasons apply.
+UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
+UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
+UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
@@ -727,29 +741,145 @@ def _stage2_embeddings(
     return eval_run, embedding_results
 
 
+def _judge_rows(
+    *,
+    session: Session,
+    openai_client: OpenAI,
+    eval_run: EvaluationRun,
+    judgeable: list[tuple[str, str, dict[str, Any]]],
+    log_prefix: str,
+) -> tuple[dict[str, JudgeResult], set[str], str | None]:
+    """Run one combined judge completion per judgeable row, isolated per row.
+
+    `judgeable` is (item_id, ref, response). Returns the per-item JudgeResults,
+    the refs whose entire combined call failed (all metrics unscoreable), and the
+    judge model used. A setup failure (unresolvable config) isolates every row.
+    """
+    results: dict[str, JudgeResult] = {}
+    failed_refs: set[str] = set()
+    if not judgeable:
+        return results, failed_refs, None
+
+    metrics = enabled_metric_specs()
+
+    # Build base params once per run; judging is system-config only, so every metric
+    # uses its built-in prompt + fallback model. A setup failure leaves all rows
+    # unjudged rather than failing the run.
+    try:
+        base_params, _system_prompt = build_judge_params(
+            session=session, metrics=metrics
+        )
+    except Exception as exc:
+        logger.error(
+            f"[_judge_rows] {log_prefix} Judge setup failed; leaving all rows "
+            f"unjudged | error={exc}",
+            exc_info=True,
+        )
+        return results, {ref for _item_id, ref, _r in judgeable}, None
+
+    judge_model = base_params.get("model")
+
+    max_workers = max(1, min(settings.EVAL_FAST_API_CONCURRENCY, len(judgeable)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(
+                judge_row,
+                openai_client=openai_client,
+                base_params=base_params,
+                metrics=metrics,
+                question=response.get("question", ""),
+                generated_answer=response.get("generated_output", ""),
+                golden_answer=response.get("ground_truth", ""),
+            ): (item_id, ref)
+            for item_id, ref, response in judgeable
+        }
+        for future in as_completed(future_map):
+            item_id, ref = future_map[future]
+            try:
+                results[item_id] = future.result()
+            except Exception as exc:
+                failed_refs.add(ref)
+                logger.warning(
+                    f"[_judge_rows] {log_prefix} Judge failed for row; flagged "
+                    f"unscoreable | item_id={item_id} | ref={ref} | error={exc}"
+                )
+
+    return results, failed_refs, judge_model
+
+
+def _attach_metric_scores(
+    *,
+    spec: JudgeMetricSpec,
+    eval_run: EvaluationRun,
+    judge_results: dict[str, JudgeResult],
+    item_id_to_ref: dict[str, str],
+    summary_scores: list[dict[str, Any]],
+) -> None:
+    """Persist one metric's per-row map + summary score from the combined results.
+
+    Iterates the registry so knowledge_base / prompt need only add a spec + column.
+    Per-trace score comments are attached separately in the trace-build loop.
+    """
+    per_item: dict[str, float] = {}
+    values: list[float] = []
+    for item_id, result in judge_results.items():
+        metric_score = result.metrics.get(spec.key)
+        if metric_score is None:
+            continue
+        ref = item_id_to_ref[item_id]
+        per_item[ref] = round(float(metric_score.score), 6)
+        values.append(metric_score.score)
+
+    # Durable {ref: score} map on the metric's own column (Kaapi-native store).
+    setattr(eval_run, spec.per_item_column, per_item or None)
+
+    if values:
+        arr = np.array(values)
+        summary_scores.append(
+            {
+                "name": spec.score_name,
+                "avg": round(float(np.mean(arr)), 2),
+                "std": round(float(np.std(arr)), 2),
+                "total_pairs": len(values),
+                "data_type": "NUMERIC",
+            }
+        )
+
+
 def _stage3_score_and_trace(
     *,
     session: Session,
+    openai_client: OpenAI,
     eval_run: EvaluationRun,
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     response_results: list[dict[str, Any]],
-    embedding_results: list[dict[str, Any]],
+    embedding_results: list[dict[str, Any]] | None,
     log_prefix: str,
 ) -> tuple[EvaluationRun, EvaluationScore, list[dict[str, Any]]]:
-    """Stage 3 — compute cosine, create Langfuse traces, attach costs.
+    """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs.
 
     Returns the run, the full score unit (summary_scores + per-trace records, in
     the batch path's shape), and the Langfuse `write_items` (per-item cosine +
-    unscoreable placeholders). The caller completes the run before writing those
-    items, so completion is not gated on Langfuse calls. Idempotent, no stage
-    marker.
+    unscoreable placeholders; empty for v2). Everything is keyed by `ref` (trace_id
+    when traced, else item_id) so it works with or without Langfuse.
+
+    Two mutually-exclusive scoring paths, gated on `eval_run.is_judge_run`:
+      - v1 (`is_judge_run` false): cosine over the embedded pairs, per_item_scores,
+        the Cosine summary score, and Langfuse cosine sync — unchanged.
+      - v2 (`is_judge_run` true): no embeddings ran, so cosine is skipped entirely
+        (`embedding_results` is None/empty); only the ground-truth judge scores each
+        row, per_item_scores stays NULL, and there are no Langfuse writes.
+    A judge failure can never block a v1 cosine score because v1 never judges.
+    Idempotent, no stage marker.
     """
+    is_judge_run = eval_run.is_judge_run
     logger.info(
-        f"[_stage3_score_and_trace] {log_prefix} Computing cosine + creating traces"
+        f"[_stage3_score_and_trace] {log_prefix} Scoring stage 3 | "
+        f"judge_run={is_judge_run}"
     )
 
     item_id_to_pair = {
-        r["item_id"]: r for r in embedding_results if not r.get("failed")
+        r["item_id"]: r for r in (embedding_results or []) if not r.get("failed")
     }
 
     model = resolve_model_from_config(session=session, eval_run=eval_run)
@@ -761,68 +891,88 @@ def _stage3_score_and_trace(
         model=model,
     )
 
-    # Per-item cosine scores, keyed by trace_id (Langfuse) and item_id (persisted
-    # records). Items with a trace but no computable score are flagged unscoreable
-    # so they're kept out of avg/std/total_pairs.
+    # Scoring accumulators keyed by ref (trace_id when traced, else item_id) so they
+    # persist with tracing off. Unscoreable rows stay out of avg/std/total_pairs. The
+    # cosine-only fields (per_item_scores, similarities, write_items) stay empty for v2.
     per_item_scores: list[dict[str, Any]] = []
     item_id_to_score: dict[str, float] = {}
+    item_id_to_ref: dict[str, str] = {}
     similarities: list[float] = []
-    unscoreable: dict[str, str] = {}  # {trace_id: reason}
-    for response in response_results:
-        item_id = response["item_id"]
-        trace_id = trace_id_mapping.get(item_id)
-        if not trace_id:
-            continue
-        embedding_pair = item_id_to_pair.get(item_id)
-        has_embeddings = (
-            embedding_pair is not None
-            and embedding_pair.get("output_embedding") is not None
-            and embedding_pair.get("ground_truth_embedding") is not None
-        )
-        if not has_embeddings:
-            # Classify why this item cannot be scored, for the UI flag.
+    unscoreable: dict[str, str] = {}  # {ref: reason}
+    write_items: list[dict[str, Any]] = []
+    summary_scores: list[dict[str, Any]] = []
+
+    if is_judge_run:
+        # v2: no cosine. A row is judgeable only with a non-empty generated AND
+        # golden answer; empty sides are unscoreable and skip the judge below.
+        for response in response_results:
+            item_id = response["item_id"]
+            ref = trace_id_mapping.get(item_id) or item_id
+            item_id_to_ref[item_id] = ref
             if not response.get("generated_output"):
-                unscoreable[trace_id] = "empty_output"
+                unscoreable[ref] = UNSCOREABLE_EMPTY_OUTPUT
             elif not response.get("ground_truth"):
-                unscoreable[trace_id] = "empty_ground_truth"
-            else:
-                unscoreable[trace_id] = "embedding_failed"
-            continue
-        cosine = calculate_cosine_similarity(
-            embedding_pair["output_embedding"],
-            embedding_pair["ground_truth_embedding"],
-        )
-        similarities.append(cosine)
-        item_id_to_score[item_id] = cosine
-        per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
-
-    # Langfuse write list (cosine + 0-scores for unscoreable items); written
-    # after completion in run_fast_evaluation.
-    unscoreable_writes = [
-        {"trace_id": trace_id, "unscoreable": True, "reason": reason}
-        for trace_id, reason in unscoreable.items()
-    ]
-    write_items = per_item_scores + unscoreable_writes
-
-    # Durable source of truth, persisted by the commit below.
-    eval_run.per_item_scores = {
-        trace_id_mapping[item_id]: round(float(score), 6)
-        for item_id, score in item_id_to_score.items()
-        if item_id in trace_id_mapping
-    }
-    eval_run.unscoreable = unscoreable or None
-
-    # Aggregate similarity stats, in the batch path's summary_scores shape.
-    if similarities:
-        sim_array = np.array(similarities)
-        avg = float(np.mean(sim_array))
-        std = float(np.std(sim_array))
+                unscoreable[ref] = UNSCOREABLE_EMPTY_GROUND_TRUTH
     else:
-        avg = 0.0
-        std = 0.0
+        for response in response_results:
+            item_id = response["item_id"]
+            ref = trace_id_mapping.get(item_id) or item_id
+            item_id_to_ref[item_id] = ref
+            embedding_pair = item_id_to_pair.get(item_id)
+            has_embeddings = (
+                embedding_pair is not None
+                and embedding_pair.get("output_embedding") is not None
+                and embedding_pair.get("ground_truth_embedding") is not None
+            )
+            if not has_embeddings:
+                # Classify why this item cannot be scored, for the UI flag.
+                if not response.get("generated_output"):
+                    unscoreable[ref] = UNSCOREABLE_EMPTY_OUTPUT
+                elif not response.get("ground_truth"):
+                    unscoreable[ref] = UNSCOREABLE_EMPTY_GROUND_TRUTH
+                else:
+                    unscoreable[ref] = UNSCOREABLE_EMBEDDING_FAILED
+                continue
+            cosine = calculate_cosine_similarity(
+                embedding_pair["output_embedding"],
+                embedding_pair["ground_truth_embedding"],
+            )
+            similarities.append(cosine)
+            item_id_to_score[item_id] = cosine
+            per_item_scores.append(
+                {"trace_id": trace_id_mapping.get(item_id), "cosine_similarity": cosine}
+            )
 
-    score_payload = {
-        "summary_scores": apply_cosine_breakdown(
+        # Langfuse write list, filtered to real trace_ids (empty when untraced).
+        unscoreable_writes = [
+            {
+                "trace_id": trace_id_mapping[item_id],
+                "unscoreable": True,
+                "reason": reason,
+            }
+            for item_id, ref in item_id_to_ref.items()
+            if item_id in trace_id_mapping
+            and (reason := unscoreable.get(ref)) is not None
+        ]
+        scored_writes = [w for w in per_item_scores if w["trace_id"] is not None]
+        write_items = scored_writes + unscoreable_writes
+
+        # Durable source of truth, keyed by ref, persisted by the commit below.
+        eval_run.per_item_scores = {
+            item_id_to_ref[item_id]: round(float(score), 6)
+            for item_id, score in item_id_to_score.items()
+        }
+
+        # Aggregate similarity stats, in the batch path's summary_scores shape.
+        if similarities:
+            sim_array = np.array(similarities)
+            avg = float(np.mean(sim_array))
+            std = float(np.std(sim_array))
+        else:
+            avg = 0.0
+            std = 0.0
+
+        summary_scores = apply_cosine_breakdown(
             [
                 {
                     "name": COSINE_SCORE_NAME,
@@ -833,9 +983,8 @@ def _stage3_score_and_trace(
                 }
             ],
             total_items=eval_run.total_items,
-            unscoreable=eval_run.unscoreable,
+            unscoreable=unscoreable or None,
         )
-    }
 
     # Attach response- and embedding-stage costs (attach_cost is idempotent per stage).
     if response_results:
@@ -870,40 +1019,106 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # Build the per-trace records in the same shape the batch path persists (via
-    # fetch_trace_scores_from_langfuse). One record per response that has a
-    # Langfuse trace; the cosine score is attached when its embedding succeeded.
+    # v2 native LLM-as-judge: the only v2 scorer, over rows with both a generated
+    # answer and a golden answer. Gated on the run's marker so v1 never judges;
+    # per-row isolation lives in _judge_rows.
+    judge_results: dict[str, JudgeResult] = {}
+    if eval_run.is_judge_run:
+        judgeable = [
+            (response["item_id"], item_id_to_ref[response["item_id"]], response)
+            for response in response_results
+            if response.get("generated_output") and response.get("ground_truth")
+        ]
+        judge_results, judge_failed_refs, judge_model = _judge_rows(
+            session=session,
+            openai_client=openai_client,
+            eval_run=eval_run,
+            judgeable=judgeable,
+            log_prefix=log_prefix,
+        )
+
+        # Flag judge-failed rows unscoreable WITHOUT clobbering an empty-side reason
+        # (setdefault): a row already flagged empty_output/empty_ground_truth keeps it.
+        for ref in judge_failed_refs:
+            unscoreable.setdefault(ref, JUDGE_FAILED_REASON)
+
+        for spec in enabled_metric_specs():
+            _attach_metric_scores(
+                spec=spec,
+                eval_run=eval_run,
+                judge_results=judge_results,
+                item_id_to_ref=item_id_to_ref,
+                summary_scores=summary_scores,
+            )
+
+        # One combined call per row; attribute its usage to the primary metric's
+        # cost stage (single-metric slice — per-metric cost split is deferred).
+        if judge_results and judge_model:
+            attach_cost(
+                session=session,
+                eval_run=eval_run,
+                log_prefix=log_prefix,
+                judge_stage=enabled_metric_specs()[0].cost_stage,
+                judge_model=judge_model,
+                judge_results=[
+                    {"usage": result.usage} for result in judge_results.values()
+                ],
+            )
+
+    eval_run.unscoreable = unscoreable or None
+
+    # Per-trace records, in the batch path's shape. Keyed by ref so untraced runs
+    # persist too. Judge metric scores carry their reasoning in the score comment.
     traces: list[TraceData] = []
     for response in response_results:
         item_id = response["item_id"]
-        trace_id = trace_id_mapping.get(item_id)
-        if not trace_id:
-            continue
+        ref = item_id_to_ref.get(item_id, item_id)
         trace_scores: list[TraceScore] = []
-        cosine = item_id_to_score.get(item_id)
-        if cosine is not None:
-            trace_scores.append(
-                {
-                    "name": COSINE_SCORE_NAME,
-                    "value": round(cosine, 2),
-                    "data_type": "NUMERIC",
-                    "comment": COSINE_SCORE_COMMENT,
-                }
-            )
-        elif trace_id in unscoreable:
-            # Placeholder 0-score, excluded from summary stats via the marker.
-            trace_scores.append(
-                {
-                    "name": COSINE_SCORE_NAME,
-                    "value": 0,
-                    "data_type": "NUMERIC",
-                    "comment": f"Cannot compute: {unscoreable[trace_id]}",
-                    "unscoreable": True,
-                }
-            )
+        # v2 judged runs carry no cosine score or cosine placeholder — only the
+        # ground-truth judge score below.
+        if not is_judge_run:
+            cosine = item_id_to_score.get(item_id)
+            if cosine is not None:
+                trace_scores.append(
+                    {
+                        "name": COSINE_SCORE_NAME,
+                        "value": round(cosine, 2),
+                        "data_type": "NUMERIC",
+                        "comment": COSINE_SCORE_COMMENT,
+                    }
+                )
+            elif ref in unscoreable and unscoreable[ref] != JUDGE_FAILED_REASON:
+                # Placeholder 0-score, excluded from summary stats via the marker. A
+                # judge_failed-only reason is about the judge, not cosine, so it gets
+                # no cosine placeholder.
+                trace_scores.append(
+                    {
+                        "name": COSINE_SCORE_NAME,
+                        "value": 0,
+                        "data_type": "NUMERIC",
+                        "comment": f"Cannot compute: {unscoreable[ref]}",
+                        "unscoreable": True,
+                    }
+                )
+
+        judge_result = judge_results.get(item_id)
+        if judge_result is not None:
+            for spec in enabled_metric_specs():
+                metric_score = judge_result.metrics.get(spec.key)
+                if metric_score is None:
+                    continue
+                trace_scores.append(
+                    {
+                        "name": spec.score_name,
+                        "value": round(metric_score.score, 2),
+                        "data_type": "NUMERIC",
+                        "comment": metric_score.reasoning,
+                    }
+                )
+
         traces.append(
             {
-                "trace_id": trace_id,
+                "trace_id": ref,
                 "question": response.get("question", ""),
                 "llm_answer": response.get("generated_output", ""),
                 "ground_truth_answer": response.get("ground_truth", ""),
@@ -912,16 +1127,20 @@ def _stage3_score_and_trace(
             }
         )
 
-    # Persist cost here; the score unit (summary + traces) is persisted by the
-    # caller via save_score so it lands in S3 (score_trace_url) like the batch path.
+    # Persist cost + the durable judge maps here; the score unit (summary + traces)
+    # is persisted by the caller via save_score so it lands in S3 like the batch path.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(cost=eval_run.cost),
+        update=EvaluationRunUpdate(
+            cost=eval_run.cost,
+            unscoreable=eval_run.unscoreable,
+            per_item_ground_truth=eval_run.per_item_ground_truth,
+        ),
     )
 
     score: EvaluationScore = {
-        "summary_scores": score_payload["summary_scores"],
+        "summary_scores": summary_scores,
         "traces": traces,
     }
     return eval_run, score, write_items
@@ -931,7 +1150,7 @@ def run_fast_evaluation(
     *,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     eval_run: EvaluationRun,
 ) -> EvaluationRun:
     """Merge the response chunks, then run embeddings + scoring + completion.
@@ -940,6 +1159,10 @@ def run_fast_evaluation(
     only after every chunk has a raw_output_url). Stages are skipped on retry
     when their batch_job marker is set. Raises on terminal failure (run marked
     failed).
+
+    `langfuse` is None for v2 judged runs (fully Kaapi-native, no trace creation
+    or score sync) and for tracing-opted-out projects; scoring falls back to
+    keying by item_id. Whether the run judges is read from `eval_run.is_judge_run`.
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
@@ -972,18 +1195,22 @@ def run_fast_evaluation(
             f"threshold={settings.EVAL_FAST_FAILURE_THRESHOLD}"
         )
 
-    # Stage 2
-    eval_run, embedding_results = _stage2_embeddings(
-        session=session,
-        openai_client=openai_client,
-        eval_run=eval_run,
-        response_results=response_results,
-        log_prefix=log_prefix,
-    )
+    # Stage 2 — embeddings feed only cosine, so v2 judged runs skip it entirely
+    # (no embedding API calls, no embedding_batch_job). v1 embeds exactly as before.
+    embedding_results: list[dict[str, Any]] | None = None
+    if not eval_run.is_judge_run:
+        eval_run, embedding_results = _stage2_embeddings(
+            session=session,
+            openai_client=openai_client,
+            eval_run=eval_run,
+            response_results=response_results,
+            log_prefix=log_prefix,
+        )
 
     # Stage 3
     eval_run, score, write_items = _stage3_score_and_trace(
         session=session,
+        openai_client=openai_client,
         eval_run=eval_run,
         langfuse=langfuse,
         response_results=response_results,
@@ -1007,9 +1234,10 @@ def run_fast_evaluation(
 
     # Stage 5a — write cosine scores to Langfuse after completion (mirrors the
     # batch path). is_score_updated tracks the outcome so a cron can retry the
-    # gap from per_item_scores.
+    # gap from per_item_scores. Skipped entirely when langfuse is None — v2 judged
+    # runs are Kaapi-native and never sync scores to Langfuse.
     is_score_updated = True
-    if write_items:
+    if langfuse is not None and write_items:
         try:
             failed_trace_ids = update_traces_with_cosine_scores(
                 langfuse=langfuse, per_item_scores=write_items
