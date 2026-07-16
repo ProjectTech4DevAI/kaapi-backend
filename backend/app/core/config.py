@@ -216,6 +216,10 @@ class Settings(BaseSettings):
     # built-in prompts. gpt-5-mini takes no temperature parameter.
     # See docs/srd-three-metric-evaluation-verdict.md for the full design.
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
+    # Reasoning effort for the judge model. "minimal" keeps per-row judging fast
+    # enough to finish within the Celery task time limit; ignored for non-reasoning
+    # models. One of: none | minimal | low | medium | high | xhigh.
+    EVAL_JUDGE_REASONING_EFFORT: str = "minimal"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

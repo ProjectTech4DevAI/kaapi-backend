@@ -346,12 +346,13 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 
 
 def _resolve_config_and_clients(
-    *, session: Session, eval_run: EvaluationRun
-) -> tuple[TextLLMParams, OpenAI, Langfuse]:
-    """Resolve the run's text config and build its OpenAI + Langfuse clients.
+    *, session: Session, eval_run: EvaluationRun, dataset: EvaluationDataset
+) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
+    """Resolve the run's text config and build its OpenAI + (optional) Langfuse clients.
 
-    The Langfuse client is None when the project opted out of tracing (#996) so
-    the run degrades to cosine-only instead of failing."""
+    Only a Langfuse-backed (v1) dataset needs a Langfuse client — its items live in
+    Langfuse. A v2 dataset loads from S3, so we skip the client (and its credential
+    requirement) rather than fail a Langfuse-free run. Mirrors the fan-out sizing."""
     config_blob, error = resolve_evaluation_config(
         session=session,
         config_id=eval_run.config_id,
@@ -367,10 +368,14 @@ def _resolve_config_and_clients(
         org_id=eval_run.organization_id,
         project_id=eval_run.project_id,
     )
-    langfuse_client = get_langfuse_client(
-        session=session,
-        org_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
+    langfuse_client = (
+        get_langfuse_client(
+            session=session,
+            org_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        )
+        if dataset.langfuse_dataset_id
+        else None
     )
     return text_params, openai_client, langfuse_client
 
@@ -398,9 +403,6 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             return
 
         try:
-            text_params, openai_client, langfuse_client = _resolve_config_and_clients(
-                session=session, eval_run=eval_run
-            )
             dataset = get_dataset_by_id(
                 session=session,
                 dataset_id=eval_run.dataset_id,
@@ -411,6 +413,9 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
                 raise ValueError(
                     f"Dataset {eval_run.dataset_id} not found for run {eval_run_id}"
                 )
+            text_params, openai_client, langfuse_client = _resolve_config_and_clients(
+                session=session, eval_run=eval_run, dataset=dataset
+            )
             dataset_items = load_run_dataset_items(
                 session=session, dataset=dataset, langfuse=langfuse_client
             )

@@ -152,8 +152,13 @@ def build_judge_params(
     preamble followed by each enabled metric's fragment.
     """
     # gpt-5-mini is a reasoning model that rejects a custom temperature, so the judge
-    # body carries only the model and never a temperature.
-    judge_params: dict[str, Any] = {"model": settings.EVAL_JUDGE_MODEL}
+    # body carries only the model + a low reasoning effort (per-row batch judging
+    # must stay within the Celery task time limit) and never a temperature. The
+    # mapper drops `effort` for non-reasoning models, so this is safe either way.
+    judge_params: dict[str, Any] = {
+        "model": settings.EVAL_JUDGE_MODEL,
+        "effort": settings.EVAL_JUDGE_REASONING_EFFORT,
+    }
 
     base_params, mapper_warnings = map_kaapi_to_openai_params(
         session=session, kaapi_params=judge_params
