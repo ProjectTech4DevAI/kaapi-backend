@@ -3,7 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import Boolean, Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlmodel import Field as SQLField, Relationship, SQLModel
@@ -552,8 +552,16 @@ class EvaluationDatasetPublic(SQLModel):
     updated_at: datetime
 
 
+class ImprovePromptRequest(SQLModel):
+    """Body for POST /evaluations/{id}/improve-prompt."""
+
+    callback_url: HttpUrl = Field(
+        description="HTTPS webhook that receives the result once the job finishes."
+    )
+
+
 class PromptImprovementJobPublic(SQLModel):
-    """Poll response: the new config_version once the job succeeds."""
+    """Callback payload body: the new config_version once the job succeeds."""
 
     job_id: UUID
     status: str

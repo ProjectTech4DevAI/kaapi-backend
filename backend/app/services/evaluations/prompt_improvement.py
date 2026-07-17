@@ -30,10 +30,15 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.crud.jobs import JobCrud
 from app.models.config.config import ConfigTag
-from app.models.config.version import ConfigVersion, ConfigVersionUpdate
-from app.models.evaluation import EvaluationRun
+from app.models.config.version import (
+    ConfigVersion,
+    ConfigVersionPublic,
+    ConfigVersionUpdate,
+)
+from app.models.evaluation import EvaluationRun, PromptImprovementJobPublic
 from app.models.job import Job, JobStatus, JobType, JobUpdate
 from app.services.llm.providers.claude import ClaudeProvider
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
 
@@ -152,10 +157,11 @@ def start_prompt_improvement_job(
     evaluation_id: int,
     organization_id: int,
     project_id: int,
+    callback_url: str,
 ) -> Job:
     """Validate preconditions, create a job row, and enqueue the worker task.
 
-    Returns the created Job immediately so the route can hand back a poll handle.
+    Returns the created Job immediately; the result is delivered to callback_url.
     """
     validate_improve_prompt(
         session=session,
@@ -183,6 +189,7 @@ def start_prompt_improvement_job(
             trace_id=trace_id,
             organization_id=organization_id,
             evaluation_id=evaluation_id,
+            callback_url=callback_url,
         )
     except Exception as exc:
         logger.error(
@@ -208,6 +215,73 @@ def start_prompt_improvement_job(
     return job
 
 
+def _build_improve_prompt_payload(
+    *,
+    job_id: UUID,
+    config_version: ConfigVersionPublic | None,
+    error_message: str | None,
+) -> dict:
+    """Build the callback body: PromptImprovementJobPublic inside an APIResponse.
+
+    Pre-dump the inner model to JSON so no UUID/datetime survives into the dict
+    send_callback serialises.
+    """
+    status = JobStatus.FAILED if error_message else JobStatus.SUCCESS
+    job_public = PromptImprovementJobPublic(
+        job_id=job_id,
+        status=status.value,
+        config_version=config_version,
+        error_message=error_message,
+    ).model_dump(mode="json")
+    envelope = (
+        APIResponse.failure_response(error=error_message, data=job_public)
+        if error_message
+        else APIResponse.success_response(data=job_public)
+    )
+    return envelope.model_dump()
+
+
+def _resolve_success_config_version(
+    *,
+    session: Session,
+    evaluation_id: int,
+    organization_id: int,
+    project_id: int,
+    version_number: int | None,
+) -> ConfigVersionPublic | None:
+    """Rebuild the minted config_version from a completed job's meta (redelivery)."""
+    if version_number is None:
+        return None
+    run = get_evaluation_run_by_id(
+        session=session,
+        evaluation_id=evaluation_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    if run is None or run.config_id is None:
+        return None
+    version = ConfigVersionCrud(
+        session=session,
+        config_id=run.config_id,
+        project_id=project_id,
+    ).read_one(version_number=version_number)
+    return ConfigVersionPublic.model_validate(version) if version else None
+
+
+def _send_improve_prompt_callback(
+    *,
+    callback_url: str | None,
+    payload: dict,
+    project_id: int,
+    organization_id: int,
+) -> None:
+    """Best-effort single POST to callback_url; no-op when no URL was supplied."""
+    if not callback_url:
+        return
+    webhook_secret = get_webhook_secret(project_id, organization_id)
+    send_callback(callback_url, payload, webhook_secret=webhook_secret)
+
+
 def execute_prompt_improvement(
     *,
     project_id: int,
@@ -224,6 +298,7 @@ def execute_prompt_improvement(
     records the failure.
     """
     task_id = kwargs.get("task_id")
+    callback_url = kwargs.get("callback_url")
     job_uuid = UUID(job_id)
 
     logger.info(
@@ -243,6 +318,24 @@ def execute_prompt_improvement(
             logger.info(
                 f"[execute_prompt_improvement] Redelivery of completed job, skipping | "
                 f"job_id={job_id}"
+            )
+            # At-least-once delivery: the first callback may have failed before the
+            # worker died, so re-send. The client may receive a duplicate callback.
+            _send_improve_prompt_callback(
+                callback_url=callback_url,
+                payload=_build_improve_prompt_payload(
+                    job_id=job_uuid,
+                    config_version=_resolve_success_config_version(
+                        session=session,
+                        evaluation_id=evaluation_id,
+                        organization_id=organization_id,
+                        project_id=project_id,
+                        version_number=(existing.meta or {}).get("version"),
+                    ),
+                    error_message=None,
+                ),
+                project_id=project_id,
+                organization_id=organization_id,
             )
             return {"success": True, **(existing.meta or {})}
 
@@ -314,7 +407,6 @@ def execute_prompt_improvement(
                 JobUpdate(
                     status=JobStatus.SUCCESS,
                     meta={
-                        "config_version_id": str(new_version.id),
                         "version": new_version.version,
                         "rationale": rationale,
                     },
@@ -326,23 +418,28 @@ def execute_prompt_improvement(
                 f"evaluation_id={evaluation_id} new_version_id={new_version.id} "
                 f"version={new_version.version}"
             )
-            return {
-                "success": True,
-                "config_version_id": str(new_version.id),
-                "version": new_version.version,
-            }
+            new_version_public = ConfigVersionPublic.model_validate(new_version)
+            result = {"success": True, "version": new_version.version}
 
         except (Timeout, SoftTimeLimitExceeded):
             logger.warning(
                 f"[execute_prompt_improvement] Timeout | job_id={job_id} "
                 f"evaluation_id={evaluation_id}"
             )
+            error_message = "Task exceeded soft time limit"
             job_crud.update(
                 job_uuid,
-                JobUpdate(
-                    status=JobStatus.FAILED,
-                    error_message="Task exceeded soft time limit",
+                JobUpdate(status=JobStatus.FAILED, error_message=error_message),
+            )
+            _send_improve_prompt_callback(
+                callback_url=callback_url,
+                payload=_build_improve_prompt_payload(
+                    job_id=job_uuid,
+                    config_version=None,
+                    error_message=error_message,
                 ),
+                project_id=project_id,
+                organization_id=organization_id,
             )
             raise
         except Exception as exc:
@@ -358,7 +455,34 @@ def execute_prompt_improvement(
                 job_uuid,
                 JobUpdate(status=JobStatus.FAILED, error_message=error_message),
             )
+            _send_improve_prompt_callback(
+                callback_url=callback_url,
+                payload=_build_improve_prompt_payload(
+                    job_id=job_uuid,
+                    config_version=None,
+                    error_message=error_message,
+                ),
+                project_id=project_id,
+                organization_id=organization_id,
+            )
             raise
+
+        # Reached only on success (both except blocks re-raise). The callback
+        # lives outside the try so a delivery-side hiccup (e.g. get_webhook_secret
+        # hitting a transient DB error) can't flip the committed SUCCESS to FAILED
+        # and defeat the redelivery idempotency guard — that would double-spend the
+        # LLM call and mint a duplicate config_version.
+        _send_improve_prompt_callback(
+            callback_url=callback_url,
+            payload=_build_improve_prompt_payload(
+                job_id=job_uuid,
+                config_version=new_version_public,
+                error_message=None,
+            ),
+            project_id=project_id,
+            organization_id=organization_id,
+        )
+        return result
 
 
 def _draft_improved_prompt(

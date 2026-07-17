@@ -28,7 +28,7 @@ Key `EvaluationRun` JSONB fields: `score` (per-trace `scores` + `summary_scores`
 
 ## Async
 - Provider batches polled by cron (`crud/evaluations/cron.py`); no long-lived Celery task per run.
-- Prompt improvement is job-based: `POST /evaluations/{id}/improve-prompt` enqueues a `Job` (`JobType.PROMPT_IMPROVEMENT`, `models/job.py`) run by Celery task `run_prompt_improvement` (`celery/tasks/job_execution.py`); `GET /evaluations/{id}/improve-prompt/{job_id}` polls and returns `PromptImprovementJobPublic` (`models/evaluation.py`) with the new `ConfigVersion` on success.
+- Prompt improvement is job-based with callback delivery: `POST /evaluations/{id}/improve-prompt` validates preconditions, enqueues a `Job` (`JobType.PROMPT_IMPROVEMENT`, `models/job.py`) run by Celery task `run_prompt_improvement` (`celery/tasks/job_execution.py`), and returns `202` with an `LLMJobImmediatePublic` handle. On finish the worker POSTs a single best-effort callback to the caller-supplied `callback_url` (SSRF-guarded via `validate_callback_url`): an `APIResponse[PromptImprovementJobPublic]` (`models/evaluation.py`) carrying the new `ConfigVersion` on success or `error_message` on failure. The `ConfigVersion` is persisted regardless of callback outcome. Celery redelivery of a `SUCCESS` job re-sends the callback without re-running the LLM.
 
 ## External
 - OpenAI Batch + embeddings, Gemini Batch, Langfuse (per-trace scores + summary), object storage (datasets/audio), kaapi-frontend console (results + annotation).

@@ -1,17 +1,22 @@
-"""Tests for the async prompt-improvement feature.
+"""Tests for the async prompt-improvement feature (callback-URL / webhook flow).
 
-The endpoint is now split into:
+The endpoint is:
   - POST /evaluations/{id}/improve-prompt → 202 + a job handle
-    (LLMJobImmediatePublic), backed by start_prompt_improvement_job.
-  - GET  /evaluations/{id}/improve-prompt/{job_id} → poll for the result
-    (PromptImprovementJobPublic).
+    (LLMJobImmediatePublic). Requires a JSON body {"callback_url": "https://..."}.
+    The result is delivered to callback_url once the worker finishes — there is
+    no GET poll route anymore.
   - execute_prompt_improvement → the Celery worker entrypoint that does the
-    Anthropic round-trip and mints the new config_version.
+    Anthropic round-trip, mints the new config_version, and fires send_callback
+    on every exit (SUCCESS, timeout, generic failure, redelivery no-op).
 
 HTTP boundaries mocked (patched as bound in the service module):
 - ClaudeProvider.create_client (fake Anthropic client) OR _draft_improved_prompt
 - get_cloud_storage / load_json_from_object_store (traces)
 - start_prompt_improvement (the Celery enqueue helper) — never touch a broker
+- send_callback + get_webhook_secret — never make real outbound HTTP
+- validate_callback_url at the route call site — real DNS is avoided for the
+  happy/domain paths; the SSRF-rejection tests use the real validator with
+  literal hosts that resolve without network.
 - Session (the worker opens its own Session(engine); we redirect it at the
   transactional db fixture, matching the doctransformer worker tests)
 
@@ -21,6 +26,7 @@ DB is real (transactional db fixture; rolls back after each test).
 import contextlib
 import json
 from contextlib import ExitStack
+from dataclasses import dataclass
 from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -34,9 +40,9 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.jobs import JobCrud
-from app.models import ConfigVersion, EvaluationDataset, EvaluationRun
+from app.models import EvaluationDataset, EvaluationRun
 from app.models.config.config import ConfigTag
-from app.models.job import Job, JobStatus, JobType, JobUpdate
+from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
     COMMIT_MESSAGE_MAX_LENGTH,
@@ -50,8 +56,12 @@ from app.tests.utils.utils import random_lower_string
 
 
 _SERVICE = "app.services.evaluations.prompt_improvement"
+_ROUTE_VALIDATE = "app.api.routes.evaluations.evaluation.validate_callback_url"
 POST_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt"
-POLL_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt/{job_id}"
+# The deleted GET poll route — any method here must now miss all routes.
+OLD_POLL_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt/{job_id}"
+
+_CALLBACK_URL = "https://example.com/callback"
 
 _IMPROVED_INSTRUCTIONS = "You are an improved assistant. Answer precisely."
 _RATIONALE = "Tightened answer scoping to address weak categories."
@@ -97,6 +107,14 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     return client
 
 
+@dataclass
+class WorkerEnv:
+    """Handles yielded by ``_worker_env``: the LLM boundary and the callback sink."""
+
+    llm: MagicMock
+    callback: MagicMock
+
+
 @contextlib.contextmanager
 def _worker_env(
     db: Session,
@@ -104,11 +122,12 @@ def _worker_env(
     draft: MagicMock | None = None,
     claude_client: MagicMock | None = None,
     traces: Any = _TRACES,
-) -> Iterator[MagicMock]:
+) -> Iterator[WorkerEnv]:
     """Redirect the worker's Session(engine) at the test db and mock its boundaries.
 
-    Yields the draft mock when ``draft`` is given (LLM step stubbed wholesale),
-    otherwise the fake Claude client (real _draft_improved_prompt exercised).
+    ``env.llm`` is the draft mock when ``draft`` is given (LLM step stubbed
+    wholesale), otherwise the fake Claude client (real _draft_improved_prompt
+    exercised). ``env.callback`` is the patched send_callback — no real HTTP ever.
     """
     session_cm = MagicMock()
     session_cm.__enter__.return_value = db
@@ -122,9 +141,12 @@ def _worker_env(
         stack.enter_context(
             patch(f"{_SERVICE}.load_json_from_object_store", return_value=traces)
         )
+        stack.enter_context(patch(f"{_SERVICE}.get_webhook_secret", return_value=None))
+        callback = stack.enter_context(patch(f"{_SERVICE}.send_callback"))
+
         if draft is not None:
             stack.enter_context(patch(f"{_SERVICE}._draft_improved_prompt", draft))
-            yield draft
+            yield WorkerEnv(llm=draft, callback=callback)
         else:
             if claude_client is None:
                 claude_client = _make_fake_claude_client()
@@ -134,7 +156,13 @@ def _worker_env(
                     return_value=claude_client,
                 )
             )
-            yield claude_client
+            yield WorkerEnv(llm=claude_client, callback=callback)
+
+
+def _callback_payload(callback: MagicMock) -> dict:
+    """Single send_callback invocation → the APIResponse envelope it POSTed."""
+    assert callback.call_count == 1
+    return callback.call_args.args[1]
 
 
 def _make_config_with_instructions(
@@ -400,11 +428,13 @@ class TestStartJobRoute:
         auth: TestAuthContext,
         completed_run: EvaluationRun,
     ) -> None:
-        with patch(
+        with patch(_ROUTE_VALIDATE), patch(
             f"{_SERVICE}.start_prompt_improvement", return_value="task-1"
         ) as enqueue:
             resp = client.post(
-                POST_URL.format(evaluation_id=completed_run.id), headers=headers
+                POST_URL.format(evaluation_id=completed_run.id),
+                headers=headers,
+                json={"callback_url": _CALLBACK_URL},
             )
 
         assert resp.status_code == 202, resp.text
@@ -422,6 +452,48 @@ class TestStartJobRoute:
         assert kwargs["job_id"] == job_id
         assert kwargs["organization_id"] == auth.organization_id
         assert kwargs["evaluation_id"] == completed_run.id
+        assert kwargs["callback_url"] == _CALLBACK_URL
+
+    def test_missing_callback_url_returns_422(
+        self,
+        client: Any,
+        headers: dict[str, str],
+        completed_run: EvaluationRun,
+    ) -> None:
+        with patch(f"{_SERVICE}.start_prompt_improvement") as enqueue:
+            resp = client.post(
+                POST_URL.format(evaluation_id=completed_run.id),
+                headers=headers,
+                json={},
+            )
+        assert resp.status_code == 422, resp.text
+        enqueue.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "callback_url",
+        [
+            "http://example.com/callback",  # non-HTTPS scheme
+            "https://10.0.0.1/callback",  # RFC 1918 private IP
+            "https://127.0.0.1/callback",  # loopback
+        ],
+    )
+    def test_invalid_callback_url_rejected_by_ssrf_guard(
+        self,
+        callback_url: str,
+        client: Any,
+        headers: dict[str, str],
+        completed_run: EvaluationRun,
+    ) -> None:
+        # Real validate_callback_url runs; literal hosts resolve without DNS.
+        with patch(f"{_SERVICE}.start_prompt_improvement") as enqueue:
+            resp = client.post(
+                POST_URL.format(evaluation_id=completed_run.id),
+                headers=headers,
+                json={"callback_url": callback_url},
+            )
+        assert resp.status_code == 422, resp.text
+        assert "invalid_callback_url" in resp.json()["error"], resp.text
+        enqueue.assert_not_called()
 
     def test_enqueue_failure_marks_job_failed_and_raises_500(
         self,
@@ -439,6 +511,7 @@ class TestStartJobRoute:
                     evaluation_id=completed_run.id,
                     organization_id=auth.organization_id,
                     project_id=auth.project_id,
+                    callback_url=_CALLBACK_URL,
                 )
 
         assert exc.value.status_code == 500
@@ -486,9 +559,13 @@ class TestStartJobRoute:
             )
             evaluation_id = run.id
 
-        with patch(f"{_SERVICE}.start_prompt_improvement") as enqueue:
+        with patch(_ROUTE_VALIDATE), patch(
+            f"{_SERVICE}.start_prompt_improvement"
+        ) as enqueue:
             resp = client.post(
-                POST_URL.format(evaluation_id=evaluation_id), headers=headers
+                POST_URL.format(evaluation_id=evaluation_id),
+                headers=headers,
+                json={"callback_url": _CALLBACK_URL},
             )
 
         assert resp.status_code == expected_status, resp.text
@@ -504,7 +581,7 @@ class TestStartJobRoute:
 
 
 class TestExecuteWorker:
-    """Worker entrypoint: PROCESSING → SUCCESS/FAILED, idempotent redelivery."""
+    """Worker entrypoint: PROCESSING → SUCCESS/FAILED, callback delivery, redelivery."""
 
     def _pending_job(self, db: Session, project_id: int) -> Job:
         return JobCrud(session=db).create(
@@ -521,13 +598,14 @@ class TestExecuteWorker:
     ) -> None:
         job = self._pending_job(db, auth.project_id)
 
-        with _worker_env(db) as fake_client:
+        with _worker_env(db) as env:
             result = execute_prompt_improvement(
                 project_id=auth.project_id,
                 job_id=str(job.id),
                 organization_id=auth.organization_id,
                 evaluation_id=completed_run.id,
                 task_id="celery-task-1",
+                callback_url=_CALLBACK_URL,
             )
 
         assert result["success"] is True
@@ -537,7 +615,6 @@ class TestExecuteWorker:
         assert refreshed.task_id == "celery-task-1"
         assert refreshed.meta["version"] == 2
         assert refreshed.meta["rationale"] == _RATIONALE
-        assert refreshed.meta["config_version_id"]
 
         crud = ConfigVersionCrud(
             session=db, config_id=completed_run.config_id, project_id=auth.project_id
@@ -553,8 +630,33 @@ class TestExecuteWorker:
         assert _RATIONALE in v2.commit_message
 
         # structured-output request shape is what makes the JSON parse reliable
-        output_config = fake_client.messages.create.call_args.kwargs["output_config"]
+        output_config = env.llm.messages.create.call_args.kwargs["output_config"]
         assert output_config["format"]["type"] == "json_schema"
+
+    def test_success_fires_callback_with_config_version(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db) as env:
+            execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+
+        assert env.callback.call_args.args[0] == _CALLBACK_URL
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is True
+        assert payload["data"]["status"] == JobStatus.SUCCESS.value
+        assert payload["data"]["error_message"] is None
+        assert payload["data"]["config_version"] is not None
+        assert payload["data"]["config_version"]["version"] == 2
 
     def test_long_rationale_truncated_in_commit_message(
         self,
@@ -572,6 +674,7 @@ class TestExecuteWorker:
                 job_id=str(job.id),
                 organization_id=auth.organization_id,
                 evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
             )
 
         v2 = ConfigVersionCrud(
@@ -580,7 +683,7 @@ class TestExecuteWorker:
         assert len(v2.commit_message) == COMMIT_MESSAGE_MAX_LENGTH
         assert v2.commit_message.startswith(AI_GENERATED_MARKER)
 
-    def test_llm_runtime_error_marks_failed_and_reraises(
+    def test_llm_runtime_error_marks_failed_and_fires_failure_callback(
         self,
         db: Session,
         auth: TestAuthContext,
@@ -589,18 +692,26 @@ class TestExecuteWorker:
         job = self._pending_job(db, auth.project_id)
         draft = MagicMock(side_effect=RuntimeError("prompt_generation_failed: boom"))
 
-        with _worker_env(db, draft=draft):
+        with _worker_env(db, draft=draft) as env:
             with pytest.raises(RuntimeError):
                 execute_prompt_improvement(
                     project_id=auth.project_id,
                     job_id=str(job.id),
                     organization_id=auth.organization_id,
                     evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
                 )
 
         refreshed = db.get(Job, job.id)
         assert refreshed.status == JobStatus.FAILED
         assert "prompt_generation_failed" in refreshed.error_message
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert payload["data"]["config_version"] is None
+        assert payload["data"]["error_message"]
+        assert "prompt_generation_failed" in payload["data"]["error_message"]
 
         # no version minted on failure
         v2 = ConfigVersionCrud(
@@ -608,10 +719,36 @@ class TestExecuteWorker:
         ).read_one(version_number=2)
         assert v2 is None
 
+    def test_trace_download_failure_fires_failure_callback(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db, traces=None) as env:
+            with pytest.raises(RuntimeError):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert "trace_download_failed" in payload["data"]["error_message"]
+
     @pytest.mark.parametrize(
         "exc", [Timeout(1), SoftTimeLimitExceeded()], ids=["gevent", "celery"]
     )
-    def test_timeout_marks_failed_and_reraises(
+    def test_timeout_marks_failed_and_fires_failure_callback(
         self,
         exc: Exception,
         db: Session,
@@ -621,20 +758,26 @@ class TestExecuteWorker:
         job = self._pending_job(db, auth.project_id)
         draft = MagicMock(side_effect=exc)
 
-        with _worker_env(db, draft=draft):
+        with _worker_env(db, draft=draft) as env:
             with pytest.raises(type(exc)):
                 execute_prompt_improvement(
                     project_id=auth.project_id,
                     job_id=str(job.id),
                     organization_id=auth.organization_id,
                     evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
                 )
 
         refreshed = db.get(Job, job.id)
         assert refreshed.status == JobStatus.FAILED
         assert refreshed.error_message == "Task exceeded soft time limit"
 
-    def test_redelivery_of_success_job_is_noop(
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert payload["data"]["error_message"] == "Task exceeded soft time limit"
+
+    def test_redelivery_of_success_job_is_noop_and_resends_callback(
         self,
         db: Session,
         auth: TestAuthContext,
@@ -643,14 +786,15 @@ class TestExecuteWorker:
         job = self._pending_job(db, auth.project_id)
 
         # First run mints v2 and lands SUCCESS.
-        with _worker_env(db) as fake_client:
+        with _worker_env(db) as env:
             execute_prompt_improvement(
                 project_id=auth.project_id,
                 job_id=str(job.id),
                 organization_id=auth.organization_id,
                 evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
             )
-        assert fake_client.messages.create.call_count == 1
+        assert env.llm.messages.create.call_count == 1
 
         crud = ConfigVersionCrud(
             session=db, config_id=completed_run.config_id, project_id=auth.project_id
@@ -658,14 +802,16 @@ class TestExecuteWorker:
         assert crud.read_one(version_number=3) is None
         first_meta = db.get(Job, job.id).meta
 
-        # Redelivery: SUCCESS job must not re-call the LLM or mint a duplicate.
+        # Redelivery: SUCCESS job must not re-call the LLM or mint a duplicate,
+        # but at-least-once delivery re-sends the success callback.
         draft = MagicMock(side_effect=AssertionError("LLM must not be re-called"))
-        with _worker_env(db, draft=draft):
+        with _worker_env(db, draft=draft) as env:
             result = execute_prompt_improvement(
                 project_id=auth.project_id,
                 job_id=str(job.id),
                 organization_id=auth.organization_id,
                 evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
             )
 
         draft.assert_not_called()
@@ -673,125 +819,23 @@ class TestExecuteWorker:
         assert result["version"] == first_meta["version"]
         assert crud.read_one(version_number=3) is None
 
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is True
+        assert payload["data"]["status"] == JobStatus.SUCCESS.value
+        assert payload["data"]["config_version"]["version"] == first_meta["version"]
 
-class TestPollStatus:
-    """GET poll endpoint across job states and tenant isolation."""
 
-    def test_unknown_job_returns_404(
+class TestPollRouteRemoved:
+    """The GET poll endpoint was removed with the switch to callbacks."""
+
+    def test_old_poll_path_no_longer_routed(
         self,
         client: Any,
         headers: dict[str, str],
         completed_run: EvaluationRun,
     ) -> None:
         resp = client.get(
-            POLL_URL.format(evaluation_id=completed_run.id, job_id=uuid4()),
+            OLD_POLL_URL.format(evaluation_id=completed_run.id, job_id=uuid4()),
             headers=headers,
         )
         assert resp.status_code == 404, resp.text
-
-    def test_cross_project_job_returns_404(
-        self,
-        client: Any,
-        headers: dict[str, str],
-        db: Session,
-        superuser_api_key: TestAuthContext,
-        completed_run: EvaluationRun,
-    ) -> None:
-        other_job = JobCrud(session=db).create(
-            job_type=JobType.PROMPT_IMPROVEMENT,
-            project_id=superuser_api_key.project_id,
-        )
-        resp = client.get(
-            POLL_URL.format(evaluation_id=completed_run.id, job_id=other_job.id),
-            headers=headers,  # normal-user headers
-        )
-        assert resp.status_code == 404, resp.text
-
-    @pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.PROCESSING])
-    def test_in_progress_job_has_null_config_version(
-        self,
-        status: JobStatus,
-        client: Any,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        completed_run: EvaluationRun,
-    ) -> None:
-        job = JobCrud(session=db).create(
-            job_type=JobType.PROMPT_IMPROVEMENT, project_id=auth.project_id
-        )
-        if status != JobStatus.PENDING:
-            JobCrud(session=db).update(job.id, JobUpdate(status=status))
-
-        resp = client.get(
-            POLL_URL.format(evaluation_id=completed_run.id, job_id=job.id),
-            headers=headers,
-        )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()["data"]
-        assert body["status"] == status.value
-        assert body["config_version"] is None
-        assert body["error_message"] is None
-
-    def test_failed_job_returns_error_message(
-        self,
-        client: Any,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        completed_run: EvaluationRun,
-    ) -> None:
-        job = JobCrud(session=db).create(
-            job_type=JobType.PROMPT_IMPROVEMENT, project_id=auth.project_id
-        )
-        JobCrud(session=db).update(
-            job.id,
-            JobUpdate(
-                status=JobStatus.FAILED, error_message="prompt_generation_failed"
-            ),
-        )
-        resp = client.get(
-            POLL_URL.format(evaluation_id=completed_run.id, job_id=job.id),
-            headers=headers,
-        )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()["data"]
-        assert body["status"] == JobStatus.FAILED.value
-        assert body["config_version"] is None
-        assert body["error_message"] == "prompt_generation_failed"
-
-    def test_success_job_returns_nested_config_version(
-        self,
-        client: Any,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        completed_run: EvaluationRun,
-    ) -> None:
-        job = JobCrud(session=db).create(
-            job_type=JobType.PROMPT_IMPROVEMENT, project_id=auth.project_id
-        )
-        with _worker_env(db):
-            execute_prompt_improvement(
-                project_id=auth.project_id,
-                job_id=str(job.id),
-                organization_id=auth.organization_id,
-                evaluation_id=completed_run.id,
-            )
-
-        resp = client.get(
-            POLL_URL.format(evaluation_id=completed_run.id, job_id=job.id),
-            headers=headers,
-        )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()["data"]
-        assert body["status"] == JobStatus.SUCCESS.value
-        assert body["error_message"] is None
-        assert body["config_version"] is not None
-        assert body["config_version"]["version"] == 2
-        assert (
-            body["config_version"]["config_blob"]["completion"]["params"][
-                "instructions"
-            ]
-            == _IMPROVED_INSTRUCTIONS
-        )
