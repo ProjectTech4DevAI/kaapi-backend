@@ -42,12 +42,6 @@ def evaluate_v2(
     v2 runs are always fast and judged on Adherence to Ground Truth; there is no
     `run_mode` — batch judging is deferred to a later phase.
     """
-    logger.info(
-        f"[evaluate_v2] Starting v2 evaluation | "
-        f"experiment_name={experiment_name} | dataset_id={dataset_id} | "
-        f"org_id={auth_context.organization_.id} | "
-        f"project_id={auth_context.project_.id}"
-    )
 
     eval_run = validate_and_start_judged_evaluation(
         session=session,
