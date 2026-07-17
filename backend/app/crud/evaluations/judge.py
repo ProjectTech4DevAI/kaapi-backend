@@ -1,6 +1,9 @@
-"""
-Runs one OpenAI judge call per row to score all enabled metrics together.
-Executes after cosine similarity, so judge failures never block cosine; metrics are registry-driven and easily extensible.
+"""Native LLM-as-a-judge for v2 fast evaluations.
+
+Runs one OpenAI judge call per row (after the answers are generated) to score all
+enabled metrics together. v2 runs are judge-only — no cosine, no embeddings — and
+v1 never invokes this judge. A per-row judge failure is isolated to that row.
+Metrics are registry-driven and easily extensible.
 """
 
 import json
