@@ -1,7 +1,7 @@
 """Add native LLM-as-judge columns to evaluation_run
 
-Revision ID: 074
-Revises: 073
+Revision ID: 075
+Revises: 074
 Create Date: 2026-07-16 00:00:00.000000
 
 The v2 judged fast-eval run stores its judge state on the existing evaluation_run
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "074"
-down_revision = "073"
+revision = "075"
+down_revision = "074"
 branch_labels = None
 depends_on = None
 
