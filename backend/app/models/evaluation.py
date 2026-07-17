@@ -3,13 +3,14 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import Boolean, Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
 
 from app.core.util import now
+from app.models.config.version import ConfigVersionPublic
 
 if TYPE_CHECKING:
     from .batch_job import BatchJob
@@ -579,3 +580,20 @@ class EvaluationDatasetPublic(SQLModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
+
+
+class ImprovePromptRequest(SQLModel):
+    """Body for POST /evaluations/{id}/improve-prompt."""
+
+    callback_url: HttpUrl = Field(
+        description="HTTPS webhook that receives the result once the job finishes."
+    )
+
+
+class PromptImprovementJobPublic(SQLModel):
+    """Callback payload body: the new config_version once the job succeeds."""
+
+    job_id: UUID
+    status: str
+    config_version: ConfigVersionPublic | None = None
+    error_message: str | None = None
