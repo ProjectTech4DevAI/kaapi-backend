@@ -9,11 +9,7 @@ from fastapi import APIRouter, Body, Depends
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
-from app.models.evaluation import (
-    EvaluationRunPublic,
-    RunModeEnum,
-)
-from app.services.evaluations import validate_and_start_batch_evaluation
+from app.models.evaluation import EvaluationRunPublic
 from app.services.evaluations.judge import validate_and_start_judged_evaluation
 from app.utils import APIResponse, load_description
 
@@ -40,47 +36,27 @@ def evaluate_v2(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
-    run_mode: RunModeEnum = Body(
-        default=RunModeEnum.FAST,
-        description="Execution mode: 'batch' or 'fast'. Judging runs in fast only.",
-    ),
 ) -> APIResponse[EvaluationRunPublic]:
-    """Start a v2 evaluation run; fast runs are judged on Adherence to Ground Truth."""
+    """Start a v2 evaluation run.
+
+    v2 runs are always fast and judged on Adherence to Ground Truth; there is no
+    `run_mode` — batch judging is deferred to a later phase.
+    """
     logger.info(
-        f"[evaluate_v2] Starting v2 evaluation | run_mode={run_mode.value} | "
+        f"[evaluate_v2] Starting v2 evaluation | "
         f"experiment_name={experiment_name} | dataset_id={dataset_id} | "
         f"org_id={auth_context.organization_.id} | "
         f"project_id={auth_context.project_.id}"
     )
 
-    if run_mode == RunModeEnum.FAST:
-        eval_run = validate_and_start_judged_evaluation(
-            session=session,
-            dataset_id=dataset_id,
-            run_name=experiment_name,
-            config_id=config_id,
-            config_version=config_version,
-            organization_id=auth_context.organization_.id,
-            project_id=auth_context.project_.id,
-            trace_id=correlation_id.get() or "N/A",
-        )
-        return APIResponse.success_response(data=eval_run)
-
-    # Phase 1 judges fast runs only; batch mode mirrors the v1 batch path unchanged.
-    eval_run = validate_and_start_batch_evaluation(
+    eval_run = validate_and_start_judged_evaluation(
         session=session,
         dataset_id=dataset_id,
-        experiment_name=experiment_name,
+        run_name=experiment_name,
         config_id=config_id,
         config_version=config_version,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
+        trace_id=correlation_id.get() or "N/A",
     )
-
-    if eval_run.status == "failed":
-        return APIResponse.failure_response(
-            error=eval_run.error_message or "Evaluation failed to start",
-            data=eval_run,
-        )
-
     return APIResponse.success_response(data=eval_run)

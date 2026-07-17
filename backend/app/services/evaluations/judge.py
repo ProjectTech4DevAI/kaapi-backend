@@ -1,13 +1,5 @@
-"""v2 native LLM-as-judge run trigger.
-
-Thin layer over the shared fast-eval pipeline: it marks the run as a judged
-(Kaapi-native) run and reuses v1's `validate_and_start_fast_evaluation` for
-dataset/config validation, run creation, and chunk dispatch. The judge itself
-runs inside the aggregate, gated on the run's `is_judge_run` marker. Judging is
-system-config only — always the fallback model + built-in prompt, no per-run
-tailoring. v1's trigger is untouched.
-
-See docs/srd-three-metric-evaluation-verdict.md for the full design.
+"""Starts a v2 native LLM-as-judge run using the shared fast-eval pipeline.
+Judging runs in the aggregate with the built-in prompt and fallback model; v1 remains unchanged.
 """
 
 import logging
@@ -38,12 +30,6 @@ def validate_and_start_judged_evaluation(
     shared v1 fast trigger with the native-judge marker set. Judging always runs
     for v2 fast runs — there is no opt-in flag and no per-run judge config.
     """
-    logger.info(
-        f"[validate_and_start_judged_evaluation] Starting v2 judged eval | "
-        f"run_name={run_name} | dataset_id={dataset_id} | "
-        f"org_id={organization_id} | project_id={project_id}"
-    )
-
     return validate_and_start_fast_evaluation(
         session=session,
         dataset_id=dataset_id,

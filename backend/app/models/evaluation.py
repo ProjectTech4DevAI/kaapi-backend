@@ -377,8 +377,6 @@ class EvaluationRun(SQLModel, table=True):
         description="Map of trace_id to the reason the item cannot be scored",
     )
 
-    # LLM-as-judge (v2 native) fields. Null on v1 and pre-feature runs; a judge
-    # never syncs to Langfuse, so these two columns are Kaapi's own store.
     is_judge_run: bool | None = SQLField(
         default=None,
         sa_column=Column(

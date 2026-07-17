@@ -16,8 +16,6 @@ COSINE_SCORE_COMMENT: str = (
     "Cosine similarity between generated output and ground truth embeddings"
 )
 
-# Native LLM-as-judge (v2). The combined judge grades one metric per JSON key;
-# these are the ground-truth metric's public score name and its failure reason.
 GROUND_TRUTH_SCORE_NAME: str = "Adherence to Ground Truth"
 JUDGE_FAILED_REASON: str = "judge_failed"
 
@@ -31,9 +29,6 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     JUDGE_FAILED_REASON,
 )
 
-# Shared preamble for the single combined judge call. Metric-specific rubric
-# fragments (below, one per registry entry) are appended after it, then the
-# output contract listing the JSON keys the judge must return.
 JUDGE_SYSTEM_PREAMBLE: str = (
     "You are a strict, impartial evaluator. You score an assistant's answer on the "
     "independent metrics listed below in a single pass. Each metric is a float in "
@@ -42,9 +37,6 @@ JUDGE_SYSTEM_PREAMBLE: str = (
     "verdict bleed into another."
 )
 
-# Built-in rubric fragment for the Adherence to Ground Truth metric. Self-contained
-# (its own rules), carries no interpolation placeholder — the judge appends the
-# row's inputs at call time. Each metric owns its full rubric block like this.
 GROUND_TRUTH_JUDGE_PROMPT: str = (
     'Adherence to Ground Truth (score key "ground_truth"):\n'
     "Judge ONLY whether the assistant's answer conveys the same correct information "
@@ -60,8 +52,6 @@ GROUND_TRUTH_JUDGE_PROMPT: str = (
     "Reasoning: name what was correct or what was missing/contradicted."
 )
 
-# Output contract for the combined call; `{metric_keys}` is filled with the
-# enabled metric keys at build time so parsing stays N-metric shaped.
 JUDGE_OUTPUT_INSTRUCTION: str = (
     "Respond with ONLY a single JSON object mapping each metric key to its result, of "
     'the form {{"<metric_key>": {{"score": <float between 0 and 1>, "reasoning": '

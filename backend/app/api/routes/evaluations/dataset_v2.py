@@ -2,8 +2,7 @@
 
 Replica of the v1 dataset upload with the same multipart shape and response, but
 it creates no Langfuse dataset and stores only the original items — duplication is
-recorded in metadata and applied at run time. See
-docs/srd-three-metric-evaluation-verdict.md (FR-1, FR-2).
+recorded in metadata and applied at run time.
 """
 
 import logging

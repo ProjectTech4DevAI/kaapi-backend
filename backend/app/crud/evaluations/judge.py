@@ -1,15 +1,6 @@
-"""Native LLM-as-a-judge scoring for v2 fast evaluations.
-
-A single combined OpenAI call per evaluated row grades every enabled metric at
-once and returns a per-metric JSON map ({"ground_truth": {"score", "reasoning"}}).
-Runs after cosine similarity, so a judge failure never blocks cosine scoring;
-malformed output or an exhausted retry raises so the caller isolates the row.
-
-The metric set is driven by `METRIC_REGISTRY`. Adding a metric later (knowledge_base,
-prompt) is a new registry entry — score name, built-in prompt fragment, required
-inputs, durable per-row column, cost stage, and fallback-model setting — plus the
-model field on `EvaluationRun`; the combined-prompt build, per-metric parse, and
-per-metric persistence already iterate the registry.
+"""
+Runs one OpenAI judge call per row to score all enabled metrics together.
+Executes after cosine similarity, so judge failures never block cosine; metrics are registry-driven and easily extensible.
 """
 
 import json
@@ -55,7 +46,6 @@ class JudgeInputEnum(str, Enum):
     GOLDEN_ANSWER = "golden_answer"
 
 
-# Human labels for each input block, rendered in a stable (enum) order.
 _INPUT_LABELS: dict[JudgeInputEnum, str] = {
     JudgeInputEnum.QUESTION: "Question",
     JudgeInputEnum.GENERATED_ANSWER: "Generated answer",
@@ -75,7 +65,7 @@ class JudgeMetricSpec:
     cost_stage: str
 
 
-# Phase 1: only ground_truth. knowledge_base / prompt slot in here later. All
+# Phase 1: only ground_truth, knowledge_base / prompt slot in here. All
 # metrics are graded by one combined call, so they share a single judge model
 # (settings.EVAL_JUDGE_MODEL); there is no per-metric model.
 METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
@@ -151,10 +141,6 @@ def build_judge_params(
     (settings.EVAL_JUDGE_MODEL) for all metrics. The system prompt is the shared
     preamble followed by each enabled metric's fragment.
     """
-    # gpt-5-mini is a reasoning model that rejects a custom temperature, so the judge
-    # body carries only the model + a low reasoning effort (per-row batch judging
-    # must stay within the Celery task time limit) and never a temperature. The
-    # mapper drops `effort` for non-reasoning models, so this is safe either way.
     judge_params: dict[str, Any] = {
         "model": settings.EVAL_JUDGE_MODEL,
         "effort": settings.EVAL_JUDGE_REASONING_EFFORT,

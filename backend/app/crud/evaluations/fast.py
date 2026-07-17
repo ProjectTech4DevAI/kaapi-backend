@@ -95,7 +95,7 @@ JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 CHUNK_CONFIG_RUN_ID = "eval_run_id"
 CHUNK_CONFIG_INDEX = "chunk_index"
 
-# Reasons a row cannot be scored, surfaced to the UI. embedding_failed is v1-only
+# Reasons a row cannot be scored. embedding_failed is v1-only
 # (cosine); v2 judged runs never embed, so only the empty-side reasons apply.
 UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
@@ -749,12 +749,7 @@ def _judge_rows(
     judgeable: list[tuple[str, str, dict[str, Any]]],
     log_prefix: str,
 ) -> tuple[dict[str, JudgeResult], set[str], str | None]:
-    """Run one combined judge completion per judgeable row, isolated per row.
-
-    `judgeable` is (item_id, ref, response). Returns the per-item JudgeResults,
-    the refs whose entire combined call failed (all metrics unscoreable), and the
-    judge model used. A setup failure (unresolvable config) isolates every row.
-    """
+    """Run one combined judge completion per judgeable row, isolated per row."""
     results: dict[str, JudgeResult] = {}
     failed_refs: set[str] = set()
     if not judgeable:
@@ -763,8 +758,7 @@ def _judge_rows(
     metrics = enabled_metric_specs()
 
     # Build base params once per run; judging is system-config only, so every metric
-    # uses its built-in prompt + fallback model. A setup failure leaves all rows
-    # unjudged rather than failing the run.
+    # uses its built-in prompt + fallback model.
     try:
         base_params, _system_prompt = build_judge_params(
             session=session, metrics=metrics
@@ -1019,9 +1013,6 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # v2 native LLM-as-judge: the only v2 scorer, over rows with both a generated
-    # answer and a golden answer. Gated on the run's marker so v1 never judges;
-    # per-row isolation lives in _judge_rows.
     judge_results: dict[str, JudgeResult] = {}
     if eval_run.is_judge_run:
         judgeable = [

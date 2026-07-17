@@ -211,13 +211,9 @@ class Settings(BaseSettings):
     # task well under CELERY_TASK_SOFT_TIME_LIMIT.
     EVAL_FAST_CHUNK_SIZE: int = 50
 
-    # Native LLM-as-judge (v2 fast eval). All three metrics are graded by one
-    # combined call, so they share a SINGLE judge model (not per-metric) plus their
-    # built-in prompts. gpt-5-mini takes no temperature parameter.
-    # See docs/srd-three-metric-evaluation-verdict.md for the full design.
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
-    # Reasoning effort for the judge model. "minimal" keeps per-row judging fast
-    # enough to finish within the Celery task time limit; ignored for non-reasoning
+
+    # Reasoning effort for the judge model. "minimal" keeps per-row judging fast.
     # models. One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "minimal"
 

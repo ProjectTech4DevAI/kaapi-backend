@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 # dataset_metadata keys, shared by the upload services and the run-time loader so
-# writer and reader never drift on the string.
 DATASET_META_ORIGINAL_ITEMS = "original_items_count"
 DATASET_META_TOTAL_ITEMS = "total_items_count"
 DATASET_META_DUPLICATION_FACTOR = "duplication_factor"
