@@ -52,6 +52,7 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
 )
 from app.crud.evaluations.judge import (
+    JudgeInputEnum,
     JudgeMetricSpec,
     JudgeResult,
     build_judge_params,
@@ -81,6 +82,7 @@ from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.llm.mappers import map_kaapi_to_openai_params
+from app.services.response.response import get_file_search_results
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +183,7 @@ def _response_result(
     failed: bool,
     response_id: str | None = None,
     usage: dict[str, int] | None = None,
+    retrieved_chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -192,6 +195,7 @@ def _response_result(
         "usage": usage,
         "question_id": question_id,
         "failed": failed,
+        "retrieved_chunks": retrieved_chunks,
     }
 
 
@@ -254,6 +258,11 @@ def _responses_call_for_item(
             "total_tokens": int(_field(usage, "total_tokens", 0) or 0),
         },
         failed=False,
+        # Plain dicts (not FileResultChunk) so the unit stays JSON-serializable for S3.
+        retrieved_chunks=[
+            {"score": c.score, "text": c.text}
+            for c in get_file_search_results(response)
+        ],
     )
 
 
@@ -490,6 +499,10 @@ def run_response_chunk(
         logger.info(
             f"[run_response_chunk] {log_prefix} Mapper warnings: {mapper_warnings}"
         )
+
+    # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
+    if any(t.get("type") == "file_search" for t in base_params.get("tools", [])):
+        base_params["include"] = ["file_search_call.results"]
 
     results: list[dict[str, Any]] = []
     max_workers = max(
@@ -758,11 +771,10 @@ def _judge_rows(
     metrics = enabled_metric_specs()
 
     # Build base params once per run; judging is system-config only, so every metric
-    # uses its built-in prompt + fallback model.
+    # uses its built-in prompt + fallback model. The instructions vary per row (by
+    # applicable-metric subset) and are composed inside judge_row.
     try:
-        base_params, _system_prompt = build_judge_params(
-            session=session, metrics=metrics
-        )
+        base_params = build_judge_params(session=session)
     except Exception as exc:
         logger.error(
             f"[_judge_rows] {log_prefix} Judge setup failed; leaving all rows "
@@ -781,9 +793,18 @@ def _judge_rows(
                 openai_client=openai_client,
                 base_params=base_params,
                 metrics=metrics,
-                question=response.get("question", ""),
-                generated_answer=response.get("generated_output", ""),
-                golden_answer=response.get("ground_truth", ""),
+                inputs={
+                    JudgeInputEnum.QUESTION: response.get("question", ""),
+                    JudgeInputEnum.GENERATED_ANSWER: response.get(
+                        "generated_output", ""
+                    ),
+                    JudgeInputEnum.GOLDEN_ANSWER: response.get("ground_truth", ""),
+                    JudgeInputEnum.RETRIEVED_CHUNKS: "\n---\n".join(
+                        c.get("text", "")
+                        for c in (response.get("retrieved_chunks") or [])
+                        if c.get("text")
+                    ),
+                },
             ): (item_id, ref)
             for item_id, ref, response in judgeable
         }
@@ -824,8 +845,11 @@ def _attach_metric_scores(
         per_item[ref] = round(float(metric_score.score), 6)
         values.append(metric_score.score)
 
-    # Durable {ref: score} map on the metric's own column (Kaapi-native store).
-    setattr(eval_run, spec.per_item_column, per_item or None)
+    # Durable {ref: score} map on the metric's own column, when it has one. Metrics
+    # without a backup column (e.g. knowledge_base) rely on the score_trace_url trace
+    # unit, which carries the same per-row score plus its reasoning.
+    if spec.per_item_column:
+        setattr(eval_run, spec.per_item_column, per_item or None)
 
     if values:
         arr = np.array(values)

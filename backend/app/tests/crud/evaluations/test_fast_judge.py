@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
 from sqlmodel import Session
 
@@ -29,13 +30,19 @@ from app.crud.evaluations.fast import (
     CHUNK_CONFIG_INDEX,
     CHUNK_CONFIG_RUN_ID,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
+    _responses_call_for_item,
     run_fast_evaluation,
 )
-from app.crud.evaluations.score import GROUND_TRUTH_SCORE_NAME, JUDGE_FAILED_REASON
+from app.crud.evaluations.score import (
+    GROUND_TRUTH_SCORE_NAME,
+    JUDGE_FAILED_REASON,
+    KNOWLEDGE_BASE_SCORE_NAME,
+)
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import ConfigBlob, KaapiCompletionConfig
+from app.models.response import FileResultChunk
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
@@ -459,3 +466,117 @@ class TestV1PipelineUnchanged:
         summary_names = {s["name"] for s in result.score["summary_scores"]}
         assert GROUND_TRUTH_SCORE_NAME not in summary_names
         assert COSINE_SCORE_NAME in summary_names
+
+
+def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "input": {"question": "What is X?"},
+        "expected_output": {"answer": "golden"},
+        "metadata": {"question_id": 1},
+    }
+
+
+def _openai_response():
+    return SimpleNamespace(
+        output_text="generated answer",
+        output=[],
+        id="resp_1",
+        usage=SimpleNamespace(input_tokens=5, output_tokens=5, total_tokens=10),
+    )
+
+
+class TestResponsesChunkCapture:
+    """`_responses_call_for_item` flattens file_search hits into JSON-safe dicts."""
+
+    def test_success_with_chunks_returns_serializable_plain_dicts(self):
+        client = MagicMock()
+        client.responses.create.return_value = _openai_response()
+        with patch(
+            "app.crud.evaluations.fast.get_file_search_results",
+            return_value=[
+                FileResultChunk(score=0.91, text="chunk A"),
+                FileResultChunk(score=0.42, text="chunk B"),
+            ],
+        ):
+            result = _responses_call_for_item(
+                openai_client=client,
+                base_params={"model": "gpt-4o"},
+                item=_responses_item(),
+            )
+
+        assert result["failed"] is False
+        assert result["retrieved_chunks"] == [
+            {"score": 0.91, "text": "chunk A"},
+            {"score": 0.42, "text": "chunk B"},
+        ]
+        json.dumps(result)  # the S3 unit must stay JSON-serializable
+
+    def test_success_without_hits_returns_empty_chunks(self):
+        client = MagicMock()
+        client.responses.create.return_value = _openai_response()
+        with patch(
+            "app.crud.evaluations.fast.get_file_search_results", return_value=[]
+        ):
+            result = _responses_call_for_item(
+                openai_client=client,
+                base_params={"model": "gpt-4o"},
+                item=_responses_item(),
+            )
+
+        assert result["failed"] is False
+        assert result["retrieved_chunks"] == []
+
+    def test_error_path_has_no_chunks(self):
+        client = MagicMock()
+        client.responses.create.side_effect = openai.OpenAIError("provider down")
+        with patch("app.crud.evaluations.fast.get_file_search_results") as fake_search:
+            result = _responses_call_for_item(
+                openai_client=client,
+                base_params={"model": "gpt-4o"},
+                item=_responses_item(),
+            )
+
+        assert result["failed"] is True
+        assert result["retrieved_chunks"] is None
+        fake_search.assert_not_called()
+
+
+class TestKnowledgeBaseScoring:
+    def test_groundedness_scores_only_chunked_rows(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """A chunk-less row is unscoreable for groundedness (absent, not 0), while
+        ground truth still scores every judged row."""
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        chunked = _resp_result("item-chunked", "Q1", "golden-1")
+        chunked["retrieved_chunks"] = [{"score": 0.9, "text": "supporting chunk"}]
+        plain = _resp_result("item-plain", "Q2", "golden-2")  # no retrieved_chunks
+        _seed_chunk(db=db, eval_run=eval_run, results=[chunked, plain], store=_s3_store)
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                            "knowledge_base": {"score": 0.6, "reasoning": "kb"},
+                        }
+                    )
+                )
+            return _judge_response(0.9, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        assert result.status == "completed"
+        run = db.get(EvaluationRun, result.id)
+        # ground_truth keeps its durable per-row column; knowledge_base has none —
+        # its per-row score lives only in the score_trace_url trace unit below.
+        assert set(run.per_item_ground_truth) == {"item-chunked", "item-plain"}
+
+        traces = _trace_by_ref(result)
+        kb_chunked = _score_named(traces["item-chunked"], KNOWLEDGE_BASE_SCORE_NAME)
+        assert kb_chunked is not None
+        assert kb_chunked["value"] == 0.6
+        assert _score_named(traces["item-plain"], KNOWLEDGE_BASE_SCORE_NAME) is None
+        assert _score_named(traces["item-plain"], GROUND_TRUTH_SCORE_NAME) is not None

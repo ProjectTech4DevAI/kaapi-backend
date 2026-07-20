@@ -29,6 +29,8 @@ from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_OUTPUT_INSTRUCTION,
     JUDGE_SYSTEM_PREAMBLE,
+    KNOWLEDGE_BASE_JUDGE_PROMPT,
+    KNOWLEDGE_BASE_SCORE_NAME,
 )
 from app.services.llm.mappers import map_kaapi_to_openai_params
 
@@ -39,20 +41,27 @@ class JudgeMetricEnum(str, Enum):
     """Registry keys — also the JSON keys the combined judge returns per metric."""
 
     GROUND_TRUTH = "ground_truth"
+    KNOWLEDGE_BASE = "knowledge_base"
 
 
 class JudgeInputEnum(str, Enum):
-    """Per-row inputs a metric may require in the composed judge prompt."""
+    """Per-row inputs a metric may require in the composed judge prompt.
+
+    Declaration order fixes the render order in the input block, so new inputs are
+    appended last to keep existing metrics' prompts byte-identical.
+    """
 
     QUESTION = "question"
     GENERATED_ANSWER = "generated_answer"
     GOLDEN_ANSWER = "golden_answer"
+    RETRIEVED_CHUNKS = "retrieved_chunks"
 
 
 _INPUT_LABELS: dict[JudgeInputEnum, str] = {
     JudgeInputEnum.QUESTION: "Question",
     JudgeInputEnum.GENERATED_ANSWER: "Generated answer",
     JudgeInputEnum.GOLDEN_ANSWER: "Golden (reference) answer",
+    JudgeInputEnum.RETRIEVED_CHUNKS: "Retrieved knowledge-base chunks",
 }
 
 
@@ -64,13 +73,15 @@ class JudgeMetricSpec:
     score_name: str
     prompt_fragment: str
     required_inputs: tuple[JudgeInputEnum, ...]
-    per_item_column: str
+    # None = no dedicated backup column; the per-row score + reasoning still land in
+    # the score_trace_url trace unit (the Kaapi-native source of truth).
+    per_item_column: str | None
     cost_stage: str
 
 
-# Phase 1: only ground_truth, knowledge_base / prompt slot in here. All
-# metrics are graded by one combined call, so they share a single judge model
-# (settings.EVAL_JUDGE_MODEL); there is no per-metric model.
+# prompt slots in here next. All metrics are graded by one combined call, so they
+# share a single judge model (settings.EVAL_JUDGE_MODEL); there is no per-metric
+# model. A metric only runs on a row that carries all its required_inputs.
 METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
     JudgeMetricEnum.GROUND_TRUTH: JudgeMetricSpec(
         key=JudgeMetricEnum.GROUND_TRUTH,
@@ -83,6 +94,20 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
         ),
         per_item_column="per_item_ground_truth",
         cost_stage="ground_truth_judge",
+    ),
+    JudgeMetricEnum.KNOWLEDGE_BASE: JudgeMetricSpec(
+        key=JudgeMetricEnum.KNOWLEDGE_BASE,
+        score_name=KNOWLEDGE_BASE_SCORE_NAME,
+        prompt_fragment=KNOWLEDGE_BASE_JUDGE_PROMPT,
+        # No QUESTION: groundedness judges the answer against the chunks alone.
+        required_inputs=(
+            JudgeInputEnum.GENERATED_ANSWER,
+            JudgeInputEnum.RETRIEVED_CHUNKS,
+        ),
+        # No backup column: the per-row groundedness score + reasoning live in the
+        # score_trace_url trace unit; v2 is fully Kaapi-native, so no resync store.
+        per_item_column=None,
+        cost_stage="knowledge_base_judge",
     ),
 }
 
@@ -132,17 +157,13 @@ class JudgeResult:
     usage: dict[str, int]
 
 
-def build_judge_params(
-    *,
-    session: Session,
-    metrics: list[JudgeMetricSpec],
-) -> tuple[dict[str, Any], str]:
-    """Build the model-independent OpenAI body and the combined judge system prompt.
+def build_judge_params(*, session: Session) -> dict[str, Any]:
+    """Build the model-independent OpenAI body for the combined judge call.
 
-    Judging is system-config only: every metric uses its built-in rubric fragment,
-    and the single combined call runs on one shared judge model
-    (settings.EVAL_JUDGE_MODEL) for all metrics. The system prompt is the shared
-    preamble followed by each enabled metric's fragment.
+    Judging is system-config only: the single combined call runs on one shared
+    judge model (settings.EVAL_JUDGE_MODEL) for all metrics. `instructions` are NOT
+    baked here — they're the applicable-metric subset, which varies per row, so
+    `judge_row` composes and sets them from `_compose_system_prompt`.
     """
     judge_params: dict[str, Any] = {
         "model": settings.EVAL_JUDGE_MODEL,
@@ -155,11 +176,28 @@ def build_judge_params(
     if mapper_warnings:
         logger.warning(f"[build_judge_params] Mapper warnings: {mapper_warnings}")
 
-    fragments = "\n\n".join(spec.prompt_fragment for spec in metrics)
-    system_prompt = f"{JUDGE_SYSTEM_PREAMBLE}\n\n{fragments}"
-    # The judge prompt IS the instructions; overwrite anything the mapper carried.
-    base_params["instructions"] = system_prompt
-    return base_params, system_prompt
+    return base_params
+
+
+def _compose_system_prompt(metrics: list[JudgeMetricSpec]) -> str:
+    """Shared preamble followed by each metric's built-in rubric fragment."""
+    fragments = [spec.prompt_fragment for spec in metrics]
+    return f"{JUDGE_SYSTEM_PREAMBLE}\n\n" + "\n\n".join(fragments)
+
+
+def _applicable_metrics(
+    metrics: list[JudgeMetricSpec], inputs: dict[JudgeInputEnum, str]
+) -> list[JudgeMetricSpec]:
+    """The metrics whose required_inputs are all present and non-empty for this row.
+
+    A row missing an input (e.g. no retrieved chunks) simply omits that metric from
+    the judge call — it stays unscoreable for that row, not scored 0.
+    """
+    return [
+        spec
+        for spec in metrics
+        if all(inputs.get(key, "").strip() for key in spec.required_inputs)
+    ]
 
 
 def _compose_judge_input(
@@ -273,27 +311,27 @@ def judge_row(
     openai_client: OpenAI,
     base_params: dict[str, Any],
     metrics: list[JudgeMetricSpec],
-    question: str,
-    generated_answer: str,
-    golden_answer: str,
+    inputs: dict[JudgeInputEnum, str],
 ) -> JudgeResult:
     """Run one combined judge completion for a row and return its per-metric result.
 
     `base_params` is the model-independent body from `build_judge_params`, built
-    once per run; only `input` varies per row. Raises on retry-exhausted OpenAI
-    errors or malformed output so the caller can flag the whole row unscoreable.
+    once per run; the system prompt and input block are composed here from the
+    per-row applicable-metric subset (a metric whose inputs are absent is dropped,
+    so its key never enters the prompt or the expected reply). Raises on
+    retry-exhausted OpenAI errors or malformed output so the caller can flag the
+    whole row unscoreable.
     """
+    applicable = _applicable_metrics(metrics, inputs)
+    if not applicable:
+        raise ValueError("no judge metric applies to this row's inputs")
+
     model = base_params.get("model")
     params = {
         **base_params,
-        "input": _compose_judge_input(
-            metrics=metrics,
-            inputs={
-                JudgeInputEnum.QUESTION: question,
-                JudgeInputEnum.GENERATED_ANSWER: generated_answer,
-                JudgeInputEnum.GOLDEN_ANSWER: golden_answer,
-            },
-        ),
+        # The judge prompt IS the instructions; overwrite anything the mapper carried.
+        "instructions": _compose_system_prompt(applicable),
+        "input": _compose_judge_input(metrics=applicable, inputs=inputs),
     }
 
     try:
@@ -319,5 +357,5 @@ def judge_row(
         "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0),
     }
 
-    metric_scores = _parse_judge_output(_extract_response_text(response), metrics)
+    metric_scores = _parse_judge_output(_extract_response_text(response), applicable)
     return JudgeResult(metrics=metric_scores, usage=usage)
