@@ -246,6 +246,25 @@ def run_evaluation_batch_submission(
     )
 
 
+# Priority 6 (fast-eval tier): user-blocking interactive prompt iteration in the
+# evaluation domain, above default batch work but below core LLM call/chain jobs.
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_prompt_improvement")
+def run_prompt_improvement(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+    from app.services.evaluations.prompt_improvement import execute_prompt_improvement
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_prompt_improvement(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            **kwargs,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_batch_submission")
 def run_stt_batch_submission(

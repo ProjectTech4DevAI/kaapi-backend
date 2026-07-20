@@ -27,7 +27,7 @@ APIKey → Organization, Project, User  # programmatic access
 | ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references (logical) |
 | LlmCall | llm/request.py | Job, LlmChain, Org, Project | Langfuse traces (logical); analytics |
 | LlmChain | llm/request.py | Org, Project | LlmCall |
-| Job | job.py | Project | LlmCall; Celery job execution (logical) |
+| Job | job.py | Project | LlmCall; Celery job execution (logical); evaluation prompt improvement (`JobType.PROMPT_IMPROVEMENT`, logical) |
 | BatchJob | batch_job.py | Org, Project | EvaluationRun, Assessment; batch polling cron (logical) |
 | EvaluationDataset | evaluation.py | Org, Project, Language | EvaluationRun, STTSample (via stt_evaluation), Assessment |
 | EvaluationRun | evaluation.py | Dataset, Config, BatchJob, Org, Project, Language | STTResult, TTSResult; Langfuse scores (logical); console UI (logical) |

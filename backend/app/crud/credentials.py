@@ -11,7 +11,6 @@ from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +96,12 @@ def get_key_by_org(
         return creds.credential["api_key"]
 
     return None
+
+
+def list_all_credentials(*, session: Session) -> list[Credential]:
+    """Fetch every credential row across all orgs/projects. Admin-only use
+    (re-encryption backfill); never expose through a tenant-scoped route."""
+    return list(session.exec(select(Credential)).all())
 
 
 def get_creds_by_org(
