@@ -105,7 +105,7 @@ UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
 UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
 
-# Judge tell the template apart from the instructions above it
+# Judge tell the template apart from the instructions above it.
 PROMPT_TEMPLATE_LABEL = "Prompt template wrapped around each user input:"
 
 
