@@ -20,12 +20,12 @@ All paths relative to `backend/app/`.
 | `batch_job` (BatchJob) | `models/batch_job.py` |
 
 Key `EvaluationRun` JSONB fields: `score` (per-trace `scores` + `summary_scores`), `per_item_scores`, `cost` (per-stage), `unscoreable`. References `config_id`, `batch_job_id`.
-v2 judge fields on `EvaluationRun`: `is_judge_run` (bool marker gating native judging + Langfuse skip), `per_item_ground_truth` (JSONB `{ref: score}`, Kaapi-native, not synced to Langfuse). Judging is system-config only — always the fallback model (`gpt-5-mini`) + built-in prompt, no per-run config.
+v2 judge fields on `EvaluationRun`: `is_judge_run` (bool marker gating native judging + Langfuse skip), `per_item_ground_truth` (JSONB `{ref: score}`, Kaapi-native, not synced to Langfuse) backing the `ground_truth` metric. The `knowledge_base` metric has no backup column — its per-row score + reasoning live in the `score_trace_url` trace unit (the native source of truth). Judging is system-config only — always the fallback model (`gpt-5-mini`) + built-in prompt, no per-run config.
 
 ## Services / CRUD
 - `services/evaluations/` — `evaluation.py`, `dataset.py`, `fast.py`, `judge.py` (v2 judged run trigger), `batch_job.py`, `validators.py`, `prompt_improvement.py`
 - `services/stt_evaluations/`, `services/tts_evaluations/`
-- `crud/evaluations/` — `core.py`, `batch.py`, `fast.py`, `judge.py` (metric registry + combined judge call), `score.py`, `embeddings.py`, `cost.py`, `langfuse.py`, `merge.py`, `processing.py`, `cron.py`
+- `crud/evaluations/` — `core.py`, `batch.py`, `fast.py`, `judge.py` (`METRIC_REGISTRY` + combined judge call; `ground_truth` and `knowledge_base` metrics, applied per-row by which required inputs the row carries), `score.py`, `embeddings.py`, `cost.py`, `langfuse.py`, `merge.py`, `processing.py`, `cron.py`
 - `core/batch/` — shared provider batch clients: `openai.py`, `gemini.py`, `anthropic.py`, `polling.py`, `operations.py`
 
 ## Async
@@ -38,4 +38,4 @@ v2 judge fields on `EvaluationRun`: `is_judge_run` (bool marker gating native ju
 ## Gotchas
 - Eval traffic deliberately bypasses `/llm/call` (separate code path from production).
 - Scores sync to Langfuse; durable per-row maps on `evaluation_run` are the resync source of truth.
-- v2 (`is_judge_run`) is fully Kaapi-native: no Langfuse dataset/trace/score sync; the native ground-truth judge is one combined `responses.create` per row, structured via `crud/evaluations/judge.py` `METRIC_REGISTRY` so knowledge_base/prompt metrics + verdict slot in later. v1 path is unchanged.
+- v2 (`is_judge_run`) is fully Kaapi-native: no Langfuse dataset/trace/score sync; one combined `responses.create` per row scores every applicable metric, structured via `crud/evaluations/judge.py` `METRIC_REGISTRY`. Live metrics: `ground_truth` (backed by `per_item_ground_truth`) and `knowledge_base` (groundedness; no backup column — score + reasoning land in `score_trace_url`) — the latter judges the file_search chunks captured during response generation and only applies to rows that retrieved chunks; `prompt` + weighted verdict slot in later. v1 path is unchanged.

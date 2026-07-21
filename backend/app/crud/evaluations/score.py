@@ -17,6 +17,7 @@ COSINE_SCORE_COMMENT: str = (
 )
 
 GROUND_TRUTH_SCORE_NAME: str = "Adherence to Ground Truth"
+KNOWLEDGE_BASE_SCORE_NAME: str = "Adherence to Knowledge Base"
 JUDGE_FAILED_REASON: str = "judge_failed"
 
 # Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
@@ -50,6 +51,25 @@ GROUND_TRUTH_JUDGE_PROMPT: str = (
     "- Do NOT use any outside knowledge; the golden answer is the source of truth.\n"
     "- Do NOT answer the question yourself.\n"
     "Reasoning: name what was correct or what was missing/contradicted."
+)
+
+KNOWLEDGE_BASE_JUDGE_PROMPT: str = (
+    'Adherence to Knowledge Base (score key "knowledge_base"):\n'
+    "Judge ONLY whether the answer's claims are supported by the retrieved "
+    "knowledge-base chunks (groundedness / hallucination detection).\n"
+    "- Break the answer into its distinct factual claims. A claim is supported iff "
+    "it is stated in, or directly entailed by, at least one chunk.\n"
+    "- Score = supported claims / total claims: all supported = 1.0; mostly "
+    "unsupported trends toward 0.0.\n"
+    "- Generic pleasantries or a safe refusal that make no factual claim are "
+    "trivially grounded — score them high.\n"
+    "- Judge groundedness ONLY, not correctness, completeness, or "
+    "instruction-following. A claim faithful to the chunks is grounded even if the "
+    "chunks are themselves wrong.\n"
+    "- Do NOT use any outside knowledge; the retrieved chunks are the ONLY allowed "
+    "source of support.\n"
+    "Reasoning: when the score is below 1.0, name the specific unsupported or "
+    "invented claim."
 )
 
 JUDGE_OUTPUT_INSTRUCTION: str = (

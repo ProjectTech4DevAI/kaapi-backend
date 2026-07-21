@@ -18,10 +18,13 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.judge import (
+    METRIC_REGISTRY,
     JudgeInputEnum,
     JudgeMetricEnum,
     MetricScore,
+    _applicable_metrics,
     _compose_judge_input,
+    _compose_system_prompt,
     _parse_judge_output,
     build_judge_params,
     enabled_metric_specs,
@@ -31,7 +34,12 @@ from app.crud.evaluations.score import (
     GROUND_TRUTH_JUDGE_PROMPT,
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_SYSTEM_PREAMBLE,
+    KNOWLEDGE_BASE_JUDGE_PROMPT,
+    KNOWLEDGE_BASE_SCORE_NAME,
 )
+
+_GROUND_TRUTH_SPEC = METRIC_REGISTRY[JudgeMetricEnum.GROUND_TRUTH]
+_KNOWLEDGE_BASE_SPEC = METRIC_REGISTRY[JudgeMetricEnum.KNOWLEDGE_BASE]
 
 
 def _judge_response(payload: dict | str, *, usage=(15, 8, 23)):
@@ -87,6 +95,34 @@ class TestParseJudgeOutput:
         )
         assert list(result) == [JudgeMetricEnum.GROUND_TRUTH]
 
+    def test_parses_both_metrics_when_both_requested(self) -> None:
+        result = _parse_judge_output(
+            json.dumps(
+                {
+                    "ground_truth": {"score": 0.8, "reasoning": "same facts"},
+                    "knowledge_base": {
+                        "score": 0.6,
+                        "reasoning": "one unsupported claim",
+                    },
+                }
+            ),
+            [_GROUND_TRUTH_SPEC, _KNOWLEDGE_BASE_SPEC],
+        )
+        assert set(result) == {
+            JudgeMetricEnum.GROUND_TRUTH,
+            JudgeMetricEnum.KNOWLEDGE_BASE,
+        }
+        assert result[JudgeMetricEnum.KNOWLEDGE_BASE].score == 0.6
+
+    def test_missing_knowledge_base_leaves_only_ground_truth(self) -> None:
+        # Both metrics requested but the reply omits knowledge_base: that metric is
+        # silently unscoreable for the row — no raise, ground_truth still parsed.
+        result = _parse_judge_output(
+            json.dumps({"ground_truth": {"score": 0.9, "reasoning": "correct"}}),
+            [_GROUND_TRUTH_SPEC, _KNOWLEDGE_BASE_SPEC],
+        )
+        assert set(result) == {JudgeMetricEnum.GROUND_TRUTH}
+
     def test_raises_when_no_enabled_metric_scored(self) -> None:
         specs = enabled_metric_specs()
         with pytest.raises(ValueError, match="scored no enabled metric"):
@@ -141,6 +177,52 @@ class TestComposeJudgeInput:
         assert "ground_truth" in composed
 
 
+class TestApplicableMetrics:
+    """A metric runs on a row only when all its required inputs are present + non-empty."""
+
+    def test_no_chunks_yields_ground_truth_only(self) -> None:
+        applicable = _applicable_metrics(
+            enabled_metric_specs(),
+            {
+                JudgeInputEnum.QUESTION: "Q",
+                JudgeInputEnum.GENERATED_ANSWER: "A",
+                JudgeInputEnum.GOLDEN_ANSWER: "G",
+                JudgeInputEnum.RETRIEVED_CHUNKS: "",
+            },
+        )
+        assert [s.key for s in applicable] == [JudgeMetricEnum.GROUND_TRUTH]
+
+    def test_chunks_present_yields_both_metrics(self) -> None:
+        applicable = _applicable_metrics(
+            enabled_metric_specs(),
+            {
+                JudgeInputEnum.QUESTION: "Q",
+                JudgeInputEnum.GENERATED_ANSWER: "A",
+                JudgeInputEnum.GOLDEN_ANSWER: "G",
+                JudgeInputEnum.RETRIEVED_CHUNKS: "chunk text",
+            },
+        )
+        assert [s.key for s in applicable] == [
+            JudgeMetricEnum.GROUND_TRUTH,
+            JudgeMetricEnum.KNOWLEDGE_BASE,
+        ]
+
+    def test_empty_question_drops_ground_truth(self) -> None:
+        applicable = _applicable_metrics(
+            enabled_metric_specs(),
+            {
+                JudgeInputEnum.QUESTION: "",
+                JudgeInputEnum.GENERATED_ANSWER: "A",
+                JudgeInputEnum.GOLDEN_ANSWER: "G",
+                JudgeInputEnum.RETRIEVED_CHUNKS: "chunk text",
+            },
+        )
+        # QUESTION is empty, so ground_truth is inapplicable; knowledge_base (no QUESTION
+        # requirement) still applies from the generated answer + chunks.
+        assert JudgeMetricEnum.GROUND_TRUTH not in [s.key for s in applicable]
+        assert [s.key for s in applicable] == [JudgeMetricEnum.KNOWLEDGE_BASE]
+
+
 class TestBuildJudgeParams:
     """FR-9: system-config judging uses the fallback model + built-in ground-truth prompt.
 
@@ -149,28 +231,37 @@ class TestBuildJudgeParams:
     """
 
     def test_defaults_to_fallback_model_and_builtin_prompt(self, db: Session) -> None:
-        specs = enabled_metric_specs()
-        base_params, system_prompt = build_judge_params(session=db, metrics=specs)
+        base_params = build_judge_params(session=db)
 
         assert base_params["model"] == settings.EVAL_JUDGE_MODEL
         assert base_params["model"] == "gpt-5-mini"
         assert "temperature" not in base_params
+        # Instructions are the per-row applicable-metric subset, so they are composed
+        # in judge_row, never baked into the shared base params.
+        assert "instructions" not in base_params
+
+        system_prompt = _compose_system_prompt(enabled_metric_specs())
         assert JUDGE_SYSTEM_PREAMBLE in system_prompt
         assert GROUND_TRUTH_JUDGE_PROMPT in system_prompt
-        # The judge prompt IS the instructions; a bot's own instructions never leak.
-        assert base_params["instructions"] == system_prompt
 
 
 class TestJudgeRow:
     """FR-3 / FR-15: one combined call per row, returning scores + usage; raises isolate."""
 
     def _base_params(self, db: Session) -> dict:
-        specs = enabled_metric_specs()
-        base_params, _ = build_judge_params(session=db, metrics=specs)
-        return base_params
+        return build_judge_params(session=db)
+
+    @staticmethod
+    def _gt_inputs(
+        question: str = "Q", generated: str = "A", golden: str = "G"
+    ) -> dict[JudgeInputEnum, str]:
+        return {
+            JudgeInputEnum.QUESTION: question,
+            JudgeInputEnum.GENERATED_ANSWER: generated,
+            JudgeInputEnum.GOLDEN_ANSWER: golden,
+        }
 
     def test_returns_metric_score_and_usage(self, db: Session) -> None:
-        specs = enabled_metric_specs()
         with patch(
             "app.crud.evaluations.judge._create_judge_response",
             return_value=_judge_response(
@@ -180,10 +271,8 @@ class TestJudgeRow:
             result = judge_row(
                 openai_client=SimpleNamespace(),
                 base_params=self._base_params(db),
-                metrics=specs,
-                question="Q",
-                generated_answer="A",
-                golden_answer="A-golden",
+                metrics=enabled_metric_specs(),
+                inputs=self._gt_inputs(generated="A", golden="A-golden"),
             )
 
         assert result.metrics[JudgeMetricEnum.GROUND_TRUTH] == MetricScore(
@@ -194,6 +283,82 @@ class TestJudgeRow:
             "output_tokens": 8,
             "total_tokens": 23,
         }
+
+    def test_chunkless_row_judges_ground_truth_only(self, db: Session) -> None:
+        captured: dict = {}
+
+        def _capture(_client, params):
+            captured.update(params)
+            return _judge_response({"ground_truth": {"score": 0.9, "reasoning": "ok"}})
+
+        with patch(
+            "app.crud.evaluations.judge._create_judge_response", side_effect=_capture
+        ):
+            result = judge_row(
+                openai_client=SimpleNamespace(),
+                base_params=self._base_params(db),
+                metrics=enabled_metric_specs(),
+                inputs=self._gt_inputs(),
+            )
+
+        assert set(result.metrics) == {JudgeMetricEnum.GROUND_TRUTH}
+        # With no chunks, knowledge_base is dropped: its rubric, chunk label, and key
+        # must never reach the judge call for this row.
+        assert KNOWLEDGE_BASE_JUDGE_PROMPT not in captured["instructions"]
+        assert "Retrieved knowledge-base chunks" not in captured["input"]
+        assert "knowledge_base" not in captured["input"]
+
+    def test_chunk_present_row_judges_both_metrics(self, db: Session) -> None:
+        with patch(
+            "app.crud.evaluations.judge._create_judge_response",
+            return_value=_judge_response(
+                {
+                    "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                    "knowledge_base": {"score": 0.7, "reasoning": "kb"},
+                }
+            ),
+        ):
+            result = judge_row(
+                openai_client=SimpleNamespace(),
+                base_params=self._base_params(db),
+                metrics=enabled_metric_specs(),
+                inputs={
+                    **self._gt_inputs(),
+                    JudgeInputEnum.RETRIEVED_CHUNKS: "supporting chunk",
+                },
+            )
+
+        assert set(result.metrics) == {
+            JudgeMetricEnum.GROUND_TRUTH,
+            JudgeMetricEnum.KNOWLEDGE_BASE,
+        }
+        assert result.metrics[JudgeMetricEnum.KNOWLEDGE_BASE].score == 0.7
+
+    def test_chunkless_prompt_is_byte_identical_to_ground_truth_only(
+        self, db: Session
+    ) -> None:
+        """Adding knowledge_base to the registry leaves the chunk-less path unchanged."""
+        captured: dict = {}
+
+        def _capture(_client, params):
+            captured.update(params)
+            return _judge_response({"ground_truth": {"score": 0.5, "reasoning": "x"}})
+
+        with patch(
+            "app.crud.evaluations.judge._create_judge_response", side_effect=_capture
+        ):
+            judge_row(
+                openai_client=SimpleNamespace(),
+                base_params=self._base_params(db),
+                metrics=enabled_metric_specs(),
+                inputs=self._gt_inputs(question="Qx", generated="Ax", golden="Gx"),
+            )
+
+        assert captured["instructions"] == _compose_system_prompt([_GROUND_TRUTH_SPEC])
+        assert "Question:\nQx" in captured["input"]
+        assert "Generated answer:\nAx" in captured["input"]
+        assert "Golden (reference) answer:\nGx" in captured["input"]
+        assert "Include exactly these metric keys: ground_truth." in captured["input"]
 
     def test_judge_call_receives_question_answer_and_golden(self, db: Session) -> None:
         """FR-3: the row's golden answer reaches the judge completion input."""
@@ -212,9 +377,11 @@ class TestJudgeRow:
                 openai_client=SimpleNamespace(),
                 base_params=self._base_params(db),
                 metrics=enabled_metric_specs(),
-                question="Who wrote Hamlet?",
-                generated_answer="Shakespeare wrote it.",
-                golden_answer="William Shakespeare",
+                inputs=self._gt_inputs(
+                    question="Who wrote Hamlet?",
+                    generated="Shakespeare wrote it.",
+                    golden="William Shakespeare",
+                ),
             )
 
         assert "Who wrote Hamlet?" in captured["input"]
@@ -231,9 +398,7 @@ class TestJudgeRow:
                     openai_client=SimpleNamespace(),
                     base_params=self._base_params(db),
                     metrics=enabled_metric_specs(),
-                    question="Q",
-                    generated_answer="A",
-                    golden_answer="G",
+                    inputs=self._gt_inputs(),
                 )
 
     def test_openai_error_propagates_for_row_isolation(self, db: Session) -> None:
@@ -246,16 +411,23 @@ class TestJudgeRow:
                     openai_client=SimpleNamespace(),
                     base_params=self._base_params(db),
                     metrics=enabled_metric_specs(),
-                    question="Q",
-                    generated_answer="A",
-                    golden_answer="G",
+                    inputs=self._gt_inputs(),
                 )
 
 
-def test_ground_truth_is_the_only_enabled_metric() -> None:
-    """Phase 1 ships exactly one metric; guards against silently enabling more."""
+def test_enabled_metrics_are_ground_truth_and_knowledge_base() -> None:
+    """v2 ships exactly the two judge metrics; guards against silently enabling more."""
     specs = enabled_metric_specs()
-    assert [s.key for s in specs] == [JudgeMetricEnum.GROUND_TRUTH]
-    assert specs[0].score_name == GROUND_TRUTH_SCORE_NAME
-    assert specs[0].per_item_column == "per_item_ground_truth"
-    assert specs[0].cost_stage == "ground_truth_judge"
+    assert [s.key for s in specs] == [
+        JudgeMetricEnum.GROUND_TRUTH,
+        JudgeMetricEnum.KNOWLEDGE_BASE,
+    ]
+
+    assert _GROUND_TRUTH_SPEC.score_name == GROUND_TRUTH_SCORE_NAME
+    assert _GROUND_TRUTH_SPEC.per_item_column == "per_item_ground_truth"
+    assert _GROUND_TRUTH_SPEC.cost_stage == "ground_truth_judge"
+
+    assert _KNOWLEDGE_BASE_SPEC.score_name == KNOWLEDGE_BASE_SCORE_NAME
+    # No backup column: the per-row groundedness score lives in score_trace_url.
+    assert _KNOWLEDGE_BASE_SPEC.per_item_column is None
+    assert _KNOWLEDGE_BASE_SPEC.cost_stage == "knowledge_base_judge"
