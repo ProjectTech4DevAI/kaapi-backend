@@ -56,6 +56,7 @@ from app.crud.evaluations.embeddings import (
 from app.crud.evaluations.judge import (
     JUDGE_COST_STAGE,
     JudgeInputEnum,
+    JudgeMetricEnum,
     JudgeMetricSpec,
     JudgeResult,
     build_judge_params,
@@ -85,6 +86,7 @@ from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.llm.mappers import map_kaapi_to_openai_params
+from app.services.response.response import get_file_search_results
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,21 @@ UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
 
 # Judge tell the template apart from the instructions above it.
 PROMPT_TEMPLATE_LABEL = "Prompt template wrapped around each user input:"
+
+# How many top KB matches to name in the knowledge_base trace comment.
+_KB_TOP_CHUNKS = 3
+
+
+def _format_top_kb_matches(sorted_chunks: list[dict[str, Any]]) -> str:
+    """Top-N retrieved chunks as 'biu-1.pdf (90.6%), faq.pdf (66.3%)'.
+
+    Expects chunks pre-sorted by score desc; old S3 payloads may lack filename.
+    """
+    matches = [
+        f"{c.get('filename') or 'unknown'} ({c.get('score', 0) * 100:.1f}%)"
+        for c in sorted_chunks
+    ]
+    return ", ".join(matches[:_KB_TOP_CHUNKS])
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
@@ -188,6 +205,7 @@ def _response_result(
     failed: bool,
     response_id: str | None = None,
     usage: dict[str, int] | None = None,
+    retrieved_chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -199,6 +217,7 @@ def _response_result(
         "usage": usage,
         "question_id": question_id,
         "failed": failed,
+        "retrieved_chunks": retrieved_chunks,
     }
 
 
@@ -261,6 +280,11 @@ def _responses_call_for_item(
             "total_tokens": int(_field(usage, "total_tokens", 0) or 0),
         },
         failed=False,
+        # Plain dicts (not FileResultChunk) so the unit stays JSON-serializable for S3.
+        retrieved_chunks=[
+            {"score": c.score, "text": c.text, "filename": c.filename}
+            for c in get_file_search_results(response)
+        ],
     )
 
 
@@ -497,6 +521,12 @@ def run_response_chunk(
         logger.info(
             f"[run_response_chunk] {log_prefix} Mapper warnings: {mapper_warnings}"
         )
+
+    # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
+    # tool_choice stays at the model default (auto) — consistent with normal calls;
+    # a row where the model doesn't query the KB is scored N/A, not forced to search.
+    if any(t.get("type") == "file_search" for t in base_params.get("tools", [])):
+        base_params["include"] = ["file_search_call.results"]
 
     results: list[dict[str, Any]] = []
     max_workers = max(
@@ -812,11 +842,11 @@ def _judge_rows(
     if not judgeable or not metrics:
         return results, failed_refs, None
 
-    # Judging is system-config only, so the body is identical for every row.
+    # Build base params once per run; judging is system-config only, so every metric
+    # uses its built-in prompt + shared model. Instructions vary per row (by
+    # applicable-metric subset) and are composed inside judge_row.
     try:
-        base_params, _system_prompt = build_judge_params(
-            session=session, metrics=metrics
-        )
+        base_params = build_judge_params(session=session)
     except Exception as exc:
         logger.error(
             f"[_judge_rows] {log_prefix} Judge setup failed; leaving all rows "
@@ -835,10 +865,19 @@ def _judge_rows(
                 openai_client=openai_client,
                 base_params=base_params,
                 metrics=metrics,
-                question=response.get("question", ""),
-                generated_answer=response.get("generated_output", ""),
-                golden_answer=response.get("ground_truth", ""),
-                config_prompt=config_prompt,
+                inputs={
+                    JudgeInputEnum.CONFIG_PROMPT: config_prompt,
+                    JudgeInputEnum.QUESTION: response.get("question", ""),
+                    JudgeInputEnum.GENERATED_ANSWER: response.get(
+                        "generated_output", ""
+                    ),
+                    JudgeInputEnum.GOLDEN_ANSWER: response.get("ground_truth", ""),
+                    JudgeInputEnum.RETRIEVED_CHUNKS: "\n---\n".join(
+                        c.get("text", "")
+                        for c in (response.get("retrieved_chunks") or [])
+                        if c.get("text")
+                    ),
+                },
             ): (item_id, ref)
             for item_id, ref, response in judgeable
         }
@@ -1149,18 +1188,48 @@ def _stage3_score_and_trace(
 
         judge_result = judge_results.get(item_id)
         if judge_result is not None:
+            sorted_chunks = sorted(
+                response.get("retrieved_chunks") or [],
+                key=lambda c: c.get("score", 0),
+                reverse=True,
+            )
+            top_matches = _format_top_kb_matches(sorted_chunks)
             for spec in metrics:
                 metric_score = judge_result.metrics.get(spec.key)
-                if metric_score is None:
-                    continue
-                trace_scores.append(
-                    {
-                        "name": spec.score_name,
-                        "value": round(metric_score.score, 2),
-                        "data_type": "NUMERIC",
-                        "comment": metric_score.reasoning,
-                    }
-                )
+                is_kb = spec.key == JudgeMetricEnum.KNOWLEDGE_BASE
+                if metric_score is not None:
+                    comment = metric_score.reasoning
+                    if is_kb:
+                        comment = f"{comment} | Top matches: {top_matches}"
+                    trace_scores.append(
+                        {
+                            "name": spec.score_name,
+                            "value": round(metric_score.score, 2),
+                            "data_type": "NUMERIC",
+                            "comment": comment,
+                        }
+                    )
+                elif is_kb:
+                    # KB dropped for this row: surface a human reason instead of a bare
+                    # N/A. Placeholder lives only in trace_scores, never the summary avg.
+                    if not sorted_chunks:
+                        # ponytail: empty chunks under auto tool_choice ~= not queried;
+                        # a "was queried" flag would disambiguate an empty-store hit, not
+                        # worth plumbing.
+                        reason = "Knowledge base not queried."
+                    else:
+                        # Chunks present but the judge returned no KB score (rare: a
+                        # well-formed reply that omitted the metric).
+                        reason = "Knowledge base score unavailable for this row."
+                    trace_scores.append(
+                        {
+                            "name": spec.score_name,
+                            "value": "N/A",
+                            "data_type": "CATEGORICAL",
+                            "comment": reason,
+                            "unscoreable": True,
+                        }
+                    )
 
         traces.append(
             {
