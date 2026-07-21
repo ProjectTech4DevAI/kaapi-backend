@@ -39,8 +39,7 @@ def evaluate_v2(
 ) -> APIResponse[EvaluationRunPublic]:
     """Start a v2 evaluation run.
 
-    v2 runs are always fast and judged on Adherence to Ground Truth; there is no
-    `run_mode` — batch judging is deferred to a later phase.
+    Always fast and judged; there is no `run_mode` — batch judging is deferred.
     """
 
     eval_run = validate_and_start_judged_evaluation(

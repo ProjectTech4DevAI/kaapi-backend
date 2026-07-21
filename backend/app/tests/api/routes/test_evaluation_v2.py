@@ -173,6 +173,7 @@ class TestV1TriggerUnchanged:
 
         assert resp.status_code == 200, resp.text
         body = resp.json()["data"]
+        assert not body["is_judge_run"]
         run = db.get(EvaluationRun, body["id"])
         assert not run.is_judge_run
-        assert run.per_item_ground_truth is None
+        assert run.run_mode == "fast"

@@ -1,10 +1,11 @@
 """Unit tests for the native LLM-as-judge scoring primitives (`crud/evaluations/judge.py`).
 
-Covers the ground-truth judge slice of the three-metric SRD:
-FR-2 (score in [0,1] + reasoning), FR-3 (ground truth judged against the golden
-answer), FR-9 (zero-config default prompt), FR-15 (malformed → raises so the row
-isolates). The single external boundary — the OpenAI judge completion — is mocked
-at `_create_judge_response`; parsing/prompt-composition helpers are pure.
+Covers the ground-truth and adherence-to-prompt judge slices of the three-metric
+SRD: FR-2 (score in [0,1] + reasoning), FR-3 (ground truth judged against the
+golden answer), FR-9 (zero-config default prompt), FR-15 (malformed → raises so
+the row isolates), plus the run-level gating that drops a metric whose run input
+could not be resolved. The single external boundary — the OpenAI judge completion
+— is mocked at `_create_judge_response`; parsing/prompt-composition helpers are pure.
 """
 
 import json
@@ -18,6 +19,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.judge import (
+    JUDGE_COST_STAGE,
     JudgeInputEnum,
     JudgeMetricEnum,
     MetricScore,
@@ -31,6 +33,8 @@ from app.crud.evaluations.score import (
     GROUND_TRUTH_JUDGE_PROMPT,
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_SYSTEM_PREAMBLE,
+    PROMPT_JUDGE_PROMPT,
+    PROMPT_SCORE_NAME,
 )
 
 
@@ -46,6 +50,13 @@ def _judge_response(payload: dict | str, *, usage=(15, 8, 23)):
             output_tokens=output_tokens,
             total_tokens=total_tokens,
         ),
+    )
+
+
+def _both_metric_specs():
+    """The metric set a run gets once its assistant prompt resolves."""
+    return enabled_metric_specs(
+        available_run_inputs=frozenset({JudgeInputEnum.CONFIG_PROMPT})
     )
 
 
@@ -139,6 +150,22 @@ class TestComposeJudgeInput:
         assert "Golden (reference) answer:\nParis" in composed
         # The output contract names the metric key the judge must return.
         assert "ground_truth" in composed
+
+    def test_config_prompt_block_renders_first_and_labelled(self) -> None:
+        composed = _compose_judge_input(
+            metrics=_both_metric_specs(),
+            inputs={
+                JudgeInputEnum.CONFIG_PROMPT: "Only answer in Hindi.",
+                JudgeInputEnum.QUESTION: "What is the capital of France?",
+                JudgeInputEnum.GENERATED_ANSWER: "Paris is the capital.",
+                JudgeInputEnum.GOLDEN_ANSWER: "Paris",
+            },
+        )
+        assert composed.startswith(
+            "Assistant's configured instructions:\nOnly answer in Hindi."
+        )
+        assert composed.index("Question:") < composed.index("Generated answer:")
+        assert "ground_truth, prompt" in composed
 
 
 class TestBuildJudgeParams:
@@ -252,10 +279,27 @@ class TestJudgeRow:
                 )
 
 
-def test_ground_truth_is_the_only_enabled_metric() -> None:
-    """Phase 1 ships exactly one metric; guards against silently enabling more."""
-    specs = enabled_metric_specs()
-    assert [s.key for s in specs] == [JudgeMetricEnum.GROUND_TRUTH]
-    assert specs[0].score_name == GROUND_TRUTH_SCORE_NAME
-    assert specs[0].per_item_column == "per_item_ground_truth"
-    assert specs[0].cost_stage == "ground_truth_judge"
+class TestEnabledMetricSpecs:
+    """Run-level input gating: a metric is dropped when its run input is unresolved."""
+
+    def test_without_run_inputs_only_ground_truth_is_enabled(self) -> None:
+        specs = enabled_metric_specs()
+        assert [s.key for s in specs] == [JudgeMetricEnum.GROUND_TRUTH]
+        assert specs[0].score_name == GROUND_TRUTH_SCORE_NAME
+        assert JudgeInputEnum.CONFIG_PROMPT not in specs[0].required_inputs
+
+    def test_config_prompt_available_enables_both_metrics(self) -> None:
+        specs = enabled_metric_specs(
+            available_run_inputs=frozenset({JudgeInputEnum.CONFIG_PROMPT})
+        )
+        assert [s.key for s in specs] == [
+            JudgeMetricEnum.GROUND_TRUTH,
+            JudgeMetricEnum.PROMPT,
+        ]
+        prompt_spec = specs[1]
+        assert prompt_spec.score_name == PROMPT_SCORE_NAME
+        assert JudgeInputEnum.CONFIG_PROMPT in prompt_spec.required_inputs
+
+    def test_all_metrics_share_one_judge_cost_stage(self) -> None:
+        # One combined call per row, so tokens can't be split per metric.
+        assert JUDGE_COST_STAGE == "judge"

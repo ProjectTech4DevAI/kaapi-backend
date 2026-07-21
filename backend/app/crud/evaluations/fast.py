@@ -25,6 +25,7 @@ import numpy as np
 import openai
 from langfuse import Langfuse
 from openai import OpenAI
+from pydantic import ValidationError
 from sqlalchemy import Integer
 from sqlmodel import Session, select
 from tenacity import (
@@ -42,6 +43,7 @@ from app.core.storage_utils import (
     upload_jsonl_to_object_store,
 )
 from app.crud.evaluations.core import (
+    resolve_evaluation_config,
     resolve_model_from_config,
     save_score,
     update_evaluation_run,
@@ -52,6 +54,8 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
 )
 from app.crud.evaluations.judge import (
+    JUDGE_COST_STAGE,
+    JudgeInputEnum,
     JudgeMetricSpec,
     JudgeResult,
     build_judge_params,
@@ -100,6 +104,9 @@ CHUNK_CONFIG_INDEX = "chunk_index"
 UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
 UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
+
+# Lets the judge tell the template apart from the instructions above it.
+PROMPT_TEMPLATE_LABEL = "Prompt template wrapped around each user input:"
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
@@ -741,24 +748,71 @@ def _stage2_embeddings(
     return eval_run, embedding_results
 
 
+def _resolve_config_prompt(
+    *, session: Session, eval_run: EvaluationRun, log_prefix: str
+) -> str | None:
+    """The evaluated bot's own configured prompt, or None if unresolvable.
+
+    The prompt template is appended when the config carries one, since it is equally
+    part of what the bot was told to do. Returns None when the config carries no
+    instructions, so the caller drops the prompt metric rather than grading against "".
+    """
+    if not eval_run.config_id or not eval_run.config_version:
+        return None
+
+    config, error = resolve_evaluation_config(
+        session=session,
+        config_id=eval_run.config_id,
+        config_version=eval_run.config_version,
+        project_id=eval_run.project_id,
+    )
+    if error or config is None:
+        return None
+
+    # Native/proxy params aren't TextLLMParams-shaped; a mismatch just means there are
+    # no instructions to grade against, not a run failure.
+    try:
+        params = TextLLMParams.model_validate(config.completion.params)
+    except ValidationError as exc:
+        logger.info(
+            f"[_resolve_config_prompt] {log_prefix} Completion params are not "
+            f"text params; prompt metric unscoreable | error={exc}"
+        )
+        return None
+
+    sections: list[str] = []
+    if params.instructions:
+        sections.append(params.instructions.strip())
+    if config.prompt_template and config.prompt_template.template:
+        sections.append(
+            f"{PROMPT_TEMPLATE_LABEL}\n{config.prompt_template.template.strip()}"
+        )
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
 def _judge_rows(
     *,
     session: Session,
     openai_client: OpenAI,
-    eval_run: EvaluationRun,
+    metrics: list[JudgeMetricSpec],
+    config_prompt: str,
     judgeable: list[tuple[str, str, dict[str, Any]]],
     log_prefix: str,
 ) -> tuple[dict[str, JudgeResult], set[str], str | None]:
-    """Run one combined judge completion per judgeable row, isolated per row."""
+    """Run one combined judge completion per judgeable row, isolated per row.
+
+    `metrics` is the run's enabled set, already filtered for unresolvable run-level
+    inputs; `config_prompt` is the same run-level text for every row.
+    """
     results: dict[str, JudgeResult] = {}
     failed_refs: set[str] = set()
-    if not judgeable:
+    if not judgeable or not metrics:
         return results, failed_refs, None
 
-    metrics = enabled_metric_specs()
-
-    # Build base params once per run; judging is system-config only, so every metric
-    # uses its built-in prompt + fallback model.
+    # Judging is system-config only, so the body is identical for every row.
     try:
         base_params, _system_prompt = build_judge_params(
             session=session, metrics=metrics
@@ -784,6 +838,7 @@ def _judge_rows(
                 question=response.get("question", ""),
                 generated_answer=response.get("generated_output", ""),
                 golden_answer=response.get("ground_truth", ""),
+                config_prompt=config_prompt,
             ): (item_id, ref)
             for item_id, ref, response in judgeable
         }
@@ -804,28 +859,19 @@ def _judge_rows(
 def _attach_metric_scores(
     *,
     spec: JudgeMetricSpec,
-    eval_run: EvaluationRun,
     judge_results: dict[str, JudgeResult],
-    item_id_to_ref: dict[str, str],
     summary_scores: list[dict[str, Any]],
 ) -> None:
-    """Persist one metric's per-row map + summary score from the combined results.
+    """Append one metric's run-level summary score from the combined results.
 
-    Iterates the registry so knowledge_base / prompt need only add a spec + column.
-    Per-trace score comments are attached separately in the trace-build loop.
+    Per-row scores and reasoning are stored per trace in the trace-build loop, which
+    is what the read path serves; only the aggregate belongs on the run.
     """
-    per_item: dict[str, float] = {}
-    values: list[float] = []
-    for item_id, result in judge_results.items():
-        metric_score = result.metrics.get(spec.key)
-        if metric_score is None:
-            continue
-        ref = item_id_to_ref[item_id]
-        per_item[ref] = round(float(metric_score.score), 6)
-        values.append(metric_score.score)
-
-    # Durable {ref: score} map on the metric's own column (Kaapi-native store).
-    setattr(eval_run, spec.per_item_column, per_item or None)
+    values: list[float] = [
+        metric_score.score
+        for result in judge_results.values()
+        if (metric_score := result.metrics.get(spec.key)) is not None
+    ]
 
     if values:
         arr = np.array(values)
@@ -850,21 +896,19 @@ def _stage3_score_and_trace(
     embedding_results: list[dict[str, Any]] | None,
     log_prefix: str,
 ) -> tuple[EvaluationRun, EvaluationScore, list[dict[str, Any]]]:
-    """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs.
+    """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs. Idempotent.
 
-    Returns the run, the full score unit (summary_scores + per-trace records, in
-    the batch path's shape), and the Langfuse `write_items` (per-item cosine +
-    unscoreable placeholders; empty for v2). Everything is keyed by `ref` (trace_id
-    when traced, else item_id) so it works with or without Langfuse.
+    Returns the run, the full score unit (summary_scores + per-trace records in the
+    batch path's shape), and the Langfuse `write_items` (empty for v2). Everything is
+    keyed by `ref` (trace_id when traced, else item_id) so it works without Langfuse.
 
-    Two mutually-exclusive scoring paths, gated on `eval_run.is_judge_run`:
-      - v1 (`is_judge_run` false): cosine over the embedded pairs, per_item_scores,
-        the Cosine summary score, and Langfuse cosine sync — unchanged.
-      - v2 (`is_judge_run` true): no embeddings ran, so cosine is skipped entirely
-        (`embedding_results` is None/empty); only the ground-truth judge scores each
-        row, per_item_scores stays NULL, and there are no Langfuse writes.
-    A judge failure can never block a v1 cosine score because v1 never judges.
-    Idempotent, no stage marker.
+    The two scoring paths are mutually exclusive, gated on `eval_run.is_judge_run`:
+      - v1: cosine over the embedded pairs, per_item_scores, the Cosine summary score
+        and Langfuse sync — unchanged; v1 never judges, so a judge failure can never
+        block a cosine score.
+      - v2: no embeddings ran, so cosine is skipped entirely (`embedding_results` is
+        None/empty); one combined judge call scores every enabled metric per row,
+        per_item_scores stays NULL, and nothing is written to Langfuse.
     """
     is_judge_run = eval_run.is_judge_run
     logger.info(
@@ -1014,16 +1058,30 @@ def _stage3_score_and_trace(
             )
 
     judge_results: dict[str, JudgeResult] = {}
+    # Stays empty for v1, which never judges.
+    metrics: list[JudgeMetricSpec] = []
     if eval_run.is_judge_run:
         judgeable = [
             (response["item_id"], item_id_to_ref[response["item_id"]], response)
             for response in response_results
             if response.get("generated_output") and response.get("ground_truth")
         ]
+
+        # Run-level input: resolved once for every row. When missing, only the
+        # metrics requiring it drop out; the run still completes.
+        config_prompt = _resolve_config_prompt(
+            session=session, eval_run=eval_run, log_prefix=log_prefix
+        )
+        available_run_inputs = (
+            frozenset({JudgeInputEnum.CONFIG_PROMPT}) if config_prompt else frozenset()
+        )
+        metrics = enabled_metric_specs(available_run_inputs=available_run_inputs)
+
         judge_results, judge_failed_refs, judge_model = _judge_rows(
             session=session,
             openai_client=openai_client,
-            eval_run=eval_run,
+            metrics=metrics,
+            config_prompt=config_prompt or "",
             judgeable=judgeable,
             log_prefix=log_prefix,
         )
@@ -1033,23 +1091,21 @@ def _stage3_score_and_trace(
         for ref in judge_failed_refs:
             unscoreable.setdefault(ref, JUDGE_FAILED_REASON)
 
-        for spec in enabled_metric_specs():
+        for spec in metrics:
             _attach_metric_scores(
                 spec=spec,
-                eval_run=eval_run,
                 judge_results=judge_results,
-                item_id_to_ref=item_id_to_ref,
                 summary_scores=summary_scores,
             )
 
-        # One combined call per row; attribute its usage to the primary metric's
-        # cost stage (single-metric slice — per-metric cost split is deferred).
+        # One combined call grades every metric, so its tokens can't be split per
+        # metric; see JUDGE_COST_STAGE.
         if judge_results and judge_model:
             attach_cost(
                 session=session,
                 eval_run=eval_run,
                 log_prefix=log_prefix,
-                judge_stage=enabled_metric_specs()[0].cost_stage,
+                judge_stage=JUDGE_COST_STAGE,
                 judge_model=judge_model,
                 judge_results=[
                     {"usage": result.usage} for result in judge_results.values()
@@ -1065,8 +1121,7 @@ def _stage3_score_and_trace(
         item_id = response["item_id"]
         ref = item_id_to_ref.get(item_id, item_id)
         trace_scores: list[TraceScore] = []
-        # v2 judged runs carry no cosine score or cosine placeholder — only the
-        # ground-truth judge score below.
+        # v2 carries no cosine score or placeholder — only the judge scores below.
         if not is_judge_run:
             cosine = item_id_to_score.get(item_id)
             if cosine is not None:
@@ -1094,7 +1149,7 @@ def _stage3_score_and_trace(
 
         judge_result = judge_results.get(item_id)
         if judge_result is not None:
-            for spec in enabled_metric_specs():
+            for spec in metrics:
                 metric_score = judge_result.metrics.get(spec.key)
                 if metric_score is None:
                     continue
@@ -1118,15 +1173,14 @@ def _stage3_score_and_trace(
             }
         )
 
-    # Persist cost + the durable judge maps here; the score unit (summary + traces)
-    # is persisted by the caller via save_score so it lands in S3 like the batch path.
+    # Persist cost + unscoreable here; the score unit (summary + traces) is persisted
+    # by the caller via save_score so it lands in S3 like the batch path.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
         update=EvaluationRunUpdate(
             cost=eval_run.cost,
             unscoreable=eval_run.unscoreable,
-            per_item_ground_truth=eval_run.per_item_ground_truth,
         ),
     )
 
