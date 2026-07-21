@@ -30,8 +30,10 @@ from app.crud.evaluations.fast import (
     CHUNK_CONFIG_INDEX,
     CHUNK_CONFIG_RUN_ID,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
+    _format_top_kb_matches,
     _responses_call_for_item,
     run_fast_evaluation,
+    run_response_chunk,
 )
 from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
@@ -41,7 +43,7 @@ from app.crud.evaluations.score import (
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
-from app.models.llm.request import ConfigBlob, KaapiCompletionConfig
+from app.models.llm.request import ConfigBlob, KaapiCompletionConfig, TextLLMParams
 from app.models.response import FileResultChunk
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
@@ -495,7 +497,7 @@ class TestResponsesChunkCapture:
         with patch(
             "app.crud.evaluations.fast.get_file_search_results",
             return_value=[
-                FileResultChunk(score=0.91, text="chunk A"),
+                FileResultChunk(score=0.91, text="chunk A", filename="doc.pdf"),
                 FileResultChunk(score=0.42, text="chunk B"),
             ],
         ):
@@ -506,9 +508,10 @@ class TestResponsesChunkCapture:
             )
 
         assert result["failed"] is False
+        # filename flows into the persisted unit so knowledge_base can name its matches.
         assert result["retrieved_chunks"] == [
-            {"score": 0.91, "text": "chunk A"},
-            {"score": 0.42, "text": "chunk B"},
+            {"score": 0.91, "text": "chunk A", "filename": "doc.pdf"},
+            {"score": 0.42, "text": "chunk B", "filename": None},
         ]
         json.dumps(result)  # the S3 unit must stay JSON-serializable
 
@@ -543,11 +546,12 @@ class TestResponsesChunkCapture:
 
 
 class TestKnowledgeBaseScoring:
-    def test_groundedness_scores_only_chunked_rows(
+    def test_groundedness_scores_chunked_row_and_flags_chunkless_row_na(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
     ):
-        """A chunk-less row is unscoreable for groundedness (absent, not 0), while
-        ground truth still scores every judged row."""
+        """A chunked row gets a numeric KB score; a chunk-less-but-judged row gets an
+        N/A KB placeholder (not a numeric score, not absent), while ground truth still
+        scores every judged row."""
         eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
         chunked = _resp_result("item-chunked", "Q1", "golden-1")
         chunked["retrieved_chunks"] = [{"score": 0.9, "text": "supporting chunk"}]
@@ -578,5 +582,238 @@ class TestKnowledgeBaseScoring:
         kb_chunked = _score_named(traces["item-chunked"], KNOWLEDGE_BASE_SCORE_NAME)
         assert kb_chunked is not None
         assert kb_chunked["value"] == 0.6
-        assert _score_named(traces["item-plain"], KNOWLEDGE_BASE_SCORE_NAME) is None
+
+        # The judged-but-chunkless row surfaces a human N/A placeholder that stays out
+        # of the summary avg (it is not a numeric 0).
+        kb_plain = _score_named(traces["item-plain"], KNOWLEDGE_BASE_SCORE_NAME)
+        assert kb_plain["value"] == "N/A"
+        assert kb_plain["data_type"] == "CATEGORICAL"
+        assert kb_plain["unscoreable"] is True
+        assert kb_plain["comment"] == "Knowledge base not queried."
         assert _score_named(traces["item-plain"], GROUND_TRUTH_SCORE_NAME) is not None
+
+    def test_kb_scored_row_comment_names_top_matches(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """A scored KB row appends the top retrieved filenames to its comment."""
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        chunked = _resp_result("item-1", "Q1", "golden-1")
+        chunked["retrieved_chunks"] = [
+            {"score": 0.906, "text": "supporting chunk", "filename": "biu-1.pdf"},
+            {"score": 0.42, "text": "weak chunk", "filename": "faq.pdf"},
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[chunked], store=_s3_store)
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                            "knowledge_base": {"score": 0.7, "reasoning": "grounded"},
+                        }
+                    )
+                )
+            return _judge_response(0.9, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        kb = _score_named(_trace_by_ref(result)["item-1"], KNOWLEDGE_BASE_SCORE_NAME)
+        assert kb["data_type"] == "NUMERIC"
+        assert kb["value"] == 0.7
+        # No relevance gate: every retrieved chunk names a match, low scores included.
+        assert (
+            kb["comment"]
+            == "grounded | Top matches: biu-1.pdf (90.6%), faq.pdf (42.0%)"
+        )
+
+    def test_kb_scored_even_when_all_chunks_low_score(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """Gate removed: any retrieved chunk is judged, however weak its score."""
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.55, "text": "weak but relevant", "filename": "a.pdf"},
+            {"score": 0.30, "text": "weaker", "filename": "b.pdf"},
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=_s3_store)
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 0.9, "reasoning": "gt"},
+                            "knowledge_base": {"score": 0.6, "reasoning": "partial"},
+                        }
+                    )
+                )
+            return _judge_response(0.9, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        kb = _score_named(_trace_by_ref(result)["item-1"], KNOWLEDGE_BASE_SCORE_NAME)
+        assert kb["data_type"] == "NUMERIC"
+        assert kb["value"] == 0.6
+        assert kb["comment"] == "partial | Top matches: a.pdf (55.0%), b.pdf (30.0%)"
+
+    def test_kb_na_placeholder_stays_out_of_summary_avg(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """The KB summary avg reflects only genuinely-scored rows, never the N/A rows."""
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        scored = _resp_result("item-scored", "Q1", "golden-1")
+        scored["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting", "filename": "kb.pdf"}
+        ]
+        dropped = _resp_result("item-dropped", "Q2", "golden-2")  # no chunks → N/A
+        _seed_chunk(
+            db=db, eval_run=eval_run, results=[scored, dropped], store=_s3_store
+        )
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                            "knowledge_base": {"score": 0.6, "reasoning": "grounded"},
+                        }
+                    )
+                )
+            return _judge_response(0.9, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        kb_summary = next(
+            s
+            for s in result.score["summary_scores"]
+            if s["name"] == KNOWLEDGE_BASE_SCORE_NAME
+        )
+        # Only item-scored (0.6) is a real KB score; the N/A row never enters the avg.
+        assert kb_summary["avg"] == 0.6
+        assert kb_summary["total_pairs"] == 1
+
+    def test_non_kb_metric_none_is_skipped_not_placeholdered(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """A missing non-KB metric (ground_truth) yields no trace score at all — the
+        N/A placeholder is a KB-only affordance."""
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting", "filename": "kb.pdf"}
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=_s3_store)
+
+        # Judge returns knowledge_base only; ground_truth is silently dropped in parsing.
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _raw_judge_response(
+                json.dumps({"knowledge_base": {"score": 0.7, "reasoning": "grounded"}})
+            ),
+        )
+
+        trace = _trace_by_ref(result)["item-1"]
+        assert _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME) is not None
+        # No ground_truth score is emitted — not even an N/A placeholder.
+        assert _score_named(trace, GROUND_TRUTH_SCORE_NAME) is None
+
+
+class TestFormatTopKbMatches:
+    """`_format_top_kb_matches` — the human 'Top matches: ...' string for KB comments."""
+
+    def test_formats_filename_and_percent_to_one_decimal(self) -> None:
+        result = _format_top_kb_matches(
+            [
+                {"filename": "biu-1.pdf", "score": 0.906},
+                {"filename": "faq.pdf", "score": 0.663},
+            ]
+        )
+        assert result == "biu-1.pdf (90.6%), faq.pdf (66.3%)"
+
+    def test_includes_all_chunks_regardless_of_score(self) -> None:
+        result = _format_top_kb_matches(
+            [
+                {"filename": "hi.pdf", "score": 0.9},
+                {"filename": "lo.pdf", "score": 0.5},
+            ]
+        )
+        assert result == "hi.pdf (90.0%), lo.pdf (50.0%)"
+
+    def test_caps_at_three_matches(self) -> None:
+        chunks = [{"filename": f"f{i}.pdf", "score": 0.9 - i * 0.01} for i in range(5)]
+        result = _format_top_kb_matches(chunks)
+        assert result == "f0.pdf (90.0%), f1.pdf (89.0%), f2.pdf (88.0%)"
+
+    def test_missing_filename_renders_unknown(self) -> None:
+        assert _format_top_kb_matches([{"score": 0.9}]) == "unknown (90.0%)"
+        assert (
+            _format_top_kb_matches([{"filename": None, "score": 0.8}])
+            == "unknown (80.0%)"
+        )
+
+    def test_empty_input_is_empty_string(self) -> None:
+        assert _format_top_kb_matches([]) == ""
+
+
+class TestFileSearchIncludeParam:
+    """`run_response_chunk` requests file_search hits only when a file_search tool is present,
+    and never overrides tool_choice (stays at the model default / auto)."""
+
+    def _run_and_capture_base_params(
+        self, *, db: Session, eval_run: EvaluationRun, tools: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        captured: dict[str, Any] = {}
+
+        def _fake_call(*, openai_client, base_params, item):
+            captured.update(base_params)
+            return {"item_id": item["id"], "failed": False, "usage": {}}
+
+        with (
+            patch(
+                "app.crud.evaluations.fast.map_kaapi_to_openai_params",
+                return_value=({"model": "gpt-4o", "tools": tools}, []),
+            ),
+            patch(
+                "app.crud.evaluations.fast._responses_call_for_item",
+                side_effect=_fake_call,
+            ),
+            patch(
+                "app.crud.evaluations.fast._upload_unit_to_s3",
+                return_value="s3://bucket/chunk.json",
+            ),
+        ):
+            run_response_chunk(
+                session=db,
+                openai_client=MagicMock(),
+                eval_run=eval_run,
+                config=TextLLMParams(model="gpt-4o"),
+                dataset_items_slice=[{"id": "item-1"}],
+                chunk_index=0,
+                log_prefix="[test]",
+            )
+        return captured
+
+    def test_file_search_present_sets_include_and_leaves_tool_choice_default(
+        self, db: Session, user_api_key: TestAuthContext
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        base_params = self._run_and_capture_base_params(
+            db=db, eval_run=eval_run, tools=[{"type": "file_search"}]
+        )
+        assert base_params["include"] == ["file_search_call.results"]
+        assert "tool_choice" not in base_params
+
+    def test_no_file_search_leaves_include_and_tool_choice_unset(
+        self, db: Session, user_api_key: TestAuthContext
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        base_params = self._run_and_capture_base_params(
+            db=db, eval_run=eval_run, tools=[]
+        )
+        assert "include" not in base_params
+        assert "tool_choice" not in base_params
+        assert "include" not in base_params

@@ -53,6 +53,7 @@ from app.crud.evaluations.embeddings import (
 )
 from app.crud.evaluations.judge import (
     JudgeInputEnum,
+    JudgeMetricEnum,
     JudgeMetricSpec,
     JudgeResult,
     build_judge_params,
@@ -102,6 +103,21 @@ CHUNK_CONFIG_INDEX = "chunk_index"
 UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
 UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
+
+# How many top KB matches to name in the knowledge_base trace comment.
+_KB_TOP_CHUNKS = 3
+
+
+def _format_top_kb_matches(sorted_chunks: list[dict[str, Any]]) -> str:
+    """Top-N retrieved chunks as 'biu-1.pdf (90.6%), faq.pdf (66.3%)'.
+
+    Expects chunks pre-sorted by score desc; old S3 payloads may lack filename.
+    """
+    matches = [
+        f"{c.get('filename') or 'unknown'} ({c.get('score', 0) * 100:.1f}%)"
+        for c in sorted_chunks
+    ]
+    return ", ".join(matches[:_KB_TOP_CHUNKS])
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
@@ -260,7 +276,7 @@ def _responses_call_for_item(
         failed=False,
         # Plain dicts (not FileResultChunk) so the unit stays JSON-serializable for S3.
         retrieved_chunks=[
-            {"score": c.score, "text": c.text}
+            {"score": c.score, "text": c.text, "filename": c.filename}
             for c in get_file_search_results(response)
         ],
     )
@@ -501,6 +517,8 @@ def run_response_chunk(
         )
 
     # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
+    # tool_choice stays at the model default (auto) — consistent with normal calls;
+    # a row where the model doesn't query the KB is scored N/A, not forced to search.
     if any(t.get("type") == "file_search" for t in base_params.get("tools", [])):
         base_params["include"] = ["file_search_call.results"]
 
@@ -1118,18 +1136,48 @@ def _stage3_score_and_trace(
 
         judge_result = judge_results.get(item_id)
         if judge_result is not None:
+            sorted_chunks = sorted(
+                response.get("retrieved_chunks") or [],
+                key=lambda c: c.get("score", 0),
+                reverse=True,
+            )
+            top_matches = _format_top_kb_matches(sorted_chunks)
             for spec in enabled_metric_specs():
                 metric_score = judge_result.metrics.get(spec.key)
-                if metric_score is None:
-                    continue
-                trace_scores.append(
-                    {
-                        "name": spec.score_name,
-                        "value": round(metric_score.score, 2),
-                        "data_type": "NUMERIC",
-                        "comment": metric_score.reasoning,
-                    }
-                )
+                is_kb = spec.key == JudgeMetricEnum.KNOWLEDGE_BASE
+                if metric_score is not None:
+                    comment = metric_score.reasoning
+                    if is_kb:
+                        comment = f"{comment} | Top matches: {top_matches}"
+                    trace_scores.append(
+                        {
+                            "name": spec.score_name,
+                            "value": round(metric_score.score, 2),
+                            "data_type": "NUMERIC",
+                            "comment": comment,
+                        }
+                    )
+                elif is_kb:
+                    # KB dropped for this row: surface a human reason instead of a bare
+                    # N/A. Placeholder lives only in trace_scores, never the summary avg.
+                    if not sorted_chunks:
+                        # ponytail: empty chunks under auto tool_choice ~= not queried;
+                        # a "was queried" flag would disambiguate an empty-store hit, not
+                        # worth plumbing.
+                        reason = "Knowledge base not queried."
+                    else:
+                        # Chunks present but the judge returned no KB score (rare: a
+                        # well-formed reply that omitted the metric).
+                        reason = "Knowledge base score unavailable for this row."
+                    trace_scores.append(
+                        {
+                            "name": spec.score_name,
+                            "value": "N/A",
+                            "data_type": "CATEGORICAL",
+                            "comment": reason,
+                            "unscoreable": True,
+                        }
+                    )
 
         traces.append(
             {
