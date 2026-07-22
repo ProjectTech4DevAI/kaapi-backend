@@ -158,6 +158,7 @@ def map_kaapi_to_google_params(
         - model → model
         - instructions → instructions (for STT prompts, if available)
         - temperature -> temperature parameter (0-2)
+        - knowledge_base_ids → FileSearch tool store names (text only)
 
     Returns:
         Tuple of:
@@ -191,11 +192,14 @@ def map_kaapi_to_google_params(
         if reasoning:
             google_params["reasoning"] = reasoning
 
-        # Warn about unsupported parameters
-        if kaapi_params.get("knowledge_base_ids"):
-            # TODO: Will take up later, when we add google filesearch tool support
+        knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
+        if knowledge_base_ids:
+            google_params["knowledge_base_ids"] = knowledge_base_ids
+
+        if kaapi_params.get("max_num_results"):
             warnings.append(
-                "Parameter 'knowledge_base_ids' is not supported by Google AI and was ignored."
+                "Parameter 'max_num_results' is not supported by the Gemini "
+                "FileSearch tool and was ignored."
             )
 
     elif completion_type == CompletionType.TTS:
