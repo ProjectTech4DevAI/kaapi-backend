@@ -13,20 +13,20 @@ import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any, Tuple
+from typing import Any
 
 import boto3
 import jwt
-from jwt.exceptions import InvalidTokenError
 from botocore.client import BaseClient
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from sqlmodel import Session, and_, select
 
 from app.core.config import settings
-from app.models import APIKey, User, Organization, Project, AuthContext
+from app.models import APIKey, AuthContext, Organization, Project, User
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class APIKeyManager:
     pwd_context = CryptContext(schemes=[HASH_ALGORITHM], deprecated="auto")
 
     @classmethod
-    def generate(cls) -> Tuple[str, str, str]:
+    def generate(cls) -> tuple[str, str, str]:
         """
         Generate a new API key with prefix and hashed value.
         Ensures exact lengths: prefix=22 chars, secret=43 chars.
@@ -288,7 +288,7 @@ class APIKeyManager:
         return raw_key, key_prefix, key_hash
 
     @classmethod
-    def _extract_key_parts(cls, raw_key: str) -> Tuple[str, str] | None:
+    def _extract_key_parts(cls, raw_key: str) -> tuple[str, str] | None:
         """
         Extract prefix and secret from an API key based on its format.
 

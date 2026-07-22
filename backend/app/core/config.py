@@ -213,8 +213,8 @@ class Settings(BaseSettings):
 
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
 
-    # Reasoning effort for the judge model. "minimal" keeps per-row judging fast.
-    # models. One of: none | minimal | low | medium | high | xhigh.
+    # Reasoning effort for the judge model; "minimal" keeps per-row judging fast.
+    # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "minimal"
 
     @computed_field  # type: ignore[prop-decorator]

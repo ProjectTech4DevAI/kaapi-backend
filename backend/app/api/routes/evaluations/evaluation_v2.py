@@ -10,7 +10,7 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.models.evaluation import EvaluationRunPublic
-from app.services.evaluations.judge import validate_and_start_judged_evaluation
+from app.services.evaluations.fast import validate_and_start_fast_evaluation
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,10 @@ def evaluate_v2(
     """Start a v2 evaluation run.
 
     Always fast and judged; there is no `run_mode` — batch judging is deferred.
+    Judging always runs (`is_judge_run=True`); there is no per-run judge config.
     """
 
-    eval_run = validate_and_start_judged_evaluation(
+    eval_run = validate_and_start_fast_evaluation(
         session=session,
         dataset_id=dataset_id,
         run_name=experiment_name,
@@ -51,5 +52,6 @@ def evaluate_v2(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
         trace_id=correlation_id.get() or "N/A",
+        is_judge_run=True,
     )
     return APIResponse.success_response(data=eval_run)
