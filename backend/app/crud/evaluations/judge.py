@@ -24,6 +24,9 @@ from tenacity import (
 )
 
 from app.core.config import settings
+from app.crud.evaluations.response_parsing import (
+    extract_response_text as _extract_response_text,
+)
 from app.crud.evaluations.score import (
     GROUND_TRUTH_JUDGE_PROMPT,
     GROUND_TRUTH_SCORE_NAME,
@@ -280,24 +283,6 @@ def _compose_judge_input(
     metric_keys = ", ".join(spec.key.value for spec in metrics)
     contract = JUDGE_OUTPUT_INSTRUCTION.format(metric_keys=metric_keys)
     return "\n\n".join(blocks) + "\n\n" + contract
-
-
-def _extract_response_text(response: Any) -> str:
-    """Extract generated text, preferring `output_text` then walking `output`."""
-    output_text = getattr(response, "output_text", None)
-    if output_text:
-        return output_text
-
-    output = getattr(response, "output", None) or []
-    for item in output:
-        if getattr(item, "type", None) != "message":
-            continue
-        for content in getattr(item, "content", None) or []:
-            if getattr(content, "type", None) == "output_text":
-                text = getattr(content, "text", None)
-                if text:
-                    return text
-    return ""
 
 
 def _parse_metric_score(key: JudgeMetricEnum, raw: Any) -> MetricScore:

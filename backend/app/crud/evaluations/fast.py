@@ -68,6 +68,12 @@ from app.crud.evaluations.langfuse import (
     update_traces_with_cosine_scores,
 )
 from app.crud.evaluations.merge import apply_cosine_breakdown
+from app.crud.evaluations.response_parsing import (
+    extract_response_text as _extract_response_text,
+)
+from app.crud.evaluations.response_parsing import (
+    field_value as _field,
+)
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
@@ -163,36 +169,6 @@ def _create_embedding(
     return openai_client.embeddings.create(
         model=model, input=[output_text, ground_truth], encoding_format="float"
     )
-
-
-def _field(obj: Any, name: str, default: Any = None) -> Any:
-    """Read a field from an object or dict (SDK object vs test dict), with a default."""
-    if obj is None:
-        return default
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-
-def _extract_response_text(response: Any) -> str:
-    """Extract generated text, preferring `output_text` then walking `output`."""
-    output_text = _field(response, "output_text")
-    if output_text:
-        return output_text
-
-    output = _field(response, "output")
-    if not output:
-        return ""
-
-    for item in output:
-        if _field(item, "type") != "message":
-            continue
-        for content in _field(item, "content") or []:
-            if _field(content, "type") == "output_text":
-                text = _field(content, "text")
-                if text:
-                    return text
-    return ""
 
 
 def _response_result(
