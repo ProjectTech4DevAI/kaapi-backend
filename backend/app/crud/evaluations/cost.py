@@ -11,13 +11,13 @@ Persisted shape on `eval_run.cost`:
     {
         "response":          {model, input_tokens, output_tokens, total_tokens, cost_usd},
         "embedding":         {model, input_tokens, output_tokens, total_tokens, cost_usd},
-        "ground_truth_judge": {model, input_tokens, output_tokens, total_tokens, cost_usd},
+        "judge":             {model, input_tokens, output_tokens, total_tokens, cost_usd},
         "total_cost_usd": float,
     }
 
-Any stage entry is optional. Embedding entries use output_tokens=0. Judge stages
-(one per metric, keyed by the metric's cost_stage) are priced like the response
-stage from per-row usage.
+Any stage entry is optional. Embedding entries use output_tokens=0. One combined call
+grades every metric, so judge tokens can't be split per metric and form a single stage,
+priced from per-row usage like the response stage.
 """
 
 import logging
@@ -115,8 +115,8 @@ def _build_embedding_cost_entry(
     return _build_cost_entry(session=session, model=model, totals=totals)
 
 
-# Fixed top-level keys on eval_run.cost that are NOT per-metric judge stages;
-# everything else at the top level is a judge stage preserved across partial updates.
+# Everything else at eval_run.cost's top level is a judge stage, preserved across
+# partial updates.
 _NON_JUDGE_COST_KEYS: frozenset[str] = frozenset(
     {"response", "embedding", "total_cost_usd"}
 )
@@ -177,8 +177,7 @@ def attach_cost(
 
     Caller is responsible for persisting `eval_run` afterwards. Any stage's
     previously-computed entry on `eval_run.cost` is preserved when that stage's
-    inputs are not supplied, so partial updates never clobber prior data — including
-    prior per-metric judge stages, which are carried forward untouched.
+    inputs are not supplied, so partial updates never clobber prior data.
     """
     try:
         existing_cost = eval_run.cost or {}

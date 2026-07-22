@@ -390,18 +390,6 @@ class EvaluationRun(SQLModel, table=True):
         ),
         description="Marks a v2 judged run; gates judging and the Langfuse-sync skip",
     )
-    per_item_ground_truth: dict[str, Any] | None = SQLField(
-        default=None,
-        sa_column=Column(
-            JSONB,
-            nullable=True,
-            comment=(
-                "Durable {ref: score} map of the Adherence to Ground Truth judge "
-                "scores (ref = trace_id when traced, else item_id); Kaapi's own store"
-            ),
-        ),
-        description="Durable map of per-row ground-truth judge scores keyed by ref",
-    )
 
     is_score_updated: bool | None = SQLField(
         default=None,
@@ -515,7 +503,6 @@ class EvaluationRunUpdate(SQLModel):
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
     is_judge_run: bool | None = None
-    per_item_ground_truth: dict[str, Any] | None = None
 
 
 class EvaluationRunPublic(SQLModel):
@@ -538,7 +525,6 @@ class EvaluationRunPublic(SQLModel):
     unscoreable: dict[str, Any] | None = None
     is_score_updated: bool | None = None
     is_judge_run: bool | None = None
-    per_item_ground_truth: dict[str, Any] | None = None
     cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int

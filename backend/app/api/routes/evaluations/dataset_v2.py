@@ -1,8 +1,7 @@
 """v2 Langfuse-free evaluation dataset upload route.
 
-Replica of the v1 dataset upload with the same multipart shape and response, but
-it creates no Langfuse dataset and stores only the original items — duplication is
-recorded in metadata and applied at run time.
+Same multipart shape and response, but no Langfuse dataset is created and only
+the original items are stored — duplication is metadata, applied at run time.
 """
 
 import logging

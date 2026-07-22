@@ -1,9 +1,9 @@
 """Native LLM-as-a-judge for v2 fast evaluations.
 
-Runs one OpenAI judge call per row (after the answers are generated) to score all
-enabled metrics together. v2 runs are judge-only — no cosine, no embeddings — and
-v1 never invokes this judge. A per-row judge failure is isolated to that row.
-Metrics are registry-driven and easily extensible.
+One OpenAI call per row scores all enabled metrics together. v2 runs are judge-only
+(no cosine, no embeddings) and v1 never invokes this judge. A per-row failure is
+isolated to that row; a metric whose run-level input cannot be resolved is dropped
+for the run, which still completes on the remaining metrics.
 """
 
 import json
@@ -31,6 +31,8 @@ from app.crud.evaluations.score import (
     JUDGE_SYSTEM_PREAMBLE,
     KNOWLEDGE_BASE_JUDGE_PROMPT,
     KNOWLEDGE_BASE_SCORE_NAME,
+    PROMPT_JUDGE_PROMPT,
+    PROMPT_SCORE_NAME,
 )
 from app.services.llm.mappers import map_kaapi_to_openai_params
 
@@ -41,6 +43,7 @@ class JudgeMetricEnum(str, Enum):
     """Registry keys — also the JSON keys the combined judge returns per metric."""
 
     GROUND_TRUTH = "ground_truth"
+    PROMPT = "prompt"
     KNOWLEDGE_BASE = "knowledge_base"
 
 
@@ -51,6 +54,7 @@ class JudgeInputEnum(str, Enum):
     appended last to keep existing metrics' prompts byte-identical.
     """
 
+    CONFIG_PROMPT = "config_prompt"
     QUESTION = "question"
     GENERATED_ANSWER = "generated_answer"
     GOLDEN_ANSWER = "golden_answer"
@@ -58,11 +62,25 @@ class JudgeInputEnum(str, Enum):
 
 
 _INPUT_LABELS: dict[JudgeInputEnum, str] = {
+    JudgeInputEnum.CONFIG_PROMPT: "Assistant's configured instructions",
     JudgeInputEnum.QUESTION: "Question",
     JudgeInputEnum.GENERATED_ANSWER: "Generated answer",
     JudgeInputEnum.GOLDEN_ANSWER: "Golden (reference) answer",
     JudgeInputEnum.RETRIEVED_CHUNKS: "Retrieved knowledge-base chunks",
 }
+
+RUN_LEVEL_INPUTS: frozenset[JudgeInputEnum] = frozenset({JudgeInputEnum.CONFIG_PROMPT})
+
+JUDGE_COST_STAGE: str = "judge"
+
+# Every input block is visible to every metric, so each metric section states its own
+# scope — at the input level, never the metric level, so it can never be read as
+# permission to skip the metric itself.
+_CONSIDER_INPUTS_TEMPLATE: str = (
+    "When scoring THIS metric, consider only these input blocks: {labels}."
+)
+_IGNORE_INPUTS_TEMPLATE: str = "Do not consider: {labels}."
+_LABEL_SEPARATOR: str = ", "
 
 
 @dataclass(frozen=True)
@@ -73,15 +91,11 @@ class JudgeMetricSpec:
     score_name: str
     prompt_fragment: str
     required_inputs: tuple[JudgeInputEnum, ...]
-    # None = no dedicated backup column; the per-row score + reasoning still land in
-    # the score_trace_url trace unit (the Kaapi-native source of truth).
-    per_item_column: str | None
-    cost_stage: str
 
 
-# prompt slots in here next. All metrics are graded by one combined call, so they
-# share a single judge model (settings.EVAL_JUDGE_MODEL); there is no per-metric
-# model. A metric only runs on a row that carries all its required_inputs.
+# All metrics are graded by one combined call, so they share a single judge model
+# (settings.EVAL_JUDGE_MODEL); there is no per-metric model. A metric only runs on a
+# row that carries all its required_inputs.
 METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
     JudgeMetricEnum.GROUND_TRUTH: JudgeMetricSpec(
         key=JudgeMetricEnum.GROUND_TRUTH,
@@ -92,8 +106,16 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.GOLDEN_ANSWER,
         ),
-        per_item_column="per_item_ground_truth",
-        cost_stage="ground_truth_judge",
+    ),
+    JudgeMetricEnum.PROMPT: JudgeMetricSpec(
+        key=JudgeMetricEnum.PROMPT,
+        score_name=PROMPT_SCORE_NAME,
+        prompt_fragment=PROMPT_JUDGE_PROMPT,
+        required_inputs=(
+            JudgeInputEnum.CONFIG_PROMPT,
+            JudgeInputEnum.QUESTION,
+            JudgeInputEnum.GENERATED_ANSWER,
+        ),
     ),
     JudgeMetricEnum.KNOWLEDGE_BASE: JudgeMetricSpec(
         key=JudgeMetricEnum.KNOWLEDGE_BASE,
@@ -104,17 +126,21 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.RETRIEVED_CHUNKS,
         ),
-        # No backup column: the per-row groundedness score + reasoning live in the
-        # score_trace_url trace unit; v2 is fully Kaapi-native, so no resync store.
-        per_item_column=None,
-        cost_stage="knowledge_base_judge",
     ),
 }
 
 
-def enabled_metric_specs() -> list[JudgeMetricSpec]:
-    """The metrics a judged run scores. Phase 1 always scores every registry entry."""
-    return list(METRIC_REGISTRY.values())
+def enabled_metric_specs(
+    *, available_run_inputs: frozenset[JudgeInputEnum] = frozenset()
+) -> list[JudgeMetricSpec]:
+    """The metrics a run scores: those whose run-level inputs it could resolve."""
+    specs: list[JudgeMetricSpec] = []
+    for spec in METRIC_REGISTRY.values():
+        missing = (set(spec.required_inputs) & RUN_LEVEL_INPUTS) - available_run_inputs
+        if missing:
+            continue
+        specs.append(spec)
+    return specs
 
 
 # Per-call retry mechanism (mirrors the fast-eval Responses/Embeddings stages).
@@ -157,6 +183,38 @@ class JudgeResult:
     usage: dict[str, int]
 
 
+def _required_input_union(metrics: list[JudgeMetricSpec]) -> list[JudgeInputEnum]:
+    """Inputs needed by at least one enabled metric, in stable enum order.
+
+    Single source for both the rendered input blocks and the per-metric scoping lines,
+    so the stated scope can never drift from what is actually sent.
+    """
+    required = {key for spec in metrics for key in spec.required_inputs}
+    return [key for key in JudgeInputEnum if key in required]
+
+
+def _format_input_labels(keys: list[JudgeInputEnum]) -> str:
+    return _LABEL_SEPARATOR.join(_INPUT_LABELS[key] for key in keys)
+
+
+def _build_metric_section(*, spec: JudgeMetricSpec, union: list[JudgeInputEnum]) -> str:
+    """One metric's rubric fragment plus its registry-derived input scoping."""
+    considered = [key for key in union if key in spec.required_inputs]
+    ignored = [key for key in union if key not in spec.required_inputs]
+
+    lines = [
+        spec.prompt_fragment,
+        _CONSIDER_INPUTS_TEMPLATE.format(labels=_format_input_labels(considered)),
+    ]
+    # With nothing out of scope (single enabled metric), an "ignore nothing" sentence
+    # would be noise the model could misread.
+    if ignored:
+        lines.append(
+            _IGNORE_INPUTS_TEMPLATE.format(labels=_format_input_labels(ignored))
+        )
+    return "\n".join(lines)
+
+
 def build_judge_params(*, session: Session) -> dict[str, Any]:
     """Build the model-independent OpenAI body for the combined judge call.
 
@@ -180,9 +238,17 @@ def build_judge_params(*, session: Session) -> dict[str, Any]:
 
 
 def _compose_system_prompt(metrics: list[JudgeMetricSpec]) -> str:
-    """Shared preamble followed by each metric's built-in rubric fragment."""
-    fragments = [spec.prompt_fragment for spec in metrics]
-    return f"{JUDGE_SYSTEM_PREAMBLE}\n\n" + "\n\n".join(fragments)
+    """Shared preamble plus each metric's fragment and its input scoping.
+
+    The combined call shows every input block to every metric, so each section
+    states its own CONSIDER/IGNORE scope over the union of these metrics' inputs —
+    keeping the stated scope aligned with what `_compose_judge_input` actually sends.
+    """
+    union = _required_input_union(metrics)
+    sections = "\n\n".join(
+        _build_metric_section(spec=spec, union=union) for spec in metrics
+    )
+    return f"{JUDGE_SYSTEM_PREAMBLE}\n\n{sections}"
 
 
 def _applicable_metrics(
@@ -207,17 +273,9 @@ def _compose_judge_input(
 
     Metric prompts carry no interpolation placeholder — inputs are appended here.
     """
-    required: list[JudgeInputEnum] = []
-    for spec in metrics:
-        for key in spec.required_inputs:
-            if key not in required:
-                required.append(key)
-
-    # Render in stable enum order regardless of registry declaration order.
     blocks = [
         f"{_INPUT_LABELS[key]}:\n{inputs.get(key, '')}"
-        for key in JudgeInputEnum
-        if key in required
+        for key in _required_input_union(metrics)
     ]
     metric_keys = ", ".join(spec.key.value for spec in metrics)
     contract = JUDGE_OUTPUT_INSTRUCTION.format(metric_keys=metric_keys)
@@ -269,9 +327,8 @@ def _parse_judge_output(
     """Parse the combined reply into a per-metric score map.
 
     Leniently extracts the outermost JSON object so a stray prose wrapper doesn't
-    break parsing. A well-formed object missing one metric leaves only that metric
-    unscoreable (dropped from the map); a fully malformed reply raises so the caller
-    isolates the whole row. Raises ValueError on anything unparseable.
+    break parsing. A metric missing from an otherwise valid object is simply dropped;
+    anything unparseable raises ValueError so the caller isolates the whole row.
     """
     if not text or not text.strip():
         raise ValueError("empty judge response")
@@ -292,7 +349,6 @@ def _parse_judge_output(
     for spec in metrics:
         raw = data.get(spec.key.value)
         if raw is None:
-            # Well-formed but missing this metric: only this metric is unscoreable.
             continue
         results[spec.key] = _parse_metric_score(spec.key, raw)
 
@@ -318,9 +374,10 @@ def judge_row(
     `base_params` is the model-independent body from `build_judge_params`, built
     once per run; the system prompt and input block are composed here from the
     per-row applicable-metric subset (a metric whose inputs are absent is dropped,
-    so its key never enters the prompt or the expected reply). Raises on
-    retry-exhausted OpenAI errors or malformed output so the caller can flag the
-    whole row unscoreable.
+    so its key never enters the prompt or the expected reply). `config_prompt`
+    travels only as an input block, never as the judge's own `instructions`, so the
+    evaluated bot's prompt cannot steer the grader. Raises on retry-exhausted OpenAI
+    errors or malformed output so the caller can flag the whole row unscoreable.
     """
     applicable = _applicable_metrics(metrics, inputs)
     if not applicable:
