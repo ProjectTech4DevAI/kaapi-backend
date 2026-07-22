@@ -833,7 +833,7 @@ def _judge_rows(
 
     judge_model = base_params.get("model")
 
-    max_workers = max(1, min(settings.EVAL_FAST_API_CONCURRENCY, len(judgeable)))
+    max_workers = max(1, min(settings.EVAL_JUDGE_CONCURRENCY, len(judgeable)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
             executor.submit(
