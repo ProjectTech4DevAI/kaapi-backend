@@ -8,6 +8,7 @@ All paths relative to `backend/app/`.
 ## Routes
 - `api/routes/evaluations/dataset.py`, `api/routes/evaluations/evaluation.py` — text datasets + runs (v1, `/api/v1`)
 - `api/routes/evaluations/evaluation_v2.py` — `POST /api/v2/evaluations`, replica of v1 run trigger + native ground-truth LLM judge (Langfuse-free); mounted under `settings.API_V2_STR`
+- `api/routes/evaluations/dataset_v2.py` — `POST /api/v2/evaluations/datasets`, Langfuse-free dataset upload; stores only the original CSV in S3 and records `duplication_factor` as metadata (rows expanded ×factor at run time, not physically duplicated)
 - `api/routes/stt_evaluations/`, `api/routes/tts_evaluations/` — STT/TTS
 - `api/routes/cron.py` — batch polling trigger
 
@@ -30,6 +31,7 @@ v2 judge field on `EvaluationRun`: `is_judge_run` (bool marker gating native jud
 
 ## Async
 - Provider batches polled by cron (`crud/evaluations/cron.py`); no long-lived Celery task per run.
+- Fast text runs (v1 cosine + v2 judge) fan out `ceil(total_items / EVAL_FAST_CHUNK_SIZE)` `run_evaluation_fast_chunk` tasks (responses only), then a cron barrier (`dispatch_fast_evaluation_barriers`) enqueues one `run_evaluation_fast_aggregate` once every chunk has a `raw_output_url`. The aggregate merges chunks, then (v2) judges **every** row in that single task — so the judge pool is sized by its own `EVAL_JUDGE_CONCURRENCY` (not the response stage's `EVAL_FAST_API_CONCURRENCY`) to clear the max dataset (`EVAL_FAST_MAX_UNIQUE_ROWS` × `duplication_factor`) under the aggregate's `CELERY_TASK_SOFT_TIME_LIMIT`. No judge fan-out / second barrier.
 - Prompt improvement is job-based with callback delivery: `POST /evaluations/{id}/improve-prompt` validates preconditions, enqueues a `Job` (`JobType.PROMPT_IMPROVEMENT`, `models/job.py`) run by Celery task `run_prompt_improvement` (`celery/tasks/job_execution.py`), and returns `202` with an `LLMJobImmediatePublic` handle. On finish the worker POSTs a single best-effort callback to the caller-supplied `callback_url` (SSRF-guarded via `validate_callback_url`): an `APIResponse[PromptImprovementJobPublic]` (`models/evaluation.py`) carrying the new `ConfigVersion` on success or `error_message` on failure. The `ConfigVersion` is persisted regardless of callback outcome. Celery redelivery of a `SUCCESS` job re-sends the callback without re-running the LLM.
 
 ## External
