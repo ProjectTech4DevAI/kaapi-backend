@@ -12,23 +12,27 @@ from fastapi import (
     Query,
 )
 
-
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
 from app.crud.evaluations.core import group_traces_by_question_id
-from app.models.config.version import ConfigVersionPublic
-from app.models.evaluation import EvaluationRunPublic, RunModeEnum
+from app.models.evaluation import (
+    EvaluationRunPublic,
+    ImprovePromptRequest,
+    RunModeEnum,
+)
+from app.models.llm.response import LLMJobImmediatePublic
 from app.services.evaluations import (
     get_evaluation_with_scores,
-    improve_prompt,
+    start_prompt_improvement_job,
     validate_and_start_batch_evaluation,
     validate_and_start_fast_evaluation,
 )
 from app.utils import (
     APIResponse,
     load_description,
+    validate_callback_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,8 +59,8 @@ def evaluate(
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
     run_mode: RunModeEnum = Body(
-        default=RunModeEnum.BATCH,
-        description="Execution mode: 'batch' (default) or 'fast'",
+        default=RunModeEnum.FAST,
+        description="Execution mode: 'batch' or 'fast'. Omit to default to 'fast'.",
     ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start an evaluation run."""
@@ -208,26 +212,43 @@ def get_evaluation_run_status(
 @router.post(
     "/{evaluation_id}/improve-prompt",
     description=load_description("evaluation/improve_prompt.md"),
-    response_model=APIResponse[ConfigVersionPublic],
-    status_code=201,
+    response_model=APIResponse[LLMJobImmediatePublic],
+    status_code=202,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def improve_evaluation_prompt(
     evaluation_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[ConfigVersionPublic]:
-    """Generate an AI-improved prompt iteration from a completed evaluation run."""
+    request: ImprovePromptRequest,
+) -> APIResponse[LLMJobImmediatePublic]:
+    """Enqueue an AI prompt-improvement job for a completed evaluation run."""
     logger.info(
         f"[improve_evaluation_prompt] Starting | evaluation_id={evaluation_id} "
         f"org_id={auth_context.organization_.id} project_id={auth_context.project_.id}"
     )
 
-    new_version = improve_prompt(
+    # No global ValueError handler exists, so map the SSRF guard's ValueError to
+    # a 422 here rather than letting it surface as a 500.
+    try:
+        validate_callback_url(str(request.callback_url))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_callback_url: {exc}")
+
+    job = start_prompt_improvement_job(
         session=session,
         evaluation_id=evaluation_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
+        callback_url=str(request.callback_url),
     )
 
-    return APIResponse.success_response(data=new_version)
+    return APIResponse.success_response(
+        data=LLMJobImmediatePublic(
+            job_id=job.id,
+            status=job.status.value,
+            message="Prompt improvement is running; the result will be delivered to your callback_url.",
+            job_inserted_at=job.inserted_at,
+            job_updated_at=job.updated_at,
+        )
+    )

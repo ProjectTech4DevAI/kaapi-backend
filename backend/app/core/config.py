@@ -1,8 +1,8 @@
+import multiprocessing
+import os
 import secrets
 import warnings
-import os
-import multiprocessing
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     EmailStr,
@@ -13,7 +13,6 @@ from pydantic import (
 )
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 
 def parse_cors(origins: Any) -> list[str] | str:
@@ -103,6 +102,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
+    # KMS key (ID, ARN, or alias) for credential encryption
+    AWS_KMS_KEY_ID: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
     # its own ``google`` credential row (BYOK is all-or-nothing — see the
@@ -185,6 +186,9 @@ class Settings(BaseSettings):
     LLM_PENDING_THRESHOLD_MINUTES: int = 30
     COLLECTION_PENDING_THRESHOLD_MINUTES: int = 30
     DOC_TRANSFORMATION_PENDING_THRESHOLD_MINUTES: int = 30
+    # A fast run stuck in `processing` past this with no chunk progress is stalled;
+    # the cron healer re-enqueues its missing chunk tasks.
+    EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
     # AI-assisted prompt improvement settings.
@@ -196,11 +200,14 @@ class Settings(BaseSettings):
 
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
-    EVAL_FAST_MAX_UNIQUE_ROWS: int = 10
+    EVAL_FAST_MAX_UNIQUE_ROWS: int = 100
     EVAL_FAST_FAILURE_THRESHOLD: float = 0.5
     # Capped at 4 by default: higher values (8-10) across multiple Celery
     # workers can cause memory pressure on smaller EC2 instances.
     EVAL_FAST_API_CONCURRENCY: int = 4
+    # Items per responses chunk task; smaller = more parallel workers and each
+    # task well under CELERY_TASK_SOFT_TIME_LIMIT.
+    EVAL_FAST_CHUNK_SIZE: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
     @property

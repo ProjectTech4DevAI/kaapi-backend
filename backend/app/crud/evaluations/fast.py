@@ -25,7 +25,8 @@ import numpy as np
 import openai
 from langfuse import Langfuse
 from openai import OpenAI
-from sqlmodel import Session
+from sqlalchemy import Integer
+from sqlmodel import Session, select
 from tenacity import (
     before_sleep_log,
     retry,
@@ -39,10 +40,6 @@ from app.core.config import settings
 from app.core.storage_utils import (
     load_json_from_object_store,
     upload_jsonl_to_object_store,
-)
-from app.crud.evaluations.batch import (
-    load_evaluation_dataset_items,
-    use_langfuse_client,
 )
 from app.crud.evaluations.core import (
     resolve_model_from_config,
@@ -66,9 +63,13 @@ from app.crud.evaluations.score import (
     TraceData,
     TraceScore,
 )
-from app.crud.job import create_batch_job, get_batch_job
+from app.crud.job import (
+    create_batch_job,
+    delete_batch_job,
+    get_batch_job,
+)
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.batch_job import BatchJobCreate
+from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import TextLLMParams
 from app.services.llm.mappers import map_kaapi_to_openai_params
@@ -79,7 +80,12 @@ logger = logging.getLogger(__name__)
 # job_type discriminators on batch_job for the two fast-path stages. The row's
 # presence + raw_output_url is what marks a stage as already done on retry.
 JOB_TYPE_EVALUATION_FAST = "evaluation_fast"
+JOB_TYPE_EVALUATION_FAST_CHUNK = "evaluation_fast_chunk"
 JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
+
+# batch_job.config keys tying a chunk row back to its run + slice.
+CHUNK_CONFIG_RUN_ID = "eval_run_id"
+CHUNK_CONFIG_INDEX = "chunk_index"
 
 
 # Per-call retry policy for Stage 1 / Stage 2.
@@ -381,42 +387,86 @@ def _load_completed_stage(
     )
 
 
-def _stage1_responses(
+def list_response_chunk_jobs(*, session: Session, eval_run_id: int) -> list[BatchJob]:
+    """All response-chunk batch_jobs for a fast run, in any state."""
+    statement = select(BatchJob).where(
+        BatchJob.job_type == JOB_TYPE_EVALUATION_FAST_CHUNK,
+        BatchJob.config[CHUNK_CONFIG_RUN_ID].astext.cast(Integer) == eval_run_id,
+    )
+    return list(session.exec(statement).all())
+
+
+def _get_chunk_job(
+    *, session: Session, eval_run_id: int, chunk_index: int
+) -> BatchJob | None:
+    """The chunk batch_job for one (eval_run, chunk_index), or None."""
+    statement = select(BatchJob).where(
+        BatchJob.job_type == JOB_TYPE_EVALUATION_FAST_CHUNK,
+        BatchJob.config[CHUNK_CONFIG_RUN_ID].astext.cast(Integer) == eval_run_id,
+        BatchJob.config[CHUNK_CONFIG_INDEX].astext.cast(Integer) == chunk_index,
+    )
+    return session.exec(statement).first()
+
+
+def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> None:
+    """Delete the per-chunk S3 files + batch_job rows once a run completes.
+
+    Best-effort: a failed delete only leaks DB+S3 bloat, so it never fails the
+    run. Failed runs skip this and keep their chunks for the healer.
+    """
+    try:
+        storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
+        chunk_jobs = list_response_chunk_jobs(session=session, eval_run_id=eval_run.id)
+        for job in chunk_jobs:
+            if job.raw_output_url:
+                storage.delete(job.raw_output_url)
+            delete_batch_job(session, job)
+        logger.info(
+            f"[_cleanup_response_chunks] Removed {len(chunk_jobs)} chunk "
+            f"artifacts | eval_run_id={eval_run.id}"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[_cleanup_response_chunks] Cleanup failed (orphans harmless) | "
+            f"eval_run_id={eval_run.id} | error={exc}",
+            exc_info=True,
+        )
+
+
+def run_response_chunk(
     *,
     session: Session,
     openai_client: OpenAI,
     eval_run: EvaluationRun,
     config: TextLLMParams,
-    dataset_items: list[dict[str, Any]],
+    dataset_items_slice: list[dict[str, Any]],
+    chunk_index: int,
     log_prefix: str,
-) -> tuple[EvaluationRun, list[dict[str, Any]]]:
-    """Stage 1 — one Responses call per dataset item.
+) -> None:
+    """Run the responses stage over one slice of dataset items.
 
-    Skipped on retry if `eval_run.batch_job_id` is set; the unit is reloaded from S3.
+    Idempotent: skipped when this (eval_run, chunk_index) already has a
+    raw_output_url, so redelivery or a cron re-enqueue never re-charges OpenAI.
+    The failure threshold is not checked here — it's decided over the merged set
+    at aggregation.
 
-    Concurrency assumption: this check-then-create is safe only against
-    *sequential* redelivery (a retry after the previous attempt fully stopped),
-    where the `batch_job_id` marker guarantees we never re-call OpenAI for work
-    that already succeeded. We rely on a single in-flight execution per
-    EvaluationRun — i.e. the broker visibility timeout is tuned above the task's
-    runtime so Celery does not redeliver while a worker is still running. If
-    that assumption is ever broken, two workers could both pass this guard; add
-    an advisory lock / atomic claim here before introducing concurrent delivery.
+    Concurrency: two workers racing the same chunk_index can both pass the skip
+    guard and write two rows; the merge de-duplicates per index.
     """
-    cached = _load_completed_stage(
-        session=session,
-        batch_job_id=eval_run.batch_job_id,
-        project_id=eval_run.project_id,
-        log_prefix=log_prefix,
-        stage="_stage1_responses",
+    existing = _get_chunk_job(
+        session=session, eval_run_id=eval_run.id, chunk_index=chunk_index
     )
-    if cached is not None:
-        return eval_run, cached
+    if existing and existing.raw_output_url:
+        logger.info(
+            f"[run_response_chunk] {log_prefix} Skipping chunk (already done) | "
+            f"chunk_index={chunk_index} | batch_job_id={existing.id}"
+        )
+        return
 
     logger.info(
-        f"[_stage1_responses] {log_prefix} Running stage 1 | "
-        f"items={len(dataset_items)} | model={config.model} | "
-        f"concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
+        f"[run_response_chunk] {log_prefix} Running chunk | "
+        f"chunk_index={chunk_index} | items={len(dataset_items_slice)} | "
+        f"model={config.model} | concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
     )
 
     base_params, mapper_warnings = map_kaapi_to_openai_params(
@@ -424,11 +474,13 @@ def _stage1_responses(
     )
     if mapper_warnings:
         logger.info(
-            f"[_stage1_responses] {log_prefix} Mapper warnings: {mapper_warnings}"
+            f"[run_response_chunk] {log_prefix} Mapper warnings: {mapper_warnings}"
         )
 
     results: list[dict[str, Any]] = []
-    max_workers = max(1, min(settings.EVAL_FAST_API_CONCURRENCY, len(dataset_items)))
+    max_workers = max(
+        1, min(settings.EVAL_FAST_API_CONCURRENCY, len(dataset_items_slice))
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -437,25 +489,97 @@ def _stage1_responses(
                 base_params=base_params,
                 item=item,
             ): item["id"]
-            for item in dataset_items
+            for item in dataset_items_slice
         }
         for future in as_completed(futures):
             results.append(future.result())
 
     failed_count = sum(1 for r in results if r.get("failed"))
     logger.info(
-        f"[_stage1_responses] {log_prefix} Stage 1 finished | "
-        f"total={len(results)} | failed={failed_count}"
+        f"[run_response_chunk] {log_prefix} Chunk finished | "
+        f"chunk_index={chunk_index} | total={len(results)} | failed={failed_count}"
     )
 
-    if _is_failure_threshold_breached(
-        failed_rows=failed_count, total_rows=len(results)
-    ):
-        raise RuntimeError(
-            f"Fast eval Stage 1 exceeded failure threshold | "
-            f"failed={failed_count}/{len(results)} | "
-            f"threshold={settings.EVAL_FAST_FAILURE_THRESHOLD}"
+    raw_output_url = _upload_unit_to_s3(
+        session=session,
+        project_id=eval_run.project_id,
+        eval_run_id=eval_run.id,
+        filename=f"responses_{eval_run.id}_{chunk_index}.json",
+        results=results,
+    )
+
+    summed_usage = _sum_usage(
+        results, ("input_tokens", "output_tokens", "total_tokens")
+    )
+    create_batch_job(
+        session=session,
+        batch_job_create=BatchJobCreate(
+            provider="openai",
+            job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
+            config={
+                "endpoint": "/v1/responses",
+                "run_mode": RunModeEnum.FAST.value,
+                "model": config.model,
+                "usage": summed_usage,
+                CHUNK_CONFIG_RUN_ID: eval_run.id,
+                CHUNK_CONFIG_INDEX: chunk_index,
+            },
+            raw_output_url=raw_output_url,
+            total_items=len(results),
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        ),
+    )
+
+
+def _merge_response_chunks(
+    *,
+    session: Session,
+    eval_run: EvaluationRun,
+) -> tuple[EvaluationRun, list[dict[str, Any]]]:
+    """Concatenate every response chunk into the canonical responses unit.
+
+    Skipped on retry when `eval_run.batch_job_id` is set (canonical unit
+    reloaded from S3) so aggregate redelivery never re-merges. Chunks are
+    ordered by index and de-duplicated per index — a healer re-enqueue may race
+    a slow chunk — so the merged order, and the scores, stay reproducible.
+    """
+    log_prefix = (
+        f"[org={eval_run.organization_id}]"
+        f"[project={eval_run.project_id}]"
+        f"[eval={eval_run.id}]"
+    )
+    cached = _load_completed_stage(
+        session=session,
+        batch_job_id=eval_run.batch_job_id,
+        project_id=eval_run.project_id,
+        log_prefix=log_prefix,
+        stage="_merge_response_chunks",
+    )
+    if cached is not None:
+        return eval_run, cached
+
+    chunk_jobs = list_response_chunk_jobs(session=session, eval_run_id=eval_run.id)
+    chunk_job_by_index: dict[int, BatchJob] = {}
+    for job in chunk_jobs:
+        chunk_index = int(job.config.get(CHUNK_CONFIG_INDEX, -1))
+        if job.raw_output_url and chunk_index not in chunk_job_by_index:
+            chunk_job_by_index[chunk_index] = job
+
+    results: list[dict[str, Any]] = []
+    for chunk_index in sorted(chunk_job_by_index):
+        results.extend(
+            _load_unit_from_s3(
+                session=session,
+                project_id=eval_run.project_id,
+                url=chunk_job_by_index[chunk_index].raw_output_url,
+            )
         )
+
+    logger.info(
+        f"[_merge_response_chunks] {log_prefix} Merged chunks | "
+        f"chunks={len(chunk_job_by_index)} | items={len(results)}"
+    )
 
     raw_output_url = _upload_unit_to_s3(
         session=session,
@@ -465,11 +589,14 @@ def _stage1_responses(
         results=results,
     )
 
-    # Aggregate usage for the batch_job summary.
+    model = (
+        next(iter(chunk_job_by_index.values())).config.get("model")
+        if chunk_job_by_index
+        else None
+    )
     summed_usage = _sum_usage(
         results, ("input_tokens", "output_tokens", "total_tokens")
     )
-
     batch_job = create_batch_job(
         session=session,
         batch_job_create=BatchJobCreate(
@@ -478,7 +605,7 @@ def _stage1_responses(
             config={
                 "endpoint": "/v1/responses",
                 "run_mode": RunModeEnum.FAST.value,
-                "model": config.model,
+                "model": model,
                 "usage": summed_usage,
             },
             raw_output_url=raw_output_url,
@@ -604,7 +731,7 @@ def _stage3_score_and_trace(
     *,
     session: Session,
     eval_run: EvaluationRun,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     response_results: list[dict[str, Any]],
     embedding_results: list[dict[str, Any]],
     log_prefix: str,
@@ -637,16 +764,15 @@ def _stage3_score_and_trace(
     # Per-item cosine scores, keyed by trace_id (Langfuse) and item_id (persisted
     # records). Items with a trace but no computable score are flagged unscoreable
     # so they're kept out of avg/std/total_pairs.
-    # ref = trace_id when traced, else item_id, so cosine persists on opt-out.
     per_item_scores: list[dict[str, Any]] = []
     item_id_to_score: dict[str, float] = {}
-    item_id_to_ref: dict[str, str] = {}
     similarities: list[float] = []
-    unscoreable: dict[str, str] = {}  # {ref: reason}
+    unscoreable: dict[str, str] = {}  # {trace_id: reason}
     for response in response_results:
         item_id = response["item_id"]
-        ref = trace_id_mapping.get(item_id) or item_id
-        item_id_to_ref[item_id] = ref
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
+            continue
         embedding_pair = item_id_to_pair.get(item_id)
         has_embeddings = (
             embedding_pair is not None
@@ -656,11 +782,11 @@ def _stage3_score_and_trace(
         if not has_embeddings:
             # Classify why this item cannot be scored, for the UI flag.
             if not response.get("generated_output"):
-                unscoreable[ref] = "empty_output"
+                unscoreable[trace_id] = "empty_output"
             elif not response.get("ground_truth"):
-                unscoreable[ref] = "empty_ground_truth"
+                unscoreable[trace_id] = "empty_ground_truth"
             else:
-                unscoreable[ref] = "embedding_failed"
+                unscoreable[trace_id] = "embedding_failed"
             continue
         cosine = calculate_cosine_similarity(
             embedding_pair["output_embedding"],
@@ -668,27 +794,21 @@ def _stage3_score_and_trace(
         )
         similarities.append(cosine)
         item_id_to_score[item_id] = cosine
-        per_item_scores.append(
-            {
-                "trace_id": trace_id_mapping.get(item_id),
-                "cosine_similarity": cosine,
-            }
-        )
+        per_item_scores.append({"trace_id": trace_id, "cosine_similarity": cosine})
 
-    # Langfuse write list, filtered to real trace_ids (empty on opt-out).
+    # Langfuse write list (cosine + 0-scores for unscoreable items); written
+    # after completion in run_fast_evaluation.
     unscoreable_writes = [
-        {"trace_id": trace_id_mapping[item_id], "unscoreable": True, "reason": reason}
-        for item_id, ref in item_id_to_ref.items()
-        if item_id in trace_id_mapping and (reason := unscoreable.get(ref)) is not None
+        {"trace_id": trace_id, "unscoreable": True, "reason": reason}
+        for trace_id, reason in unscoreable.items()
     ]
-    scored_writes = [w for w in per_item_scores if w["trace_id"] is not None]
-    write_items = scored_writes + unscoreable_writes
+    write_items = per_item_scores + unscoreable_writes
 
-    # Durable source of truth, persisted by the commit below. Keyed by ref
-    # (trace_id when traced, item_id otherwise) so the read path is consistent.
+    # Durable source of truth, persisted by the commit below.
     eval_run.per_item_scores = {
-        item_id_to_ref[item_id]: round(float(score), 6)
+        trace_id_mapping[item_id]: round(float(score), 6)
         for item_id, score in item_id_to_score.items()
+        if item_id in trace_id_mapping
     }
     eval_run.unscoreable = unscoreable or None
 
@@ -750,11 +870,15 @@ def _stage3_score_and_trace(
                 embedding_raw_results=embedding_raw,
             )
 
-    # Per-item UI records, keyed by ref, so results render on opt-out too.
+    # Build the per-trace records in the same shape the batch path persists (via
+    # fetch_trace_scores_from_langfuse). One record per response that has a
+    # Langfuse trace; the cosine score is attached when its embedding succeeded.
     traces: list[TraceData] = []
     for response in response_results:
         item_id = response["item_id"]
-        ref = item_id_to_ref.get(item_id, item_id)
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
+            continue
         trace_scores: list[TraceScore] = []
         cosine = item_id_to_score.get(item_id)
         if cosine is not None:
@@ -766,20 +890,20 @@ def _stage3_score_and_trace(
                     "comment": COSINE_SCORE_COMMENT,
                 }
             )
-        elif ref in unscoreable:
+        elif trace_id in unscoreable:
             # Placeholder 0-score, excluded from summary stats via the marker.
             trace_scores.append(
                 {
                     "name": COSINE_SCORE_NAME,
                     "value": 0,
                     "data_type": "NUMERIC",
-                    "comment": f"Cannot compute: {unscoreable[ref]}",
+                    "comment": f"Cannot compute: {unscoreable[trace_id]}",
                     "unscoreable": True,
                 }
             )
         traces.append(
             {
-                "trace_id": ref,
+                "trace_id": trace_id,
                 "question": response.get("question", ""),
                 "llm_answer": response.get("generated_output", ""),
                 "ground_truth_answer": response.get("ground_truth", ""),
@@ -807,21 +931,22 @@ def run_fast_evaluation(
     *,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     eval_run: EvaluationRun,
-    config: TextLLMParams,
 ) -> EvaluationRun:
-    """Run the full fast-eval pipeline for one evaluation_run.
+    """Merge the response chunks, then run embeddings + scoring + completion.
 
-    Called from the `run_evaluation_fast` task. Stages are skipped on retry when
-    their batch_job marker is set. Raises on terminal failure (run marked failed).
+    Called from `run_evaluation_fast_aggregate` (the cron barrier enqueues it
+    only after every chunk has a raw_output_url). Stages are skipped on retry
+    when their batch_job marker is set. Raises on terminal failure (run marked
+    failed).
     """
     log_prefix = (
         f"[org={eval_run.organization_id}]"
         f"[project={eval_run.project_id}]"
         f"[eval={eval_run.id}]"
     )
-    logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast evaluation pipeline")
+    logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast eval aggregation")
 
     if eval_run.status == "pending":
         eval_run = update_evaluation_run(
@@ -830,27 +955,22 @@ def run_fast_evaluation(
             update=EvaluationRunUpdate(status="processing"),
         )
 
-    langfuse = use_langfuse_client(
-        session=session, eval_run=eval_run, langfuse=langfuse
-    )
-
-    dataset_items = load_evaluation_dataset_items(
-        session=session, eval_run=eval_run, langfuse=langfuse
-    )
-    if not dataset_items:
-        raise ValueError(
-            f"Dataset '{eval_run.dataset_name}' returned no items for fast eval"
-        )
-
-    # Stage 1
-    eval_run, response_results = _stage1_responses(
+    # Stage 1 — merge the response chunks.
+    eval_run, response_results = _merge_response_chunks(
         session=session,
-        openai_client=openai_client,
         eval_run=eval_run,
-        config=config,
-        dataset_items=dataset_items,
-        log_prefix=log_prefix,
     )
+
+    # Failure threshold is decided over the full merged set, not per chunk.
+    failed_count = sum(1 for r in response_results if r.get("failed"))
+    if _is_failure_threshold_breached(
+        failed_rows=failed_count, total_rows=len(response_results)
+    ):
+        raise RuntimeError(
+            f"Fast eval exceeded failure threshold | "
+            f"failed={failed_count}/{len(response_results)} | "
+            f"threshold={settings.EVAL_FAST_FAILURE_THRESHOLD}"
+        )
 
     # Stage 2
     eval_run, embedding_results = _stage2_embeddings(
@@ -883,11 +1003,13 @@ def run_fast_evaluation(
         ),
     )
 
+    _cleanup_response_chunks(session=session, eval_run=eval_run)
+
     # Stage 5a — write cosine scores to Langfuse after completion (mirrors the
     # batch path). is_score_updated tracks the outcome so a cron can retry the
     # gap from per_item_scores.
     is_score_updated = True
-    if langfuse is not None and write_items:
+    if write_items:
         try:
             failed_trace_ids = update_traces_with_cosine_scores(
                 langfuse=langfuse, per_item_scores=write_items

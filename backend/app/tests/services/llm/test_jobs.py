@@ -2068,7 +2068,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch("app.services.llm.jobs.get_tracing_credential", return_value=None),
             patch("app.services.llm.chain.executor.Session") as mock_executor_session,
             patch("app.services.llm.chain.executor.send_callback"),
             patch("app.services.llm.chain.executor.update_llm_chain_status"),
@@ -2153,7 +2152,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch("app.services.llm.jobs.get_tracing_credential", return_value=None),
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch("app.services.llm.chain.chain.LLMChain"),
             patch(
@@ -2190,7 +2188,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch("app.services.llm.jobs.get_tracing_credential", return_value=None),
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch("app.services.llm.chain.chain.LLMChain"),
             patch(
@@ -2228,7 +2225,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch("app.services.llm.jobs.get_tracing_credential", return_value=None),
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch("app.services.llm.chain.chain.LLMChain"),
             patch(
@@ -2267,7 +2263,6 @@ class TestExecuteChainJob:
             patch("app.services.llm.jobs.Session") as mock_session,
             patch("app.services.llm.jobs.create_llm_chain") as mock_create_chain,
             patch("app.services.llm.jobs.get_provider_credential") as mock_creds,
-            patch("app.services.llm.jobs.get_tracing_credential", return_value=None),
             patch("app.services.llm.jobs.handle_job_error") as mock_handle_error,
             patch("app.services.llm.chain.chain.LLMChain"),
             patch(
