@@ -213,15 +213,15 @@ class Settings(BaseSettings):
 
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
 
-    # Reasoning effort for the judge model; "minimal" keeps per-row judging fast.
+    # Reasoning effort for the judge model. "medium":
     # One of: none | minimal | low | medium | high | xhigh.
-    EVAL_JUDGE_REASONING_EFFORT: str = "minimal"
+    EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
     # (EVAL_FAST_MAX_UNIQUE_ROWS x duplication) well under CELERY_TASK_SOFT_TIME_LIMIT.
     # Threads are network-bound (idle-waiting on OpenAI), so a high count is cheap.
-    EVAL_JUDGE_CONCURRENCY: int = 25
+    EVAL_JUDGE_CONCURRENCY: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
     @property
