@@ -413,9 +413,7 @@ def test_vector_store_update_succeeds_with_no_failures() -> None:
 
 def test_vector_store_update_raises_on_openai_error() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.create.side_effect = OpenAIError(
-        "rate limit"
-    )
+    client.vector_stores.file_batches.create.side_effect = OpenAIError("rate limit")
     crud = OpenAIVectorStoreCrud(client)
 
     with pytest.raises(InterruptedError, match="rate limit"):

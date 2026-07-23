@@ -254,9 +254,7 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         expected_status,
         original_message,
     ):
-        mock_client.vector_stores.file_batches.create.side_effect = (
-            exception_factory()
-        )
+        mock_client.vector_stores.file_batches.create.side_effect = exception_factory()
 
         with pytest.raises(InterruptedError) as exc_info:
             crud.update("vs_1", docs)
@@ -280,8 +278,8 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         bottom-most `except openai.OpenAIError` block — prefixed with the
         generic "OpenAI error" tag but still carrying the original message.
         """
-        mock_client.vector_stores.file_batches.create.side_effect = (
-            openai.OpenAIError("something else")
+        mock_client.vector_stores.file_batches.create.side_effect = openai.OpenAIError(
+            "something else"
         )
 
         with pytest.raises(InterruptedError) as exc_info:
