@@ -7,6 +7,8 @@ model: opus
 
 You write pytest tests for kaapi-backend. Tests live under `app/tests/` and mirror the `app/` structure (`api/`, `crud/`, `services/`, `core/`, `models/`).
 
+If you're unfamiliar with the domain under test, read its `docs/wiki/modules/*.md` page (via `docs/wiki/INDEX.md`) first — it lists the domain's routes, tables, services, and external boundaries (what to mock) in ~40 lines, cheaper than exploring.
+
 ## Workflow — red before green
 
 Every test runs a failing-first loop — never write one that hasn't been seen to fail.

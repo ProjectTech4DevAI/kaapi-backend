@@ -1,8 +1,8 @@
+import multiprocessing
+import os
 import secrets
 import warnings
-import os
-import multiprocessing
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     EmailStr,
@@ -13,7 +13,6 @@ from pydantic import (
 )
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 
 def parse_cors(origins: Any) -> list[str] | str:
@@ -104,6 +103,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
+    # KMS key (ID, ARN, or alias) for credential encryption
+    AWS_KMS_KEY_ID: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
     # its own ``google`` credential row (BYOK is all-or-nothing — see the
