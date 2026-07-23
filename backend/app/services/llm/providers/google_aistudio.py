@@ -1,5 +1,6 @@
 import logging
 import base64
+import time
 from typing import Any
 from google import genai
 from google.genai import errors as genai_errors
@@ -331,10 +332,40 @@ class GoogleAIProvider(BaseProvider):
 
         config = GenerateContentConfig(**config_kwargs)
 
-        # Execute TTS
-        response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=resolved_input, config=config
-        )
+        # Execute TTS — retry on transient Google 5xx errors (preview model instability)
+        max_attempts = 3
+        retry_delays = [2, 4]  # seconds between attempts (exponential-ish)
+        response: GenerateContentResponse | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=model, contents=resolved_input, config=config
+                )
+                break  # success — exit retry loop
+            except genai_errors.ServerError as e:
+                if attempt < max_attempts:
+                    delay = retry_delays[attempt - 1]
+                    logger.warning(
+                        f"[GoogleAIProvider._execute_tts] Transient server error from Gemini "
+                        f"(attempt {attempt}/{max_attempts}), retrying in {delay}s | "
+                        f"provider={provider}, model={model}, code={e.code}, error={e.message or str(e)}"
+                    )
+                    time.sleep(delay)
+                else:
+                    error_message = (
+                        f"[GEMINI] Server error after {max_attempts} attempts "
+                        f"(code: {e.code} {e.status or ''}): "
+                        f"{e.message or str(e)}. This is typically transient "
+                        f"(Gemini overloaded or internal error) — retry in a "
+                        f"few seconds. If the issue persists, contact Kaapi."
+                    )
+                    logger.error(
+                        f"[GoogleAIProvider._execute_tts] {error_message} | "
+                        f"provider={provider}, model={model}",
+                        exc_info=True,
+                    )
+                    return None, error_message
+
         if not response.response_id:
             error_message = (
                 "[GEMINI] TTS response is missing a response_id. This indicates "
