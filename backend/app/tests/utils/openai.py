@@ -116,13 +116,14 @@ def get_mock_openai_client_with_vector_store() -> MagicMock:
     mock_vector_store.id = "mock_vector_store_id"
     mock_client.vector_stores.create.return_value = mock_vector_store
 
-    # File upload + polling
+    # File batch creation + polling
     mock_file_batch = MagicMock()
+    mock_file_batch.id = "vsfb_mock"
     mock_file_batch.file_counts.completed = 2
     mock_file_batch.file_counts.total = 2
-    mock_client.vector_stores.file_batches.upload_and_poll.return_value = (
-        mock_file_batch
-    )
+    mock_file_batch.file_counts.failed = 0
+    mock_client.vector_stores.file_batches.create.return_value = mock_file_batch
+    mock_client.vector_stores.file_batches.poll.return_value = mock_file_batch
 
     # File list
     mock_client.vector_stores.files.list.return_value = {"data": []}

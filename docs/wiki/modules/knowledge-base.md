@@ -35,3 +35,4 @@ All paths relative to `backend/app/`.
 ## Gotchas
 - Uploads de-duplicate by provider file ID (see deep dive §7).
 - Collections are immutable-ish: deletion semantics in deep dive §10.
+- OpenAI file-batch id: the SDK's `file_batches.poll()` / `upload_and_poll()` final return deserializes a vector-store body, so its `.id` is the `vs_` id, not the `vsfb_` batch id. `crud/rag/open_ai.py` captures the batch id from `create()` before polling and uses it for `list_files`. Any failed file is a hard failure (whole vector store rolled back); partial indexing needs an add-documents endpoint first.

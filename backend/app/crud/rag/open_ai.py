@@ -115,10 +115,15 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
 
         try:
-            batch = self.client.vector_stores.file_batches.upload_and_poll(
+            created = self.client.vector_stores.file_batches.create(
                 vector_store_id=vector_store_id,
-                files=[],
                 file_ids=[doc.file_id[OPENAI_PROVIDER] for doc in docs],
+            )
+            # poll()'s return deserializes a vector-store body, so its .id is the vs_ id;
+            # capture the real vsfb_ batch id from create() before polling.
+            batch_id = created.id
+            batch = self.client.vector_stores.file_batches.poll(
+                batch_id, vector_store_id=vector_store_id
             )
         except openai.RateLimitError as e:
             error_message = (
@@ -215,14 +220,14 @@ class OpenAIVectorStoreCrud(OpenAICrud):
 
         logger.info(
             f"[OpenAIVectorStoreCrud.update] Batch complete | "
-            f"{{'vector_store_id': '{vector_store_id}', "
+            f"{{'vector_store_id': '{vector_store_id}', 'batch_id': '{batch_id}', "
             f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
         )
         if batch.file_counts.failed > 0:
             try:
                 failed_files = self.client.vector_stores.file_batches.list_files(
                     vector_store_id=vector_store_id,
-                    batch_id=batch.id,
+                    batch_id=batch_id,
                     filter="failed",
                 )
                 doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
@@ -232,11 +237,15 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     label = d.fname if d else f.id
                     msg = f.last_error.message if f.last_error else "no error detail"
                     parts.append(f"{label}: {msg}")
+                logger.error(
+                    f"[OpenAIVectorStoreCrud.update] Files failed to index | "
+                    f"{{'batch_id': '{batch_id}', 'failed_files': '{', '.join(parts)}'}}"
+                )
                 raise RuntimeError("; ".join(parts))
             except OpenAIError as err:
                 logger.warning(
                     f"[OpenAIVectorStoreCrud.update] Could not fetch per-file errors | "
-                    f"{{'batch_id': '{batch.id}', 'error': '{str(err)}'}}"
+                    f"{{'batch_id': '{batch_id}', 'error': '{str(err)}'}}"
                 )
                 raise
 
