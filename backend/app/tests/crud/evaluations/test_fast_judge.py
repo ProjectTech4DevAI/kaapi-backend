@@ -38,7 +38,6 @@ from app.crud.evaluations.fast import (
     run_fast_evaluation,
     run_response_chunk,
 )
-from app.crud.evaluations.judge import JUDGE_COST_STAGE
 from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_FAILED_REASON,
@@ -493,7 +492,7 @@ class TestGroundTruthScoring:
         )
 
         run = db.get(EvaluationRun, result.id)
-        stage = run.cost[JUDGE_COST_STAGE]
+        stage = run.cost["judge"]
         # Two rows × (12 in, 6 out, 18 total) summed for the combined judge call.
         assert stage["input_tokens"] == 24
         assert stage["output_tokens"] == 12

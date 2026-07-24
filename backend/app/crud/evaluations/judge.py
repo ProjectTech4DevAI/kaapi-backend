@@ -74,8 +74,6 @@ _INPUT_LABELS: dict[JudgeInputEnum, str] = {
 
 RUN_LEVEL_INPUTS: frozenset[JudgeInputEnum] = frozenset({JudgeInputEnum.CONFIG_PROMPT})
 
-JUDGE_COST_STAGE: str = "judge"
-
 # Every input block is visible to every metric, so each metric section states its own
 # scope — at the input level, never the metric level, so it can never be read as
 # permission to skip the metric itself.

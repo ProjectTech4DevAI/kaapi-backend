@@ -115,13 +115,6 @@ def _build_embedding_cost_entry(
     return _build_cost_entry(session=session, model=model, totals=totals)
 
 
-# Everything else at eval_run.cost's top level is a judge stage, preserved across
-# partial updates.
-_NON_JUDGE_COST_KEYS: frozenset[str] = frozenset(
-    {"response", "embedding", "total_cost_usd"}
-)
-
-
 def _build_judge_cost_entry(
     session: Session, model: str, results: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -137,7 +130,7 @@ def _build_judge_cost_entry(
 def _build_cost_dict(
     response_entry: dict[str, Any] | None,
     embedding_entry: dict[str, Any] | None,
-    judge_entries: dict[str, dict[str, Any]],
+    judge_entry: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Combine per-stage entries into the `eval_run.cost` payload with a grand total."""
     cost: dict[str, Any] = {}
@@ -151,10 +144,9 @@ def _build_cost_dict(
         cost["embedding"] = embedding_entry
         total += embedding_entry.get("cost_usd", 0.0)
 
-    for stage, entry in judge_entries.items():
-        if entry:
-            cost[stage] = entry
-            total += entry.get("cost_usd", 0.0)
+    if judge_entry:
+        cost["judge"] = judge_entry
+        total += judge_entry.get("cost_usd", 0.0)
 
     cost["total_cost_usd"] = round(total, COST_USD_DECIMALS)
     return cost
@@ -169,7 +161,6 @@ def attach_cost(
     response_results: list[dict[str, Any]] | None = None,
     embedding_model: str | None = None,
     embedding_raw_results: list[dict[str, Any]] | None = None,
-    judge_stage: str | None = None,
     judge_model: str | None = None,
     judge_results: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -198,25 +189,17 @@ def attach_cost(
         else:
             embedding_entry = existing_cost.get("embedding")
 
-        # Carry forward prior judge stages; recompute only the one supplied this call.
-        judge_entries: dict[str, dict[str, Any]] = {
-            k: v
-            for k, v in existing_cost.items()
-            if k not in _NON_JUDGE_COST_KEYS and isinstance(v, dict)
-        }
-        if (
-            judge_stage is not None
-            and judge_model is not None
-            and judge_results is not None
-        ):
-            judge_entries[judge_stage] = _build_judge_cost_entry(
+        if judge_model is not None and judge_results is not None:
+            judge_entry = _build_judge_cost_entry(
                 session=session, model=judge_model, results=judge_results
             )
+        else:
+            judge_entry = existing_cost.get("judge")
 
         eval_run.cost = _build_cost_dict(
             response_entry=response_entry,
             embedding_entry=embedding_entry,
-            judge_entries=judge_entries,
+            judge_entry=judge_entry,
         )
     except Exception as cost_err:
         logger.warning(

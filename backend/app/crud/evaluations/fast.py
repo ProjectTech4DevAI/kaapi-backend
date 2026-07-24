@@ -54,7 +54,6 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
 )
 from app.crud.evaluations.judge import (
-    JUDGE_COST_STAGE,
     JudgeInputEnum,
     JudgeMetricEnum,
     JudgeMetricSpec,
@@ -1114,13 +1113,12 @@ def _stage3_score_and_trace(
             )
 
         # One combined call grades every metric, so its tokens can't be split per
-        # metric; see JUDGE_COST_STAGE.
+        # metric — they land in a single "judge" cost stage.
         if judge_results and judge_model:
             attach_cost(
                 session=session,
                 eval_run=eval_run,
                 log_prefix=log_prefix,
-                judge_stage=JUDGE_COST_STAGE,
                 judge_model=judge_model,
                 judge_results=[
                     {"usage": result.usage} for result in judge_results.values()

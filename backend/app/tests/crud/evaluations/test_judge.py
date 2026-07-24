@@ -19,7 +19,6 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.judge import (
-    JUDGE_COST_STAGE,
     METRIC_REGISTRY,
     JudgeInputEnum,
     JudgeMetricEnum,
@@ -471,7 +470,3 @@ class TestEnabledMetricSpecs:
         prompt_spec = specs[1]
         assert prompt_spec.score_name == PROMPT_SCORE_NAME
         assert JudgeInputEnum.CONFIG_PROMPT in prompt_spec.required_inputs
-
-    def test_all_metrics_share_one_judge_cost_stage(self) -> None:
-        # One combined call per row, so tokens can't be split per metric.
-        assert JUDGE_COST_STAGE == "judge"
