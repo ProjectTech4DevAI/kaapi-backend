@@ -1,6 +1,6 @@
 """Evaluation services."""
 
-from app.services.evaluations.dataset import upload_dataset
+from app.services.evaluations.dataset import upload_dataset, upload_dataset_v2
 from app.services.evaluations.evaluation import (
     get_evaluation_with_scores,
     validate_and_start_batch_evaluation,
