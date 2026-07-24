@@ -887,25 +887,23 @@ class TestMapKaapiToAnthropicParams:
 
 class TestTransformGoogleVertexRouting:
     """Routing contract for the ``google`` provider (which executes via
-    Vertex AI). Text completions are explicitly rejected — they must go
-    through the ``google-aistudio`` provider."""
+    Vertex AI)."""
 
-    def test_text_completion_is_rejected(self, db: Session):
-        """``google`` is audio-only (Vertex STT/TTS) — text completions
-        must be routed through ``google-aistudio``."""
+    def test_text_completion_maps_via_google_mapper(self, db: Session):
+        """``google`` text completions reuse the Google mapper and produce a
+        ``google-native`` config (param shape is identical to Google's)."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
             type="text",
             params={"model": "gemini-2.5-pro"},
         )
 
-        with pytest.raises(ValueError) as exc_info:
-            transform_kaapi_config_to_native(session=db, kaapi_config=kaapi_config)
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
-        msg = str(exc_info.value)
-        assert "google" in msg
-        assert "text" in msg
-        assert "google-aistudio" in msg  # hints the caller toward the right provider
+        assert native_config.provider == "google-native"
+        assert native_config.params["model"] == "gemini-2.5-pro"
 
     def test_unsupported_language_emits_warning(self, db: Session):
         """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
