@@ -34,13 +34,6 @@ def improve_evaluation_prompt_v2(
     request: ImprovePromptRequest,
 ) -> APIResponse[LLMJobImmediatePublic]:
     """Enqueue a v2 prompt-recommendation job for a judged evaluation run."""
-    logger.info(
-        f"[improve_evaluation_prompt_v2] Starting | evaluation_id={evaluation_id} "
-        f"org_id={auth_context.organization_.id} project_id={auth_context.project_.id}"
-    )
-
-    # No global ValueError handler exists, so map the SSRF guard's ValueError to
-    # a 422 here rather than letting it surface as a 500.
     try:
         validate_callback_url(str(request.callback_url))
     except ValueError as exc:
