@@ -348,14 +348,11 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
 
 
 def _build_langfuse_client(credentials: dict[str, Any]) -> Langfuse:
-    from app.core.langfuse.langfuse import get_langfuse_tracer_provider
-
     return Langfuse(
         public_key=credentials["public_key"],
         secret_key=credentials["secret_key"],
         host=credentials["host"],
         timeout=60,
-        tracer_provider=get_langfuse_tracer_provider(),
     )
 
 
