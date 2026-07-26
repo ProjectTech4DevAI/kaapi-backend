@@ -1,6 +1,10 @@
 import logging
 
 import sentry_sdk
+from asgi_correlation_id.middleware import CorrelationIdMiddleware
+from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
+from fastapi.routing import APIRoute
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
@@ -8,19 +12,14 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from fastapi import FastAPI
-from fastapi.routing import APIRoute
-from fastapi.openapi.utils import get_openapi
-from asgi_correlation_id.middleware import CorrelationIdMiddleware
-from app.api.main import api_router
-from app.api.docs.openapi_config import tags_metadata, customize_openapi_schema
+from app.api.docs.openapi_config import customize_openapi_schema, tags_metadata
+from app.api.main import api_router, api_v2_router
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
 from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
 from app.core.sentry_filters import before_send_transaction_filter
 from app.core.telemetry import instrument_app, setup_telemetry
-
 from app.load_env import load_environment
 
 # Load environment variables
@@ -94,6 +93,7 @@ app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(StripTrailingSlashMiddleware)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_v2_router, prefix=settings.API_V2_STR)
 
 register_exception_handlers(app)
 
