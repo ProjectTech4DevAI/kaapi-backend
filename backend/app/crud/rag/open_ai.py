@@ -1,9 +1,12 @@
 import json
 import logging
+import time
 import functools as ft
 
 import openai
 from openai import OpenAI, OpenAIError
+from openai.types import VectorStore
+from openai.types.vector_stores import VectorStoreFileBatch
 from pydantic import BaseModel
 
 from app.models import Document, ProviderType
@@ -11,6 +14,15 @@ from app.models import Document, ProviderType
 logger = logging.getLogger(__name__)
 
 OPENAI_PROVIDER = ProviderType.openai.value
+
+OPENAI_MAX_RETRIES = 2
+
+# Per socket operation, not per call: a steady upload runs as long as it needs and
+# this only fires on a dead connection. Sized so all attempts fit one Celery task.
+OPENAI_TIMEOUT_SECONDS = 90
+
+BATCH_POLL_INTERVAL_SECONDS = 2
+BATCH_POLL_TIMEOUT_SECONDS = 240
 
 
 def vs_ls(client: OpenAI, vector_store_id: str):
@@ -85,7 +97,7 @@ class OpenAICrud:
 
 
 class OpenAIVectorStoreCrud(OpenAICrud):
-    def create(self):
+    def create(self) -> VectorStore:
         logger.info(
             f"[OpenAIVectorStoreCrud.create] Creating vector store | {{'action': 'create'}}"
         )
@@ -101,6 +113,52 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
         yield from vs_ls(self.client, vector_store_id)
 
+    def _create_file_batch(self, vector_store_id: str, file_ids: list[str]) -> str:
+        """Returns the vsfb_ id. poll()'s return deserializes a vector-store body,
+        so its .id is the vs_ id - take the batch id from create()."""
+        created = self.client.vector_stores.file_batches.create(
+            vector_store_id=vector_store_id,
+            file_ids=file_ids,
+        )
+        return created.id
+
+    def _retrieve_file_batch(
+        self, batch_id: str, vector_store_id: str
+    ) -> VectorStoreFileBatch:
+        return self.client.vector_stores.file_batches.retrieve(
+            batch_id, vector_store_id=vector_store_id
+        )
+
+    def _poll_file_batch(
+        self, batch_id: str, vector_store_id: str
+    ) -> VectorStoreFileBatch:
+        """Wait for indexing to finish. The SDK's own poll() loops forever."""
+        deadline = time.monotonic() + BATCH_POLL_TIMEOUT_SECONDS
+
+        while True:
+            batch = self._retrieve_file_batch(batch_id, vector_store_id)
+            if batch.status != "in_progress":
+                return batch
+
+            if time.monotonic() >= deadline:
+                error_message = (
+                    f"[KAAPI] Timed out (code: batch-poll-timeout) after "
+                    f"{BATCH_POLL_TIMEOUT_SECONDS}s waiting for OpenAI to finish indexing "
+                    f"{batch.file_counts.in_progress} file(s). Retry the "
+                    f"collection, or split it into smaller batches."
+                )
+                logger.error(
+                    f"[OpenAIVectorStoreCrud._poll_file_batch] {error_message} | "
+                    f"vector_store_id={vector_store_id}, batch_id={batch_id}, "
+                    f"completed={batch.file_counts.completed}, "
+                    f"in_progress={batch.file_counts.in_progress}"
+                )
+                raise InterruptedError(error_message)
+
+            time.sleep(
+                min(BATCH_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
+            )
+
     def update(
         self,
         vector_store_id: str,
@@ -115,16 +173,10 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
 
         try:
-            created = self.client.vector_stores.file_batches.create(
-                vector_store_id=vector_store_id,
-                file_ids=[doc.file_id[OPENAI_PROVIDER] for doc in docs],
+            batch_id = self._create_file_batch(
+                vector_store_id, [doc.file_id[OPENAI_PROVIDER] for doc in docs]
             )
-            # poll()'s return deserializes a vector-store body, so its .id is the vs_ id;
-            # capture the real vsfb_ batch id from create() before polling.
-            batch_id = created.id
-            batch = self.client.vector_stores.file_batches.poll(
-                batch_id, vector_store_id=vector_store_id
-            )
+            batch = self._poll_file_batch(batch_id, vector_store_id)
         except openai.RateLimitError as e:
             error_message = (
                 f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "

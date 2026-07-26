@@ -381,12 +381,14 @@ def test_upload_files_first_failure_stops_remaining_docs() -> None:
 
 
 def _wire_batch(client: MagicMock, completed: int, failed: int) -> None:
-    """create() yields the real vsfb_ id; poll()'s return carries the corrupt vs_ id."""
+    """create() gives the real vsfb_ id; retrieve() gives the corrupt vs_ id."""
     client.vector_stores.file_batches.create.return_value = MagicMock(id="vsfb_real")
     batch = MagicMock(id="vs_corrupt")
+    batch.status = "completed"
     batch.file_counts.completed = completed
     batch.file_counts.failed = failed
-    client.vector_stores.file_batches.poll.return_value = batch
+    batch.file_counts.in_progress = 0
+    client.vector_stores.file_batches.retrieve.return_value = batch
 
 
 def _make_openai_doc(file_id: str = "file-abc", fname: str = "doc.pdf") -> MagicMock:

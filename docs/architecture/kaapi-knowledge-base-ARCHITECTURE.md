@@ -289,20 +289,17 @@ heavy work is chunked:
 
 1. Load the requested `document` rows; resolve the provider + project credentials.
 2. Move the job to `PROCESSING`.
-3. **Upload all files** to the provider via `provider.upload_files()` — this is
-   where the de-dup optimization lives: docs that already carry an
-   `openai_file_id` are skipped; new ones are uploaded and their file IDs
-   persisted (§7).
-4. Compute `total_size_mb` and call `batch_documents()` to produce the batch plan.
+3. Compute `total_size_mb` and call `batch_documents()` to produce the batch plan.
+4. **Create the vector store** via `provider.create_vector_store()` and record it
+   on `result` immediately, so a later failure can always tear it down.
 5. Persist batch metadata on the job (`total_batches`, `current_batch_number=0`,
    `documents_uploaded=[]`).
-6. Enqueue **batch 1** with `vector_store_id=None` and the remaining batches as a
-   tail list.
+6. Enqueue **batch 1** with the resolved `vector_store_id` and the remaining
+   batches as a tail list.
 
-> Note the asymmetry: *file upload to the provider is not itself batched* — it
-> happens for all docs in this single setup task. Only the **vector-store attach**
-> is batched across Phase-2 tasks. See §11 for the residual timeout risk this
-> leaves.
+> Setup does **no** file uploading. Both the upload and the vector-store attach
+> happen per batch in Phase 2, so each is bounded by the batch caps (≤200 docs /
+> ≤30 MB).
 
 ### Phase 2 — `execute_batch_job` (one task per batch, self-chaining)
 
@@ -311,16 +308,16 @@ heavy work is chunked:
 For each batch the task:
 
 1. Resolves the provider and reads this batch's document rows.
-2. Calls `provider.create(batch_docs, vector_store_id)`:
-   - On batch 1, `vector_store_id is None` → the vector store is **created**, then
-     this batch's file IDs are attached.
-   - On later batches, the existing `vector_store_id` (threaded through the task
-     args) is reused and the batch's file IDs are attached to it.
-3. **Checkpoints** progress to the job row (`current_batch_number`,
+2. Calls `provider.upload_files(storage, batch_docs, project_id)` — ships the
+   bytes of any doc that does not already carry a provider file ID (§7).
+3. Calls `provider.create(batch_docs, vector_store_id)` — attaches this batch's
+   file IDs to the vector store created during setup, then waits for indexing
+   under a deadline (§12).
+4. **Checkpoints** progress to the job row (`current_batch_number`,
    `documents_uploaded += this batch`).
-4. If batches remain → enqueue the next batch task (passing the resolved
+5. If batches remain → enqueue the next batch task (passing the resolved
    `vector_store_id` and the shrinking `remaining_batches` tail) and **return**.
-5. On the **final** batch → finalize:
+6. On the **final** batch → finalize:
    - Create the `Collection` row (`llm_service_id` = vector store ID,
      `llm_service_name`, provider, name, description).
    - Link every uploaded doc to it via `document_collection`.
@@ -620,26 +617,41 @@ store, the remote vector store can be left orphaned:
   sends a failure callback. No `Collection` row is created (it only appears on the
   final batch), and no further batches are queued.
 - Cleanup is guarded by `if provider is not None and result is not None:
-  provider.delete(result)` in `_handle_job_failure`. But `result` is only set
-  **after** `provider.create()` returns. If `provider.create()` itself raises
-  (the common failure — e.g. an attach/parse error), `result` stays `None`, so
-  the **cleanup is skipped** and the vector store built by previous batches is
-  left dangling on the provider.
+  provider.delete(result)` in `_handle_job_failure`. **Resolved:** `result` is now
+  assigned as soon as the vector store exists — immediately after
+  `create_vector_store()` in setup, and at the top of the `try` in each batch task
+  — so a failure inside `upload_files()` or `create()` still tears the store down.
 - Uploaded provider **files persist** regardless (their IDs are saved on the
   `document` rows) — this is intentional for reuse, not a leak.
-- **TODO:** track the resolved `vector_store_id` independently of `result` so a
-  mid-chain failure can always tear down the in-progress vector store.
+- Residual gap: if `create_vector_store()` creates the store remotely but the
+  response is lost, the retry creates a second store and the first is orphaned.
 
-### 11.5 File upload to the provider is not batched
+### 11.5 Upload and attach are both batched — timing bounds
 
-- Batching protects the **vector-store attach** step, but `execute_setup_job`
-  uploads **all** new files to the provider in a single task before batching
-  begins. For a collection with many large *new* (not-yet-uploaded) documents,
-  that one setup task can still approach the soft time limit.
-- The reuse optimization (§7) mitigates this for repeat documents, but a
-  first-time bulk upload is still a single-task operation.
-- **TODO:** consider batching the upload phase too, or moving uploads into the
-  per-batch tasks.
+**Resolved:** uploads moved out of `execute_setup_job` into `execute_batch_job`,
+so both phases are bounded by the batch caps. Measured worst case for a full
+200-doc / 30 MB batch: **122 s at 300 ms RTT** (62 s at 150 ms, 22 s at 50 ms);
+pure code overhead is 0.3 s, the rest is round-trip latency. That fits inside
+`CELERY_TASK_SOFT_TIME_LIMIT = 300s`.
+
+The remaining unbounded call was the **indexing wait**: the SDK's
+`file_batches.poll()` is a `while True` with no deadline, so a stuck batch could
+outlast the soft limit and kill the task mid-write. `OpenAIVectorStoreCrud` now
+polls with its own deadline instead (§12).
+
+Do **not** solve batch timing with a self-requeueing "continuation" task. Celery
+runs with `task_acks_late=True` and `task_reject_on_worker_lost=True`, so a
+*crashed* task is redelivered — but a task that returns normally and relies on a
+freshly enqueued message has no such guarantee. If that message is lost the job
+sits in `PROCESSING` forever, and `crud/job/pending_monitor.py` only counts
+`status == PENDING` and only alerts, never recovers.
+
+The timeout retry (§12) shares that residual risk — `task_instance.retry()`
+publishes a new message too — so it is bounded rather than unbounded: at most
+`CELERY_TASK_MAX_RETRIES` attempts, and each one is recorded on the job's
+`error_message` (`"Batch N timed out; retry k/3 queued"`) so a retry that never
+lands is at least diagnosable from the job row. Widening `pending_monitor` to
+watch stalled `PROCESSING` jobs is still open.
 
 ### 11.6 Two divergent delete paths
 
@@ -658,8 +670,12 @@ store, the remote vector store can be left orphaned:
 |---|---|
 | **Async** | `POST /collections` returns `job_id` immediately; work runs on the Celery `low_priority` (priority 1) queue. |
 | **Batching** | One task per batch (≤30 MB / ≤200 docs), self-chaining; progress checkpointed to the job row across tasks. |
-| **Timeout** | `SoftTimeLimitExceeded` → job `FAILED` ("Task exceeded soft time limit") + failure callback, then re-raised. |
-| **Provider / attach error** | `OpenAIVectorStoreCrud.update` raises if any file fails to attach → job `FAILED`; see §11.4 for the orphan-cleanup gap. |
+| **Timeout** | `execute_batch_job` **retries the batch** via `task_instance.retry()` while attempts remain (`CELERY_TASK_MAX_RETRIES = 3`, delay 180 s). The retry deliberately skips `_handle_job_failure`, so the vector store survives and the retried task reuses the same `vector_store_id`. Only once attempts are exhausted does the job go `FAILED` ("Task exceeded soft time limit") with a failure callback and vector-store teardown. `execute_setup_job` does **not** retry — a second `create_vector_store()` would orphan the first (§11.4). |
+| **Why retry converges** | `upload_files` persists each document's provider file ID in its own session the moment that document uploads, so attempt N+1 skips everything attempt N finished. A 200-doc batch against a provider degraded to ~70 uploads/attempt completes on attempt 3 (measured). This is why a timeout is worth retrying rather than failing: each attempt does strictly less work. |
+| **Indexing wait** | `OpenAIVectorStoreCrud._poll_file_batch` polls `file_batches.retrieve` every `BATCH_POLL_INTERVAL_SECONDS` (2 s) until the batch leaves `in_progress`, bounded by `BATCH_POLL_TIMEOUT_SECONDS` (240 s). Expiry raises `InterruptedError` tagged `(code: batch-poll-timeout)`. One constant, no coupling to the caller — overrunning the soft limit is survivable now that the batch retries. |
+| **What `OPENAI_TIMEOUT_SECONDS` actually bounds** | A **stall**, not a duration. httpx applies its timeout per socket operation — there is no total-request deadline in httpx at all — so a large upload that streams steadily takes as long as it takes. Verified: a 10 MB upload running 12 s wall-clock under a 2 s write timeout **succeeds**; only a receiver that stops draining trips `WriteTimeout`. So 90 s means "90 consecutive seconds of zero bytes moving", i.e. a dead connection. It imposes no throughput floor on documents. Kept under a third of the soft limit so all attempts against one dead socket still fit in a task, letting the batch recover without spending a Celery retry. |
+| **Transient provider errors** | Handled by the **OpenAI SDK's own retries** — `max_retries=OPENAI_MAX_RETRIES` (2) and `timeout=OPENAI_TIMEOUT_SECONDS` (90 s), both set in `providers/registry.py`. The timeout is what makes the ceiling provable: without it the SDK default is a 600 s read timeout, so one hung call is 3 × 600 = 1800 s — six times the soft limit, with zero progress made and nothing for a retry to build on. The SDK retries connection errors, 408, 409, 429 and 5xx, honours `retry-after`, and rewinds the upload stream between attempts. Deterministic errors (400/401/404/422) are not retried. Do **not** stack a second retry layer on top: two layers multiply attempts (3×3 = 9 requests, measured) and the outer layer's longer backoff dominates — a custom tenacity layer measured **4.5× slower** on an intermittent-failure batch (402 s vs 90 s projected over 200 docs). |
+| **Provider / attach error** | `OpenAIVectorStoreCrud.update` raises if any file fails to attach → job `FAILED`; failed files are never retried, since an unsupported or corrupt file fails identically every time. |
 | **Upload then DB failure** | The just-uploaded provider file is deleted to avoid an orphan; the job fails. |
 | **Credentials missing** | `get_llm_provider` raises `ValueError` → clean job failure. |
 | **Callback delivery** | Best-effort; HTTPS-only, SSRF-validated, optional HMAC signing. A failed callback does not change job status (still pollable). |

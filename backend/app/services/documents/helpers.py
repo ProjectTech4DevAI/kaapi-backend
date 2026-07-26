@@ -42,17 +42,16 @@ JSON_OPENERS = (b"{", b"[")
 JSON_CLOSERS: dict[int, int] = {ord("{"): ord("}"), ord("["): ord("]")}
 UTF8_BOM = b"\xef\xbb\xbf"
 
-# Past this size a full parse is no longer cheap enough for the request path;
-# larger documents fall back to the O(1) truncation check in _check_json_tail.
 JSON_FULL_PARSE_MAX_BYTES = 256 * 1024
 
-# Set False if ragged rows turn out to be common in real uploads.
 CSV_STRICT_COLUMN_COUNT = True
-CSV_SAMPLE_MAX_ROWS = 20
+CSV_SAMPLE_MAX_ROWS = 200
+
+OLE2_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 MISLABELLED_BINARY_SIGNATURES: dict[bytes, str] = {
     b"PK\x03\x04": "an Office/zip file (xlsx, docx)",
-    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1": "a legacy Office file (xls, doc)",
+    OLE2_SIGNATURE: "a legacy Office file (xls, doc)",
     b"%PDF-": "a PDF",
 }
 
@@ -87,8 +86,6 @@ def _decode_utf8(filename: str, sample: bytes) -> str:
             "the file is binary, corrupt, or has the wrong extension",
         )
     try:
-        # Buffers a multi-byte char split by the sample boundary instead of
-        # reporting it as a decode failure.
         return getincrementaldecoder("utf-8")().decode(sample)
     except UnicodeDecodeError as e:
         raise DocumentValidationError(
@@ -112,8 +109,8 @@ def _check_pdf(filename: str, head: bytes, tail: bytes, file: UploadFile) -> Non
         )
 
 
-def _check_ooxml(filename: str, head: bytes, expected_part: bytes) -> None:
-    if OOXML_CONTENT_TYPES not in head:
+def _check_ooxml(filename: str, sample: bytes, expected_part: bytes) -> None:
+    if OOXML_CONTENT_TYPES not in sample:
         raise DocumentValidationError(
             filename,
             "parsing error - file is a zip archive but not a valid Office document "
@@ -123,9 +120,7 @@ def _check_ooxml(filename: str, head: bytes, expected_part: bytes) -> None:
     other_part = (
         OOXML_EXCEL_PART if expected_part == OOXML_WORD_PART else OOXML_WORD_PART
     )
-    # Only rejects on positive evidence of the wrong package type; neither
-    # marker landing in the sample leaves the file alone.
-    if other_part in head and expected_part not in head:
+    if other_part in sample and expected_part not in sample:
         raise DocumentValidationError(
             filename,
             f"parsing error - file is a '{other_part.decode()}' Office package, "
@@ -134,11 +129,13 @@ def _check_ooxml(filename: str, head: bytes, expected_part: bytes) -> None:
 
 
 def _check_docx(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
-    _check_ooxml(filename, head, OOXML_WORD_PART)
+    """Head+tail: the zip central directory lists all entry names and sits at the
+    end; the head holds only the first entry."""
+    _check_ooxml(filename, head + tail, OOXML_WORD_PART)
 
 
 def _check_xlsx(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
-    _check_ooxml(filename, head, OOXML_EXCEL_PART)
+    _check_ooxml(filename, head + tail, OOXML_EXCEL_PART)
 
 
 def _check_csv(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
@@ -154,7 +151,6 @@ def _check_csv(filename: str, head: bytes, tail: bytes, file: UploadFile) -> Non
 
     lines = text.splitlines()
     if len(head) == SNIFF_HEAD_BYTES and len(lines) > 1:
-        # Only a head-sized read can have cut its last line in half.
         lines = lines[:-1]
 
     try:
@@ -213,9 +209,6 @@ def _check_json(filename: str, head: bytes, tail: bytes, file: UploadFile) -> No
         return
 
     try:
-        # The hook discards every object as it is parsed: the whole document is
-        # still validated, but no result graph is built, cutting peak memory
-        # roughly 5x versus a plain json.loads.
         json.loads(stream.read(), object_pairs_hook=lambda pairs: None)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise DocumentValidationError(
@@ -232,19 +225,20 @@ class FormatSpec:
     checker: Callable[[str, bytes, bytes, UploadFile], None] | None = None
 
 
-# Deliberately partial: text, markdown and html are omitted because any
-# decodable byte string is a valid document in those formats.
 FORMAT_SPECS: dict[str, FormatSpec] = {
     "pdf": FormatSpec(signatures=(b"%PDF-",), needs_tail=True, checker=_check_pdf),
-    # OOXML is a zip; empty/spanned archives use the other two headers.
     "docx": FormatSpec(
-        signatures=(b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"), checker=_check_docx
+        signatures=(b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+        needs_tail=True,
+        checker=_check_docx,
     ),
     "xlsx": FormatSpec(
-        signatures=(b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"), checker=_check_xlsx
+        signatures=(b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+        needs_tail=True,
+        checker=_check_xlsx,
     ),
-    # OLE2, shared with .doc/.ppt/.msg - telling them apart needs a real parse.
-    "xls": FormatSpec(signatures=(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",)),
+    "xls": FormatSpec(signatures=(OLE2_SIGNATURE,)),
+    "doc": FormatSpec(signatures=(OLE2_SIGNATURE,)),
     "csv": FormatSpec(checker=_check_csv),
     "json": FormatSpec(needs_tail=True, checker=_check_json),
 }

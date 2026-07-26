@@ -42,13 +42,13 @@ CORRUPT_POLL_ID = "vs_corrupt999"
 
 
 def _wire_batch(mock_client, *, completed: int, failed: int) -> None:
-    """Stub create() with the real vsfb_ id and poll() with the corrupt vs_ id the SDK returns."""
+    """create() gives the real vsfb_ id; retrieve() gives the corrupt vs_ id."""
     mock_client.vector_stores.file_batches.create.return_value = MagicMock(
         id=REAL_BATCH_ID
     )
-    counts = MagicMock(completed=completed, failed=failed)
-    mock_client.vector_stores.file_batches.poll.return_value = MagicMock(
-        id=CORRUPT_POLL_ID, file_counts=counts
+    counts = MagicMock(completed=completed, failed=failed, in_progress=0)
+    mock_client.vector_stores.file_batches.retrieve.return_value = MagicMock(
+        id=CORRUPT_POLL_ID, status="completed", file_counts=counts
     )
 
 
@@ -77,7 +77,7 @@ class TestOpenAIVectorStoreCrudUpdateSuccess:
 
         crud.update("vs_1", docs)
 
-        args, kwargs = mock_client.vector_stores.file_batches.poll.call_args
+        args, kwargs = mock_client.vector_stores.file_batches.retrieve.call_args
         assert args[0] == REAL_BATCH_ID
         assert kwargs["vector_store_id"] == "vs_1"
 
