@@ -263,6 +263,16 @@ class TestGoogleVertexAIProvider:
             == "Kore"
         )
 
+    def test_tts_wraps_input_in_transcript_tags(self, provider, tts_config, query):
+        with patch(
+            "app.services.llm.providers.google_ai.requests.post",
+            return_value=_mock_http_ok(_tts_response()),
+        ) as mock_post:
+            provider.execute(tts_config, query, "Say this text")
+
+        parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert parts[0]["text"] == "<transcript>Say this text</transcript>"
+
     def test_tts_rejects_non_string_input(self, provider, tts_config, query):
         resp, err = provider.execute(tts_config, query, ["not a string"])
         assert resp is None
