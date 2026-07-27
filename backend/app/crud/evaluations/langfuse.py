@@ -46,7 +46,7 @@ def _write_trace_score(
 
 
 def create_langfuse_dataset_run(
-    langfuse: Langfuse,
+    langfuse: Langfuse | None,
     dataset_name: str,
     run_name: str,
     results: list[dict[str, Any]],
@@ -93,6 +93,15 @@ def create_langfuse_dataset_run(
     Raises:
         Exception: If Langfuse operations fail
     """
+    # v2 native (judged) runs and tracing-opted-out projects pass langfuse=None:
+    # no traces are created, and callers fall back to keying scores by item_id.
+    if langfuse is None:
+        logger.info(
+            "[create_langfuse_dataset_run] No Langfuse client; skipping trace "
+            f"creation | run_name={run_name} | dataset={dataset_name}"
+        )
+        return {}
+
     logger.info(
         f"[create_langfuse_dataset_run] Creating Langfuse dataset run | "
         f"run_name={run_name} | dataset={dataset_name} | items={len(results)}"
