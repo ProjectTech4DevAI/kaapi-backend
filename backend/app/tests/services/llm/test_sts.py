@@ -550,7 +550,7 @@ class TestErrorPaths:
         payload["input_language"] = "hindi"
         response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
-        assert isinstance(response.json()["detail"], list)
+        assert isinstance(response.json()["errors"], list)
 
     def test_invalid_output_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -561,7 +561,7 @@ class TestErrorPaths:
         payload["output_language"] = "english"
         response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
-        assert isinstance(response.json()["detail"], list)
+        assert isinstance(response.json()["errors"], list)
 
     @pytest.mark.parametrize("forbidden", ["unknown", "auto"])
     def test_detection_sentinels_rejected_as_output_language(
