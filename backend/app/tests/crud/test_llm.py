@@ -21,8 +21,8 @@ from app.models.llm import (
     QueryParams,
 )
 from app.models.llm.request import (
-    KaapiCompletionConfig,
     LLMCallConfig,
+    build_kaapi_completion_config,
 )
 from app.tests.utils.utils import get_project, get_organization
 from app.tests.utils.llm import create_llm_job
@@ -47,7 +47,7 @@ def test_job(db: Session):
 def text_config_blob() -> ConfigBlob:
     """Create a text completion config blob."""
     return ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             params={
                 "model": "gpt-4o",
@@ -63,7 +63,7 @@ def text_config_blob() -> ConfigBlob:
 def stt_config_blob() -> ConfigBlob:
     """Create a speech-to-text config blob."""
     return ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             params={
                 "model": "whisper-1",
@@ -79,7 +79,7 @@ def stt_config_blob() -> ConfigBlob:
 def tts_config_blob() -> ConfigBlob:
     """Create a text-to-speech config blob."""
     return ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             params={
                 "model": "tts-1",

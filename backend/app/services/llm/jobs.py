@@ -47,7 +47,9 @@ from app.models.llm.request import (
     ChainStatus,
     ConfigBlob,
     ImageInput,
-    KaapiCompletionConfig,
+    KaapiSTTCompletionConfig,
+    KaapiTextCompletionConfig,
+    KaapiTTSCompletionConfig,
     LLMCallConfig,
     NativeCompletionConfig,
     PDFInput,
@@ -618,8 +620,7 @@ def execute_llm_call(
                     return BlockResult(
                         error="Proxy completion only supports text input"
                     )
-                proxy_params = config_blob.completion.params or {}
-                client_llm_url = proxy_params.get("client_llm_url")
+                client_llm_url = str(config_blob.completion.params.client_llm_url)
                 if not client_llm_url:
                     return BlockResult(error="Proxy config missing client_llm_url")
                 try:
@@ -833,7 +834,14 @@ def execute_llm_call(
             completion_config = config_blob.completion
             original_provider = completion_config.provider
 
-            if isinstance(completion_config, KaapiCompletionConfig):
+            if isinstance(
+                completion_config,
+                (
+                    KaapiTextCompletionConfig,
+                    KaapiSTTCompletionConfig,
+                    KaapiTTSCompletionConfig,
+                ),
+            ):
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session, kaapi_config=completion_config
                 )

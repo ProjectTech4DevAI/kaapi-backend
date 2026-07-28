@@ -42,8 +42,8 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.services.evaluations.fast import (
     execute_fast_evaluation_chunk,
@@ -157,7 +157,7 @@ def _make_text_openai_config(db: Session, project_id: int) -> Config:
     exact model name is immaterial to every assertion here.
     """
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o-fast-eval-test", "temperature": 0.7},
@@ -415,7 +415,7 @@ class TestFastEvaluationRoute:
         config = _make_text_openai_config(db, user_api_key.project_id)
 
         fake_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="stt",
                 params={"model": "whisper-1"},

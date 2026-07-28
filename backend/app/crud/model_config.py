@@ -151,7 +151,12 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model") or None
+    params = completion.params
+    model_name = (
+        params.get("model")
+        if isinstance(params, dict)
+        else getattr(params, "model", None)
+    ) or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -170,7 +175,11 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
         )
 
     if completion_type == "tts" and model_row is not None:
-        voice = (completion.params or {}).get("voice")
+        voice = (
+            params.get("voice")
+            if isinstance(params, dict)
+            else getattr(params, "voice", None)
+        )
         voice_spec = (
             model_row.config.get("voice")
             if isinstance(model_row.config, dict)

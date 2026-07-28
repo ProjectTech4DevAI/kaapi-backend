@@ -63,6 +63,38 @@ class Modality(StrEnum):
     FILES = "FILES"
 
 
+# BCP-47 language codes accepted by the speech-to-speech endpoint (STT input /
+# TTS output). Single source of truth: `SUPPORTED_LANGUAGE_CODES` in
+# `app/services/llm/chain/utils.py` derives from this via `get_args`.
+STSLanguageCode = Literal[
+    "auto",
+    "unknown",
+    "en-IN",
+    "hi-IN",
+    "bn-IN",
+    "kn-IN",
+    "ml-IN",
+    "mr-IN",
+    "od-IN",
+    "pa-IN",
+    "ta-IN",
+    "te-IN",
+    "gu-IN",
+    "as-IN",
+    "ur-IN",
+    "ne-IN",
+    "kok-IN",
+    "ks-IN",
+    "sd-IN",
+    "sa-IN",
+    "sat-IN",
+    "mni-IN",
+    "brx-IN",
+    "mai-IN",
+    "doi-IN",
+]
+
+
 DEFAULT_STT_MODEL = "gemini-2.5-pro"
 DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 DEFAULT_TTS_VOICE = "Kore"

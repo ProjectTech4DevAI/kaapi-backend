@@ -414,7 +414,13 @@ def submit_assessment_batch(
     completion = config_blob.completion
     provider_name = completion.provider or "openai"
 
-    params = dict(completion.params)
+    # Native params are a plain dict; Kaapi params are now a typed submodel.
+    raw_params = completion.params
+    params = (
+        dict(raw_params)
+        if isinstance(raw_params, dict)
+        else raw_params.model_dump(exclude_none=True)
+    )
     params.pop("instructions", None)
     params.pop("system_instruction", None)
     if isinstance(system_instruction, str) and system_instruction.strip():

@@ -4,7 +4,7 @@ import logging
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -18,7 +18,6 @@ from app.models.llm.constants import (
 from app.models.llm.request import (
     ChainBlock,
     ConfigBlob,
-    KaapiCompletionConfig,
     LLMCallConfig,
     LLMChainRequest,
     QueryParams,
@@ -29,11 +28,9 @@ from app.models.llm.request import (
     TextLLMParams,
     TTSBlockSpec,
     TTSLLMParams,
+    build_kaapi_completion_config,
 )
-from app.services.llm.chain.utils import (
-    DEFAULT_RAG_INSTRUCTIONS,
-    SUPPORTED_LANGUAGE_CODES,
-)
+from app.services.llm.chain.utils import DEFAULT_RAG_INSTRUCTIONS
 from app.services.llm.jobs import start_chain_job
 from app.utils import APIResponse, load_description, validate_callback_url
 
@@ -116,10 +113,10 @@ def _inline_call_config(
 ) -> LLMCallConfig:
     return LLMCallConfig(
         blob=ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider=provider,
                 type=type_,
-                params=params.model_dump(exclude_none=True),
+                params=params,
             )
         )
     )
@@ -221,25 +218,9 @@ def speech_to_speech(
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
 
-    if (
-        request.input_language
-        and request.input_language not in SUPPORTED_LANGUAGE_CODES
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unsupported input language code: {request.input_language}. Supported: {', '.join(SUPPORTED_LANGUAGE_CODES)}",
-        )
-
-    if request.output_language and (
-        request.output_language not in SUPPORTED_LANGUAGE_CODES
-        or request.output_language in ("auto", "unknown")
-    ):
-        tts_supported = SUPPORTED_LANGUAGE_CODES - {"auto", "unknown"}
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unsupported output language code: {request.output_language}. Supported: {', '.join(tts_supported)}",
-        )
-
+    # Code membership + the auto/unknown exclusion on output_language are now
+    # enforced by SpeechToSpeechRequest itself (STSLanguageCode Literal +
+    # validate_output_language), so FastAPI 422s before this handler runs.
     input_lang, output_lang = _resolve_languages(request)
 
     blocks = [

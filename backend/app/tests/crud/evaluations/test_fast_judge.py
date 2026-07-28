@@ -49,9 +49,9 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     PromptTemplate,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
 from app.tests.utils.auth import TestAuthContext
@@ -85,7 +85,7 @@ def _make_text_config(
     if instructions is not None:
         params["instructions"] = instructions
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params=params,

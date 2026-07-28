@@ -1,35 +1,13 @@
 """Utility functions for LLM chain operations, including speech-to-speech helpers."""
 
-# BCP-47 language codes accepted by the speech-to-speech endpoint.
-SUPPORTED_LANGUAGE_CODES = {
-    "auto",
-    "unknown",
-    # Primary Indian languages
-    "en-IN",
-    "hi-IN",
-    "bn-IN",
-    "kn-IN",
-    "ml-IN",
-    "mr-IN",
-    "od-IN",
-    "pa-IN",
-    "ta-IN",
-    "te-IN",
-    "gu-IN",
-    # Additional languages
-    "as-IN",
-    "ur-IN",
-    "ne-IN",
-    "kok-IN",
-    "ks-IN",
-    "sd-IN",
-    "sa-IN",
-    "sat-IN",
-    "mni-IN",
-    "brx-IN",
-    "mai-IN",
-    "doi-IN",
-}
+from typing import get_args
+
+from app.models.llm.constants import STSLanguageCode
+
+# BCP-47 language codes accepted by the speech-to-speech endpoint. Derived from
+# STSLanguageCode (app/models/llm/constants.py) so the request model and this
+# set never drift apart.
+SUPPORTED_LANGUAGE_CODES: set[str] = set(get_args(STSLanguageCode))
 
 DEFAULT_RAG_INSTRUCTIONS = (
     "Answer the user's question using the provided knowledge base. "

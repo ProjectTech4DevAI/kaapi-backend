@@ -172,11 +172,11 @@ def _make_config_with_instructions(
 ) -> Any:
     from app.crud.config import ConfigCrud
     from app.models.config.config import ConfigCreate
-    from app.models.llm import KaapiCompletionConfig
+    from app.models.llm import build_kaapi_completion_config
     from app.models.llm.request import ConfigBlob
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={

@@ -358,7 +358,11 @@ def observe_llm_execution(
                     as_type="generation",
                     name=f"{completion_config.provider}-completion",
                     input=query.input,
-                    model=completion_config.params.get("model"),
+                    model=(
+                        completion_config.params.get("model")
+                        if isinstance(completion_config.params, dict)
+                        else getattr(completion_config.params, "model", None)
+                    ),
                 )
 
             response: LLMCallResponse | None

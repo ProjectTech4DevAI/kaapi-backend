@@ -1,9 +1,11 @@
 import logging
+from typing import Any
 
 from sqlmodel import Session
 
 from app.crud.model_config import is_reasoning_model
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
+from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.models.llm.constants import (
     BCP47_LOCALE_TO_GEMINI_LANG,
     BCP47_TO_ELEVENLABS_LANG,
@@ -526,6 +528,26 @@ def map_kaapi_to_anthropic_params(
     return anthropic_params, warnings
 
 
+def kaapi_params_as_dict(
+    params: TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize a Kaapi completion config's `params` to a plain dict for the
+    provider mappers below, which are dict-in/dict-out.
+
+    Strips `temperature` when the caller didn't explicitly set it, even
+    though the params model defaults it to 0.1 — mirrors the pre-refactor
+    behavior of KaapiCompletionConfig, where an unset temperature was never
+    forwarded to the provider mapper (e.g. it triggers a spurious "suppressed
+    because reasoning is enabled" warning for reasoning models otherwise).
+    """
+    if isinstance(params, dict):
+        return dict(params)
+    dumped = params.model_dump(exclude_none=True)
+    if "temperature" in dumped and "temperature" not in params.model_fields_set:
+        dumped.pop("temperature")
+    return dumped
+
+
 def transform_kaapi_config_to_native(
     session: Session,
     kaapi_config: KaapiCompletionConfig,
@@ -543,9 +565,11 @@ def transform_kaapi_config_to_native(
         - NativeCompletionConfig with provider-native parameters ready for API
         - List of warnings for suppressed/ignored parameters
     """
+    kaapi_params = kaapi_params_as_dict(kaapi_config.params)
+
     if kaapi_config.provider == Provider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(
-            session=session, kaapi_params=kaapi_config.params
+            session=session, kaapi_params=kaapi_params
         )
         return (
             NativeCompletionConfig(
@@ -556,7 +580,7 @@ def transform_kaapi_config_to_native(
 
     if kaapi_config.provider == Provider.GOOGLE_AISTUDIO:
         mapped_params, warnings = map_kaapi_to_google_params(
-            kaapi_config.params, kaapi_config.type
+            kaapi_params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
@@ -569,7 +593,7 @@ def transform_kaapi_config_to_native(
 
     if kaapi_config.provider == Provider.SARVAMAI:
         mapped_params, warnings = map_kaapi_to_sarvam_params(
-            kaapi_config.params, kaapi_config.type
+            kaapi_params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
@@ -580,7 +604,7 @@ def transform_kaapi_config_to_native(
 
     if kaapi_config.provider == Provider.ELEVENLABS:
         mapped_params, warnings = map_kaapi_to_elevenlabs_params(
-            kaapi_config.params, kaapi_config.type
+            kaapi_params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
@@ -594,7 +618,7 @@ def transform_kaapi_config_to_native(
     if kaapi_config.provider == Provider.GOOGLE:
         # Kaapi STT/TTS param shape is identical to Google's; reuse the Google mapper.
         mapped_params, warnings = map_kaapi_to_google_params(
-            kaapi_config.params, kaapi_config.type
+            kaapi_params, kaapi_config.type
         )
         return (
             NativeCompletionConfig(
@@ -610,7 +634,7 @@ def transform_kaapi_config_to_native(
             raise ValueError(
                 f"Anthropic provider does not support completion type '{kaapi_config.type}'"
             )
-        mapped_params, warnings = map_kaapi_to_anthropic_params(kaapi_config.params)
+        mapped_params, warnings = map_kaapi_to_anthropic_params(kaapi_params)
         return (
             NativeCompletionConfig(
                 provider="anthropic-native",
