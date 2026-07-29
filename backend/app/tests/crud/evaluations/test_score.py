@@ -1,4 +1,4 @@
-"""`verdict_from_score` — the per-metric verdict band on v2 judge runs (issue #1092).
+"""`verdict_from_score` — the per-metric verdict band on v2 judge runs.
 
 Bands are upper-bound exclusive: [0, 0.3) Needs Improvement, [0.3, 0.6) Needs
 Refinement, [0.6, 1] Good. The enum serializes by value into the trace JSON, so the

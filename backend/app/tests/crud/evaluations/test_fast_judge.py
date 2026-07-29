@@ -616,7 +616,6 @@ class TestAdherenceToPromptScoring:
         traces = _trace_by_ref(result)
         for ref in ("item-1", "item-2"):
             prompt_score = _score_named(traces[ref], PROMPT_SCORE_NAME)
-            # 0.25 falls in the [0, 0.3) band → "Needs Improvement" (issue #1092).
             assert prompt_score == {
                 "name": PROMPT_SCORE_NAME,
                 "value": 0.25,
@@ -1086,7 +1085,7 @@ class TestKnowledgeBaseScoring:
 
 
 class TestVerdictBandOnTraceScores:
-    """issue #1092: each scored judge metric on a v2 trace carries a verdict band;
+    """each scored judge metric on a v2 trace carries a verdict band;
     the cosine (v1) score and the KB N/A placeholder never do."""
 
     def test_each_scored_judge_metric_carries_its_verdict_band(
@@ -1125,7 +1124,6 @@ class TestVerdictBandOnTraceScores:
         prompt = _score_named(trace, PROMPT_SCORE_NAME)
         kb = _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME)
 
-        # Expected bands are the #1092 spec, not a re-run of the mapper.
         assert gt["verdict"] == "Needs Improvement"
         assert prompt["verdict"] == "Needs Refinement"
         assert kb["verdict"] == "Good"

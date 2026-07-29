@@ -12,7 +12,7 @@ DEFAULT_CATEGORY: str = "Other"
 
 
 class VerdictEnum(str, Enum):
-    """Qualitative band derived from a 0–1 judge-metric score (issue #1092)."""
+    """Qualitative band derived from a 0–1 judge-metric score."""
 
     NEEDS_IMPROVEMENT = "Needs Improvement"
     NEEDS_REFINEMENT = "Needs Refinement"
