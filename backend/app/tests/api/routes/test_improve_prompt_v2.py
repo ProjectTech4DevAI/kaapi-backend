@@ -5,7 +5,7 @@ The v2 endpoint is:
     JSON body {"callback_url": "https://..."} and a *judged* (is_judge_run) run;
     calls start_prompt_improvement_job(..., require_judge_run=True).
   - execute_prompt_improvement (shared with v1) → branches on run.is_judge_run:
-    a judge run drafts via _draft_improved_prompt_v2 and delivers a
+    a judge run drafts via _draft_improved_prompt(is_judge_run=True) and delivers a
     PromptRecommendationJobPublic callback; a non-judge run keeps the v1 shape.
 
 HTTP boundaries mocked (patched as bound in the modules under test):
@@ -144,8 +144,8 @@ def _worker_env(
 ) -> Iterator[WorkerEnv]:
     """Redirect the worker's Session(engine) at the test db and mock its boundaries.
 
-    Default: the fake Claude client, so the real _draft_improved_prompt_v2 runs and
-    its user message is inspectable. Pass ``draft_v2`` to stub the v2 draft wholesale
+    Default: the fake Claude client, so the real _draft_improved_prompt runs and
+    its user message is inspectable. Pass ``draft_v2`` to stub the draft wholesale
     (used to assert it is NOT re-called on redelivery). ``env.callback`` is the
     patched send_callback — no real HTTP ever.
     """
@@ -165,9 +165,7 @@ def _worker_env(
         callback = stack.enter_context(patch(f"{_SERVICE}.send_callback"))
 
         if draft_v2 is not None:
-            stack.enter_context(
-                patch(f"{_SERVICE}._draft_improved_prompt_v2", draft_v2)
-            )
+            stack.enter_context(patch(f"{_SERVICE}._draft_improved_prompt", draft_v2))
             yield WorkerEnv(llm=draft_v2, callback=callback)
         else:
             if claude_client is None:

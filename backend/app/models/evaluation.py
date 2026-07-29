@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -585,28 +585,16 @@ class PromptImprovementJobPublic(SQLModel):
     error_message: str | None = None
 
 
-class RecommendationTypeEnum(str, Enum):
-    """Kind of recommendation a v2 improvement job returns.
-
-    Only prompt rewrites ship now; KNOWLEDGE_BASE and MODEL are deferred to a
-    later phase but named here so the callback API stays extensible.
-    """
-
-    PROMPT = "prompt"
-    # KNOWLEDGE_BASE = "knowledge_base"  # deferred
-    # MODEL = "model"  # deferred
-
-
 class PromptRecommendationJobPublic(SQLModel):
     """v2 callback payload: a typed recommendation from a judged (v2) run.
 
     Distinct from the v1 PromptImprovementJobPublic so the v1 callback shape
-    stays byte-for-byte unchanged; adds recommendation_type as the extensibility
-    hook for future KB/model recommendations.
+    stays byte-for-byte unchanged. `recommendation_type` widens to a union when
+    knowledge-base / model recommendations land.
     """
 
     job_id: UUID
     status: str
-    recommendation_type: RecommendationTypeEnum = RecommendationTypeEnum.PROMPT
+    recommendation_type: Literal["prompt"] = "prompt"
     config_version: ConfigVersionPublic | None = None
     error_message: str | None = None

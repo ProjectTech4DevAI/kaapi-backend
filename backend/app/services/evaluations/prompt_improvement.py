@@ -44,7 +44,6 @@ from app.models.evaluation import (
     EvaluationRun,
     PromptImprovementJobPublic,
     PromptRecommendationJobPublic,
-    RecommendationTypeEnum,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
 from app.services.llm.providers.claude import ClaudeProvider
@@ -257,7 +256,6 @@ def _build_improve_prompt_payload(
         job_public = PromptRecommendationJobPublic(
             job_id=job_id,
             status=status.value,
-            recommendation_type=RecommendationTypeEnum.PROMPT,
             config_version=config_version,
             error_message=error_message,
         ).model_dump(mode="json")
@@ -421,13 +419,11 @@ def execute_prompt_improvement(
                     "trace_download_failed: could not retrieve trace file from storage"
                 )
 
-            draft = (
-                _draft_improved_prompt_v2 if is_judge_run else _draft_improved_prompt
-            )
-            improved_instructions, rationale = draft(
+            improved_instructions, rationale = _draft_improved_prompt(
                 current_instructions=current_instructions,
                 config_params=params,
                 traces=traces,
+                is_judge_run=is_judge_run,
             )
 
             # Derive the new version from the *evaluated* version's blob (not the
@@ -659,77 +655,71 @@ def _draft_improved_prompt(
     current_instructions: str,
     config_params: dict,
     traces: list | dict,
+    is_judge_run: bool = False,
 ) -> tuple[str, str]:
-    """v1 draft: rewrite the prompt from cosine/correctness score traces."""
-    target_config = _target_config_from_params(config_params)
+    """Rewrite the prompt from a run's score traces.
 
-    user_message_text = (
-        "You are a prompt engineer. Below is a JSON array of evaluation traces. "
-        "Each trace has the fields: `question`, `ground_truth_answer`, "
-        "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
-        "`name`, `value`, and `unscoreable`).\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
-        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
-        "## Target configuration (read-only — do NOT change any of these)\n"
-        f"```\n{json.dumps(target_config)}\n```\n\n"
-        "## Task\n"
-        "1. Identify the answers that performed poorly — those with low scores or "
-        "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
-        "2. Rewrite the system prompt to improve those low-performing answers while "
-        "keeping what already works well.\n"
-        "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
-        "or any other configuration.\n"
-        f"4. Return `{_LLM_KEY_RATIONALE}` as ONE concise sentence "
-        f"(≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
-    )
-
-    return _call_prompt_drafting_llm(user_message_text=user_message_text)
-
-
-def _draft_improved_prompt_v2(
-    *,
-    current_instructions: str,
-    config_params: dict,
-    traces: list | dict,
-) -> tuple[str, str]:
-    """v2 draft: rewrite the prompt from the three-metric judge results.
-
-    Each trace's `scores` list holds the three Adherence-to-* metrics, each with a
-    0-1 `value` (score) and a `comment` (the judge's reasoning). The model must read
-    both. Low Adherence to Knowledge Base is a retrieval/KB gap, not a prompt fault,
-    so the model is told not to chase grounding by editing the prompt.
+    v1 traces carry cosine/correctness scores. A judged (v2) run instead carries the
+    three Adherence-to-* metrics, each with the judge's reasoning in `comment`, so
+    that brief tells the model to read the reasoning and not to chase a low
+    Adherence to Knowledge Base — that is a retrieval/KB gap, not a prompt fault.
     """
+    if is_judge_run:
+        trace_description = (
+            " from an LLM-as-judge run. Each trace has the fields: `question`, "
+            "`ground_truth_answer`, `llm_answer`, and `scores`. `scores` is a list of "
+            "metric objects; each has `name`, `value`, and `comment`, where:\n"
+            f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
+            f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
+            "- `value` is the metric's score from 0 (worst) to 1 (best). Metrics that "
+            'could not be scored appear with `value` = "N/A" and `unscoreable` = true; '
+            "ignore those.\n"
+            "- `comment` is the judge's reasoning for that score — read it, not just "
+            "the number, to understand *why* a row failed."
+        )
+        task_steps = [
+            f"1. Focus on rows where `{PROMPT_SCORE_NAME}` or "
+            f"`{GROUND_TRUTH_SCORE_NAME}` is low. Use BOTH the `value` and the "
+            "`comment` of each metric: the score tells you how bad it is, the "
+            "reasoning tells you what went wrong.\n",
+            "2. Rewrite the system prompt to fix those failures while keeping what "
+            "already works well.\n",
+            f"3. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
+            "knowledge-base gap, NOT a prompt problem — do not try to fix grounding "
+            "by editing the prompt. You may add a light instruction to avoid "
+            "unsupported claims, but do not attempt to change the model, knowledge "
+            "base, or config.\n",
+            "4. Change ONLY the prompt text.\n",
+        ]
+    else:
+        trace_description = (
+            ". Each trace has the fields: `question`, `ground_truth_answer`, "
+            "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
+            "`name`, `value`, and `unscoreable`)."
+        )
+        task_steps = [
+            "1. Identify the answers that performed poorly — those with low scores or "
+            "where `llm_answer` diverges significantly from `ground_truth_answer`.\n",
+            "2. Rewrite the system prompt to improve those low-performing answers "
+            "while keeping what already works well.\n",
+            "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
+            "or any other configuration.\n",
+        ]
+
+    task_steps.append(
+        f"{len(task_steps) + 1}. Return `{_LLM_KEY_RATIONALE}` as ONE concise "
+        f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
+    )
     target_config = _target_config_from_params(config_params)
 
     user_message_text = (
-        "You are a prompt engineer. Below is a JSON array of evaluation traces from "
-        "an LLM-as-judge run. Each trace has the fields: `question`, "
-        "`ground_truth_answer`, `llm_answer`, and `scores`. `scores` is a list of "
-        "metric objects; each has `name`, `value`, and `comment`, where:\n"
-        f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
-        f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
-        "- `value` is the metric's score from 0 (worst) to 1 (best). Metrics that "
-        'could not be scored appear with `value` = "N/A" and `unscoreable` = true; '
-        "ignore those.\n"
-        "- `comment` is the judge's reasoning for that score — read it, not just the "
-        "number, to understand *why* a row failed.\n\n"
+        "You are a prompt engineer. Below is a JSON array of evaluation traces"
+        f"{trace_description}\n\n"
         f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
         f"```\n{json.dumps(target_config)}\n```\n\n"
-        "## Task\n"
-        f"1. Focus on rows where `{PROMPT_SCORE_NAME}` or `{GROUND_TRUTH_SCORE_NAME}` "
-        "is low. Use BOTH the `value` and the `comment` of each metric: the score "
-        "tells you how bad it is, the reasoning tells you what went wrong.\n"
-        "2. Rewrite the system prompt to fix those failures while keeping what already "
-        "works well.\n"
-        f"3. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
-        "knowledge-base gap, NOT a prompt problem — do not try to fix grounding by "
-        "editing the prompt. You may add a light instruction to avoid unsupported "
-        "claims, but do not attempt to change the model, knowledge base, or config.\n"
-        "4. Change ONLY the prompt text.\n"
-        f"5. Return `{_LLM_KEY_RATIONALE}` as ONE concise sentence "
-        f"(≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
+        "## Task\n" + "".join(task_steps)
     )
 
     return _call_prompt_drafting_llm(user_message_text=user_message_text)
