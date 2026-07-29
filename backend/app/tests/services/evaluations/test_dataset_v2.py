@@ -1,4 +1,4 @@
-"""Tests for the Langfuse-free dataset upload service (`upload_dataset_v2`).
+"""Tests for the Langfuse-free dataset upload service (`upload_dataset(use_langfuse=False)`).
 
 Covers the v2 upload slice of the three-metric SRD
 (docs/srd-three-metric-evaluation-verdict.md, FR-19/FR-20):
@@ -25,7 +25,7 @@ from app.crud.evaluations.dataset import (
     DATASET_META_TOTAL_ITEMS,
 )
 from app.models import EvaluationDataset
-from app.services.evaluations.dataset import upload_dataset_v2
+from app.services.evaluations.dataset import upload_dataset
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.utils import random_lower_string
 
@@ -49,7 +49,7 @@ class TestUploadDatasetV2:
             patch(f"{_DATASET}.get_langfuse_client") as mock_langfuse_client,
             patch(f"{_DATASET}.upload_dataset_to_langfuse") as mock_langfuse_upload,
         ):
-            dataset = upload_dataset_v2(
+            dataset = upload_dataset(
                 session=db,
                 csv_content=_CSV,
                 dataset_name=name,
@@ -57,6 +57,7 @@ class TestUploadDatasetV2:
                 duplication_factor=5,
                 organization_id=user_api_key.organization_id,
                 project_id=user_api_key.project_id,
+                use_langfuse=False,
             )
 
         mock_langfuse_client.assert_not_called()
@@ -81,7 +82,7 @@ class TestUploadDatasetV2:
             patch(f"{_DATASET}.get_langfuse_client"),
             patch(f"{_DATASET}.upload_dataset_to_langfuse"),
         ):
-            dataset = upload_dataset_v2(
+            dataset = upload_dataset(
                 session=db,
                 csv_content=_CSV,
                 dataset_name=name,
@@ -89,6 +90,7 @@ class TestUploadDatasetV2:
                 duplication_factor=5,
                 organization_id=user_api_key.organization_id,
                 project_id=user_api_key.project_id,
+                use_langfuse=False,
             )
 
         # The bytes handed to S3 are the original rows, not a duplicated payload.
@@ -110,7 +112,7 @@ class TestUploadDatasetV2:
             patch(f"{_DATASET}.get_langfuse_client"),
         ):
             with pytest.raises(HTTPException) as exc:
-                upload_dataset_v2(
+                upload_dataset(
                     session=db,
                     csv_content=_CSV,
                     dataset_name=f"v2-nourl-{random_lower_string()}",
@@ -118,6 +120,7 @@ class TestUploadDatasetV2:
                     duplication_factor=2,
                     organization_id=user_api_key.organization_id,
                     project_id=user_api_key.project_id,
+                    use_langfuse=False,
                 )
 
         assert exc.value.status_code == 500
