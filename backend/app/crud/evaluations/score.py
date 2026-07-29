@@ -178,8 +178,6 @@ class TraceScore(TypedDict):
     value: float | str
     data_type: str
     comment: NotRequired[str]
-    # Verdict band; present only on numeric judge-metric scores (v2 runs), never
-    # on cosine or unscoreable/"N/A" entries.
     verdict: NotRequired[str]
     # True for placeholder scores on unscoreable items; excluded from summary stats.
     unscoreable: NotRequired[bool]
