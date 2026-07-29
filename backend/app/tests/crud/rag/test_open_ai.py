@@ -4,12 +4,13 @@ enrichment (per-file reasons + category-prefixed messages for each specific
 OpenAI exception type).
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import openai
 import pytest
 
 from app.crud.rag.open_ai import OpenAIVectorStoreCrud
+from app.tests.utils.openai import get_mock_openai_client_with_vector_store
 
 
 @pytest.fixture
@@ -295,3 +296,43 @@ class TestOpenAIVectorStoreCrudInit:
     def test_none_client_raises(self):
         with pytest.raises(ValueError):
             OpenAIVectorStoreCrud(client=None)
+
+
+class TestPollFileBatchTimeout:
+    """When the batch never leaves 'in_progress', the poll loop must give up at the
+    deadline rather than spin forever like the SDK's own poll()."""
+
+    def test_raises_interrupted_error_past_deadline(self, crud, mock_client):
+        with patch("app.crud.rag.open_ai.time") as mock_time:
+            # monotonic: deadline setup, first below-deadline check, its sleep arg,
+            # then a value past the deadline that trips the timeout.
+            mock_time.monotonic.side_effect = [0, 0, 0, 300]
+            mock_time.sleep = MagicMock()
+            mock_client.vector_stores.file_batches.retrieve.return_value = MagicMock(
+                status="in_progress",
+                file_counts=MagicMock(in_progress=1, completed=0),
+            )
+
+            with pytest.raises(InterruptedError) as exc_info:
+                crud._poll_file_batch("vsfb_x", "vs_1")
+
+        assert "batch-poll-timeout" in str(exc_info.value)
+        assert mock_time.sleep.called
+
+
+class TestGetMockOpenAIClientWithVectorStore:
+    """Contract test for the repo test fixture: exercises the whole helper and
+    pins the wiring the callers that use it depend on."""
+
+    def test_wiring_contract(self):
+        client = get_mock_openai_client_with_vector_store()
+
+        assert client.vector_stores.create.return_value.id == "mock_vector_store_id"
+
+        batch = client.vector_stores.file_batches.create.return_value
+        assert batch.id == "vsfb_mock"
+        assert batch.file_counts.failed == 0
+        assert batch.file_counts.completed == 2
+        assert client.vector_stores.file_batches.poll.return_value is batch
+
+        assert client.beta.assistants.create.return_value.id == "mock_assistant_id"
