@@ -2,6 +2,7 @@ import logging
 import re
 from collections import defaultdict
 
+import sentry_sdk
 from asgi_correlation_id import correlation_id
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -108,6 +109,20 @@ def register_exception_handlers(app: FastAPI) -> None:
         detail = exc.detail
         if isinstance(detail, list):
             detail = _sanitize_validation_errors(detail)
+
+        # Tag at the boundary: the status is only known here, and call-site logs
+        # fire before it. 5xx is a server fault (error event); 4xx is the caller's.
+        if sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("http.status_code", str(exc.status_code))
+            sentry_sdk.set_tag(
+                "error.class", "server" if exc.status_code >= 500 else "client"
+            )
+        if exc.status_code >= 500:
+            logger.error(
+                f"[http_exception] {request.method} {request.url.path} "
+                f"-> {exc.status_code}",
+                exc_info=exc,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
