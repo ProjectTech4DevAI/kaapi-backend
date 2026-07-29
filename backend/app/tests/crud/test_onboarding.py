@@ -3,7 +3,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.core.exceptions import ConflictError, UpstreamError
 
 from app.crud.onboarding import onboard_project
 from app.crud import (
@@ -298,10 +297,12 @@ def test_onboard_kms_failure_raises_502(db: Session, monkeypatch) -> None:
     """A KMS outage while encrypting credentials is upstream, not our bug."""
     monkeypatch.setattr(
         "app.crud.onboarding.encrypt_credentials",
-        lambda _: (_ for _ in ()).throw(UpstreamError("kms down", provider="kms")),
+        lambda _: (_ for _ in ()).throw(
+            HTTPException(status_code=502, detail="kms down")
+        ),
     )
 
-    with pytest.raises(UpstreamError) as exc:
+    with pytest.raises(HTTPException) as exc:
         onboard_project(
             session=db,
             onboard_in=OnboardingRequest(
@@ -327,7 +328,7 @@ def test_onboard_concurrent_commit_conflict_raises_409(
 
     monkeypatch.setattr(db, "commit", _raise_integrity_error)
 
-    with pytest.raises(ConflictError) as exc:
+    with pytest.raises(HTTPException) as exc:
         onboard_project(
             session=db,
             onboard_in=OnboardingRequest(

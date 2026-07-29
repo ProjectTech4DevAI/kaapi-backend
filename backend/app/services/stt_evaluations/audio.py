@@ -8,7 +8,6 @@ from fastapi import UploadFile
 from sqlmodel import Session
 
 from app.core.cloud.storage import get_cloud_storage
-from app.core.exceptions import KaapiError, UpstreamError
 from fastapi import HTTPException
 from app.crud.file import create_file
 from app.models.file import FileType, AudioUploadResponse
@@ -117,7 +116,7 @@ def upload_audio_file(
             content_type=content_type,
         )
 
-    except (HTTPException, KaapiError):
+    except HTTPException:
         raise
     except Exception as e:
         logger.error(
@@ -125,7 +124,7 @@ def upload_audio_file(
             f"project_id: {project_id}, error: {str(e)}",
             exc_info=True,
         )
-        raise UpstreamError(
-            "Object storage could not accept the audio file. Retry shortly.",
-            provider="object-storage",
+        raise HTTPException(
+            status_code=502,
+            detail="Object storage could not accept the audio file. Retry shortly.",
         )

@@ -7,7 +7,6 @@ from sqlmodel import Session, select
 
 from fastapi import HTTPException
 
-from app.core.exceptions import ConflictError, KaapiError, NotFoundError
 from app.core.providers import validate_provider, validate_provider_credentials
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
@@ -66,11 +65,13 @@ def set_creds_for_org(
                 exc_info=True,
             )
             if is_duplicate:
-                raise ConflictError(
-                    f"Credentials for provider '{provider}' already exist for this organization and project combination"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Credentials for provider '{provider}' already exist for this organization and project combination",
                 )
-            raise KaapiError(
-                f"Could not store credentials for provider '{provider}'. Contact Kaapi if it persists."
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not store credentials for provider '{provider}'. Contact Kaapi if it persists.",
             )
     logger.info(
         f"[set_creds_for_org] Successfully created credentials | organization_id {organization_id}, project_id {project_id}"
@@ -287,7 +288,9 @@ def remove_provider_credential(
         logger.warning(
             f"[remove_provider_credential] Credential not found | organization_id {org_id}, provider {provider}, project_id {project_id}"
         )
-        raise NotFoundError(f"No credentials found for provider '{provider}'.")
+        raise HTTPException(
+            status_code=404, detail=f"No credentials found for provider '{provider}'."
+        )
     session.commit()
     logger.info(
         f"[remove_provider_credential] Successfully deleted credential | provider {provider}, organization_id {org_id}, project_id {project_id}"
@@ -324,7 +327,10 @@ def remove_creds_for_org(*, session: Session, org_id: int, project_id: int) -> N
         logger.warning(
             f"[remove_creds_for_org] No credentials to delete | organization_id {org_id}, project_id {project_id}"
         )
-        raise NotFoundError("No credentials found for this organization and project.")
+        raise HTTPException(
+            status_code=404,
+            detail="No credentials found for this organization and project.",
+        )
 
     if rows_deleted < expected_count:
         logger.error(

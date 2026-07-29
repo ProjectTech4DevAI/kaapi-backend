@@ -21,7 +21,6 @@ from app.celery.utils import start_fast_evaluation_chunk
 from app.core.cloud import get_cloud_storage
 from app.core.config import settings
 from app.core.db import engine
-from app.core.exceptions import InvalidPayloadError, KaapiError
 from app.crud.evaluations import (
     get_dataset_by_id,
     resolve_evaluation_config,
@@ -299,7 +298,9 @@ def validate_and_start_fast_evaluation(
         )
         total_items = len(dataset_items)
         if total_items == 0:
-            raise InvalidPayloadError(f"Dataset '{dataset.name}' returned no items")
+            raise HTTPException(
+                status_code=422, detail=f"Dataset '{dataset.name}' returned no items"
+            )
         n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
 
         # total_items isn't on EvaluationRunUpdate; set it directly, then flip to
@@ -322,7 +323,7 @@ def validate_and_start_fast_evaluation(
             f"eval_run_id={eval_run.id} | total_items={total_items} | "
             f"n_chunks={n_chunks}"
         )
-    except KaapiError as exc:
+    except HTTPException as exc:
         log = logger.error if exc.status_code >= 500 else logger.warning
         log(
             f"[validate_and_start_fast_evaluation] Failed to start run | "

@@ -13,7 +13,6 @@ from app.crud import (
     remove_creds_for_org,
 )
 from app.models import CredsCreate, CredsUpdate
-from app.core.exceptions import ConflictError, NotFoundError
 from app.core.providers import Provider
 from app.tests.utils.test_data import (
     create_test_project,
@@ -384,7 +383,7 @@ def test_remove_provider_credential_race_deletes_nothing_raises_404(
     )
     monkeypatch.setattr(db, "exec", lambda *a, **k: MagicMock(rowcount=0))
 
-    with pytest.raises(NotFoundError) as exc:
+    with pytest.raises(HTTPException) as exc:
         remove_provider_credential(
             session=db,
             org_id=project.organization_id,
@@ -417,7 +416,7 @@ def test_duplicate_provider_raises_409(db: Session) -> None:
         credential={"openai": {"api_key": "another-key"}},
     )
 
-    with pytest.raises(ConflictError) as exc:
+    with pytest.raises(HTTPException) as exc:
         set_creds_for_org(
             session=db,
             creds_add=creds_create,

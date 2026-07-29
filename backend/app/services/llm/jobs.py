@@ -17,7 +17,6 @@ from sqlmodel import Session
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
-from app.core.exceptions import ServiceUnavailableError
 from app.core.providers import Provider
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
@@ -179,8 +178,8 @@ def start_job(
             )
             job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
             job_crud.update(job_id=job.id, job_update=job_update)
-            raise ServiceUnavailableError(
-                "Could not queue the LLM call. Retry shortly."
+            raise HTTPException(
+                status_code=503, detail="Could not queue the LLM call. Retry shortly."
             )
 
         _set_traceability_attributes(span, task_id=str(task_id))
@@ -239,8 +238,9 @@ def start_chain_job(
             )
             job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
             job_crud.update(job_id=job.id, job_update=job_update)
-            raise ServiceUnavailableError(
-                "Could not queue the LLM chain job. Retry shortly."
+            raise HTTPException(
+                status_code=503,
+                detail="Could not queue the LLM chain job. Retry shortly.",
             )
 
         _set_traceability_attributes(span, task_id=str(task_id))

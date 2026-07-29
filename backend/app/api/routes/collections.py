@@ -2,10 +2,11 @@ import logging
 from uuid import UUID
 from typing import List
 
-from fastapi import APIRouter, Query, Body, Depends
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from fastapi import Path as FastPath
 
 from app.api.deps import SessionDep, AuthContextDep
+from app.crud.collection.collection import CollectionNameConflictError
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
 from app.core.rate_monitor import monitor_rate
@@ -214,7 +215,13 @@ def update_collection(
         organization_id=current_user.organization_.id,
     ):
         collection_crud = CollectionCrud(session, current_user.project_.id)
-        collection = collection_crud.update(collection_id, patch)
+        try:
+            collection = collection_crud.update(collection_id, patch)
+        except CollectionNameConflictError as err:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Collection '{err.name}' already exists. Choose a different name.",
+            )
 
         logger.info(
             f"[update_collection] Collection updated | {{'collection_id': '{collection_id}'}}"

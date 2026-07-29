@@ -9,21 +9,18 @@ from sqlmodel import Session, select, and_
 from sqlalchemy.exc import IntegrityError
 
 from app.models import Document, Collection, CollectionUpdate, DocumentCollection
-from app.core.exceptions import ConflictError
 from app.core.util import now
 from app.crud.document_collection import DocumentCollectionCrud
 
 logger = logging.getLogger(__name__)
 
 
-class CollectionNameConflictError(ConflictError):
+class CollectionNameConflictError(Exception):
     """Raised when a collection name conflicts with an existing active collection."""
 
     def __init__(self, name: str | None) -> None:
         self.name = name
-        super().__init__(
-            f"Collection '{name}' already exists. Choose a different name."
-        )
+        super().__init__(f"Collection name '{name}' already exists")
 
 
 class CollectionCrud:
@@ -114,7 +111,7 @@ class CollectionCrud:
                 "[CollectionCrud.read_one_if_delete] Collection already deleted | "
                 f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
             )
-            raise ConflictError("Collection already deleted")
+            raise HTTPException(status_code=409, detail="Collection already deleted")
 
         return collection
 

@@ -1,4 +1,3 @@
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -7,15 +6,6 @@ from app.core.exception_handlers import (
     GENERIC_ERROR_DETAIL,
     _sanitize_validation_errors,
     register_exception_handlers,
-)
-from app.core.exceptions import (
-    ConflictError,
-    InvalidPayloadError,
-    InvalidValueError,
-    KaapiError,
-    NotFoundError,
-    ServiceUnavailableError,
-    UpstreamError,
 )
 from app.tests.utils.auth import TestAuthContext
 
@@ -164,30 +154,6 @@ def _app_raising(exc: Exception) -> TestClient:
         raise exc
 
     return TestClient(app, raise_server_exceptions=False)
-
-
-class TestKaapiErrorHandler:
-    """Each domain exception surfaces as its own status code."""
-
-    @pytest.mark.parametrize(
-        "exc, expected",
-        [
-            (NotFoundError("gone"), 404),
-            (ConflictError("dupe"), 409),
-            (InvalidValueError("bad value"), 400),
-            (InvalidPayloadError("bad shape"), 422),
-            (UpstreamError("langfuse down", provider="langfuse"), 502),
-            (ServiceUnavailableError("broker down"), 503),
-            (KaapiError("our bug"), 500),
-        ],
-    )
-    def test_status_code_and_body(self, exc: KaapiError, expected: int) -> None:
-        response = _app_raising(exc).get("/boom")
-
-        assert response.status_code == expected
-        body = response.json()
-        assert body["success"] is False
-        assert body["error"] == exc.detail
 
 
 class TestGenericErrorHandler:

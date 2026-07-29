@@ -9,7 +9,6 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_stt_batch_submission
 from app.core.cloud import get_cloud_storage
-from app.core.exceptions import ServiceUnavailableError
 from app.crud.stt_evaluations import (
     create_stt_run,
     get_results_by_run_id,
@@ -107,8 +106,9 @@ def start_stt_evaluation(
             status="failed",
             error_message=f"Failed to queue batch submission: {str(e)}",
         )
-        raise ServiceUnavailableError(
-            "Could not queue the batch submission. Retry shortly."
+        raise HTTPException(
+            status_code=503,
+            detail="Could not queue the batch submission. Retry shortly.",
         )
 
     return APIResponse.success_response(

@@ -4,7 +4,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.core.exceptions import ServiceUnavailableError
 from sqlmodel import Session, select
 
 from app.models import Job, JobStatus, JobType
@@ -149,7 +148,7 @@ def test_start_job_celery_failure_marks_failed_and_raises_503(
 ) -> None:
     with patch("app.services.guardrails.jobs.start_guardrails_job") as mock_enqueue:
         mock_enqueue.side_effect = RuntimeError("broker down")
-        with pytest.raises(ServiceUnavailableError) as exc:
+        with pytest.raises(HTTPException) as exc:
             start_job(
                 db=db,
                 request=_make_request(),

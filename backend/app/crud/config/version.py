@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
-from app.core.exceptions import ConflictError, KaapiError
 from app.core.util import now
 from app.crud.model_config import is_reasoning_model, validate_blob_model_or_raise
 from app.models import (
@@ -109,7 +108,7 @@ class ConfigVersionCrud:
 
             return version
 
-        except (HTTPException, KaapiError):
+        except HTTPException:
             self.session.rollback()
             raise
 
@@ -119,8 +118,9 @@ class ConfigVersionCrud:
                 f"[ConfigVersionCrud.create_or_raise] Version conflict | "
                 f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
             )
-            raise ConflictError(
-                "A version with this number already exists for this config."
+            raise HTTPException(
+                status_code=409,
+                detail="A version with this number already exists for this config.",
             )
 
         except Exception as e:

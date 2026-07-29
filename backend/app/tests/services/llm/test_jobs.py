@@ -6,7 +6,6 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 
 
-from app.core.exceptions import ServiceUnavailableError
 from sqlmodel import Session, select
 
 from app.crud import JobCrud
@@ -96,7 +95,7 @@ class TestStartJob:
         with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.side_effect = Exception("Celery connection failed")
 
-            with pytest.raises(ServiceUnavailableError) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 start_job(db, llm_call_request, project.id, project.organization_id)
 
             assert exc_info.value.status_code == 503
@@ -2005,7 +2004,7 @@ class TestStartChainJob:
             mock_job.id = uuid4()
             mock_job_crud_class.return_value.create.return_value = mock_job
 
-            with pytest.raises(ServiceUnavailableError) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 start_chain_job(db, chain_request, project.id, project.organization_id)
 
             assert exc_info.value.status_code == 503

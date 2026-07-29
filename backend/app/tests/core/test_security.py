@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 import boto3
 import jwt
 import pytest
+from fastapi import HTTPException
 from moto import mock_aws
 from sqlmodel import Session
 
 import app.core.security as security
 from app.core.config import settings
-from app.core.exceptions import UpstreamError
 from app.core.security import (
     ALGORITHM,
     KMS_CIPHERTEXT_PREFIX,
@@ -87,11 +87,10 @@ class TestCredentialEncryption:
         broken.encrypt.side_effect = Exception("arn:aws:kms:ap-south-1:secret")
         monkeypatch.setattr(security, "_kms_client", broken)
 
-        with pytest.raises(UpstreamError) as exc:
+        with pytest.raises(HTTPException) as exc:
             encrypt_credentials({"api_key": "sk-1"})
 
         assert exc.value.status_code == 502
-        assert exc.value.provider == "kms"
         assert "arn:aws:kms" not in exc.value.detail
 
     def test_kms_decrypt_failure_raises_502(self, monkeypatch, kms_key):
@@ -100,7 +99,7 @@ class TestCredentialEncryption:
         broken.decrypt.side_effect = Exception("arn:aws:kms:ap-south-1:secret")
         monkeypatch.setattr(security, "_kms_client", broken)
 
-        with pytest.raises(UpstreamError) as exc:
+        with pytest.raises(HTTPException) as exc:
             decrypt_credentials(encrypted)
 
         assert exc.value.status_code == 502

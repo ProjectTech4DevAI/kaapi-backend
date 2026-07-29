@@ -5,7 +5,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, select
 
-from app.core.exceptions import ConflictError, KaapiError
 from app.core.util import now
 from app.crud.model_config import validate_blob_model_or_raise
 from app.models import (
@@ -69,7 +68,7 @@ class ConfigCrud:
 
             return config, version
 
-        except (HTTPException, KaapiError):
+        except HTTPException:
             self.session.rollback()
             raise
 
@@ -79,8 +78,9 @@ class ConfigCrud:
                 f"[ConfigCrud.create] Duplicate configuration name | "
                 f"{{'name': '{config_create.name}', 'project_id': {self.project_id}, 'error': '{str(e)}'}}",
             )
-            raise ConflictError(
-                f"Config with name '{config_create.name}' already exists in this project."
+            raise HTTPException(
+                status_code=409,
+                detail=f"Config with name '{config_create.name}' already exists in this project.",
             )
 
         except Exception as e:

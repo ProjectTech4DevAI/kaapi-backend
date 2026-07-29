@@ -10,6 +10,7 @@ This module provides utilities for:
 import base64
 import json
 import logging
+from fastapi import HTTPException
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -26,7 +27,6 @@ from passlib.context import CryptContext
 from sqlmodel import Session, and_, select
 
 from app.core.config import settings
-from app.core.exceptions import UpstreamError
 from app.models import APIKey, AuthContext, Organization, Project, User
 
 logger = logging.getLogger(__name__)
@@ -216,8 +216,8 @@ def encrypt_credentials(credentials: dict[str, Any]) -> str:
         logger.error(
             f"[encrypt_credentials] Encryption failed | error: {e}", exc_info=True
         )
-        raise UpstreamError(
-            "Failed to encrypt credentials. Retry shortly.", provider="kms"
+        raise HTTPException(
+            status_code=502, detail="Failed to encrypt credentials. Retry shortly."
         )
 
 
@@ -240,8 +240,8 @@ def decrypt_credentials(encrypted_credentials: str) -> dict[str, Any]:
         logger.error(
             f"[decrypt_credentials] Decryption failed | error: {e}", exc_info=True
         )
-        raise UpstreamError(
-            "Failed to decrypt credentials. Retry shortly.", provider="kms"
+        raise HTTPException(
+            status_code=502, detail="Failed to decrypt credentials. Retry shortly."
         )
 
 

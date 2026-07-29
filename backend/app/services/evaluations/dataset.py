@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
-from app.core.exceptions import UpstreamError
 from app.crud.evaluations import (
     create_evaluation_dataset,
     upload_csv_to_object_store,
@@ -140,9 +139,9 @@ def upload_dataset(
             f"[upload_dataset] Failed to upload dataset to Langfuse | dataset={dataset_name}",
             exc_info=True,
         )
-        raise UpstreamError(
-            f"Langfuse could not accept dataset '{dataset_name}'. Retry shortly.",
-            provider="langfuse",
+        raise HTTPException(
+            status_code=502,
+            detail=f"Langfuse could not accept dataset '{dataset_name}'. Retry shortly.",
         )
 
     # Step 5: Store metadata in database

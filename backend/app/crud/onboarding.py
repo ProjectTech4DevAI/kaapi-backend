@@ -3,7 +3,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.core.exceptions import ConflictError
 from app.core.security import encrypt_credentials, get_password_hash
 from app.crud import (
     api_key_manager,
@@ -147,9 +146,10 @@ def onboard_project(
             f"[onboard_project] Conflicting concurrent onboarding | "
             f"org={onboard_in.organization_name}, project={onboard_in.project_name} | {e}"
         )
-        raise ConflictError(
-            f"Project '{onboard_in.project_name}' already exists for "
-            f"organization '{onboard_in.organization_name}'"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project '{onboard_in.project_name}' already exists for "
+            f"organization '{onboard_in.organization_name}'",
         )
 
     cred_ids = [c.id for c in created_credentials]

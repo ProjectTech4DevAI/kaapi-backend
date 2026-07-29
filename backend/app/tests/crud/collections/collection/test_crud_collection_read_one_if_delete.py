@@ -7,7 +7,6 @@ from sqlmodel import Session
 
 from fastapi import HTTPException
 
-from app.core.exceptions import ConflictError
 from app.core.util import now
 from app.crud import CollectionCrud
 from app.models import Collection, ProviderType
@@ -32,7 +31,7 @@ def test_already_deleted_raises_409(db: Session) -> None:
     project = get_project(db)
     collection = _make_collection(db, project.id, deleted=True)
 
-    with pytest.raises(ConflictError) as exc:
+    with pytest.raises(HTTPException) as exc:
         CollectionCrud(db, project.id).read_one_if_delete(collection.id)
 
     assert exc.value.status_code == 409

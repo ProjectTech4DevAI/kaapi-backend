@@ -11,7 +11,6 @@ from starlette.status import (
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
 
-from app.core.exceptions import KaapiError
 from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
@@ -112,13 +111,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
-        )
-
-    @app.exception_handler(KaapiError)
-    async def kaapi_error_handler(request: Request, exc: KaapiError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=APIResponse.failure_response(exc.detail).model_dump(),
         )
 
     @app.exception_handler(Exception)

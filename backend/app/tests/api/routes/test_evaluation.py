@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from app.core.exceptions import InvalidPayloadError, InvalidValueError
 from app.core.util import now
 from app.crud.evaluations.batch import (
     build_google_evaluation_jsonl,
@@ -1134,7 +1133,7 @@ class TestStartEvaluationBatch:
     ) -> None:
         mock_fetch.return_value = _BATCH_DATASET_ITEMS
 
-        with pytest.raises(InvalidValueError, match="Unsupported provider"):
+        with pytest.raises(HTTPException, match="Unsupported provider"):
             start_evaluation_batch(
                 langfuse=MagicMock(),
                 session=db,
@@ -1158,7 +1157,7 @@ class TestStartEvaluationBatch:
         ]
         mock_map.return_value = ({"model": "gpt-4o"}, [])
 
-        with pytest.raises(InvalidPayloadError, match="did not produce any JSONL"):
+        with pytest.raises(HTTPException, match="did not produce any JSONL"):
             start_evaluation_batch(
                 langfuse=MagicMock(),
                 session=db,
