@@ -18,7 +18,6 @@ from celery import Task, current_task
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
-
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
@@ -428,18 +427,10 @@ def run_evaluation_fast_aggregate(
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_health_probes")
 def run_health_probes(self, trace_id: str = DEFAULT_TRACE_ID) -> dict:
-    from sqlmodel import Session
-
-    from app.core.db import engine
-    from app.services.health_probes import run_probes
+    from app.services.health_probes import execute_health_probes
 
     _set_trace(trace_id)
-
-    def _do() -> dict:
-        with Session(engine) as session:
-            return run_probes(session=session)
-
-    return _run_with_otel_parent(self, _do)
+    return _run_with_otel_parent(self, execute_health_probes)
 
 
 @celery_app.task(bind=True, queue="default", priority=1)

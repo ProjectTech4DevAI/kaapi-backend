@@ -32,20 +32,6 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     "recovery_threshold": 1,
 }
 
-HEALTH_PROBES_CRON_MONITOR_CONFIG: MonitorConfig = {
-    "schedule": {
-        "type": "interval",
-        # not required eventbridge is aleady 5 mins. So not required.
-        "value": settings.HEALTH_PROBE_INTERVAL_MINUTES,
-        "unit": "minute",
-    },
-    "timezone": "UTC",
-    "checkin_margin": 2,
-    "max_runtime": 2 * settings.HEALTH_PROBE_INTERVAL_MINUTES,
-    "failure_issue_threshold": 2,
-    "recovery_threshold": 1,
-}
-
 PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {
         "type": "interval",
@@ -141,11 +127,9 @@ async def evaluation_cron_job(
     include_in_schema=False,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
-@sentry_sdk.monitor(
-    monitor_slug="health-probes-cron-job",
-    monitor_config=HEALTH_PROBES_CRON_MONITOR_CONFIG,
-)
 def health_probes_cron_job() -> dict:
+    # Sentry check-ins happen inside the Celery task so the monitor reflects
+    # probe results, not just enqueue success.
     logger.info("[health_probes_cron_job] Cron job invoked — enqueueing task")
     async_result = run_health_probes.delay()
     return {"enqueued": True, "task_id": async_result.id}
