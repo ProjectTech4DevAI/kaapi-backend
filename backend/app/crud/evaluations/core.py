@@ -485,6 +485,8 @@ def save_score(
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
             db_score = {"summary_scores": summary_score}
+            if score.get("overall") is not None:
+                db_score["overall"] = score["overall"]
         else:
             # fallback to store data in db if failed to store in s3
             db_score = score
