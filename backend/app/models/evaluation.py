@@ -3,12 +3,14 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import Boolean, Column, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
-from sqlmodel import Field as SQLField, Relationship, SQLModel
+from sqlmodel import Field as SQLField
+from sqlmodel import Relationship, SQLModel
 
 from app.core.util import now
+from app.models.config.version import ConfigVersionPublic
 
 if TYPE_CHECKING:
     from .batch_job import BatchJob
@@ -370,10 +372,23 @@ class EvaluationRun(SQLModel, table=True):
             nullable=True,
             comment=(
                 "{trace_id: reason} for items that cannot be scored "
-                "(empty_output / empty_ground_truth / embedding_failed)"
+                "(empty_output / empty_ground_truth / embedding_failed / judge_failed)"
             ),
         ),
         description="Map of trace_id to the reason the item cannot be scored",
+    )
+
+    is_judge_run: bool | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Boolean,
+            nullable=True,
+            comment=(
+                "True for v2 runs that run the native LLM-as-judge (and skip the "
+                "Langfuse score sync). NULL/False = v1 run, cosine-only, Langfuse-synced"
+            ),
+        ),
+        description="Marks a v2 judged run; gates judging and the Langfuse-sync skip",
     )
 
     is_score_updated: bool | None = SQLField(
@@ -487,6 +502,7 @@ class EvaluationRunUpdate(SQLModel):
     is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
+    is_judge_run: bool | None = None
 
 
 class EvaluationRunPublic(SQLModel):
@@ -508,6 +524,7 @@ class EvaluationRunPublic(SQLModel):
     score: dict[str, Any] | None
     unscoreable: dict[str, Any] | None = None
     is_score_updated: bool | None = None
+    is_judge_run: bool | None = None
     cost: dict[str, Any] | None
     error_message: str | None
     organization_id: int
@@ -549,3 +566,20 @@ class EvaluationDatasetPublic(SQLModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
+
+
+class ImprovePromptRequest(SQLModel):
+    """Body for POST /evaluations/{id}/improve-prompt."""
+
+    callback_url: HttpUrl = Field(
+        description="HTTPS webhook that receives the result once the job finishes."
+    )
+
+
+class PromptImprovementJobPublic(SQLModel):
+    """Callback payload body: the new config_version once the job succeeds."""
+
+    job_id: UUID
+    status: str
+    config_version: ConfigVersionPublic | None = None
+    error_message: str | None = None

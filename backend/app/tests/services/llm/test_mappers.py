@@ -161,10 +161,11 @@ class TestMapKaapiToGoogleParams:
         assert result["temperature"] == 0.5
         assert warnings == []
 
-    def test_text_completion_knowledge_base_unsupported(self):
-        """Test that knowledge_base_ids generate warning for Google AI."""
+    def test_text_completion_knowledge_base_passthrough(self):
+        """knowledge_base_ids pass through for the Gemini FileSearch tool."""
         kaapi_params = TextLLMParams(
-            model="gemini-2.5-pro", knowledge_base_ids=["vs_abc123"]
+            model="gemini-2.5-pro",
+            knowledge_base_ids=["fileSearchStores/abc123"],
         )
 
         result, warnings = map_kaapi_to_google_params(
@@ -172,10 +173,24 @@ class TestMapKaapiToGoogleParams:
         )
 
         assert result["model"] == "gemini-2.5-pro"
-        assert "knowledge_base_ids" not in result
+        assert result["knowledge_base_ids"] == ["fileSearchStores/abc123"]
+        assert warnings == []
+
+    def test_text_completion_max_num_results_unsupported(self):
+        """max_num_results is OpenAI-only and warned-then-ignored for Gemini."""
+        kaapi_params = TextLLMParams(
+            model="gemini-2.5-pro",
+            knowledge_base_ids=["fileSearchStores/abc123"],
+            max_num_results=5,
+        )
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="text"
+        )
+
+        assert "max_num_results" not in result
         assert len(warnings) == 1
-        assert "knowledge_base_ids" in warnings[0].lower()
-        assert "not supported" in warnings[0]
+        assert "max_num_results" in warnings[0]
 
     def test_stt_completion_with_instructions(self):
         """Test STT completion with instructions parameter."""
@@ -872,25 +887,23 @@ class TestMapKaapiToAnthropicParams:
 
 class TestTransformGoogleVertexRouting:
     """Routing contract for the ``google`` provider (which executes via
-    Vertex AI). Text completions are explicitly rejected — they must go
-    through the ``google-aistudio`` provider."""
+    Vertex AI)."""
 
-    def test_text_completion_is_rejected(self, db: Session):
-        """``google`` is audio-only (Vertex STT/TTS) — text completions
-        must be routed through ``google-aistudio``."""
+    def test_text_completion_maps_via_google_mapper(self, db: Session):
+        """``google`` text completions reuse the Google mapper and produce a
+        ``google-native`` config (param shape is identical to Google's)."""
         kaapi_config = KaapiCompletionConfig(
             provider="google",
             type="text",
             params={"model": "gemini-2.5-pro"},
         )
 
-        with pytest.raises(ValueError) as exc_info:
-            transform_kaapi_config_to_native(session=db, kaapi_config=kaapi_config)
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
 
-        msg = str(exc_info.value)
-        assert "google" in msg
-        assert "text" in msg
-        assert "google-aistudio" in msg  # hints the caller toward the right provider
+        assert native_config.provider == "google-native"
+        assert native_config.params["model"] == "gemini-2.5-pro"
 
     def test_unsupported_language_emits_warning(self, db: Session):
         """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect

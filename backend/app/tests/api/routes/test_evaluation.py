@@ -79,7 +79,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -163,7 +163,7 @@ class TestDatasetUploadValidation:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -211,7 +211,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -255,7 +255,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -300,7 +300,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -404,7 +404,7 @@ class TestDatasetUploadDuplication:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
+                "app.services.evaluations.dataset.get_langfuse_client"
             ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
@@ -439,47 +439,6 @@ class TestDatasetUploadDuplication:
 class TestDatasetUploadErrors:
     """Test error handling."""
 
-    def test_upload_succeeds_without_langfuse_when_tracing_off(
-        self,
-        client: TestClient,
-        user_api_key_header: dict[str, str],
-        valid_csv_content: str,
-    ) -> None:
-        """With tracing opt-out (get_tracing_client returns None), the dataset is
-        created from object store only; no Langfuse upload, no error."""
-        with (
-            patch("app.core.cloud.get_cloud_storage") as _mock_storage,
-            patch(
-                "app.services.evaluations.dataset.upload_csv_to_object_store"
-            ) as mock_store_upload,
-            patch(
-                "app.services.evaluations.dataset.get_tracing_client"
-            ) as mock_get_tracing_client,
-            patch(
-                "app.services.evaluations.dataset.upload_dataset_to_langfuse"
-            ) as mock_langfuse_upload,
-        ):
-            mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
-            mock_get_tracing_client.return_value = None
-
-            filename, file_obj = create_csv_file(valid_csv_content)
-
-            response = client.post(
-                "/api/v1/evaluations/datasets",
-                files={"file": (filename, file_obj, "text/csv")},
-                data={
-                    "dataset_name": "test_dataset",
-                    "duplication_factor": 5,
-                },
-                headers=user_api_key_header,
-            )
-
-            assert response.status_code == 200, response.text
-            data = response.json()["data"]
-            assert data["langfuse_dataset_id"] is None
-            assert data["object_store_url"] == "s3://bucket/datasets/test_dataset.csv"
-            mock_langfuse_upload.assert_not_called()
-
     def test_upload_returns_500_when_langfuse_upload_raises(
         self,
         client: TestClient,
@@ -493,14 +452,14 @@ class TestDatasetUploadErrors:
                 "app.services.evaluations.dataset.upload_csv_to_object_store"
             ) as mock_store_upload,
             patch(
-                "app.services.evaluations.dataset.get_tracing_client"
-            ) as mock_get_tracing_client,
+                "app.services.evaluations.dataset.get_langfuse_client"
+            ) as mock_get_langfuse_client,
             patch(
                 "app.services.evaluations.dataset.upload_dataset_to_langfuse"
             ) as mock_langfuse_upload,
         ):
             mock_store_upload.return_value = "s3://bucket/datasets/test_dataset.csv"
-            mock_get_tracing_client.return_value = Mock()
+            mock_get_langfuse_client.return_value = Mock()
             mock_langfuse_upload.side_effect = Exception("Langfuse down")
 
             filename, file_obj = create_csv_file(valid_csv_content)
@@ -931,6 +890,30 @@ class TestBuildGoogleEvaluationJSONL:
 
         thinking = jsonl_data[0]["request"]["generationConfig"]["thinkingConfig"]
         assert thinking == {"includeThoughts": False, "thinkingLevel": "high"}
+
+    def test_knowledge_base_ids_become_file_search_tool(self) -> None:
+        """``knowledge_base_ids`` are mapped into the FileSearch tool on every line."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q1", "Q2"),
+            {
+                "model": "gemini-2.5-pro",
+                "knowledge_base_ids": ["fileSearchStores/abc123"],
+            },
+        )
+
+        assert len(jsonl_data) == 2
+        for line in jsonl_data:
+            assert line["request"]["tools"] == [
+                {"fileSearch": {"fileSearchStoreNames": ["fileSearchStores/abc123"]}}
+            ]
+
+    def test_no_knowledge_base_ids_no_tools(self) -> None:
+        """Without ``knowledge_base_ids`` the request carries no ``tools`` key."""
+        jsonl_data = build_google_evaluation_jsonl(
+            self._items("Q"), {"model": "gemini-2.5-pro"}
+        )
+
+        assert "tools" not in jsonl_data[0]["request"]
 
     def test_full_params(self) -> None:
         """All optional fields together populate both config blocks."""
