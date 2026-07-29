@@ -11,7 +11,7 @@ from app.crud.stats import get_daily_stats
 
 logger = logging.getLogger(__name__)
 
-DAILY_WINDOW = timedelta(hours=168)
+DEFAULT_STATS_WINDOW = timedelta(hours=168)  # 7-day rolling window by default
 _MAX_ROWS_PER_SECTION = 20
 _DISCORD_CHUNK_LIMIT = 1900  # Discord content cap is 2000; leave headroom
 
@@ -21,7 +21,7 @@ def collect_daily_stats(
 ) -> dict[str, Any]:
     end_at = now()
     start_at = end_at - (
-        timedelta(hours=window_hours) if window_hours else DAILY_WINDOW
+        timedelta(hours=window_hours) if window_hours else DEFAULT_STATS_WINDOW
     )
     stats = get_daily_stats(session=session, start_at=start_at, end_at=end_at)
     return {
@@ -30,14 +30,6 @@ def collect_daily_stats(
             "end_at": end_at.isoformat(),
         },
         "stats": stats,
-    }
-
-
-def section_counts(result: dict[str, Any]) -> dict[str, int]:
-    return {
-        section: len(rows)
-        for section, rows in result["stats"].items()
-        if isinstance(rows, list)
     }
 
 

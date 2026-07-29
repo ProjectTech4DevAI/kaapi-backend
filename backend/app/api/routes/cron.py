@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import sentry_sdk
 from fastapi import APIRouter, Depends
@@ -147,7 +148,9 @@ async def evaluation_cron_job(
     monitor_slug="daily-stats-cron-job",
     monitor_config=DAILY_STATS_CRON_MONITOR_CONFIG,
 )
-def daily_stats_cron_job(session: SessionDep, hours: int | None = None) -> dict:
+def daily_stats_cron_job(
+    session: SessionDep, hours: int | None = None
+) -> dict[str, Any]:
     logger.info(f"[daily_stats_cron_job] Cron job invoked | hours={hours}")
     try:
         result = collect_daily_stats(session=session, window_hours=hours)

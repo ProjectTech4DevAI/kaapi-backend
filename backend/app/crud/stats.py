@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ _JOB_COUNTS_SQL = text(
 )
 
 
-def _org_count_sql(table: str) -> Any:
+def _org_count_sql(table: str) -> TextClause:
     return text(
         f"""
         SELECT
@@ -94,7 +94,9 @@ _TTS_RESULT_COUNTS_SQL = _org_count_sql("tts_result")
 _ASSESSMENT_COUNTS_SQL = _org_count_sql("assessment")
 
 
-def _rows(session: Session, stmt: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+def _rows(
+    session: Session, stmt: TextClause, params: dict[str, Any]
+) -> list[dict[str, Any]]:
     return [dict(row) for row in session.execute(stmt, params).mappings().all()]
 
 

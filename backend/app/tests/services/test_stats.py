@@ -8,7 +8,6 @@ from app.services.stats import (
     collect_daily_stats,
     format_daily_stats_message,
     post_daily_stats_to_discord,
-    section_counts,
 )
 
 
@@ -38,21 +37,6 @@ def _sample_result() -> dict:
             "tts_result_counts": [],
         },
     }
-
-
-def test_section_counts_returns_row_len_per_list_section():
-    counts = section_counts(_sample_result())
-    assert counts == {
-        "llm_call_counts": 1,
-        "llm_call_token_summary": 2,
-        "stt_result_counts": 0,
-        "tts_result_counts": 0,
-    }
-
-
-def test_section_counts_skips_non_list_values():
-    result = {"stats": {"a": [{"x": 1}], "b": "not-a-list", "c": None}}
-    assert section_counts(result) == {"a": 1}
 
 
 def test_format_message_header_shows_trimmed_window():
@@ -177,7 +161,7 @@ def test_collect_daily_stats_uses_default_window_when_hours_none():
         result = collect_daily_stats(session=MagicMock())
     call_kwargs = mock_get.call_args.kwargs
     delta = call_kwargs["end_at"] - call_kwargs["start_at"]
-    assert delta == stats_mod.DAILY_WINDOW
+    assert delta == stats_mod.DEFAULT_STATS_WINDOW
     assert result["stats"] == {"x": []}
     assert "start_at" in result["window"] and "end_at" in result["window"]
 
