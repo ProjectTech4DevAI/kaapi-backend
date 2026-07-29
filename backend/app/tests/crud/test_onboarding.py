@@ -1,6 +1,9 @@
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+
+from app.core.exceptions import ConflictError, UpstreamError
 
 from app.crud.onboarding import onboard_project
 from app.crud import (
@@ -289,3 +292,51 @@ def test_onboard_project_response_data_integrity(db: Session) -> None:
     assert project.name == response.project_name
     assert project.organization_id == response.organization_id
     assert user.email == response.user_email
+
+
+def test_onboard_kms_failure_raises_502(db: Session, monkeypatch) -> None:
+    """A KMS outage while encrypting credentials is upstream, not our bug."""
+    monkeypatch.setattr(
+        "app.crud.onboarding.encrypt_credentials",
+        lambda _: (_ for _ in ()).throw(UpstreamError("kms down", provider="kms")),
+    )
+
+    with pytest.raises(UpstreamError) as exc:
+        onboard_project(
+            session=db,
+            onboard_in=OnboardingRequest(
+                organization_name=random_lower_string(),
+                project_name=random_lower_string(),
+                email=random_email(),
+                user_name=random_lower_string(),
+                password=random_lower_string(),
+                credentials=[{"openai": {"api_key": "sk-test"}}],
+            ),
+        )
+
+    assert exc.value.status_code == 502
+
+
+def test_onboard_concurrent_commit_conflict_raises_409(
+    db: Session, monkeypatch
+) -> None:
+    """The pre-checks are racy; a collision at commit is a 409, not a 500."""
+
+    def _raise_integrity_error() -> None:
+        raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+    monkeypatch.setattr(db, "commit", _raise_integrity_error)
+
+    with pytest.raises(ConflictError) as exc:
+        onboard_project(
+            session=db,
+            onboard_in=OnboardingRequest(
+                organization_name=random_lower_string(),
+                project_name=random_lower_string(),
+                email=random_email(),
+                user_name=random_lower_string(),
+                password=random_lower_string(),
+            ),
+        )
+
+    assert exc.value.status_code == 409

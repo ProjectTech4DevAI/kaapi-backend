@@ -151,6 +151,7 @@ class GeminiAIStudioProvider(BaseProvider):
                         doc.id,
                         uploaded.name,
                         str(delete_err),
+                        exc_info=True,
                     )
                 doc.file_id.pop(GOOGLE_AISTUDIO_PROVIDER, None)
                 raise

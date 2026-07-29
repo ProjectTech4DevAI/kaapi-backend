@@ -1,11 +1,11 @@
 import logging
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlmodel import Session, select, and_
 
 from app.models import Document
 from app.core.util import now
-from app.core.exception_handlers import HTTPException
 
 logger = logging.getLogger(__name__)
 

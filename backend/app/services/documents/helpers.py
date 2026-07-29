@@ -56,12 +56,13 @@ def pre_transform_validation(
       - resolve actual transformer (or None if no target_format)
 
     Returns: (source_format, actual_transformer_or_none)
-    Raises: HTTPException(400) on client errors.
+    Raises: HTTPException(422) on an unreadable source format, 400 on an
+    unsupported transformation or transformer.
     """
     try:
         source_format = get_file_format(src_filename)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
 
     actual_transformer: Optional[str] = None
     if target_format:

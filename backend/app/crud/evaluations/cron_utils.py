@@ -324,7 +324,8 @@ async def poll_all_pending_evaluations_by_type(
             except Exception as client_err:
                 logger.error(
                     f"[{fn_name}] Failed to get Gemini client | "
-                    f"org_id={org_id} | project_id={project_id} | error={client_err}"
+                    f"org_id={org_id} | project_id={project_id} | error={client_err}",
+                    exc_info=True,
                 )
                 for run in project_runs:
                     update_run_fn(

@@ -3,12 +3,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
-from fastapi import HTTPException
 from opentelemetry import trace
 from sqlmodel import Session
 
 from app.celery.utils import start_guardrails_job
 from app.core.db import engine
+from app.core.exceptions import ServiceUnavailableError
 from app.core.telemetry import log_context
 from app.crud.jobs import JobCrud
 from app.models import Job, JobStatus, JobType, JobUpdate
@@ -84,9 +84,8 @@ def start_job(
                 job_id=job.id,
                 job_update=JobUpdate(status=JobStatus.FAILED, error_message=str(e)),
             )
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error while scheduling guardrails job",
+            raise ServiceUnavailableError(
+                "Could not queue the guardrails job. Retry shortly."
             )
 
         logger.info(

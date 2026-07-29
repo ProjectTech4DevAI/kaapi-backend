@@ -102,13 +102,15 @@ def build_embedding_jsonl(
         ground_truth = result.get("ground_truth", "")
 
         if not item_id:
-            logger.warning("Skipping result with no item_id")
+            logger.warning("[build_embedding_jsonl] Skipping result with no item_id")
             continue
 
         # Get trace_id from mapping
         trace_id = trace_id_mapping.get(item_id)
         if not trace_id:
-            logger.warning(f"Skipping item {item_id} - no trace_id found")
+            logger.warning(
+                f"[build_embedding_jsonl] Skipping item {item_id} - no trace_id found"
+            )
             skipped.append(
                 {"item_id": item_id, "trace_id": None, "reason": "missing_trace_id"}
             )
@@ -117,7 +119,9 @@ def build_embedding_jsonl(
         # Empty output/ground_truth can't be embedded; record the reason.
         if not generated_output or not ground_truth:
             reason = "empty_output" if not generated_output else "empty_ground_truth"
-            logger.warning(f"Skipping item {item_id} - {reason}")
+            logger.warning(
+                f"[build_embedding_jsonl] Skipping item {item_id} - {reason}"
+            )
             skipped.append({"item_id": item_id, "trace_id": trace_id, "reason": reason})
             continue
 
@@ -140,7 +144,7 @@ def build_embedding_jsonl(
         jsonl_data.append(batch_request)
 
     logger.info(
-        f"Built {len(jsonl_data)} embedding JSONL lines | skipped={len(skipped)}"
+        f"[build_embedding_jsonl] Built {len(jsonl_data)} embedding JSONL lines | skipped={len(skipped)}"
     )
     return jsonl_data, skipped
 
@@ -160,7 +164,9 @@ def parse_embedding_results(
         - failed_trace_ids: trace_ids whose embedding could not be parsed (flagged
           embedding_failed downstream). Lines with no trace_id are dropped silently.
     """
-    logger.info(f"Parsing embedding results from {len(raw_results)} lines")
+    logger.info(
+        f"[parse_embedding_results] Parsing embedding results from {len(raw_results)} lines"
+    )
 
     embedding_pairs = []
     failed_trace_ids: list[str] = []
@@ -171,7 +177,9 @@ def parse_embedding_results(
             # Extract BATCH_KEY (which is now the Langfuse trace_id)
             trace_id = response.get(BATCH_KEY)
             if not trace_id:
-                logger.warning(f"Line {line_num}: No {BATCH_KEY} found, skipping")
+                logger.warning(
+                    f"[parse_embedding_results] Line {line_num}: No {BATCH_KEY} found, skipping"
+                )
                 continue
 
             # Handle errors in batch processing
@@ -189,7 +197,7 @@ def parse_embedding_results(
 
             if len(embedding_data) < 2:
                 logger.warning(
-                    f"Trace {trace_id}: Expected 2 embeddings, got {len(embedding_data)}"
+                    f"[parse_embedding_results] Trace {trace_id}: Expected 2 embeddings, got {len(embedding_data)}"
                 )
                 failed_trace_ids.append(trace_id)
                 continue
@@ -214,7 +222,7 @@ def parse_embedding_results(
 
             if output_embedding is None or ground_truth_embedding is None:
                 logger.warning(
-                    f"Trace {trace_id}: Missing embeddings (output={output_embedding is not None}, "
+                    f"[parse_embedding_results] Trace {trace_id}: Missing embeddings (output={output_embedding is not None}, "
                     f"ground_truth={ground_truth_embedding is not None})"
                 )
                 failed_trace_ids.append(trace_id)
@@ -229,13 +237,16 @@ def parse_embedding_results(
             )
 
         except Exception as e:
-            logger.error(f"Line {line_num}: Unexpected error: {e}", exc_info=True)
+            logger.error(
+                f"[parse_embedding_results] Line {line_num}: Unexpected error: {e}",
+                exc_info=True,
+            )
             if trace_id:
                 failed_trace_ids.append(trace_id)
             continue
 
     logger.info(
-        f"Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines "
+        f"[parse_embedding_results] Parsed {len(embedding_pairs)} embedding pairs from {len(raw_results)} lines "
         f"| failed={len(failed_trace_ids)}"
     )
     return embedding_pairs, failed_trace_ids
@@ -293,7 +304,9 @@ def calculate_average_similarity(
             "per_item_scores": [...]  # Individual scores with trace_ids
         }
     """
-    logger.info(f"Calculating similarity for {len(embedding_pairs)} pairs")
+    logger.info(
+        f"[calculate_average_similarity] Calculating similarity for {len(embedding_pairs)} pairs"
+    )
 
     if not embedding_pairs:
         return {
@@ -323,12 +336,15 @@ def calculate_average_similarity(
 
         except Exception as e:
             logger.error(
-                f"Error calculating similarity for trace {pair.get('trace_id')}: {e}"
+                f"[calculate_average_similarity] Error calculating similarity for trace {pair.get('trace_id')}: {e}",
+                exc_info=True,
             )
             continue
 
     if not similarities:
-        logger.warning("No valid similarities calculated")
+        logger.warning(
+            "[calculate_average_similarity] No valid similarities calculated"
+        )
         return {
             "cosine_similarity_avg": 0.0,
             "cosine_similarity_std": 0.0,
@@ -347,7 +363,7 @@ def calculate_average_similarity(
     }
 
     logger.info(
-        f"Calculated similarity stats: avg={stats['cosine_similarity_avg']:.3f}, "
+        f"[calculate_average_similarity] Calculated similarity stats: avg={stats['cosine_similarity_avg']:.3f}, "
         f"std={stats['cosine_similarity_std']:.3f}"
     )
 
@@ -384,7 +400,9 @@ def start_embedding_batch(
         Exception: If any step fails
     """
     try:
-        logger.info(f"Starting embedding batch for evaluation run {eval_run.id}")
+        logger.info(
+            f"[start_embedding_batch] Starting embedding batch for evaluation run {eval_run.id}"
+        )
 
         # Use default embedding model
         embedding_model = EMBEDDING_MODEL
@@ -440,7 +458,7 @@ def start_embedding_batch(
         session.refresh(eval_run)
 
         logger.info(
-            f"Successfully started embedding batch: batch_job_id={batch_job.id}, "
+            f"[start_embedding_batch] Successfully started embedding batch: batch_job_id={batch_job.id}, "
             f"provider_batch_id={batch_job.provider_batch_id} "
             f"for evaluation run {eval_run.id} with {batch_job.total_items} items"
         )
@@ -448,6 +466,9 @@ def start_embedding_batch(
         return eval_run
 
     except Exception as e:
-        logger.error(f"Failed to start embedding batch: {e}", exc_info=True)
+        logger.error(
+            f"[start_embedding_batch] Failed to start embedding batch: {e}",
+            exc_info=True,
+        )
         # Don't update eval_run status here - let caller decide
         raise

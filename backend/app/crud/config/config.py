@@ -2,8 +2,10 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, select
 
+from app.core.exceptions import ConflictError, KaapiError
 from app.core.util import now
 from app.crud.model_config import validate_blob_model_or_raise
 from app.models import (
@@ -66,6 +68,20 @@ class ConfigCrud:
             )
 
             return config, version
+
+        except (HTTPException, KaapiError):
+            self.session.rollback()
+            raise
+
+        except IntegrityError as e:
+            self.session.rollback()
+            logger.warning(
+                f"[ConfigCrud.create] Duplicate configuration name | "
+                f"{{'name': '{config_create.name}', 'project_id': {self.project_id}, 'error': '{str(e)}'}}",
+            )
+            raise ConflictError(
+                f"Config with name '{config_create.name}' already exists in this project."
+            )
 
         except Exception as e:
             self.session.rollback()

@@ -21,6 +21,7 @@ from app.celery.utils import start_fast_evaluation_chunk
 from app.core.cloud import get_cloud_storage
 from app.core.config import settings
 from app.core.db import engine
+from app.core.exceptions import InvalidPayloadError, KaapiError
 from app.crud.evaluations import (
     get_dataset_by_id,
     resolve_evaluation_config,
@@ -53,6 +54,17 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
+
+
+def _fail_run(*, session: Session, eval_run: EvaluationRun, reason: str) -> None:
+    update_evaluation_run(
+        session=session,
+        eval_run=eval_run,
+        update=EvaluationRunUpdate(
+            status="failed",
+            error_message=f"Failed to start fast eval: {reason}",
+        ),
+    )
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -287,7 +299,7 @@ def validate_and_start_fast_evaluation(
         )
         total_items = len(dataset_items)
         if total_items == 0:
-            raise ValueError(f"Dataset '{dataset.name}' returned no items")
+            raise InvalidPayloadError(f"Dataset '{dataset.name}' returned no items")
         n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
 
         # total_items isn't on EvaluationRunUpdate; set it directly, then flip to
@@ -310,20 +322,22 @@ def validate_and_start_fast_evaluation(
             f"eval_run_id={eval_run.id} | total_items={total_items} | "
             f"n_chunks={n_chunks}"
         )
+    except KaapiError as exc:
+        log = logger.error if exc.status_code >= 500 else logger.warning
+        log(
+            f"[validate_and_start_fast_evaluation] Failed to start run | "
+            f"eval_run_id={eval_run.id} | code={exc.status_code}",
+            exc_info=True,
+        )
+        _fail_run(session=session, eval_run=eval_run, reason=exc.detail)
+        raise
     except Exception as exc:
         logger.error(
             f"[validate_and_start_fast_evaluation] Failed to start run | "
             f"eval_run_id={eval_run.id} | error={exc}",
             exc_info=True,
         )
-        update_evaluation_run(
-            session=session,
-            eval_run=eval_run,
-            update=EvaluationRunUpdate(
-                status="failed",
-                error_message=f"Failed to start fast eval: {exc}",
-            ),
-        )
+        _fail_run(session=session, eval_run=eval_run, reason=str(exc))
         raise HTTPException(
             status_code=500,
             detail="Failed to start fast evaluation",

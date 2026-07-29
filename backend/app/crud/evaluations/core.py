@@ -103,7 +103,10 @@ def create_evaluation_run(
         session.refresh(eval_run)
     except Exception as e:
         session.rollback()
-        logger.error(f"Failed to create EvaluationRun: {e}", exc_info=True)
+        logger.error(
+            f"[create_evaluation_run] Failed to create EvaluationRun: {e}",
+            exc_info=True,
+        )
         raise
 
     logger.info(
@@ -146,7 +149,7 @@ def list_evaluation_runs(
     runs = session.exec(statement).all()
 
     logger.info(
-        f"Found {len(runs)} evaluation runs for org_id={organization_id}, "
+        f"[list_evaluation_runs] Found {len(runs)} evaluation runs for org_id={organization_id}, "
         f"project_id={project_id}"
     )
 
@@ -183,12 +186,12 @@ def get_evaluation_run_by_id(
 
     if eval_run:
         logger.info(
-            f"Found evaluation run {evaluation_id}: status={eval_run.status}, "
+            f"[get_evaluation_run_by_id] Found evaluation run {evaluation_id}: status={eval_run.status}, "
             f"batch_job_id={eval_run.batch_job_id}"
         )
     else:
         logger.warning(
-            f"Evaluation run {evaluation_id} not found or not accessible "
+            f"[get_evaluation_run_by_id] Evaluation run {evaluation_id} not found or not accessible "
             f"for org_id={organization_id}, project_id={project_id}"
         )
 
@@ -236,7 +239,10 @@ def update_evaluation_run(
         session.refresh(eval_run)
     except Exception as e:
         session.rollback()
-        logger.error(f"Failed to update EvaluationRun: {e}", exc_info=True)
+        logger.error(
+            f"[update_evaluation_run] Failed to update EvaluationRun: {e}",
+            exc_info=True,
+        )
         raise
 
     if should_notify:

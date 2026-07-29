@@ -1,6 +1,8 @@
+import logging
 import re
 from collections import defaultdict
 
+from asgi_correlation_id import correlation_id
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -9,7 +11,12 @@ from starlette.status import (
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
 
+from app.core.exceptions import KaapiError
 from app.utils import APIResponse
+
+logger = logging.getLogger(__name__)
+
+GENERIC_ERROR_DETAIL = "An unexpected error occurred."
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -107,11 +114,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=APIResponse.failure_response(detail).model_dump(),
         )
 
+    @app.exception_handler(KaapiError)
+    async def kaapi_error_handler(request: Request, exc: KaapiError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=APIResponse.failure_response(exc.detail).model_dump(),
+        )
+
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
+        logger.error(
+            f"[generic_error_handler] Unhandled exception | "
+            f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            content=APIResponse.failure_response(
-                str(exc) or "An unexpected error occurred."
-            ).model_dump(),
+            content=APIResponse.failure_response(GENERIC_ERROR_DETAIL).model_dump(),
         )

@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 from typing import List, Optional
 
+from fastapi import HTTPException
 from sqlmodel import Session, select, and_
 
 from app.crud import DocumentCrud
@@ -13,7 +14,6 @@ from app.models import (
 )
 from app.models.document import Document
 from app.core.util import now
-from app.core.exception_handlers import HTTPException
 
 logger = logging.getLogger(__name__)
 

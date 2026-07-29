@@ -5,7 +5,8 @@ from uuid import UUID, uuid4
 from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 
-from fastapi import HTTPException
+
+from app.core.exceptions import ServiceUnavailableError
 from sqlmodel import Session, select
 
 from app.crud import JobCrud
@@ -95,13 +96,11 @@ class TestStartJob:
         with patch("app.services.llm.jobs.start_llm_job") as mock_schedule:
             mock_schedule.side_effect = Exception("Celery connection failed")
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError) as exc_info:
                 start_job(db, llm_call_request, project.id, project.organization_id)
 
-            assert exc_info.value.status_code == 500
-            assert "Internal server error while executing LLM call" in str(
-                exc_info.value.detail
-            )
+            assert exc_info.value.status_code == 503
+            assert "Could not queue the LLM call" in str(exc_info.value.detail)
 
     def test_start_job_exception_during_job_creation(
         self, db: Session, llm_call_request: LLMCallRequest
@@ -2006,13 +2005,11 @@ class TestStartChainJob:
             mock_job.id = uuid4()
             mock_job_crud_class.return_value.create.return_value = mock_job
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ServiceUnavailableError) as exc_info:
                 start_chain_job(db, chain_request, project.id, project.organization_id)
 
-            assert exc_info.value.status_code == 500
-            assert "Internal server error while executing LLM chain job" in str(
-                exc_info.value.detail
-            )
+            assert exc_info.value.status_code == 503
+            assert "Could not queue the LLM chain job" in str(exc_info.value.detail)
 
 
 class TestExecuteChainJob:

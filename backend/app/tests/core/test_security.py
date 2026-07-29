@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 import boto3
 import jwt
@@ -8,6 +9,7 @@ from sqlmodel import Session
 
 import app.core.security as security
 from app.core.config import settings
+from app.core.exceptions import UpstreamError
 from app.core.security import (
     ALGORITHM,
     KMS_CIPHERTEXT_PREFIX,
@@ -77,6 +79,32 @@ class TestCredentialEncryption:
 
         monkeypatch.setattr(settings, "ENVIRONMENT", "staging")
         assert decrypt_credentials(fernet_encrypted) == creds
+
+    def test_kms_encrypt_failure_raises_502_without_leaking_cause(
+        self, monkeypatch, kms_key
+    ):
+        broken = MagicMock()
+        broken.encrypt.side_effect = Exception("arn:aws:kms:ap-south-1:secret")
+        monkeypatch.setattr(security, "_kms_client", broken)
+
+        with pytest.raises(UpstreamError) as exc:
+            encrypt_credentials({"api_key": "sk-1"})
+
+        assert exc.value.status_code == 502
+        assert exc.value.provider == "kms"
+        assert "arn:aws:kms" not in exc.value.detail
+
+    def test_kms_decrypt_failure_raises_502(self, monkeypatch, kms_key):
+        encrypted = encrypt_credentials({"api_key": "sk-1"})
+        broken = MagicMock()
+        broken.decrypt.side_effect = Exception("arn:aws:kms:ap-south-1:secret")
+        monkeypatch.setattr(security, "_kms_client", broken)
+
+        with pytest.raises(UpstreamError) as exc:
+            decrypt_credentials(encrypted)
+
+        assert exc.value.status_code == 502
+        assert "arn:aws:kms" not in exc.value.detail
 
 
 class TestAPIKeyManager:

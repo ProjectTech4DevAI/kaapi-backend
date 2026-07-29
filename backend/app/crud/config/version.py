@@ -4,9 +4,11 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
+from app.core.exceptions import ConflictError, KaapiError
 from app.core.util import now
 from app.crud.model_config import is_reasoning_model, validate_blob_model_or_raise
 from app.models import (
@@ -82,7 +84,7 @@ class ConfigVersionCrud:
                 f"{{'config_id': '{self.config_id}', 'error_count': {len(validation_errors)}, "
                 f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"
             )
-            raise HTTPException(status_code=400, detail=validation_errors)
+            raise HTTPException(status_code=422, detail=validation_errors)
 
         validate_blob_model_or_raise(self.session, validated_blob)
 
@@ -101,16 +103,30 @@ class ConfigVersionCrud:
             self.session.refresh(version)
 
             logger.info(
-                f"[ConfigVersionCrud.create_from_partial] Version created successfully | "
+                f"[ConfigVersionCrud.create_or_raise] Version created successfully | "
                 f"{{'config_id': '{self.config_id}', 'version_id': '{version.id}'}}"
             )
 
             return version
 
+        except (HTTPException, KaapiError):
+            self.session.rollback()
+            raise
+
+        except IntegrityError as e:
+            self.session.rollback()
+            logger.warning(
+                f"[ConfigVersionCrud.create_or_raise] Version conflict | "
+                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
+            )
+            raise ConflictError(
+                "A version with this number already exists for this config."
+            )
+
         except Exception as e:
             self.session.rollback()
             logger.error(
-                f"[ConfigVersionCrud.create_from_partial] Failed to create version | "
+                f"[ConfigVersionCrud.create_or_raise] Failed to create version | "
                 f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
                 exc_info=True,
             )

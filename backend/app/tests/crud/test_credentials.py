@@ -1,4 +1,7 @@
+from unittest.mock import MagicMock
+
 import pytest
+from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud import (
@@ -10,6 +13,7 @@ from app.crud import (
     remove_creds_for_org,
 )
 from app.models import CredsCreate, CredsUpdate
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.providers import Provider
 from app.tests.utils.test_data import (
     create_test_project,
@@ -353,3 +357,73 @@ def test_langfuse_credential_validation(db: Session) -> None:
     )
     assert len(created_credentials) == 1
     assert created_credentials[0].provider == "langfuse"
+
+
+def test_remove_provider_credential_missing_raises_404(db: Session) -> None:
+    """Deleting a credential that was never stored is a 404, not a 500."""
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        remove_provider_credential(
+            session=db,
+            org_id=project.organization_id,
+            provider="openai",
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_remove_provider_credential_race_deletes_nothing_raises_404(
+    db: Session, monkeypatch
+) -> None:
+    """Row vanishes between the existence check and the delete: 404, not 500."""
+    _, project = create_test_credential(db)
+    monkeypatch.setattr(
+        "app.crud.credentials.get_provider_credential", lambda **k: MagicMock()
+    )
+    monkeypatch.setattr(db, "exec", lambda *a, **k: MagicMock(rowcount=0))
+
+    with pytest.raises(NotFoundError) as exc:
+        remove_provider_credential(
+            session=db,
+            org_id=project.organization_id,
+            provider="openai",
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_remove_creds_for_org_when_none_exist_raises_404(db: Session) -> None:
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        remove_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_duplicate_provider_raises_409(db: Session) -> None:
+    """Unique-constraint violation is a conflict, not bad input."""
+    _, project = create_test_credential(db)
+
+    creds_create = CredsCreate(
+        is_active=True,
+        credential={"openai": {"api_key": "another-key"}},
+    )
+
+    with pytest.raises(ConflictError) as exc:
+        set_creds_for_org(
+            session=db,
+            creds_add=creds_create,
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 409
+    assert "already exist" in exc.value.detail

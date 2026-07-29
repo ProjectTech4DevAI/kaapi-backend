@@ -11,6 +11,8 @@ import logging
 from typing import Any
 
 from langfuse import Langfuse
+from langfuse.api import NotFoundError as LangfuseNotFoundError
+from langfuse.api.core import ApiError as LangfuseApiError
 from sqlmodel import Session
 
 from app.core.batch import (
@@ -25,6 +27,12 @@ from app.models.batch_job import BatchJobType
 from app.services.llm.mappers import (
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
+)
+from app.core.exceptions import (
+    InvalidPayloadError,
+    InvalidValueError,
+    NotFoundError,
+    UpstreamError,
 )
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_openai_client
@@ -44,18 +52,41 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
         List of dataset items with input and expected_output
 
     Raises:
-        ValueError: If dataset not found or empty
+        NotFoundError, UpstreamError, InvalidPayloadError
     """
     try:
         dataset = langfuse.get_dataset(dataset_name)
-    except Exception as e:
+    except LangfuseNotFoundError as e:
         logger.warning(
-            f"[fetch_dataset_items] Failed to fetch dataset | dataset={dataset_name} | {e}"
+            f"[fetch_dataset_items] Dataset not found | dataset={dataset_name} | {e}"
         )
-        raise ValueError(f"Dataset '{dataset_name}' not found: {e}")
+        raise NotFoundError(f"Dataset '{dataset_name}' not found in Langfuse.")
+    except LangfuseApiError as e:
+        logger.error(
+            f"[fetch_dataset_items] Langfuse rejected the request | "
+            f"dataset={dataset_name}, code={getattr(e, 'status_code', 'unknown')}",
+            exc_info=True,
+        )
+        raise UpstreamError(
+            f"Langfuse could not return dataset '{dataset_name}' "
+            f"(code: {getattr(e, 'status_code', 'unknown')}). Retry shortly.",
+            provider="langfuse",
+        )
+    except Exception:
+        logger.error(
+            f"[fetch_dataset_items] Failed to reach Langfuse | dataset={dataset_name}",
+            exc_info=True,
+        )
+        raise UpstreamError(
+            f"Could not reach Langfuse to fetch dataset '{dataset_name}'. Retry shortly.",
+            provider="langfuse",
+        )
 
     if not dataset.items:
-        raise ValueError(f"Dataset '{dataset_name}' is empty")
+        logger.warning(
+            f"[fetch_dataset_items] Dataset is empty | dataset={dataset_name}"
+        )
+        raise InvalidPayloadError(f"Dataset '{dataset_name}' is empty.")
 
     items = []
     for item in dataset.items:
@@ -200,7 +231,7 @@ def start_evaluation_batch(
                 dataset_items=dataset_items, openai_params=mapped_params
             )
             if not jsonl_data:
-                raise ValueError(
+                raise InvalidPayloadError(
                     "Evaluation dataset did not produce any JSONL entries (missing questions?)."
                 )
 
@@ -240,7 +271,7 @@ def start_evaluation_batch(
                 dataset_items=dataset_items, google_params=mapped_params
             )
             if not jsonl_data:
-                raise ValueError(
+                raise InvalidPayloadError(
                     "Evaluation dataset did not produce any JSONL entries (missing questions?)."
                 )
 
@@ -271,7 +302,9 @@ def start_evaluation_batch(
             )
 
         else:
-            raise ValueError(f"Unsupported provider for evaluation batches: {provider}")
+            raise InvalidValueError(
+                f"Unsupported provider for evaluation batches: {provider}"
+            )
 
         eval_run.batch_job_id = batch_job.id
         eval_run.status = "processing"

@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import UploadFile
 
-from app.core.exception_handlers import HTTPException
+from fastapi import HTTPException
+
+from app.core.exceptions import UpstreamError
 from app.services.stt_evaluations.audio import (
     _resolve_extension,
     _validate_audio_file,
@@ -178,15 +180,15 @@ class TestUploadAudioFile:
         mock_storage.put.side_effect = Exception("S3 connection failed")
         mock_get_storage.return_value = mock_storage
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(UpstreamError) as exc_info:
             upload_audio_file(
                 session=MagicMock(),
                 file=_make_upload_file(),
                 organization_id=1,
                 project_id=1,
             )
-        assert exc_info.value.status_code == 500
-        assert "Failed to upload audio file" in str(exc_info.value.detail)
+        assert exc_info.value.status_code == 502
+        assert "Object storage could not accept" in str(exc_info.value.detail)
 
     @patch("app.services.stt_evaluations.audio.create_file")
     @patch("app.services.stt_evaluations.audio.get_cloud_storage")

@@ -1,7 +1,22 @@
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.core.exception_handlers import _sanitize_validation_errors
+from app.core.exception_handlers import (
+    GENERIC_ERROR_DETAIL,
+    _sanitize_validation_errors,
+    register_exception_handlers,
+)
+from app.core.exceptions import (
+    ConflictError,
+    InvalidPayloadError,
+    InvalidValueError,
+    KaapiError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UpstreamError,
+)
 from app.tests.utils.auth import TestAuthContext
 
 
@@ -138,3 +153,47 @@ class TestValidationErrorResponse:
         for error in response.json()["errors"]:
             assert "openai-native" not in error["message"]
             assert "NativeCompletionConfig" not in error["field"]
+
+
+def _app_raising(exc: Exception) -> TestClient:
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise exc
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+class TestKaapiErrorHandler:
+    """Each domain exception surfaces as its own status code."""
+
+    @pytest.mark.parametrize(
+        "exc, expected",
+        [
+            (NotFoundError("gone"), 404),
+            (ConflictError("dupe"), 409),
+            (InvalidValueError("bad value"), 400),
+            (InvalidPayloadError("bad shape"), 422),
+            (UpstreamError("langfuse down", provider="langfuse"), 502),
+            (ServiceUnavailableError("broker down"), 503),
+            (KaapiError("our bug"), 500),
+        ],
+    )
+    def test_status_code_and_body(self, exc: KaapiError, expected: int) -> None:
+        response = _app_raising(exc).get("/boom")
+
+        assert response.status_code == expected
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"] == exc.detail
+
+
+class TestGenericErrorHandler:
+    def test_does_not_leak_exception_text(self) -> None:
+        response = _app_raising(ValueError("secret arn:aws:kms:key/abc")).get("/boom")
+
+        assert response.status_code == 500
+        assert response.json()["error"] == GENERIC_ERROR_DETAIL
+        assert "arn:aws:kms" not in response.text
