@@ -118,7 +118,7 @@ class TestQualitativeBrief:
 
         params = client.responses.create.call_args.kwargs
         brief = params["input"]
-        assert params["max_output_tokens"] == 600
+        assert params["max_output_tokens"] == 2000
         assert "temperature" not in params
 
         assert "Accuracy against the expected answers" in brief

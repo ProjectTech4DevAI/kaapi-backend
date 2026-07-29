@@ -8,7 +8,6 @@ import openai
 from openai import OpenAI
 from sqlmodel import Session
 
-from app.core.config import settings
 from app.crud.evaluations.judge import JudgeMetricEnum
 from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.score import OverallSummary
@@ -19,7 +18,9 @@ logger = logging.getLogger(__name__)
 # Reasoning tokens count against this cap, so it needs headroom beyond the visible
 # note — too low and reasoning consumes it all, yielding empty output. Length is
 # bounded by the "1 to 3 sentences" instruction, not by a tight token cap.
-_SUMMARY_MAX_OUTPUT_TOKENS: int = 600
+_SUMMARY_MAX_OUTPUT_TOKENS: int = 2000
+
+_SUMMARY_REASONING_EFFORT: str = "minimal"
 
 # Bands for turning a metric's std (spread of its per-row scores, 0-1) into a plain
 # consistency read. With repeated questions a low spread means the assistant answered
@@ -115,17 +116,7 @@ def generate_run_ai_summary(
     summary_scores: list[dict[str, Any]],
     duplication_factor: int,
 ) -> str | None:
-    """Best-effort one-shot natural-language note on the run's overall quality.
-
-    Reuses the aggregate's existing OpenAI client (never builds a new one) and the
-    judge's reasoning-model invocation: `map_kaapi_to_openai_params` suppresses
-    temperature and sets the reasoning effort, then the body goes to the Responses
-    API. `summary_scores` supplies each metric's std (consistency) and
-    `duplication_factor` the repeat count that the brief translates into plain
-    language. A summary is a nicety, so ANY failure — missing key, API error, empty
-    output — logs a warning and returns None rather than propagating: the
-    deterministic overall (score/verdict/breakdown) must still persist.
-    """
+    """Best-effort one-shot natural-language note on the run's overall quality."""
     user_message = _format_overall_for_prompt(
         overall=overall,
         run_name=run_name,
@@ -137,7 +128,7 @@ def generate_run_ai_summary(
             session=session,
             kaapi_params={
                 "model": model,
-                "effort": settings.EVAL_JUDGE_REASONING_EFFORT,
+                "effort": _SUMMARY_REASONING_EFFORT,
             },
         )
         if mapper_warnings:
@@ -182,8 +173,4 @@ def generate_run_ai_summary(
         )
         return None
 
-    logger.info(
-        f"[generate_run_ai_summary] Generated run summary | model={model} | "
-        f"run_name={run_name} | chars={len(summary)}"
-    )
     return summary
