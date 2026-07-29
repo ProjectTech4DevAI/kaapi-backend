@@ -258,9 +258,7 @@ class TestValidateDocumentContent:
 
     def test_valid_pdf_dispatches_to_checker_and_passes(self) -> None:
         content = b"%PDF-1.4\n" + b"body " * 100 + b"trailer\n%%EOF\n"
-        validate_document_content(
-            file=make_upload_file(content), source_format="pdf"
-        )
+        validate_document_content(file=make_upload_file(content), source_format="pdf")
 
 
 class TestValidateUpload:
