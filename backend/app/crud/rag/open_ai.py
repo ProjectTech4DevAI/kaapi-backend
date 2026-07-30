@@ -279,8 +279,8 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                 )
                 raise
 
-        # Only 'completed' is success; 'cancelled'/'failed' with no per-file failures
-        # would otherwise slip through the failed-count check above.
+        # Only 'completed' is success; a 'cancelled'/'failed' batch with no per-file
+        # failures slips past the failed-count check above.
         if batch.status != "completed":
             error_message = (
                 f"[OPENAI] Vector store indexing did not complete "
@@ -289,9 +289,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             logger.error(
                 f"[OpenAIVectorStoreCrud.update] {error_message} | "
                 f"vector_store_id={vector_store_id}, batch_id={batch_id}, "
-                f"status={batch.status}, completed={batch.file_counts.completed}, "
-                f"failed={batch.file_counts.failed}, "
-                f"cancelled={batch.file_counts.cancelled}"
+                f"status={batch.status}"
             )
             raise RuntimeError(error_message)
 

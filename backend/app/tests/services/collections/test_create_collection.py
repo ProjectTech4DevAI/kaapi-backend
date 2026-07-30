@@ -761,7 +761,6 @@ def test_execute_batch_job_timeout_retries_and_keeps_vector_store(
 
     updated_job = CollectionJobCrud(db, project.id).read_one(job.id)
     assert updated_job.status == CollectionJobStatus.PROCESSING
-    assert "retry 1/3 queued" in (updated_job.error_message or "")
 
 
 @pytest.mark.parametrize(

@@ -52,36 +52,6 @@ def _can_retry_batch(task_instance) -> bool:
     return task_instance.request.retries < task_instance.max_retries
 
 
-def _note_batch_retry(
-    project_id: int,
-    job_id: str,
-    batch_number: int,
-    attempt: int,
-    max_attempts: int,
-) -> None:
-    """Record a pending retry on the job row.
-
-    The job stays PROCESSING between attempts and pending_monitor only watches
-    PENDING, so a retry that never lands would be invisible.
-    """
-    try:
-        with Session(engine) as session:
-            CollectionJobCrud(session, project_id).update(
-                UUID(job_id),
-                CollectionJobUpdate(
-                    error_message=(
-                        f"Batch {batch_number} timed out; "
-                        f"retry {attempt}/{max_attempts} queued"
-                    )
-                ),
-            )
-    except Exception:
-        logger.warning(
-            "[create_collection._note_batch_retry] Could not record retry | job_id=%s",
-            job_id,
-        )
-
-
 def start_job(
     db: Session,
     request: CreationRequest,
@@ -567,13 +537,6 @@ def execute_batch_job(
                     task_instance.max_retries,
                 )
                 span.set_attribute("collection.batch_retry", attempt)
-                _note_batch_retry(
-                    project_id,
-                    job_id,
-                    batch_number,
-                    attempt,
-                    task_instance.max_retries,
-                )
                 try:
                     # Only Retry means it reached the broker. retry() also raises
                     # Reject on a failed publish, or exc outside a worker - those
