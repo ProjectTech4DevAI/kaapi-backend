@@ -403,8 +403,6 @@ def execute_batch_job(
                 collection_job_crud = CollectionJobCrud(session, project_id)
                 collection_job = collection_job_crud.read_one(job_uuid)
                 already_uploaded = collection_job.documents_uploaded or []
-                # A re-run past this point re-appends its own IDs, and read_each
-                # rejects a list whose duplicates collapse in its IN.
                 now_uploaded = list(
                     dict.fromkeys(
                         already_uploaded + [str(d) for d in all_doc_ids_this_batch]

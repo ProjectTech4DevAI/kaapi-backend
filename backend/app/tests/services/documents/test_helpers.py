@@ -5,6 +5,10 @@ import pytest
 from fastapi import HTTPException, UploadFile
 
 from app.services.documents.helpers import (
+    calculate_file_size,
+    validate_upload,
+)
+from app.services.documents.validator import (
     SNIFF_HEAD_BYTES,
     SNIFF_TAIL_BYTES,
     DocumentValidationError,
@@ -17,9 +21,7 @@ from app.services.documents.helpers import (
     _check_xlsx,
     _decode_utf8,
     _read_edges,
-    calculate_file_size,
     validate_document_content,
-    validate_upload,
 )
 
 

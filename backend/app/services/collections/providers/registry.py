@@ -66,7 +66,6 @@ def get_llm_provider(
             raise ValueError("OpenAI credentials not configured for this project.")
         client = OpenAI(
             api_key=credentials["api_key"],
-            # SDK retries off; tenacity in OpenAIVectorStoreCrud is the sole retry layer.
             max_retries=0,
             timeout=OPENAI_TIMEOUT_SECONDS,
         )
