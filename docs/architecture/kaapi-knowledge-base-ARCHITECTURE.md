@@ -255,16 +255,16 @@ sequenceDiagram
 
     BR->>SU: deliver setup task
     SU->>DB: read documents · resolve provider + credentials · job → PROCESSING
-    SU->>Prov: upload_files() — upload EVERY not-yet-uploaded doc, persist file IDs
-    SU->>DB: persist openai_file_id per doc
     SU->>SU: batch_documents() → plan N batches
-    SU->>DB: job ← total_size_mb, total_batches=N, current_batch_number=0, documents_uploaded=[]
-    SU->>BR: enqueue batch 1  (vector_store_id=None, remaining_batches=[2..N])
+    SU->>Prov: create_vector_store()
+    SU->>DB: job ← total_size_mb, total_batches=N, current_batch_number=0, documents_uploaded=[], knowledge_base_id
+    SU->>BR: enqueue batch 1  (vector_store_id, remaining_batches=[2..N])
 
     loop each batch k = 1..N
         BR->>BA: deliver batch task (batch k, vector_store_id)
+        BA->>Prov: upload_files(batch k docs) — persist file IDs
         BA->>Prov: provider.create(batch_docs, vector_store_id)
-        Note over Prov: k=1 creates the vector store, every batch attaches its file IDs via file_batches.upload_and_poll
+        Note over Prov: every batch attaches its file IDs to the vector store via file_batches
         BA->>DB: checkpoint: current_batch_number=k, documents_uploaded += batch k
         alt batches remain
             BA->>BR: enqueue batch k+1 (vector_store_id threaded through)

@@ -49,6 +49,13 @@ CSV_SAMPLE_MAX_ROWS = 200
 
 OLE2_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
+# The OLE2 signature is a generic Compound File Binary container shared by .xls and
+# .doc, so it can't tell them apart. The CFB directory stores per-stream names as
+# UTF-16LE: an .xls carries a Workbook (BIFF8) or Book (BIFF5) stream, a .doc carries
+# WordDocument.
+OLE2_EXCEL_STREAMS = ("Workbook".encode("utf-16-le"), "Book".encode("utf-16-le"))
+OLE2_WORD_STREAMS = ("WordDocument".encode("utf-16-le"),)
+
 MISLABELLED_BINARY_SIGNATURES: dict[bytes, str] = {
     b"PK\x03\x04": "an Office/zip file (xlsx, docx)",
     OLE2_SIGNATURE: "a legacy Office file (xls, doc)",
@@ -136,6 +143,38 @@ def _check_docx(filename: str, head: bytes, tail: bytes, file: UploadFile) -> No
 
 def _check_xlsx(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
     _check_ooxml(filename, head + tail, OOXML_EXCEL_PART)
+
+
+def _check_ole2_stream(
+    filename: str,
+    sample: bytes,
+    wanted: tuple[bytes, ...],
+    rivals: tuple[bytes, ...],
+    rival_label: str,
+) -> None:
+    """Reject an OLE2 file whose extension claims one format but whose CFB directory
+    holds the rival's stream. Inconclusive samples pass — the directory can sit past
+    the sampled edges, and rejecting a valid file is worse than the loose check."""
+    if any(name in sample for name in wanted):
+        return
+    if any(name in sample for name in rivals):
+        raise DocumentValidationError(
+            filename,
+            f"parsing error - file is a {rival_label} document, "
+            "not the format its extension claims",
+        )
+
+
+def _check_xls(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
+    _check_ole2_stream(
+        filename, head + tail, OLE2_EXCEL_STREAMS, OLE2_WORD_STREAMS, "Word (.doc)"
+    )
+
+
+def _check_doc(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
+    _check_ole2_stream(
+        filename, head + tail, OLE2_WORD_STREAMS, OLE2_EXCEL_STREAMS, "Excel (.xls)"
+    )
 
 
 def _check_csv(filename: str, head: bytes, tail: bytes, file: UploadFile) -> None:
@@ -237,8 +276,12 @@ FORMAT_SPECS: dict[str, FormatSpec] = {
         needs_tail=True,
         checker=_check_xlsx,
     ),
-    "xls": FormatSpec(signatures=(OLE2_SIGNATURE,)),
-    "doc": FormatSpec(signatures=(OLE2_SIGNATURE,)),
+    "xls": FormatSpec(
+        signatures=(OLE2_SIGNATURE,), needs_tail=True, checker=_check_xls
+    ),
+    "doc": FormatSpec(
+        signatures=(OLE2_SIGNATURE,), needs_tail=True, checker=_check_doc
+    ),
     "csv": FormatSpec(checker=_check_csv),
     "json": FormatSpec(needs_tail=True, checker=_check_json),
 }

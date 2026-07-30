@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import openai
 import pytest
 
-from app.crud.rag.open_ai import OpenAIVectorStoreCrud
+from app.crud.rag.open_ai import BATCH_POLL_INTERVAL_SECONDS, OpenAIVectorStoreCrud
 from app.tests.utils.openai import get_mock_openai_client_with_vector_store
 
 
@@ -298,33 +298,51 @@ class TestOpenAIVectorStoreCrudInit:
             OpenAIVectorStoreCrud(client=None)
 
 
-class TestPollFileBatchTimeout:
-    """When the batch never leaves 'in_progress', the poll loop must give up at the
-    deadline rather than spin forever like the SDK's own poll()."""
+class TestPollFileBatch:
+    """Poll loop sleeps while in_progress and returns once the batch settles. A batch
+    that never finishes is bounded by the Celery soft time limit, not an internal one.
+    """
 
-    def test_raises_interrupted_error_past_deadline(self, crud, mock_client):
-        with patch("app.crud.rag.open_ai.time") as mock_time:
-            # monotonic: deadline setup, first below-deadline check, its sleep arg,
-            # then a value past the deadline that trips the timeout.
-            mock_time.monotonic.side_effect = [0, 0, 0, 300]
-            mock_time.sleep = MagicMock()
-            mock_client.vector_stores.file_batches.retrieve.return_value = MagicMock(
-                status="in_progress",
-                file_counts=MagicMock(in_progress=1, completed=0),
-            )
+    def test_polls_until_not_in_progress(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock
+    ) -> None:
+        done = MagicMock(status="completed")
+        mock_client.vector_stores.file_batches.retrieve.side_effect = [
+            MagicMock(status="in_progress"),
+            done,
+        ]
 
-            with pytest.raises(InterruptedError) as exc_info:
-                crud._poll_file_batch("vsfb_x", "vs_1")
+        with patch("app.crud.rag.open_ai.time.sleep") as mock_sleep:
+            result = crud._poll_file_batch("vsfb_x", "vs_1")
 
-        assert "batch-poll-timeout" in str(exc_info.value)
-        assert mock_time.sleep.called
+        assert result is done
+        mock_sleep.assert_called_once_with(BATCH_POLL_INTERVAL_SECONDS)
+
+
+class TestUpdateTerminalStatus:
+    """A batch ending 'cancelled'/'failed' with no per-file failures must raise, not
+    slip through the failed-count check as success."""
+
+    def test_cancelled_batch_raises(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock, docs: list[MagicMock]
+    ) -> None:
+        mock_client.vector_stores.file_batches.create.return_value = MagicMock(
+            id=REAL_BATCH_ID
+        )
+        counts = MagicMock(completed=0, failed=0, cancelled=2, in_progress=0)
+        mock_client.vector_stores.file_batches.retrieve.return_value = MagicMock(
+            status="cancelled", file_counts=counts
+        )
+
+        with pytest.raises(RuntimeError, match="cancelled"):
+            crud.update("vs_1", docs)
 
 
 class TestGetMockOpenAIClientWithVectorStore:
     """Contract test for the repo test fixture: exercises the whole helper and
     pins the wiring the callers that use it depend on."""
 
-    def test_wiring_contract(self):
+    def test_wiring_contract(self) -> None:
         client = get_mock_openai_client_with_vector_store()
 
         assert client.vector_stores.create.return_value.id == "mock_vector_store_id"
@@ -333,6 +351,7 @@ class TestGetMockOpenAIClientWithVectorStore:
         assert batch.id == "vsfb_mock"
         assert batch.file_counts.failed == 0
         assert batch.file_counts.completed == 2
-        assert client.vector_stores.file_batches.poll.return_value is batch
+        # _poll_file_batch polls retrieve, not poll — pin the endpoint production uses.
+        assert client.vector_stores.file_batches.retrieve.return_value is batch
 
         assert client.beta.assistants.create.return_value.id == "mock_assistant_id"

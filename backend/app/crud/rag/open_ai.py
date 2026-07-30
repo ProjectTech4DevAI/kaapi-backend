@@ -17,12 +17,10 @@ OPENAI_PROVIDER = ProviderType.openai.value
 
 OPENAI_MAX_RETRIES = 2
 
-# Per socket operation, not per call: a steady upload runs as long as it needs and
-# this only fires on a dead connection. Sized so all attempts fit one Celery task.
-OPENAI_TIMEOUT_SECONDS = 90
+# Under the Celery soft time limit so a hung call plus its retries can't eat the window.
+OPENAI_TIMEOUT_SECONDS = 30
 
 BATCH_POLL_INTERVAL_SECONDS = 2
-BATCH_POLL_TIMEOUT_SECONDS = 240
 
 
 def vs_ls(client: OpenAI, vector_store_id: str):
@@ -132,32 +130,12 @@ class OpenAIVectorStoreCrud(OpenAICrud):
     def _poll_file_batch(
         self, batch_id: str, vector_store_id: str
     ) -> VectorStoreFileBatch:
-        """Wait for indexing to finish. The SDK's own poll() loops forever."""
-        deadline = time.monotonic() + BATCH_POLL_TIMEOUT_SECONDS
-
+        """Poll until indexing finishes; the Celery soft time limit is the deadline."""
         while True:
             batch = self._retrieve_file_batch(batch_id, vector_store_id)
             if batch.status != "in_progress":
                 return batch
-
-            if time.monotonic() >= deadline:
-                error_message = (
-                    f"[KAAPI] Timed out (code: batch-poll-timeout) after "
-                    f"{BATCH_POLL_TIMEOUT_SECONDS}s waiting for OpenAI to finish indexing "
-                    f"{batch.file_counts.in_progress} file(s). Retry the "
-                    f"collection, or split it into smaller batches."
-                )
-                logger.error(
-                    f"[OpenAIVectorStoreCrud._poll_file_batch] {error_message} | "
-                    f"vector_store_id={vector_store_id}, batch_id={batch_id}, "
-                    f"completed={batch.file_counts.completed}, "
-                    f"in_progress={batch.file_counts.in_progress}"
-                )
-                raise InterruptedError(error_message)
-
-            time.sleep(
-                min(BATCH_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
-            )
+            time.sleep(BATCH_POLL_INTERVAL_SECONDS)
 
     def update(
         self,
@@ -300,6 +278,22 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     f"{{'batch_id': '{batch_id}', 'error': '{str(err)}'}}"
                 )
                 raise
+
+        # Only 'completed' is success; 'cancelled'/'failed' with no per-file failures
+        # would otherwise slip through the failed-count check above.
+        if batch.status != "completed":
+            error_message = (
+                f"[OPENAI] Vector store indexing did not complete "
+                f"(status: {batch.status}). Retry the collection."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud.update] {error_message} | "
+                f"vector_store_id={vector_store_id}, batch_id={batch_id}, "
+                f"status={batch.status}, completed={batch.file_counts.completed}, "
+                f"failed={batch.file_counts.failed}, "
+                f"cancelled={batch.file_counts.cancelled}"
+            )
+            raise RuntimeError(error_message)
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:

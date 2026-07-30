@@ -9,9 +9,11 @@ from app.services.documents.helpers import (
     SNIFF_TAIL_BYTES,
     DocumentValidationError,
     _check_csv,
+    _check_doc,
     _check_docx,
     _check_json,
     _check_pdf,
+    _check_xls,
     _check_xlsx,
     _decode_utf8,
     _read_edges,
@@ -143,6 +145,39 @@ class TestCheckOoxml:
     def test_valid_xlsx_passes(self) -> None:
         sample = b"[Content_Types].xml ... xl/worksheets/sheet1.xml"
         _check_xlsx("f.xlsx", sample, b"", make_upload_file(b""))
+
+
+class TestCheckOle2:
+    """OLE2 is a generic container shared by .xls and .doc; the checker distinguishes
+    them by the UTF-16LE stream name in the CFB directory."""
+
+    WORKBOOK = "Workbook".encode("utf-16-le")
+    WORD = "WordDocument".encode("utf-16-le")
+
+    def test_doc_mislabelled_as_xls_raises(self) -> None:
+        with pytest.raises(DocumentValidationError) as exc:
+            _check_xls("f.xls", self.WORD, b"", make_upload_file(b""))
+        assert "not the format its extension claims" in exc.value.reason
+
+    def test_valid_xls_passes(self) -> None:
+        _check_xls("f.xls", self.WORKBOOK, b"", make_upload_file(b""))
+
+    def test_xls_mislabelled_as_doc_raises(self) -> None:
+        with pytest.raises(DocumentValidationError) as exc:
+            _check_doc("f.doc", self.WORKBOOK, b"", make_upload_file(b""))
+        assert "not the format its extension claims" in exc.value.reason
+
+    def test_valid_doc_passes(self) -> None:
+        _check_doc("f.doc", self.WORD, b"", make_upload_file(b""))
+
+    def test_inconclusive_sample_passes(self) -> None:
+        """Directory can sit past the sampled edges; don't reject on absence."""
+        _check_xls(
+            "f.xls",
+            b"\xd0\xcf\x11\xe0 no stream names here",
+            b"",
+            make_upload_file(b""),
+        )
 
 
 class TestCheckCsv:
