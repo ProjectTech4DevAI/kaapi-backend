@@ -22,8 +22,7 @@ _SUMMARY_REASONING_EFFORT: str = "minimal"
 _CONSISTENCY_STABLE_AT_OR_BELOW: float = 0.1
 _CONSISTENCY_MIXED_AT_OR_BELOW: float = 0.2
 
-# Internal metric key -> plain behaviour phrase, so the brief never leaks the
-# "Adherence to X" labels into the model's context.
+# Internal metric key -> plain behaviour phrase, so the brief never leaks the labels into the model's context.
 _DIMENSION_PLAIN_NAME: dict[str, str] = {
     JudgeMetricEnum.GROUND_TRUTH.value: "Accuracy against the expected answers",
     JudgeMetricEnum.KNOWLEDGE_BASE.value: "Grounding in the source material",
