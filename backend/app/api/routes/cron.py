@@ -132,12 +132,17 @@ def health_probes_cron_job() -> dict[str, Any]:
     # Runs synchronously (no Celery task of its own) — the probe rides the
     # existing LLM_API job pipeline via `start_job`.
     logger.info("[health_probes_cron_job] Cron job invoked")
-    result = run_health_probe_tick()
-    logger.info(
-        f"[health_probes_cron_job] Tick complete | job_id: {result.get('job_id')}, "
-        f"probe_index: {result.get('probe_index')}"
-    )
-    return result
+    try:
+        result = run_health_probe_tick()
+        logger.info(
+            f"[health_probes_cron_job] Tick complete | job_id: {result.get('job_id')}, "
+            f"probe_index: {result.get('probe_index')}"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"[health_probes_cron_job] Tick failed: {e}", exc_info=True)
+        sentry_sdk.capture_exception(e)
+        raise
 
 
 @router.get(
