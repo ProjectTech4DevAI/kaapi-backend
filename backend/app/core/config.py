@@ -195,7 +195,7 @@ class Settings(BaseSettings):
 
     HEALTH_PROBE_ORG_ID: int | None = None
     HEALTH_PROBE_PROJECT_ID: int | None = None
-    HEALTH_PROBE_INTERVAL_MINUTES: int = 5
+    HEALTH_PROBE_INTERVAL_MINUTES: int = 3
 
     # AI-assisted prompt improvement settings.
     # See docs/srd-ai-prompt-improvement.md for the full design rationale.

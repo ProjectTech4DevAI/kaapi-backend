@@ -1,26 +1,25 @@
-from pathlib import Path
+import threading
 from types import TracebackType
 from typing import Any
+from unittest.mock import patch
+from uuid import UUID, uuid4
 
 import pytest
 from sqlmodel import Session
 
-from app.core.audio_utils import AudioRef
 from app.core.config import settings
-from app.models.llm import NativeCompletionConfig, QueryParams
+from app.crud.jobs import JobCrud
+from app.models.job import JobStatus, JobType, JobUpdate
+from app.models.llm.request import KaapiCompletionConfig
 from app.services import health_probes
-from app.services.health_probes import (
-    HEALTH_PROBES_MONITOR_CONFIG,
-    HEALTH_PROBES_MONITOR_SLUG,
-    _PROBES,
-    execute_health_probes,
-    run_probes,
-)
+from app.services.health_probes import _PROBES, _build_probe_request
+from app.services.llm.mappers import transform_kaapi_config_to_native
+from app.tests.utils.test_data import create_test_project
 
 
 class _NonClosingSession:
-    """Stands in for `Session(engine)` inside run_probes, yielding the
-    conftest transactional session without closing it on __exit__."""
+    """Stands in for `Session(engine)` inside health_probes, backed by the
+    conftest transactional `db` session instead of closing a real one."""
 
     def __init__(self, session: Session):
         self._session = session
@@ -37,344 +36,197 @@ class _NonClosingSession:
         return False
 
 
-class _FakeProvider:
-    def __init__(
-        self,
-        response: Any = None,
-        error: str | None = None,
-        raise_exc: Exception | None = None,
-    ):
-        self._response = response
-        self._error = error
-        self._raise_exc = raise_exc
-        self.calls: list[dict[str, Any]] = []
+class _FakeRedis:
+    """In-memory stand-in for `_redis_client`. `incr` is lock-protected so it
+    actually replicates Redis's atomicity for the concurrency test below."""
 
-    def execute(
-        self,
-        *,
-        completion_config: NativeCompletionConfig,
-        query: QueryParams,
-        resolved_input: str | AudioRef,
-    ) -> tuple[Any, str | None]:
-        self.calls.append(
-            {
-                "completion_config": completion_config,
-                "query": query,
-                "resolved_input": resolved_input,
-            }
-        )
-        if self._raise_exc is not None:
-            raise self._raise_exc
-        return self._response, self._error
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    def set(self, key: str, value: Any) -> None:
+        self.store[key] = str(value)
+
+    def incr(self, key: str) -> int:
+        with self._lock:
+            count = int(self.store.get(key, "0")) + 1
+            self.store[key] = str(count)
+            return count
 
 
 @pytest.fixture
-def configured_probe_settings(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "HEALTH_PROBE_ORG_ID", 1)
-    monkeypatch.setattr(settings, "HEALTH_PROBE_PROJECT_ID", 1)
-    # run_probes opens its own Session(engine); point it at the conftest
-    # transactional session so nothing leaks past the test.
+def probe_env(db: Session, monkeypatch: pytest.MonkeyPatch):
+    project = create_test_project(db)
+    monkeypatch.setattr(settings, "HEALTH_PROBE_ORG_ID", project.organization_id)
+    monkeypatch.setattr(settings, "HEALTH_PROBE_PROJECT_ID", project.id)
     monkeypatch.setattr(
         health_probes, "Session", lambda _engine: _NonClosingSession(db)
     )
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(health_probes, "_redis_client", fake_redis)
+    return project, fake_redis
 
 
-class TestSkipWhenNotConfigured:
-    def test_returns_skipped_when_org_id_missing(
-        self, monkeypatch: pytest.MonkeyPatch
+def _create_job(db: Session, project_id: int, status: JobStatus) -> UUID:
+    job = JobCrud(session=db).create(job_type=JobType.LLM_API, project_id=project_id)
+    JobCrud(session=db).update(job_id=job.id, job_update=JobUpdate(status=status))
+    return job.id
+
+
+class TestFiresExactlyOneProbe:
+    def test_tick_enqueues_exactly_one_job(
+        self, probe_env: tuple[Any, _FakeRedis]
     ) -> None:
-        monkeypatch.setattr(settings, "HEALTH_PROBE_ORG_ID", None)
-        monkeypatch.setattr(settings, "HEALTH_PROBE_PROJECT_ID", 1)
-        monkeypatch.setattr(
-            health_probes,
-            "Session",
-            lambda _engine: pytest.fail("no session must be opened when skipping"),
+        _, _fake_redis = probe_env
+        expected_job_id = uuid4()
+
+        with patch(
+            "app.services.health_probes.start_job", return_value=expected_job_id
+        ) as start_job_mock:
+            result = health_probes.run_health_probe_tick()
+
+        start_job_mock.assert_called_once()
+        assert result["enqueued"] is True
+        assert result["job_id"] == expected_job_id
+
+
+class TestRoundRobinRotation:
+    def test_index_advances_and_wraps_across_full_registry(
+        self, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        seen_indexes = []
+        with patch(
+            "app.services.health_probes.start_job", side_effect=lambda **_k: uuid4()
+        ):
+            for _ in range(len(_PROBES)):
+                result = health_probes.run_health_probe_tick()
+                seen_indexes.append(result["probe_index"])
+
+            assert seen_indexes == list(range(len(_PROBES)))
+
+            wrapped = health_probes.run_health_probe_tick()
+            assert wrapped["probe_index"] == 0
+
+    def test_concurrent_claims_never_collide_or_skip_a_slot(
+        self, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        # N concurrent claims must land on N distinct, evenly spread slots.
+        from concurrent.futures import ThreadPoolExecutor
+
+        rounds = 5
+        total_claims = rounds * len(_PROBES)
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            claimed = list(
+                pool.map(
+                    lambda _: health_probes._claim_next_probe_index(),
+                    range(total_claims),
+                )
+            )
+
+        counts = {i: claimed.count(i) for i in range(len(_PROBES))}
+        assert all(count == rounds for count in counts.values()), counts
+
+
+class TestMissingRedisKeysDoNotFailTick:
+    def test_missing_index_key_defaults_to_zero(
+        self, db: Session, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        project, fake_redis = probe_env
+        # last_job_id present (not a first-ever run), index key absent.
+        existing_job_id = _create_job(db, project.id, JobStatus.SUCCESS)
+        fake_redis.store[health_probes._LAST_JOB_ID_KEY] = str(existing_job_id)
+
+        with patch(
+            "app.services.health_probes.start_job", return_value=uuid4()
+        ) as start_job_mock:
+            result = health_probes.run_health_probe_tick()
+
+        start_job_mock.assert_called_once()
+        assert result["enqueued"] is True
+        assert result["probe_index"] == 0
+
+    def test_missing_last_job_id_key_skips_checkin_but_still_fires(
+        self, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        _, fake_redis = probe_env
+        fake_redis.store[health_probes._INDEX_KEY] = "2"
+
+        with (
+            patch(
+                "app.services.health_probes.start_job", return_value=uuid4()
+            ) as start_job_mock,
+            patch("app.services.health_probes.capture_checkin") as checkin_mock,
+        ):
+            result = health_probes.run_health_probe_tick()
+
+        start_job_mock.assert_called_once()
+        checkin_mock.assert_not_called()
+        assert result["enqueued"] is True
+        assert result["probe_index"] == 2
+        assert result["previous_job_status"] is None
+
+
+class TestPreviousProbeCheckin:
+    def test_previous_job_failed_reports_error_checkin(
+        self, db: Session, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        project, fake_redis = probe_env
+        failed_job_id = _create_job(db, project.id, JobStatus.FAILED)
+        fake_redis.store[health_probes._LAST_JOB_ID_KEY] = str(failed_job_id)
+
+        with (
+            patch("app.services.health_probes.start_job", return_value=uuid4()),
+            patch("app.services.health_probes.capture_checkin") as checkin_mock,
+        ):
+            result = health_probes.run_health_probe_tick()
+
+        checkin_mock.assert_called_once()
+        assert (
+            checkin_mock.call_args.kwargs["status"] == health_probes.MonitorStatus.ERROR
+        )
+        assert result["previous_job_status"] == JobStatus.FAILED.value
+
+    def test_previous_job_success_reports_ok_checkin(
+        self, db: Session, probe_env: tuple[Any, _FakeRedis]
+    ) -> None:
+        project, fake_redis = probe_env
+        success_job_id = _create_job(db, project.id, JobStatus.SUCCESS)
+        fake_redis.store[health_probes._LAST_JOB_ID_KEY] = str(success_job_id)
+
+        with (
+            patch("app.services.health_probes.start_job", return_value=uuid4()),
+            patch("app.services.health_probes.capture_checkin") as checkin_mock,
+        ):
+            result = health_probes.run_health_probe_tick()
+
+        checkin_mock.assert_called_once()
+        assert checkin_mock.call_args.kwargs["status"] == health_probes.MonitorStatus.OK
+        assert result["previous_job_status"] == JobStatus.SUCCESS.value
+
+
+class TestProbeRegistryPayloadsAreValid:
+    # FR-8/FR-10/FR-11: every registry entry must resolve through the real
+    # Kaapi -> native mapper with zero warnings (catches e.g. Sarvam TTS
+    # missing `language`, ElevenLabs TTS missing `voice`).
+
+    @pytest.mark.parametrize(
+        "probe",
+        _PROBES,
+        ids=[f"{p.provider}-{p.model}-{p.modality}" for p in _PROBES],
+    )
+    def test_probe_config_resolves_with_no_mapper_warnings(
+        self, db: Session, probe: health_probes.Probe
+    ) -> None:
+        request = _build_probe_request(probe, index=0)
+
+        kaapi_config = request.config.blob.completion  # type: ignore[union-attr]
+        assert isinstance(kaapi_config, KaapiCompletionConfig)
+
+        _native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
         )
 
-        result = run_probes()
-
-        assert result == {
-            "skipped": True,
-            "reason": "health_probe_org_or_project_not_set",
-        }
-
-    def test_returns_skipped_when_project_id_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(settings, "HEALTH_PROBE_ORG_ID", 1)
-        monkeypatch.setattr(settings, "HEALTH_PROBE_PROJECT_ID", None)
-        monkeypatch.setattr(
-            health_probes,
-            "get_llm_provider",
-            lambda **_k: pytest.fail("provider must not be built"),
-        )
-
-        result = run_probes()
-
-        assert result["skipped"] is True
-        assert result["reason"] == "health_probe_org_or_project_not_set"
-
-
-class TestRunProbesShape:
-    def test_all_probes_ok_returns_expected_structure(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        fake = _FakeProvider(response={"data": "pong"}, error=None)
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        assert set(result.keys()) == {
-            "elapsed_ms",
-            "total",
-            "ok",
-            "failed",
-            "results",
-        }
-        assert isinstance(result["elapsed_ms"], int)
-        assert result["total"] == len(_PROBES)
-        assert result["ok"] == len(_PROBES)
-        assert result["failed"] == 0
-        assert len(result["results"]) == len(_PROBES)
-
-        for r in result["results"]:
-            assert set(r.keys()) == {
-                "endpoint",
-                "provider",
-                "modality",
-                "model",
-                "ok",
-                "latency_ms",
-                "error",
-            }
-            assert r["endpoint"] == "llm/call"
-            assert r["ok"] is True
-            assert r["error"] is None
-            assert isinstance(r["latency_ms"], int)
-
-        # the config build must hand the provider a native config, not the Kaapi one
-        assert all(
-            isinstance(c["completion_config"], NativeCompletionConfig)
-            for c in fake.calls
-        )
-
-
-class TestProviderInitFailure:
-    def test_get_llm_provider_value_error_marks_client_init_failed(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        def _boom(**_kwargs: Any) -> _FakeProvider:
-            raise ValueError("no creds")
-
-        monkeypatch.setattr(health_probes, "get_llm_provider", _boom)
-
-        result = run_probes()
-
-        assert result["ok"] == 0
-        assert result["failed"] == len(_PROBES)
-        for r in result["results"]:
-            assert r["ok"] is False
-            assert r["error"] == "client_init_failed"
-            assert r["latency_ms"] is None
-
-    def test_get_llm_provider_runtime_error_marks_client_init_failed(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        monkeypatch.setattr(
-            health_probes,
-            "get_llm_provider",
-            lambda **_k: (_ for _ in ()).throw(RuntimeError("bad")),
-        )
-
-        result = run_probes()
-
-        assert result["failed"] == len(_PROBES)
-        assert all(r["error"] == "client_init_failed" for r in result["results"])
-        assert all(r["latency_ms"] is None for r in result["results"])
-
-
-class TestExecuteBehaviors:
-    def test_execute_raises_marks_error_with_exception_class_name(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        fake = _FakeProvider(raise_exc=TimeoutError("slow"))
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        assert result["ok"] == 0
-        for r in result["results"]:
-            assert r["ok"] is False
-            assert r["error"].startswith("TimeoutError")
-            assert "slow" in r["error"]
-            assert isinstance(r["latency_ms"], int)
-
-    def test_provider_returns_none_response_uses_provided_error(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        fake = _FakeProvider(response=None, error="some_error")
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        assert result["ok"] == 0
-        assert result["failed"] == len(_PROBES)
-        for r in result["results"]:
-            assert r["ok"] is False
-            assert r["error"] == "some_error"
-            assert isinstance(r["latency_ms"], int)
-
-    def test_provider_returns_none_response_and_no_error_defaults_no_response(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        fake = _FakeProvider(response=None, error=None)
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        for r in result["results"]:
-            assert r["ok"] is False
-            assert r["error"] == "no_response"
-
-    def test_provider_returns_response_marks_ok(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        fake = _FakeProvider(response={"ok": 1}, error=None)
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        assert result["ok"] == len(_PROBES)
-        for r in result["results"]:
-            assert r["ok"] is True
-            assert r["error"] is None
-
-
-class TestSttAudioNotConfigured:
-    def test_missing_stt_audio_file_short_circuits_stt_probes(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        monkeypatch.setattr(
-            health_probes, "_STT_AUDIO_PATH", Path("/nonexistent/probe.ogg")
-        )
-        # reset the lazy-load cache so the missing path is actually read
-        monkeypatch.setattr(health_probes, "_stt_audio_bytes", None)
-        fake = _FakeProvider(response={"ok": 1}, error=None)
-        monkeypatch.setattr(health_probes, "get_llm_provider", lambda **_k: fake)
-
-        result = run_probes()
-
-        stt_results = [r for r in result["results"] if r["modality"] == "stt"]
-        assert stt_results, "expected at least one STT probe"
-        for r in stt_results:
-            assert r["ok"] is False
-            assert r["error"] == "stt_audio_not_configured"
-            # short-circuit happens before execute → no latency recorded
-            assert r["latency_ms"] is None
-
-        non_stt = [r for r in result["results"] if r["modality"] != "stt"]
-        for r in non_stt:
-            assert r["ok"] is True
-
-
-class TestProviderCaching:
-    def test_get_llm_provider_called_once_per_unique_provider(
-        self, monkeypatch: pytest.MonkeyPatch, configured_probe_settings: None
-    ) -> None:
-        seen_providers: list[str] = []
-
-        def _factory(**kwargs: Any) -> _FakeProvider:
-            seen_providers.append(kwargs["provider_type"])
-            return _FakeProvider(response={"ok": 1}, error=None)
-
-        monkeypatch.setattr(health_probes, "get_llm_provider", _factory)
-
-        run_probes()
-
-        unique_probe_providers = {p.provider for p in _PROBES}
-        # One factory call per unique provider name, not per probe
-        assert sorted(seen_providers) == sorted(unique_probe_providers)
-        assert len(seen_providers) < len(_PROBES)
-
-
-class TestExecuteHealthProbes:
-    @staticmethod
-    def _patch_checkin(
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> list[dict[str, Any]]:
-        checkins: list[dict[str, Any]] = []
-
-        def _capture(**kwargs: Any) -> str:
-            checkins.append(kwargs)
-            return "checkin-123"
-
-        monkeypatch.setattr(health_probes, "capture_checkin", _capture)
-        return checkins
-
-    def test_ok_result_closes_checkin_with_ok(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        checkins = self._patch_checkin(monkeypatch)
-        canned = {"elapsed_ms": 1, "total": 2, "ok": 2, "failed": 0, "results": []}
-        monkeypatch.setattr(health_probes, "run_probes", lambda: canned)
-
-        result = execute_health_probes()
-
-        assert result == canned
-        assert len(checkins) == 2
-        assert checkins[0] == {
-            "monitor_slug": HEALTH_PROBES_MONITOR_SLUG,
-            "status": health_probes.MonitorStatus.IN_PROGRESS,
-            "monitor_config": HEALTH_PROBES_MONITOR_CONFIG,
-        }
-        assert checkins[1] == {
-            "check_in_id": "checkin-123",
-            "monitor_slug": HEALTH_PROBES_MONITOR_SLUG,
-            "status": health_probes.MonitorStatus.OK,
-        }
-
-    def test_failed_probes_close_checkin_with_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        checkins = self._patch_checkin(monkeypatch)
-        canned = {"elapsed_ms": 1, "total": 2, "ok": 1, "failed": 1, "results": []}
-        monkeypatch.setattr(health_probes, "run_probes", lambda: canned)
-
-        result = execute_health_probes()
-
-        assert result == canned
-        assert checkins[1]["status"] == health_probes.MonitorStatus.ERROR
-        assert checkins[1]["check_in_id"] == "checkin-123"
-
-    def test_skipped_result_closes_checkin_with_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        checkins = self._patch_checkin(monkeypatch)
-        skipped = {"skipped": True, "reason": "health_probe_org_or_project_not_set"}
-        monkeypatch.setattr(health_probes, "run_probes", lambda: skipped)
-
-        result = execute_health_probes()
-
-        assert result == skipped
-        assert checkins[1]["status"] == health_probes.MonitorStatus.ERROR
-
-    def test_run_probes_raising_sends_error_checkin_and_propagates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        checkins = self._patch_checkin(monkeypatch)
-
-        def _boom() -> dict[str, Any]:
-            raise RuntimeError("probe explosion")
-
-        monkeypatch.setattr(health_probes, "run_probes", _boom)
-
-        with pytest.raises(RuntimeError, match="probe explosion"):
-            execute_health_probes()
-
-        assert len(checkins) == 2
-        assert checkins[0]["status"] == health_probes.MonitorStatus.IN_PROGRESS
-        assert checkins[1] == {
-            "check_in_id": "checkin-123",
-            "monitor_slug": HEALTH_PROBES_MONITOR_SLUG,
-            "status": health_probes.MonitorStatus.ERROR,
-        }
+        assert warnings == []

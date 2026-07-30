@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import sentry_sdk
 from fastapi import APIRouter, Depends
@@ -7,8 +8,8 @@ from sentry_sdk.types import MonitorConfig
 from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
-from app.celery.tasks.job_execution import run_health_probes
 from app.crud.evaluations import process_all_pending_evaluations
+from app.services.health_probes import run_health_probe_tick
 from app.services.job_monitoring import monitor_pending_jobs
 
 logger = logging.getLogger(__name__)
@@ -127,12 +128,16 @@ async def evaluation_cron_job(
     include_in_schema=False,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
-def health_probes_cron_job() -> dict:
-    # Sentry check-ins happen inside the Celery task so the monitor reflects
-    # probe results, not just enqueue success.
-    logger.info("[health_probes_cron_job] Cron job invoked — enqueueing task")
-    async_result = run_health_probes.delay()
-    return {"enqueued": True, "task_id": async_result.id}
+def health_probes_cron_job() -> dict[str, Any]:
+    # Runs synchronously (no Celery task of its own) — the probe rides the
+    # existing LLM_API job pipeline via `start_job`.
+    logger.info("[health_probes_cron_job] Cron job invoked")
+    result = run_health_probe_tick()
+    logger.info(
+        f"[health_probes_cron_job] Tick complete | job_id: {result.get('job_id')}, "
+        f"probe_index: {result.get('probe_index')}"
+    )
+    return result
 
 
 @router.get(

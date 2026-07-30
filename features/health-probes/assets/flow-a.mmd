@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant Scheduler as External Scheduler
+    participant Cron as Kaapi backend (cron route)
+    participant Redis
+    participant DB as Postgres (job table)
+    participant Sentry
+    participant Celery as LLM call pipeline (Celery)
+    participant Provider as LLM Provider
+
+    Scheduler->>Cron: GET /cron/health-probes
+    Cron->>Redis: GET last_job_id
+    alt key present
+        Cron->>DB: look up previous Job by id
+        DB-->>Cron: JobStatus (SUCCESS / FAILED / PENDING)
+        Cron->>Sentry: check-in reflecting previous probe's real status
+    else key missing
+        Cron->>Sentry: log entry, continue (no flow failure)
+    end
+    Cron->>Redis: INCR probe_index (atomic claim)
+    Cron->>Cron: pick probe = registry[index mod len(registry)]
+    Cron->>Celery: start_job(LLMCallRequest for probe, no callback_url)
+    Celery-->>Cron: job_id
+    Cron->>Redis: SET last_job_id
+    Cron-->>Scheduler: 200 OK (enqueued)
+    Celery->>Provider: resolved config + input (config -> mapper -> provider)
+    Provider-->>Celery: response or provider error
+    Celery->>DB: update Job status (SUCCESS / FAILED)

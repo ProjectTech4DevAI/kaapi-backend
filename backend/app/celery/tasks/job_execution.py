@@ -424,15 +424,6 @@ def run_evaluation_fast_aggregate(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
-@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_health_probes")
-def run_health_probes(self, trace_id: str = DEFAULT_TRACE_ID) -> dict:
-    from app.services.health_probes import execute_health_probes
-
-    _set_trace(trace_id)
-    return _run_with_otel_parent(self, execute_health_probes)
-
-
 @celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(
     settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"

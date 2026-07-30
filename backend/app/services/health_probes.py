@@ -1,34 +1,41 @@
+import base64
 import logging
-import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
+import redis
 from sentry_sdk.crons import MonitorStatus, capture_checkin
 from sentry_sdk.types import MonitorConfig
 from sqlmodel import Session
 
-from app.core.audio_utils import AudioRef
 from app.core.config import settings
 from app.core.db import engine
-from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig, QueryParams
-from app.services.llm.mappers import transform_kaapi_config_to_native
-from app.services.llm.providers.base import BaseProvider
-from app.services.llm.providers.registry import get_llm_provider
+from app.crud.jobs import JobCrud
+from app.models.job import JobStatus
+from app.models.llm.constants import CompletionType
+from app.models.llm.request import (
+    AudioContent,
+    AudioInput,
+    ConfigBlob,
+    KaapiCompletionConfig,
+    LLMCallConfig,
+    LLMCallRequest,
+    QueryParams,
+)
+from app.services.llm.jobs import start_job
 
 logger = logging.getLogger(__name__)
 
 _PROBE_INPUT = "ping"
-_PROBE_MAX_TOKENS = 1
-_PROBE_WORKERS = 4
 
-# ~1sec "Hello" clip used as STT probe input.
+# ~1sec "Hello" clip used as the STT probe's input audio.
 _STT_AUDIO_PATH = (
     Path(__file__).resolve().parents[1] / "assets" / "health_probe_hello.ogg"
 )
 _STT_AUDIO_MIME = "audio/ogg"
-_stt_audio_bytes: bytes | None = None
+_stt_audio_b64: str | None = None
 
 HEALTH_PROBES_MONITOR_SLUG = "health-probes-cron-job"
 HEALTH_PROBES_MONITOR_CONFIG: MonitorConfig = {
@@ -44,6 +51,11 @@ HEALTH_PROBES_MONITOR_CONFIG: MonitorConfig = {
     "recovery_threshold": 1,
 }
 
+# Rotation state lives in Redis, not a table — no CRUD, no tenant isolation needed.
+_LAST_JOB_ID_KEY = "health_probe:last_job_id"
+_INDEX_KEY = "health_probe:index"
+
+_redis_client: redis.Redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 Modality = Literal["text", "tts", "stt"]
 
@@ -53,12 +65,9 @@ class Probe:
     provider: str
     model: str
     modality: Modality
-
-
-# (probe, provider, built config+input, build error) — exactly one of the last
-# two is set; a build error short-circuits _run_probe before provider.execute.
-BuiltProbe = tuple[NativeCompletionConfig, str | AudioRef]
-PreparedProbe = tuple[Probe, BaseProvider | None, BuiltProbe | None, str | None]
+    # Extra Kaapi params a provider's mapper requires beyond `model`
+    # (Sarvam TTS needs `language`, ElevenLabs TTS needs `voice`).
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 _PROBES: list[Probe] = [
@@ -71,8 +80,18 @@ _PROBES: list[Probe] = [
     Probe(provider="google", model="gemini-2.5-flash-preview-tts", modality="tts"),
     Probe(provider="google", model="gemini-3.1-flash-tts-preview", modality="tts"),
     Probe(provider="google", model="gemini-2.5-pro-preview-tts", modality="tts"),
-    Probe(provider="sarvamai", model="bulbul:v3", modality="tts"),
-    Probe(provider="elevenlabs", model="eleven_v3", modality="tts"),
+    Probe(
+        provider="sarvamai",
+        model="bulbul:v3",
+        modality="tts",
+        params={"language": "en-IN"},
+    ),
+    Probe(
+        provider="elevenlabs",
+        model="eleven_v3",
+        modality="tts",
+        params={"voice": "Sarah"},
+    ),
     # STT
     Probe(provider="google", model="gemini-2.5-pro", modality="stt"),
     Probe(provider="google", model="gemini-2.5-flash", modality="stt"),
@@ -82,244 +101,162 @@ _PROBES: list[Probe] = [
 ]
 
 
-def _load_stt_audio() -> bytes | None:
-    global _stt_audio_bytes
-    if _stt_audio_bytes is None:
-        try:
-            with open(_STT_AUDIO_PATH, "rb") as f:
-                _stt_audio_bytes = f.read()
-        except OSError as e:
-            logger.warning(
-                f"[_load_stt_audio] Probe audio unavailable | "
-                f"path: {_STT_AUDIO_PATH}, error: {e}"
+def _load_stt_audio_b64() -> str:
+    global _stt_audio_b64
+    if _stt_audio_b64 is None:
+        with open(_STT_AUDIO_PATH, "rb") as f:
+            _stt_audio_b64 = base64.b64encode(f.read()).decode("ascii")
+    return _stt_audio_b64
+
+
+def _build_probe_request(probe: Probe, index: int) -> LLMCallRequest:
+    completion_type = {
+        "text": CompletionType.TEXT,
+        "tts": CompletionType.TTS,
+        "stt": CompletionType.STT,
+    }[probe.modality]
+
+    kaapi_config = KaapiCompletionConfig(
+        provider=probe.provider,
+        type=completion_type,
+        params={"model": probe.model, **probe.params},
+    )
+
+    if probe.modality == "stt":
+        query_input: str | AudioInput = AudioInput(
+            content=AudioContent(
+                format="base64",
+                value=_load_stt_audio_b64(),
+                mime_type=_STT_AUDIO_MIME,
             )
-            return None
-    return _stt_audio_bytes
-
-
-def _build_provider(
-    session: Session, probe: Probe, *, org_id: int, project_id: int
-) -> BaseProvider | None:
-    try:
-        return get_llm_provider(
-            session=session,
-            provider_type=probe.provider,
-            project_id=project_id,
-            organization_id=org_id,
         )
-    except (ValueError, RuntimeError) as e:
+    else:
+        query_input = _PROBE_INPUT
+
+    # No callback_url: the probe reads its result by polling `Job.status` on
+    # the next tick, so callback delivery (a best-effort side channel that
+    # never affects Job.status) buys nothing here.
+    return LLMCallRequest(
+        query=QueryParams(input=query_input),
+        config=LLMCallConfig(blob=ConfigBlob(completion=kaapi_config)),
+        request_metadata={
+            "health_probe": True,
+            "probe_index": index,
+            "provider": probe.provider,
+            "modality": probe.modality,
+            "model": probe.model,
+        },
+    )
+
+
+def _check_previous_probe(project_id: int) -> JobStatus | None:
+    # Missing key (first run, Redis eviction) means skip the check-in, not fail the tick.
+    try:
+        last_job_id = _redis_client.get(_LAST_JOB_ID_KEY)
+    except redis.RedisError as e:
+        logger.warning(f"[_check_previous_probe] Redis GET failed | error: {e}")
+        return None
+
+    if last_job_id is None:
         logger.warning(
-            f"[_build_provider] Client init failed | provider: {probe.provider}, "
-            f"modality: {probe.modality}, error: {e}"
+            f"[_check_previous_probe] {_LAST_JOB_ID_KEY} missing — skipping check-in"
         )
         return None
 
+    with Session(engine) as session:
+        job = JobCrud(session=session).get(
+            job_id=UUID(str(last_job_id)), project_id=project_id
+        )
 
-def _build_config_and_input(session: Session, probe: Probe) -> BuiltProbe | None:
-    if probe.modality == "text":
-        cfg = KaapiCompletionConfig.model_validate(
-            {
-                "provider": probe.provider,
-                "type": "text",
-                "params": {
-                    "model": probe.model,
-                    "temperature": 0.0,
-                    "max_output_tokens": _PROBE_MAX_TOKENS,
-                },
-            }
-        )
-        resolved_input: str | AudioRef = _PROBE_INPUT
-    elif probe.modality == "tts":
-        cfg = KaapiCompletionConfig.model_validate(
-            {
-                "provider": probe.provider,
-                "type": "tts",
-                "params": {"model": probe.model},
-            }
-        )
-        resolved_input = _PROBE_INPUT
-    else:  # stt
-        audio_bytes = _load_stt_audio()
-        if audio_bytes is None:
-            return None
-        cfg = KaapiCompletionConfig.model_validate(
-            {
-                "provider": probe.provider,
-                "type": "stt",
-                "params": {"model": probe.model},
-            }
-        )
-        resolved_input = AudioRef(bytes_=audio_bytes, mime_type=_STT_AUDIO_MIME)
+    if job is None:
+        logger.warning(f"[_check_previous_probe] Job not found | job_id: {last_job_id}")
+        return None
 
-    native_config, _ = transform_kaapi_config_to_native(
-        session=session, kaapi_config=cfg
+    return job.status
+
+
+def _capture_previous_result_checkin(previous_status: JobStatus | None) -> None:
+    if previous_status is None:
+        return
+    # SUCCESS means the probe actually ran and returned; FAILED or a
+    # still-PENDING/PROCESSING job both mean a real failure.
+    monitor_status = (
+        MonitorStatus.OK
+        if previous_status == JobStatus.SUCCESS
+        else MonitorStatus.ERROR
     )
-    return native_config, resolved_input
+    capture_checkin(
+        monitor_slug=HEALTH_PROBES_MONITOR_SLUG,
+        status=monitor_status,
+        monitor_config=HEALTH_PROBES_MONITOR_CONFIG,
+    )
 
 
-def _run_probe(
-    probe: Probe,
-    provider: BaseProvider | None,
-    built: BuiltProbe | None,
-    build_error: str | None,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "endpoint": "llm/call",
-        "provider": probe.provider,
-        "modality": probe.modality,
-        "model": probe.model,
-        "ok": False,
-        "latency_ms": None,
-        "error": None,
-    }
-    if build_error is not None or provider is None or built is None:
-        result["error"] = build_error or "not_prepared"
-        return result
-
-    config, resolved_input = built
-    query = QueryParams(input=_PROBE_INPUT if isinstance(resolved_input, str) else "")
-
-    started = time.perf_counter()
+def _claim_next_probe_index() -> int:
+    # Redis INCR is atomic, so two overlapping ticks can never claim the same
+    # slot (which would fire the same probe twice while skipping another).
     try:
-        response, error = provider.execute(
-            completion_config=config,
-            query=query,
-            resolved_input=resolved_input,
-        )
-    except Exception as e:
-        result["latency_ms"] = int((time.perf_counter() - started) * 1000)
-        result["error"] = f"{type(e).__name__}: {e}"
+        count = _redis_client.incr(_INDEX_KEY)
+    except redis.RedisError as e:
+        logger.warning(f"[_claim_next_probe_index] Redis INCR failed | error: {e}")
+        return 0
+
+    try:
+        return (int(count) - 1) % len(_PROBES)
+    except (TypeError, ValueError):
+        logger.warning(f"[_claim_next_probe_index] Non-integer index | raw: {count!r}")
+        return 0
+
+
+def _store_last_job_id(job_id: UUID) -> None:
+    try:
+        _redis_client.set(_LAST_JOB_ID_KEY, str(job_id))
+    except redis.RedisError as e:
         logger.error(
-            f"[_run_probe] Raised | provider: {probe.provider}, "
-            f"modality: {probe.modality}, error: {result['error']}"
+            f"[_store_last_job_id] Redis SET failed | job_id: {job_id}, error: {e}"
         )
-        return result
-
-    result["latency_ms"] = int((time.perf_counter() - started) * 1000)
-    if response is None:
-        result["error"] = error or "no_response"
-        logger.error(
-            f"[_run_probe] Failed | provider: {probe.provider}, "
-            f"modality: {probe.modality}, error: {result['error']}"
-        )
-        return result
-
-    result["ok"] = True
-    return result
 
 
-def _prepare_probes(
-    session: Session, *, org_id: int, project_id: int
-) -> list[PreparedProbe]:
-    provider_cache: dict[str, BaseProvider | None] = {}
-    for p in _PROBES:
-        if p.provider not in provider_cache:
-            provider_cache[p.provider] = _build_provider(
-                session, p, org_id=org_id, project_id=project_id
-            )
-
-    prepared: list[PreparedProbe] = []
-    for p in _PROBES:
-        provider = provider_cache[p.provider]
-        if provider is None:
-            prepared.append((p, None, None, "client_init_failed"))
-            continue
-        try:
-            built = _build_config_and_input(session, p)
-        except Exception as e:
-            error = f"{type(e).__name__}: {e}"
-            logger.error(
-                f"[_prepare_probes] Config build failed | provider: {p.provider}, "
-                f"modality: {p.modality}, error: {error}"
-            )
-            prepared.append((p, provider, None, error))
-            continue
-        if built is None:
-            prepared.append((p, provider, None, "stt_audio_not_configured"))
-            continue
-        prepared.append((p, provider, built, None))
-    return prepared
-
-
-def run_probes() -> dict[str, Any]:
+def run_health_probe_tick() -> dict[str, Any]:
+    """Check the previous probe's result, then fire the next one round-robin."""
     org_id = settings.HEALTH_PROBE_ORG_ID
     project_id = settings.HEALTH_PROBE_PROJECT_ID
     if org_id is None or project_id is None:
         logger.warning(
-            "[run_probes] Health probe org/project not configured — skipping"
+            "[run_health_probe_tick] Health probe org/project not configured — skipping"
         )
-        return {"skipped": True, "reason": "health_probe_org_or_project_not_set"}
+        return {
+            "enqueued": False,
+            "job_id": None,
+            "probe_index": None,
+            "previous_job_status": None,
+        }
 
-    logger.info(
-        f"[run_probes] Starting | probes: {len(_PROBES)}, "
-        f"org_id: {org_id}, project_id: {project_id}"
-    )
+    previous_status = _check_previous_probe(project_id)
+    _capture_previous_result_checkin(previous_status)
 
-    # Session covers only preparation (credential lookup + config transform);
-    # it must be closed before the slow external provider calls below.
+    index = _claim_next_probe_index()
+    probe = _PROBES[index]
+    request = _build_probe_request(probe, index)
+
     with Session(engine) as session:
-        prepared = _prepare_probes(session, org_id=org_id, project_id=project_id)
+        job_id = start_job(
+            db=session,
+            request=request,
+            project_id=project_id,
+            organization_id=org_id,
+        )
 
-    started = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=_PROBE_WORKERS) as pool:
-        results = list(pool.map(lambda pp: _run_probe(*pp), prepared))
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    _store_last_job_id(job_id)
 
-    ok_count = sum(1 for r in results if r["ok"])
     logger.info(
-        f"[run_probes] Completed | total: {len(results)}, ok: {ok_count}, "
-        f"failed: {len(results) - ok_count}, elapsed_ms: {elapsed_ms}"
+        f"[run_health_probe_tick] Fired probe | provider: {probe.provider}, "
+        f"model: {probe.model}, modality: {probe.modality}, job_id: {job_id}, "
+        f"previous_job_status: {previous_status}"
     )
     return {
-        "elapsed_ms": elapsed_ms,
-        "total": len(results),
-        "ok": ok_count,
-        "failed": len(results) - ok_count,
-        "results": results,
+        "enqueued": True,
+        "job_id": job_id,
+        "probe_index": index,
+        "previous_job_status": previous_status.value if previous_status else None,
     }
-
-
-def execute_health_probes() -> dict[str, Any]:
-    """Run the probes wrapped in Sentry cron check-ins.
-
-    The check-in happens here (not in the cron route) so the monitor reflects
-    actual probe results rather than enqueue success.
-    """
-    check_in_id = capture_checkin(
-        monitor_slug=HEALTH_PROBES_MONITOR_SLUG,
-        status=MonitorStatus.IN_PROGRESS,
-        monitor_config=HEALTH_PROBES_MONITOR_CONFIG,
-    )
-    try:
-        result = run_probes()
-    except Exception:
-        capture_checkin(
-            check_in_id=check_in_id,
-            monitor_slug=HEALTH_PROBES_MONITOR_SLUG,
-            status=MonitorStatus.ERROR,
-        )
-        raise
-
-    ok = not result.get("skipped") and result.get("failed") == 0
-    capture_checkin(
-        check_in_id=check_in_id,
-        monitor_slug=HEALTH_PROBES_MONITOR_SLUG,
-        status=MonitorStatus.OK if ok else MonitorStatus.ERROR,
-    )
-    return result
-
-
-def main() -> None:
-    """Manual smoke test: `uv run python -m app.services.health_probes`.
-
-    Calls run_probes directly (no Sentry check-ins) against the configured
-    HEALTH_PROBE_ORG_ID/PROJECT_ID — real provider calls, real credentials.
-    """
-    import json
-
-    logging.basicConfig(level=logging.INFO)
-    print(json.dumps(run_probes(), indent=2))
-
-
-if __name__ == "__main__":
-    main()
