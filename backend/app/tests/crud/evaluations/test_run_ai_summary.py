@@ -177,3 +177,16 @@ class TestFailureIsNonFatal:
         client = MagicMock()
         client.responses.create.return_value = _responses_result(output_text)
         assert _call(client) is None
+
+    def test_malformed_payload_parse_error_returns_none_without_raising(self) -> None:
+        # extract_response_text runs inside the try, so a raise on an unexpected
+        # Responses payload must degrade to None, never escape to fail the run.
+        client = MagicMock()
+        client.responses.create.return_value = (
+            SimpleNamespace()
+        )  # no output_text/output
+        with patch(
+            "app.crud.evaluations.summary.extract_response_text",
+            side_effect=ValueError("unexpected Responses payload"),
+        ):
+            assert _call(client) is None

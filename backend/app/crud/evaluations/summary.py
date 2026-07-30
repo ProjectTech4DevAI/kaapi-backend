@@ -15,16 +15,10 @@ from app.services.llm.mappers import map_kaapi_to_openai_params
 
 logger = logging.getLogger(__name__)
 
-# Reasoning tokens count against this cap, so it needs headroom beyond the visible
-# note — too low and reasoning consumes it all, yielding empty output. Length is
-# bounded by the "1 to 3 sentences" instruction, not by a tight token cap.
 _SUMMARY_MAX_OUTPUT_TOKENS: int = 2000
 
 _SUMMARY_REASONING_EFFORT: str = "minimal"
 
-# Bands for turning a metric's std (spread of its per-row scores, 0-1) into a plain
-# consistency read. With repeated questions a low spread means the assistant answered
-# the same question the same way each time.
 _CONSISTENCY_STABLE_AT_OR_BELOW: float = 0.1
 _CONSISTENCY_MIXED_AT_OR_BELOW: float = 0.2
 
@@ -142,6 +136,10 @@ def generate_run_ai_summary(
             "max_output_tokens": _SUMMARY_MAX_OUTPUT_TOKENS,
         }
         response = openai_client.responses.create(**params)
+        # Parse inside the try so a malformed/unexpected Responses payload degrades
+        # to None like any other failure — the call site has no guard, so an escape
+        # here would fail the whole run against the best-effort contract.
+        summary = extract_response_text(response).strip()
     except openai.OpenAIError as exc:
         status = getattr(exc, "status_code", None)
         # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.
@@ -165,7 +163,6 @@ def generate_run_ai_summary(
         )
         return None
 
-    summary = extract_response_text(response).strip()
     if not summary:
         logger.warning(
             f"[generate_run_ai_summary] Empty summary returned | model={model} | "
