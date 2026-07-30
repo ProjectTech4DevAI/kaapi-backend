@@ -217,7 +217,6 @@ class Settings(BaseSettings):
 
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
 
-    # Reasoning effort for the judge model. "medium":
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 

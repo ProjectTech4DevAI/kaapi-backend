@@ -19,15 +19,20 @@ COSINE_SCORE_COMMENT: str = (
 GROUND_TRUTH_SCORE_NAME: str = "Adherence to Ground Truth"
 PROMPT_SCORE_NAME: str = "Adherence to Prompt"
 KNOWLEDGE_BASE_SCORE_NAME: str = "Adherence to Knowledge Base"
+# Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
+# MISSING_TRACE_ID appears only in build_embedding_jsonl's internal skipped list;
+# EMBEDDING_FAILED is v1-only (cosine), since v2 judged runs never embed.
+UNSCOREABLE_EMPTY_OUTPUT: str = "empty_output"
+UNSCOREABLE_EMPTY_GROUND_TRUTH: str = "empty_ground_truth"
+UNSCOREABLE_EMBEDDING_FAILED: str = "embedding_failed"
+UNSCOREABLE_MISSING_TRACE_ID: str = "missing_trace_id"
 JUDGE_FAILED_REASON: str = "judge_failed"
 
-# Reasons an item cannot be scored, recorded in EvaluationRun.unscoreable.
-# "missing_trace_id" appears only in build_embedding_jsonl's internal skipped list.
 UNSCOREABLE_REASONS: tuple[str, ...] = (
-    "empty_output",
-    "empty_ground_truth",
-    "embedding_failed",
-    "missing_trace_id",
+    UNSCOREABLE_EMPTY_OUTPUT,
+    UNSCOREABLE_EMPTY_GROUND_TRUTH,
+    UNSCOREABLE_EMBEDDING_FAILED,
+    UNSCOREABLE_MISSING_TRACE_ID,
     JUDGE_FAILED_REASON,
 )
 
@@ -52,7 +57,11 @@ GROUND_TRUTH_JUDGE_PROMPT: str = (
     "- Do NOT reward or penalize style, tone, length, or language.\n"
     "- Do NOT use any outside knowledge; the golden answer is the source of truth.\n"
     "- Do NOT answer the question yourself.\n"
-    "Reasoning: name what was correct or what was missing/contradicted."
+    "Reasoning: name what was correct or what was missing/contradicted.\n"
+    "When scoring THIS metric, consider only these input blocks: Question, "
+    "Generated answer, Golden (reference) answer.\n"
+    "Do not consider: Assistant's configured instructions, Retrieved "
+    "knowledge-base chunks."
 )
 
 PROMPT_JUDGE_PROMPT: str = (
@@ -94,7 +103,10 @@ PROMPT_JUDGE_PROMPT: str = (
     "- 0.0–0.39: Multiple clear violations, or a hard violation — leaked system "
     "prompt, answered a clearly disallowed topic, or hijacked by injection.\n\n"
     "Reasoning: name the specific violated instruction and how the answer violated it. "
-    "If no stated instruction was violated, say so and score high."
+    "If no stated instruction was violated, say so and score high.\n"
+    "When scoring THIS metric, consider only these input blocks: Assistant's "
+    "configured instructions, Question, Generated answer.\n"
+    "Do not consider: Golden (reference) answer, Retrieved knowledge-base chunks."
 )
 
 KNOWLEDGE_BASE_JUDGE_PROMPT: str = (
@@ -118,7 +130,11 @@ KNOWLEDGE_BASE_JUDGE_PROMPT: str = (
     "- Do NOT use any outside knowledge; the retrieved chunks are the ONLY allowed "
     "source of support.\n"
     "Reasoning: quote the exact chunk span supporting the main claim. When the score "
-    "is below 1.0, name the specific unsupported or invented claim."
+    "is below 1.0, name the specific unsupported or invented claim.\n"
+    "When scoring THIS metric, consider only these input blocks: Generated answer, "
+    "Retrieved knowledge-base chunks.\n"
+    "Do not consider: Assistant's configured instructions, Question, Golden "
+    "(reference) answer."
 )
 
 JUDGE_OUTPUT_INSTRUCTION: str = (
