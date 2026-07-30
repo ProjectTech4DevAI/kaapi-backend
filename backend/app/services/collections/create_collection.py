@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Session
 from gevent import Timeout
-from celery.exceptions import Retry, SoftTimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded
 from opentelemetry import trace
 from asgi_correlation_id import correlation_id
 
@@ -38,18 +38,6 @@ from app.utils import send_callback, APIResponse, get_webhook_secret
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-
-def _can_retry_batch(task_instance) -> bool:
-    """Whether a timed-out batch has attempts left.
-
-    Worth retrying because upload_files persists each file ID as it uploads, so
-    every attempt resumes where the last stopped. `max_retries=None` means retry
-    forever, which would never fail the job or fire its callback; treat as none.
-    """
-    if task_instance is None or task_instance.max_retries is None:
-        return False
-    return task_instance.request.retries < task_instance.max_retries
 
 
 def start_job(
@@ -523,35 +511,11 @@ def execute_batch_job(
                     webhook_secret=webhook_secret,
                 )
 
-        except (Timeout, SoftTimeLimitExceeded) as err:
+        except (Timeout, SoftTimeLimitExceeded):
+            # Batch-level retries happen in-task (tenacity in OpenAIVectorStoreCrud),
+            # so hitting the soft time limit means the window is spent — fail, don't
+            # re-queue.
             timeout_err = TimeoutError("Task exceeded soft time limit")
-
-            if _can_retry_batch(task_instance):
-                attempt = task_instance.request.retries + 1
-                logger.warning(
-                    "[create_collection.execute_batch_job] Batch timed out, retrying | "
-                    "{'collection_job_id': '%s', 'batch_number': %d, 'attempt': '%d/%d'}",
-                    job_id,
-                    batch_number,
-                    attempt,
-                    task_instance.max_retries,
-                )
-                span.set_attribute("collection.batch_retry", attempt)
-                try:
-                    # Only Retry means it reached the broker. retry() also raises
-                    # Reject on a failed publish, or exc outside a worker - those
-                    # must fail the job, not strand it in PROCESSING.
-                    raise task_instance.retry(exc=timeout_err)
-                except Retry:
-                    raise
-                except Exception:
-                    logger.exception(
-                        "[create_collection.execute_batch_job] Retry could not be scheduled, "
-                        "failing the job | {'collection_job_id': '%s', 'batch_number': %d}",
-                        job_id,
-                        batch_number,
-                    )
-
             logger.warning(
                 "[create_collection.execute_batch_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
                 job_id,

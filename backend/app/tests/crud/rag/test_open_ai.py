@@ -8,8 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import openai
 import pytest
+from tenacity import stop_after_attempt, wait_none
 
-from app.crud.rag.open_ai import BATCH_POLL_INTERVAL_SECONDS, OpenAIVectorStoreCrud
+from app.crud.rag.open_ai import (
+    BATCH_INDEX_MAX_ATTEMPTS,
+    BATCH_POLL_INTERVAL_SECONDS,
+    OpenAIVectorStoreCrud,
+)
 from app.tests.utils.openai import get_mock_openai_client_with_vector_store
 
 
@@ -21,6 +26,17 @@ def mock_client():
 @pytest.fixture
 def crud(mock_client):
     return OpenAIVectorStoreCrud(client=mock_client)
+
+
+@pytest.fixture(autouse=True)
+def _single_attempt_batch_retry():
+    """_create_and_index_batch is tenacity-retried; default tests to a single
+    attempt with no backoff. TestBatchRetry re-enables retries explicitly."""
+    retrying = OpenAIVectorStoreCrud._create_and_index_batch.retry
+    stop, wait = retrying.stop, retrying.wait
+    retrying.stop, retrying.wait = stop_after_attempt(1), wait_none()
+    yield
+    retrying.stop, retrying.wait = stop, wait
 
 
 def _make_doc(file_id: str, fname: str) -> MagicMock:
@@ -146,15 +162,15 @@ class TestOpenAIVectorStoreCrudUpdatePartialFailure:
         with pytest.raises(RuntimeError, match="file-unknown: parse error"):
             crud.update("vs_1", docs)
 
-    def test_reraises_when_list_files_errors(self, crud, mock_client, docs):
-        """If the follow-up list_files lookup itself raises, the OpenAI error
-        propagates instead of masking the real upload problem."""
+    def test_surfaces_when_list_files_errors(self, crud, mock_client, docs):
+        """If the follow-up list_files lookup itself raises, the OpenAI error is
+        surfaced (mapped to InterruptedError) instead of being masked as success."""
         _wire_batch(mock_client, completed=0, failed=2)
         mock_client.vector_stores.file_batches.list_files.side_effect = (
             openai.OpenAIError("list failed")
         )
 
-        with pytest.raises(openai.OpenAIError, match="list failed"):
+        with pytest.raises(InterruptedError, match="list failed"):
             crud.update("vs_1", docs)
 
 
@@ -355,3 +371,54 @@ class TestGetMockOpenAIClientWithVectorStore:
         assert client.vector_stores.file_batches.retrieve.return_value is batch
 
         assert client.beta.assistants.create.return_value.id == "mock_assistant_id"
+
+
+class TestBatchRetry:
+    """_create_and_index_batch retries the whole create+poll+validate unit on any
+    OpenAI/indexing failure, up to BATCH_INDEX_MAX_ATTEMPTS (tenacity)."""
+
+    @staticmethod
+    def _enable_retries() -> None:
+        retrying = OpenAIVectorStoreCrud._create_and_index_batch.retry
+        retrying.stop = stop_after_attempt(BATCH_INDEX_MAX_ATTEMPTS)
+        retrying.wait = wait_none()
+
+    def test_retries_then_succeeds(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock
+    ) -> None:
+        self._enable_retries()
+        mock_client.vector_stores.file_batches.create.return_value = MagicMock(
+            id=REAL_BATCH_ID
+        )
+        completed = MagicMock(
+            status="completed",
+            file_counts=MagicMock(completed=1, failed=0, in_progress=0),
+        )
+        mock_client.vector_stores.file_batches.retrieve.side_effect = [
+            openai.APIConnectionError(request=MagicMock()),
+            completed,
+        ]
+
+        crud.update("vs_1", [_make_doc("file-1", "f1.pdf")])
+
+        assert mock_client.vector_stores.file_batches.create.call_count == 2
+
+    def test_gives_up_after_max_attempts(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock
+    ) -> None:
+        self._enable_retries()
+        mock_client.vector_stores.file_batches.create.return_value = MagicMock(
+            id=REAL_BATCH_ID
+        )
+        mock_client.vector_stores.file_batches.retrieve.return_value = MagicMock(
+            status="cancelled",
+            file_counts=MagicMock(completed=0, failed=0, cancelled=1, in_progress=0),
+        )
+
+        with pytest.raises(RuntimeError):
+            crud.update("vs_1", [_make_doc("file-1", "f1.pdf")])
+
+        assert (
+            mock_client.vector_stores.file_batches.create.call_count
+            == BATCH_INDEX_MAX_ATTEMPTS
+        )

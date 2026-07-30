@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from openai import OpenAIError
+from tenacity import stop_after_attempt, wait_none
 
 from app.crud.rag.open_ai import OpenAIVectorStoreCrud
 from app.services.collections.providers.openai import OpenAIProvider
@@ -14,6 +15,16 @@ from app.tests.utils.llm_provider import (
     generate_openai_id,
     get_mock_openai_client_with_vector_store,
 )
+
+
+@pytest.fixture(autouse=True)
+def _single_attempt_batch_retry():
+    """update() retries batch create+index via tenacity; run one attempt, no backoff."""
+    retrying = OpenAIVectorStoreCrud._create_and_index_batch.retry
+    stop, wait = retrying.stop, retrying.wait
+    retrying.stop, retrying.wait = stop_after_attempt(1), wait_none()
+    yield
+    retrying.stop, retrying.wait = stop, wait
 
 
 def test_create_vector_store_returns_id() -> None:
