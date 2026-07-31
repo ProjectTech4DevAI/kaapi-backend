@@ -8,26 +8,21 @@ from app.crud import get_provider_credential
 from app.services.collections.providers.base import BaseProvider
 from app.services.collections.providers.gemini import GeminiAIStudioProvider
 from app.services.collections.providers.openai import OpenAIProvider
-
+from app.models.collection import ProviderType
 
 logger = logging.getLogger(__name__)
 
 
 class LLMProvider:
-    OPENAI = "openai"
-    GOOGLE_AISTUDIO = "google-aistudio"
-    # Future constants for providers:
-    # ANTHROPIC = "ANTHROPIC"
-
-    _registry: dict[str, type[BaseProvider]] = {
-        OPENAI: OpenAIProvider,
-        GOOGLE_AISTUDIO: GeminiAIStudioProvider,
+    _registry: dict[ProviderType, type[BaseProvider]] = {
+        ProviderType.openai: OpenAIProvider,
+        ProviderType.google: GeminiAIStudioProvider,
         # Future providers:
-        # ANTHROPIC: BedrockProvider,
+        # ProviderType.anthropic: BedrockProvider,
     }
 
     @classmethod
-    def get(cls, name: str) -> type[BaseProvider]:
+    def get(cls, name: ProviderType) -> type[BaseProvider]:
         """Return the provider class for a given name."""
         provider = cls._registry.get(name)
         if not provider:
@@ -44,7 +39,7 @@ class LLMProvider:
 
 
 def get_llm_provider(
-    session: Session, provider: str, project_id: int, organization_id: int
+    session: Session, provider: ProviderType, project_id: int, organization_id: int
 ) -> BaseProvider:
     provider_class = LLMProvider.get(provider)
 
@@ -60,11 +55,11 @@ def get_llm_provider(
             f"Credentials for provider '{provider}' not configured for this project."
         )
 
-    if provider == LLMProvider.OPENAI:
+    if provider == ProviderType.openai:
         if "api_key" not in credentials:
             raise ValueError("OpenAI credentials not configured for this project.")
         client = OpenAI(api_key=credentials["api_key"])
-    elif provider == LLMProvider.GOOGLE_AISTUDIO:
+    elif provider == ProviderType.google:
         if "api_key" not in credentials:
             raise ValueError(
                 "Google AI Studio credentials not configured for this project."

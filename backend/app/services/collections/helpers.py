@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.crud import CollectionCrud
 from app.api.deps import SessionDep
-from app.models import Collection, CollectionPublic, Document
+from app.models import Collection, CollectionPublic, Document, ProviderType
 
 
 logger = logging.getLogger(__name__)
@@ -21,14 +21,14 @@ MAX_BATCH_SIZE_KB = (MAX_DOC_SIZE_MB + 5) * 1024  # 30 MB in KB (25 + 5 MB buffe
 MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
 
-def get_service_name(provider: str) -> str:
+def get_service_name(provider: ProviderType) -> str:
     """Get the collection service name for a provider."""
     names = {
-        "openai": "openai vector store",
-        "google-aistudio": "gemini file search store",
-        #   "bedrock": "bedrock knowledge base",
+        ProviderType.openai: "openai vector store",
+        ProviderType.google: "gemini file search store",
+        # ProviderType.bedrock: "bedrock knowledge base",
     }
-    return names.get(provider.lower(), "")
+    return names.get(provider, "")
 
 
 def extract_error_message(err: Exception) -> str:

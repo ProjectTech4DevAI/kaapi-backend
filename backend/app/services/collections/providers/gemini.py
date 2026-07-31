@@ -18,7 +18,7 @@ from app.services.collections.providers import BaseProvider
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_AISTUDIO_PROVIDER = ProviderType.google_aistudio.value
+GOOGLE_PROVIDER = ProviderType.google.value
 
 STREAM_CHUNK_BYTES = 1024 * 1024
 
@@ -41,7 +41,7 @@ class GeminiAIStudioProvider(BaseProvider):
         Files API objects expire after 48h, so the cache is validated against
         the API rather than trusted; any failure falls back to a re-upload.
         """
-        cached = (doc.file_id or {}).get(GOOGLE_AISTUDIO_PROVIDER)
+        cached = (doc.file_id or {}).get(GOOGLE_PROVIDER)
         if not cached:
             return None
         try:
@@ -118,7 +118,7 @@ class GeminiAIStudioProvider(BaseProvider):
 
             doc.file_id = {
                 **(doc.file_id or {}),
-                GOOGLE_AISTUDIO_PROVIDER: uploaded.name,
+                GOOGLE_PROVIDER: uploaded.name,
             }
             try:
                 with Session(engine) as session:
@@ -152,7 +152,7 @@ class GeminiAIStudioProvider(BaseProvider):
                         uploaded.name,
                         str(delete_err),
                     )
-                doc.file_id.pop(GOOGLE_AISTUDIO_PROVIDER, None)
+                doc.file_id.pop(GOOGLE_PROVIDER, None)
                 raise
 
     def _wait_until_active(self, uploaded: File, doc: Document) -> None:
@@ -214,7 +214,7 @@ class GeminiAIStudioProvider(BaseProvider):
             store_crud = GeminiFileSearchStoreCrud(self.client)
             for doc in docs:
                 store_crud.import_document(
-                    vector_store_id, doc.file_id[GOOGLE_AISTUDIO_PROVIDER]
+                    vector_store_id, doc.file_id[GOOGLE_PROVIDER]
                 )
             if docs:
                 logger.info(
@@ -225,7 +225,7 @@ class GeminiAIStudioProvider(BaseProvider):
 
             return Collection(
                 knowledge_base_id=vector_store_id,
-                knowledge_base_provider=get_service_name(GOOGLE_AISTUDIO_PROVIDER),
+                knowledge_base_provider=get_service_name(GOOGLE_PROVIDER),
             )
 
         except Exception as e:

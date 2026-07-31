@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl
@@ -16,7 +16,7 @@ class ProviderType(str, Enum):
     """Supported LLM providers for collections."""
 
     openai = "openai"
-    google_aistudio = "google-aistudio"
+    google = "google"
     # BEDROCK = "bedrock"
 
 
@@ -41,7 +41,7 @@ class Collection(SQLModel, table=True):
     )
     provider: ProviderType = Field(
         nullable=False,
-        description="LLM provider used for this collection (e.g., 'openai', 'bedrock', 'google', etc)",
+        description="LLM provider used for this collection (e.g., 'openai', 'google')",
         sa_column_kwargs={"comment": "LLM provider used for this collection"},
     )
     knowledge_base_id: str = Field(
@@ -123,8 +123,9 @@ class CallbackRequest(SQLModel):
 class ProviderOptions(SQLModel):
     """LLM provider configuration."""
 
-    provider: Literal["openai", "google-aistudio"] = Field(
-        default="openai", description="LLM provider to use for this collection"
+    provider: ProviderType = Field(
+        default=ProviderType.openai,
+        description="LLM provider to use for this collection",
     )
 
 
