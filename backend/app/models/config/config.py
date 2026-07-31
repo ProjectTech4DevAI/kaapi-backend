@@ -3,13 +3,14 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from pydantic import field_validator
+from pydantic import model_validator
 from sqlalchemy.dialects import postgresql
 from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 from app.models.llm.request import ConfigBlob
 
+from .assessment_blob import AssessmentConfigBlob
 from .version import ConfigVersionPublic
 
 
@@ -121,8 +122,10 @@ class Config(ConfigBase, table=True):
 class ConfigCreate(ConfigBase):
     """Create new configuration"""
 
-    # Initial version data
-    config_blob: ConfigBlob = Field(description="Provider-specific parameters")
+    # Shape picked by `tag`; `_check_blob_matches_tag` enforces the pairing.
+    config_blob: ConfigBlob | AssessmentConfigBlob = Field(
+        description="Provider-specific parameters; shape must match `tag`"
+    )
     commit_message: str | None = Field(
         default=None,
         max_length=512,
@@ -136,11 +139,16 @@ class ConfigCreate(ConfigBase):
         ),
     )
 
-    @field_validator("config_blob")
-    def validate_blob_not_empty(cls, value):
-        if not value:
-            raise ValueError("config_blob cannot be empty")
-        return value
+    @model_validator(mode="after")
+    def _check_blob_matches_tag(self) -> "ConfigCreate":
+        expected = (
+            AssessmentConfigBlob if self.tag == ConfigTag.ASSESSMENT else ConfigBlob
+        )
+        if not isinstance(self.config_blob, expected):
+            raise ValueError(
+                f"config_blob shape does not match tag '{self.tag.value}'"
+            )
+        return self
 
 
 class ConfigUpdate(SQLModel):

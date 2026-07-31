@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
-from app.crud.model_config import validate_blob_model_or_raise
+from app.crud.model_config import validate_blob_completion_models
 from app.models import (
     Config,
     ConfigCreate,
@@ -34,7 +34,9 @@ class ConfigCrud:
         """
         self._check_unique_name_or_raise(config_create.name)
 
-        validate_blob_model_or_raise(self.session, config_create.config_blob)
+        # config_create.config_blob is already parsed to the tag-matching model at the
+        # request boundary; only the model-existence check remains.
+        validate_blob_completion_models(self.session, config_create.config_blob)
 
         try:
             config = Config(
@@ -144,8 +146,10 @@ class ConfigCrud:
         )
         return config
 
-    def delete_or_raise(self, config_id: UUID) -> None:
-        config = self.exists_or_raise(config_id)
+    def delete_or_raise(
+        self, config_id: UUID, tag: ConfigTag = ConfigTag.DEFAULT
+    ) -> None:
+        config = self.exists_in_tag_scope_or_raise(config_id, tag)
 
         config.deleted_at = now()
         self.session.add(config)

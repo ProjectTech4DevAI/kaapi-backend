@@ -3,12 +3,16 @@ from datetime import datetime
 from typing import Any, Literal, get_args
 
 from fastapi import HTTPException
+from pydantic import JsonValue, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
-from app.models.llm.constants import CompletionType, Provider as ProviderEnum
-from app.models.llm.request import ConfigBlob
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
+from app.models.llm.constants import CompletionType
+from app.models.llm.constants import Provider as ProviderEnum
+from app.models.llm.request import CompletionConfig, ConfigBlob
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
@@ -126,7 +130,45 @@ def is_model_supported(
 
 
 def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
-    """Reject ConfigBlob whose completion.params.model is not in model_config.
+    """Reject ConfigBlob whose completion.params.model is not in model_config."""
+    _validate_completion_model_or_raise(session, blob.completion)
+
+
+def validate_config_blob_for_tag(
+    session: Session, tag: ConfigTag, raw_blob: dict[str, JsonValue]
+) -> ConfigBlob | AssessmentConfigBlob:
+    """Validate a raw (or merged partial) blob against the type its tag dictates.
+
+    DEFAULT → ConfigBlob, ASSESSMENT → AssessmentConfigBlob. Shape errors surface
+    as 422; the model-existence check stays liberal (warn, don't raise).
+    """
+    blob_type: type[ConfigBlob] | type[AssessmentConfigBlob] = (
+        AssessmentConfigBlob if tag == ConfigTag.ASSESSMENT else ConfigBlob
+    )
+    try:
+        blob = blob_type.model_validate(raw_blob)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors()) from e
+    validate_blob_completion_models(session, blob)
+    return blob
+
+
+def validate_blob_completion_models(
+    session: Session, blob: ConfigBlob | AssessmentConfigBlob
+) -> None:
+    """Run the model-existence check on an already-parsed blob (create path)."""
+    completion = (
+        blob.assessment.model
+        if isinstance(blob, AssessmentConfigBlob)
+        else blob.completion
+    )
+    _validate_completion_model_or_raise(session, completion)
+
+
+def _validate_completion_model_or_raise(
+    session: Session, completion: CompletionConfig
+) -> None:
+    """Reject a completion whose params.model is not in model_config.
 
     model_config is the source of truth — all providers/types validated.
     Native configs are exempt (they forward raw params to the provider).
@@ -134,7 +176,6 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     # As of now - this whole validation is liberal
     # change this if we want to be more strict about unsupported models/providers or missing model configs.
     """
-    completion = blob.completion
     raw_provider = completion.provider
     completion_type = completion.type
 
@@ -165,7 +206,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     )
     if model_row is None:
         logger.warning(
-            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            f"[_validate_completion_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
             "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
         )
 
@@ -181,7 +222,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
         )
         if voice and allowed_voices and voice not in allowed_voices:
             logger.warning(
-                f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"[_validate_completion_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
                 f"model='{model_name}'. Allowed: {allowed_voices}."
             )
 
