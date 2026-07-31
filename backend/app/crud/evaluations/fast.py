@@ -54,12 +54,12 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
 )
 from app.crud.evaluations.judge import (
+    METRIC_REGISTRY,
     JudgeInputEnum,
     JudgeMetricEnum,
     JudgeMetricSpec,
     JudgeResult,
     build_judge_params,
-    enabled_metric_specs,
     judge_row,
 )
 from app.crud.evaluations.langfuse import (
@@ -77,6 +77,9 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
     JUDGE_FAILED_REASON,
+    UNSCOREABLE_EMBEDDING_FAILED,
+    UNSCOREABLE_EMPTY_GROUND_TRUTH,
+    UNSCOREABLE_EMPTY_OUTPUT,
     EvaluationScore,
     TraceData,
     TraceScore,
@@ -105,12 +108,6 @@ JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 # batch_job.config keys tying a chunk row back to its run + slice.
 CHUNK_CONFIG_RUN_ID = "eval_run_id"
 CHUNK_CONFIG_INDEX = "chunk_index"
-
-# Reasons a row cannot be scored. embedding_failed is v1-only
-# (cosine); v2 judged runs never embed, so only the empty-side reasons apply.
-UNSCOREABLE_EMPTY_OUTPUT = "empty_output"
-UNSCOREABLE_EMPTY_GROUND_TRUTH = "empty_ground_truth"
-UNSCOREABLE_EMBEDDING_FAILED = "embedding_failed"
 
 # Judge tell the template apart from the instructions above it.
 PROMPT_TEMPLATE_LABEL = "Prompt template wrapped around each user input:"
@@ -809,12 +806,14 @@ def _judge_rows(
 ) -> tuple[dict[str, JudgeResult], set[str], str | None]:
     """Run one combined judge completion per judgeable row, isolated per row.
 
-    `metrics` is the run's enabled set, already filtered for unresolvable run-level
-    inputs; `config_prompt` is the same run-level text for every row.
+    `metrics` is the full registry; `judge_row` drops the ones a given row cannot
+    supply inputs for. `config_prompt` is the same run-level text for every row, and
+    is "" when the run's config carried no instructions — which drops the prompt
+    metric for every row.
     """
     results: dict[str, JudgeResult] = {}
     failed_refs: set[str] = set()
-    if not judgeable or not metrics:
+    if not judgeable:
         return results, failed_refs, None
 
     # Build base params once per run; judging is system-config only, so every metric
@@ -1074,22 +1073,19 @@ def _stage3_score_and_trace(
     judge_results: dict[str, JudgeResult] = {}
     # Stays empty for v1, which never judges.
     metrics: list[JudgeMetricSpec] = []
-    if eval_run.is_judge_run:
+    if is_judge_run:
         judgeable = [
             (response["item_id"], item_id_to_ref[response["item_id"]], response)
             for response in response_results
             if response.get("generated_output") and response.get("ground_truth")
         ]
 
-        # Run-level input: resolved once for every row. When missing, only the
-        # metrics requiring it drop out; the run still completes.
+        # Run-level input: resolved once for every row. When it resolves to None the
+        # prompt metric drops out per row (empty input); the run still completes.
         config_prompt = _resolve_config_prompt(
             session=session, eval_run=eval_run, log_prefix=log_prefix
         )
-        available_run_inputs = (
-            frozenset({JudgeInputEnum.CONFIG_PROMPT}) if config_prompt else frozenset()
-        )
-        metrics = enabled_metric_specs(available_run_inputs=available_run_inputs)
+        metrics = list(METRIC_REGISTRY.values())
 
         judge_results, judge_failed_refs, judge_model = _judge_rows(
             session=session,

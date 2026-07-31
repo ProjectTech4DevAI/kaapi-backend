@@ -15,8 +15,10 @@ import requests
 from app.utils import (
     APIResponse,
     ValidationErrorDetail,
+    _build_langfuse_client,
     download_audio_bytes,
     generate_eval_completion_email,
+    get_langfuse_client,
     handle_openai_error,
     mask_string,
     require_organization_for_project,
@@ -459,3 +461,72 @@ class TestGenerateEvalCompletionEmail:
         )
         # The error block is only rendered when error_message is truthy
         assert "Error:" not in data.html_content
+
+
+# ---------------------------------------------------------------------------
+# Langfuse client
+# ---------------------------------------------------------------------------
+LANGFUSE_CREDENTIALS = {
+    "public_key": "pk-lf-test",
+    "secret_key": "sk-lf-test",
+    "host": "https://cloud.langfuse.com",
+}
+
+
+class TestBuildLangfuseClient:
+    @patch("app.utils.Langfuse")
+    def test_builds_client_on_isolated_tracer_provider(self, mock_langfuse) -> None:
+        from app.core.langfuse.langfuse import get_langfuse_tracer_provider
+
+        client = _build_langfuse_client(LANGFUSE_CREDENTIALS)
+
+        assert client is mock_langfuse.return_value
+        kwargs = mock_langfuse.call_args.kwargs
+        assert kwargs["public_key"] == "pk-lf-test"
+        assert kwargs["secret_key"] == "sk-lf-test"
+        assert kwargs["host"] == "https://cloud.langfuse.com"
+        assert kwargs["timeout"] == 60
+        assert kwargs["tracer_provider"] is get_langfuse_tracer_provider()
+
+
+class TestGetLangfuseClient:
+    @patch("app.utils.Langfuse")
+    @patch("app.utils.get_provider_credential")
+    def test_returns_configured_client(self, mock_credential, mock_langfuse) -> None:
+        mock_credential.return_value = LANGFUSE_CREDENTIALS
+
+        client = get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
+
+        assert client is mock_langfuse.return_value
+        assert mock_credential.call_args.kwargs["provider"] == "langfuse"
+
+    @pytest.mark.parametrize(
+        "credentials",
+        [None, {"public_key": "pk-lf-test"}],
+        ids=["missing", "incomplete"],
+    )
+    @patch("app.utils.get_provider_credential")
+    def test_raises_400_without_complete_credentials(
+        self, mock_credential, credentials
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_credential.return_value = credentials
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
+        assert exc_info.value.status_code == 400
+
+    @patch("app.utils.Langfuse", side_effect=ValueError("bad host"))
+    @patch("app.utils.get_provider_credential")
+    def test_raises_500_when_client_construction_fails(
+        self, mock_credential, mock_langfuse
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_credential.return_value = LANGFUSE_CREDENTIALS
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
+        assert exc_info.value.status_code == 500
+        assert "bad host" in exc_info.value.detail

@@ -13,7 +13,7 @@ from app.api.permissions import Permission, require_permission
 from app.api.routes.evaluations.dataset import _dataset_to_response
 from app.core.rate_monitor import monitor_rate
 from app.models.evaluation import DatasetUploadResponse
-from app.services.evaluations import upload_dataset_v2, validate_csv_file
+from app.services.evaluations import upload_dataset, validate_csv_file
 from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def upload_dataset_v2_route(
     """Upload a Langfuse-free evaluation dataset (v2)."""
     csv_content = await validate_csv_file(file)
 
-    dataset = upload_dataset_v2(
+    dataset = upload_dataset(
         session=session,
         csv_content=csv_content,
         dataset_name=dataset_name,
@@ -56,6 +56,7 @@ async def upload_dataset_v2_route(
         duplication_factor=duplication_factor,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
+        use_langfuse=False,
     )
 
     return APIResponse.success_response(data=_dataset_to_response(dataset))
