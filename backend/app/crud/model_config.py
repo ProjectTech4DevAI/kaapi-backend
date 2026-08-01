@@ -158,9 +158,7 @@ def validate_blob_completion_models(
 ) -> None:
     """Run the model-existence check on an already-parsed blob (create path)."""
     completion = (
-        blob.assessment.model
-        if isinstance(blob, AssessmentConfigBlob)
-        else blob.completion
+        blob.assessment if isinstance(blob, AssessmentConfigBlob) else blob.completion
     )
     _validate_completion_model_or_raise(session, completion)
 

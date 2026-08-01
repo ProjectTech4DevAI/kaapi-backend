@@ -34,8 +34,7 @@ class ConfigCrud:
         """
         self._check_unique_name_or_raise(config_create.name)
 
-        # config_create.config_blob is already parsed to the tag-matching model at the
-        # request boundary; only the model-existence check remains.
+        # validate that the completion models in the config blob are valid
         validate_blob_completion_models(self.session, config_create.config_blob)
 
         try:
