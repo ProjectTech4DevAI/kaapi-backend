@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import requests
 
@@ -34,6 +34,22 @@ def test_format_sections_marks_empty_sections():
     assert stt_section == "**STT Results**\n_no data_"
 
 
+def test_format_sections_clips_long_values_and_formats_numbers():
+    stats = {
+        "LLM Tokens": [
+            {
+                "organization": "Org",
+                "model": "gemini-3.1-flash-tts-preview",  # 28 chars, over the cap
+                "tokens_7d": 89271,
+            },
+        ],
+    }
+    section = format_sections(stats)[0]
+    assert "gemini-3.1-flash-…" in section  # clipped to 17 chars + ellipsis
+    assert "gemini-3.1-flash-tts-preview" not in section
+    assert "89,271" in section  # thousands separator applied
+
+
 def test_post_to_discord_noop_when_webhook_unset():
     with patch.object(stats_mod.settings, "DISCORD_STATS_WEBHOOK_URL", None), patch(
         "app.services.stats.requests.post"
@@ -47,6 +63,7 @@ def test_post_to_discord_packs_sections_under_size_limit():
 
     def fake_post(url, json, timeout):
         posted.append(json["content"])
+        return MagicMock()  # provides raise_for_status()
 
     big_sections = ["x" * 1000 for _ in range(4)]
     with patch.object(
@@ -65,3 +82,13 @@ def test_post_to_discord_swallows_request_exception():
         side_effect=requests.ConnectionError("boom"),
     ):
         post_to_discord(["hello"])  # must not raise
+
+
+def test_post_to_discord_swallows_non_success_status():
+    response = MagicMock()
+    response.raise_for_status.side_effect = requests.HTTPError("429 Too Many Requests")
+    with patch.object(
+        stats_mod.settings, "DISCORD_STATS_WEBHOOK_URL", "https://x/hook"
+    ), patch("app.services.stats.requests.post", return_value=response):
+        post_to_discord(["hello"])  # must not raise
+    response.raise_for_status.assert_called_once()

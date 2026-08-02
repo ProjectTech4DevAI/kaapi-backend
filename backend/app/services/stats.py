@@ -76,6 +76,8 @@ def post_to_discord(sections: list[str]) -> None:
 
 def _post(url: str, content: str) -> None:
     try:
-        requests.post(url, json={"content": content}, timeout=5)
+        response = requests.post(url, json={"content": content}, timeout=5)
+        response.raise_for_status()
     except requests.RequestException as e:
-        logger.warning(f"[post_to_discord] Webhook post failed: {e}")
+        # Log only the exception type — the message can contain the webhook URL.
+        logger.warning(f"[_post] Webhook post failed: {type(e).__name__}")
