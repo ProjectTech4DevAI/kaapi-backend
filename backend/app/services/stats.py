@@ -1,139 +1,81 @@
 import logging
-from datetime import timedelta
 from typing import Any
 
 import requests
-from sqlmodel import Session
 
 from app.core.config import settings
-from app.core.util import now
-from app.crud.stats import get_daily_stats
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATS_WINDOW = timedelta(hours=168)  # 7-day rolling window by default
-_MAX_ROWS_PER_SECTION = 20
-_DISCORD_CHUNK_LIMIT = 1900  # Discord content cap is 2000; leave headroom
+DISCORD_LIMIT = 1900  # Discord caps message content at 2000; leave headroom.
+MAX_COL_WIDTH = 18  # Cap each column so wide tables don't wrap in Discord.
 
 
-def collect_daily_stats(
-    *, session: Session, window_hours: int | None = None
-) -> dict[str, Any]:
-    end_at = now()
-    start_at = end_at - (
-        timedelta(hours=window_hours) if window_hours else DEFAULT_STATS_WINDOW
-    )
-    stats = get_daily_stats(session=session, start_at=start_at, end_at=end_at)
-    return {
-        "window": {
-            "start_at": start_at.isoformat(),
-            "end_at": end_at.isoformat(),
-        },
-        "stats": stats,
-    }
+def _clip(text: str) -> str:
+    if len(text) <= MAX_COL_WIDTH:
+        return text
+    return text[: MAX_COL_WIDTH - 1] + "…"
 
 
-_COL_ALIASES = {
-    "organization_name": "org",
-    "sum_total_tokens": "tokens",
-    "call_count": "calls",
-    "job_count": "jobs",
-    "row_count": "count",
-}
-
-_SECTION_TITLES = {
-    "llm_call_counts": "LLM Calls",
-    "llm_call_token_summary": "LLM Tokens",
-    "llm_call_modality_counts": "LLM Modality",
-    "job_type_counts": "Jobs by Type",
-    "evaluation_run_counts": "Evaluation Runs",
-    "stt_result_counts": "STT Results",
-    "tts_result_counts": "TTS Results",
-    "assessment_counts": "Assessments",
-}
-
-
-def _short_ts(iso: str) -> str:
-    return iso.split(".", 1)[0].replace("T", " ")
-
-
-def _fmt_num(v: Any) -> str:
-    return f"{v:,}" if isinstance(v, int) else str(v)
-
-
-def _render_section(section: str, rows: list[dict[str, Any]]) -> str | None:
-    title = _SECTION_TITLES.get(section, section)
-    if not rows:
-        return None
-    cols = list(rows[0].keys())
-    sample = rows[:_MAX_ROWS_PER_SECTION]
-    labels = {c: _COL_ALIASES.get(c, c) for c in cols}
-    is_num = {c: all(isinstance(r.get(c), (int, float)) for r in sample) for c in cols}
-    widths = {
-        c: max(len(labels[c]), *(len(_fmt_num(r.get(c, ""))) for r in sample))
-        for c in cols
-    }
-
-    def fmt(val: Any, c: str) -> str:
-        s = _fmt_num(val)
-        return f"{s:>{widths[c]}}" if is_num[c] else f"{s:<{widths[c]}}"
-
-    header = "  ".join(fmt(labels[c], c) for c in cols)
-    body = "\n".join("  ".join(fmt(r.get(c, ""), c) for c in cols) for r in sample)
-    truncated = (
-        f"\n… +{len(rows) - _MAX_ROWS_PER_SECTION} more"
-        if len(rows) > _MAX_ROWS_PER_SECTION
-        else ""
-    )
-    return f"\n{title}\n```\n{header}\n{body}{truncated}\n```"
-
-
-def format_daily_stats_message(result: dict[str, Any]) -> str:
-    window = result["window"]
-    start = _short_ts(window["start_at"])
-    end = _short_ts(window["end_at"])
-    blocks = [f"Daily Stats  ·  {start} → {end} UTC"]
-
-    quiet: list[str] = []
-    for section, rows in result["stats"].items():
-        if not isinstance(rows, list):
+def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[str]:
+    sections: list[str] = []
+    for title, rows in stats.items():
+        if not rows:
+            sections.append(f"**{title}**\n_no data_")
             continue
-        rendered = _render_section(section, rows)
-        if rendered is None:
-            quiet.append(_SECTION_TITLES.get(section, section))
-        else:
-            blocks.append(rendered)
 
-    if quiet:
-        blocks.append("\nNo data: " + ", ".join(quiet))
-    return "\n".join(blocks)
+        columns = list(rows[0].keys())
+
+        # Numeric columns get thousands separators and are right-aligned so they
+        # read as a clean column; text columns stay left-aligned.
+        numeric = {
+            c: all(isinstance(row[c], (int, float)) for row in rows) for c in columns
+        }
+
+        def cell(column: str, row: dict[str, Any]) -> str:
+            value = row[column]
+            text = f"{value:,}" if numeric[column] else str(value)
+            return _clip(text)
+
+        widths = {}
+        for column in columns:
+            cell_lengths = [len(cell(column, row)) for row in rows]
+            widths[column] = max(len(_clip(column)), max(cell_lengths))
+
+        def align(text: str, column: str) -> str:
+            width = widths[column]
+            return text.rjust(width) if numeric[column] else text.ljust(width)
+
+        header = "  ".join(align(_clip(column), column) for column in columns)
+        lines = [header.rstrip()]
+        for row in rows:
+            line = "  ".join(align(cell(column, row), column) for column in columns)
+            lines.append(line.rstrip())
+
+        table = "\n".join(lines)
+        sections.append(f"**{title}**\n```\n{table}\n```")
+    return sections
 
 
-def _chunk_message(message: str, limit: int) -> list[str]:
-    chunks: list[str] = []
-    buf = ""
-    for block in message.split("\n\n"):
-        if len(buf) + len(block) + 2 > limit and buf:
-            chunks.append(buf)
-            buf = block
-        else:
-            buf = f"{buf}\n\n{block}" if buf else block
-    if buf:
-        chunks.append(buf)
-    return chunks
-
-
-def post_daily_stats_to_discord(message: str) -> None:
-    """Fire-and-forget Discord post. No-op if webhook not configured.
-    Logs and stops on the first failed chunk — never raises."""
+def post_to_discord(sections: list[str]) -> None:
     url = settings.DISCORD_STATS_WEBHOOK_URL
     if not url:
         return
-    for chunk in _chunk_message(message, _DISCORD_CHUNK_LIMIT):
-        try:
-            requests.post(
-                str(url), json={"content": chunk}, timeout=5
-            ).raise_for_status()
-        except requests.RequestException as e:
-            logger.warning(f"[post_daily_stats_to_discord] Webhook post failed: {e}")
-            return
+
+    # Pack whole sections into messages under Discord's size cap so no code
+    # block is split across two posts.
+    chunk = "Daily Stats · last 24h and 7d (UTC)"
+    for section in sections:
+        if len(chunk) + len(section) + 2 > DISCORD_LIMIT:
+            _post(str(url), chunk)
+            chunk = ""
+        chunk = f"{chunk}\n\n{section}" if chunk else section
+    if chunk:
+        _post(str(url), chunk)
+
+
+def _post(url: str, content: str) -> None:
+    try:
+        requests.post(url, json={"content": content}, timeout=5)
+    except requests.RequestException as e:
+        logger.warning(f"[post_to_discord] Webhook post failed: {e}")

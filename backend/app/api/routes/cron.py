@@ -10,11 +10,8 @@ from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
 from app.services.job_monitoring import monitor_pending_jobs
-from app.services.stats import (
-    collect_daily_stats,
-    format_daily_stats_message,
-    post_daily_stats_to_discord,
-)
+from app.crud.stats import get_daily_stats
+from app.services.stats import format_sections, post_to_discord
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +37,7 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
 }
 
 DAILY_STATS_CRON_MONITOR_CONFIG: MonitorConfig = {
-    "schedule": {"type": "crontab", "value": "0 0 * * *"},
+    "schedule": {"type": "crontab", "value": "0 9 * * *"},
     "timezone": "UTC",
     "checkin_margin": 5,
     "max_runtime": 10,
@@ -148,18 +145,11 @@ async def evaluation_cron_job(
     monitor_slug="daily-stats-cron-job",
     monitor_config=DAILY_STATS_CRON_MONITOR_CONFIG,
 )
-def daily_stats_cron_job(
-    session: SessionDep, hours: int | None = None
-) -> dict[str, Any]:
-    logger.info(f"[daily_stats_cron_job] Cron job invoked | hours={hours}")
+def daily_stats_cron_job(session: SessionDep) -> dict[str, Any]:
     try:
-        result = collect_daily_stats(session=session, window_hours=hours)
-        post_daily_stats_to_discord(format_daily_stats_message(result))
-        logger.info(
-            "[daily_stats_cron_job] Completed | window: %s",
-            result["window"],
-        )
-        return result
+        stats = get_daily_stats(session=session)
+        post_to_discord(format_sections(stats))
+        return stats
     except Exception as e:
         logger.error(
             f"[daily_stats_cron_job] Error executing cron job: {e}",
