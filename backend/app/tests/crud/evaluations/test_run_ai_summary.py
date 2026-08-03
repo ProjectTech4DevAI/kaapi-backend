@@ -23,32 +23,32 @@ _MODEL = "gpt-5-mini"
 
 def _overall() -> OverallSummary:
     return {
-        "overall_score": 0.66,
-        "verdict": "Good",
+        "overall_score": 3.3,
+        "verdict": "Needs Refinement",
         "ai_summary": None,
         "breakdown": [
             {
                 "name": "Adherence to Ground Truth",
                 "key": "ground_truth",
-                "score": 0.8,
+                "score": 4,
                 "weight": 0.5,
-                "delta": 0.14,
+                "delta": 0.7,
                 "verdict": "Good",
             },
             {
                 "name": "Adherence to Knowledge Base",
                 "key": "knowledge_base",
-                "score": 0.6,
+                "score": 3,
                 "weight": 0.3,
-                "delta": -0.06,
-                "verdict": "Good",
+                "delta": -0.3,
+                "verdict": "Needs Refinement",
             },
             {
                 "name": "Adherence to Prompt",
                 "key": "prompt",
-                "score": 0.4,
+                "score": 2,
                 "weight": 0.2,
-                "delta": -0.26,
+                "delta": -1.3,
                 "verdict": "Needs Refinement",
             },
         ],
@@ -56,11 +56,12 @@ def _overall() -> OverallSummary:
 
 
 def _summary_scores() -> list[dict]:
-    # std per dimension drives the consistency read; names match the overall's dims.
+    # std per dimension drives the consistency read (0–5 spread; cutoffs 0.5 / 1.0);
+    # names match the overall's dims.
     return [
-        {"name": "Adherence to Ground Truth", "avg": 0.8, "std": 0.05},
-        {"name": "Adherence to Knowledge Base", "avg": 0.6, "std": 0.15},
-        {"name": "Adherence to Prompt", "avg": 0.4, "std": 0.34},
+        {"name": "Adherence to Ground Truth", "avg": 4.0, "std": 0.3},
+        {"name": "Adherence to Knowledge Base", "avg": 3.0, "std": 0.8},
+        {"name": "Adherence to Prompt", "avg": 2.0, "std": 1.5},
     ]
 
 
@@ -125,16 +126,16 @@ class TestQualitativeBrief:
         assert "Grounding in the source material" in brief
         assert "Tone and instruction-following" in brief
 
-        assert "answers stayed consistent" in brief  # std 0.05
-        assert "answers were mostly consistent, with some variation" in brief  # 0.15
-        assert "answers varied" in brief  # 0.34
+        assert "answers stayed consistent" in brief  # std 0.3
+        assert "answers were mostly consistent, with some variation" in brief  # 0.8
+        assert "answers varied" in brief  # 1.5
 
     def test_brief_leaks_no_raw_scores_or_internal_labels(self) -> None:
         brief = self._input_for(duplication_factor=5)
         assert "Adherence to" not in brief
         assert "verdict" not in brief
         # Raw score / weight / delta values must not cross into the brief.
-        for leaked in ("0.66", "0.8", "0.5", "0.14", "-0.26"):
+        for leaked in ("3.3", "0.7", "-1.3", "0.5", "0.3"):
             assert leaked not in brief
 
     def test_repetition_line_states_the_repeat_count_when_gt_one(self) -> None:
@@ -151,9 +152,11 @@ class TestConsistencyRead:
     @pytest.mark.parametrize(
         ("std", "expected"),
         [
-            (0.08, "answers stayed consistent"),
-            (0.15, "answers were mostly consistent, with some variation"),
-            (0.34, "answers varied"),
+            (0.3, "answers stayed consistent"),
+            (0.5, "answers stayed consistent"),
+            (0.8, "answers were mostly consistent, with some variation"),
+            (1.0, "answers were mostly consistent, with some variation"),
+            (1.5, "answers varied"),
             (None, "consistency unknown"),
         ],
     )

@@ -19,8 +19,8 @@ _SUMMARY_MAX_OUTPUT_TOKENS: int = 2000
 
 _SUMMARY_REASONING_EFFORT: str = "minimal"
 
-_CONSISTENCY_STABLE_AT_OR_BELOW: float = 0.1
-_CONSISTENCY_MIXED_AT_OR_BELOW: float = 0.2
+_CONSISTENCY_STABLE_AT_OR_BELOW: float = 0.5
+_CONSISTENCY_MIXED_AT_OR_BELOW: float = 1.0
 
 # Internal metric key -> plain behaviour phrase, so the brief never leaks the labels into the model's context.
 _DIMENSION_PLAIN_NAME: dict[str, str] = {
