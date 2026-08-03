@@ -41,6 +41,9 @@ from app.api.routes.evaluations.dataset_v2 import (
     router as evaluations_dataset_v2_router,
 )
 from app.api.routes.evaluations.evaluation_v2 import router as evaluations_v2_router
+from app.api.routes.evaluations.iteration_v2 import (
+    router as evaluations_iteration_v2_router,
+)
 from app.api.routes.evaluations.prompt_improvement_v2 import (
     router as evaluations_prompt_improvement_v2_router,
 )
@@ -89,3 +92,4 @@ api_v2_router = APIRouter()
 api_v2_router.include_router(evaluations_v2_router)
 api_v2_router.include_router(evaluations_dataset_v2_router)
 api_v2_router.include_router(evaluations_prompt_improvement_v2_router)
+api_v2_router.include_router(evaluations_iteration_v2_router)
