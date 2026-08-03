@@ -22,7 +22,7 @@ All paths relative to `backend/app/`.
 | `batch_job` (BatchJob) | `models/batch_job.py` |
 
 Key `EvaluationRun` JSONB fields: `score` (per-trace `scores` + `summary_scores`), `per_item_scores`, `cost` (per-stage), `unscoreable`. References `config_id`, `batch_job_id`.
-v2 judge field on `EvaluationRun`: `is_judge_run` (bool marker gating native judging + Langfuse skip). All judge metrics are trace-only — per-row score + reasoning live in the `score_trace_url` trace unit (the native source of truth); there is no per-metric backup column. Judging is system-config only — always the fallback model (`gpt-5-mini`) + built-in prompts, no per-run config.
+v2 judge field on `EvaluationRun`: `is_judge_run` (bool marker gating native judging + Langfuse skip). All judge metrics are trace-only — per-row score + reasoning live in the `score_trace_url` trace unit (the native source of truth); there is no per-metric backup column. Judging is system-config only — always the fallback model (`gpt-5-mini`) + built-in prompts, no per-run config. Each numeric judge-metric trace score also carries a `verdict` band (`crud/evaluations/score.py`: `VerdictEnum` + `verdict_from_score`, thresholds 0.3/0.6), set in the `crud/evaluations/fast.py` trace-build loop; cosine and unscoreable/`N/A` entries carry none.
 
 ## Services / CRUD
 - `services/evaluations/` — `evaluation.py`, `dataset.py` (`upload_dataset`; `use_langfuse=False` is the v2 Langfuse-free upload), `fast.py`, `batch_job.py`, `validators.py`, `prompt_improvement.py`

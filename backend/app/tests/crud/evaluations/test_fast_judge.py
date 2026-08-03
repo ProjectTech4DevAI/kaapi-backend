@@ -43,6 +43,7 @@ from app.crud.evaluations.score import (
     JUDGE_FAILED_REASON,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
+    verdict_from_score,
 )
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
@@ -620,6 +621,7 @@ class TestAdherenceToPromptScoring:
                 "value": 0.25,
                 "data_type": "NUMERIC",
                 "comment": "answered in English",
+                "verdict": "Needs Improvement",
             }
             assert _score_named(traces[ref], GROUND_TRUTH_SCORE_NAME)["value"] == 0.9
 
@@ -1080,6 +1082,107 @@ class TestKnowledgeBaseScoring:
         assert _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME) is not None
         # No ground_truth score is emitted — not even an N/A placeholder.
         assert _score_named(trace, GROUND_TRUTH_SCORE_NAME) is None
+
+
+class TestVerdictBandOnTraceScores:
+    """each scored judge metric on a v2 trace carries a verdict band;
+    the cosine (v1) score and the KB N/A placeholder never do."""
+
+    def test_each_scored_judge_metric_carries_its_verdict_band(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=True,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting", "filename": "kb.pdf"}
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=_s3_store)
+
+        # One score per band: 0.2 → Needs Improvement, 0.45 → Needs Refinement,
+        # 0.75 → Good, so the three metrics land in three different bands.
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _raw_judge_response(
+                json.dumps(
+                    {
+                        "ground_truth": {"score": 0.2, "reasoning": "gt"},
+                        "prompt": {"score": 0.45, "reasoning": "p"},
+                        "knowledge_base": {"score": 0.75, "reasoning": "kb"},
+                    }
+                )
+            ),
+        )
+
+        trace = _trace_by_ref(result)["item-1"]
+        gt = _score_named(trace, GROUND_TRUTH_SCORE_NAME)
+        prompt = _score_named(trace, PROMPT_SCORE_NAME)
+        kb = _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME)
+
+        assert gt["verdict"] == "Needs Improvement"
+        assert prompt["verdict"] == "Needs Refinement"
+        assert kb["verdict"] == "Good"
+
+        for score in (gt, prompt, kb):
+            assert score["verdict"] == verdict_from_score(score["value"])
+
+    def test_cosine_score_carries_no_verdict(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=False,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[_resp_result("item-1", "Q1", "golden-1")],
+            store=_s3_store,
+        )
+
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _judge_response(0.9, "never runs"),
+        )
+
+        cosine = _score_named(_trace_by_ref(result)["item-1"], COSINE_SCORE_NAME)
+        assert cosine is not None
+        assert "verdict" not in cosine
+
+    def test_kb_na_placeholder_carries_no_verdict(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        plain = _resp_result("item-plain", "Q1", "golden-1")  # no retrieved_chunks
+        _seed_chunk(db=db, eval_run=eval_run, results=[plain], store=_s3_store)
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                            "knowledge_base": {"score": 0.6, "reasoning": "kb"},
+                        }
+                    )
+                )
+            return _judge_response(0.8, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        kb = _score_named(
+            _trace_by_ref(result)["item-plain"], KNOWLEDGE_BASE_SCORE_NAME
+        )
+        assert kb["value"] == "N/A"
+        assert "verdict" not in kb
 
 
 class TestFormatTopKbMatches:

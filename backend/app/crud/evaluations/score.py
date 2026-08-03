@@ -5,9 +5,35 @@ This module contains TypedDict definitions for type-safe score data
 used throughout the evaluation system.
 """
 
+from enum import Enum
 from typing import NotRequired, TypedDict
 
 DEFAULT_CATEGORY: str = "Other"
+
+
+class VerdictEnum(str, Enum):
+    """Qualitative band derived from a 0–1 judge-metric score."""
+
+    NEEDS_IMPROVEMENT = "Needs Improvement"
+    NEEDS_REFINEMENT = "Needs Refinement"
+    GOOD = "Good"
+
+
+VERDICT_NEEDS_IMPROVEMENT_BELOW: float = 0.3
+VERDICT_GOOD_AT_OR_ABOVE: float = 0.6
+
+
+def verdict_from_score(score: float) -> VerdictEnum:
+    """Map a 0–1 judge-metric score to its verdict band.
+
+    Boundaries: exactly 0.3 → Needs Refinement, exactly 0.6 → Good.
+    """
+    if score < VERDICT_NEEDS_IMPROVEMENT_BELOW:
+        return VerdictEnum.NEEDS_IMPROVEMENT
+    if score < VERDICT_GOOD_AT_OR_ABOVE:
+        return VerdictEnum.NEEDS_REFINEMENT
+    return VerdictEnum.GOOD
+
 
 # Canonical name/comment for the cosine-similarity score, centralized to avoid
 # import cycles.
@@ -152,6 +178,7 @@ class TraceScore(TypedDict):
     value: float | str
     data_type: str
     comment: NotRequired[str]
+    verdict: NotRequired[str]
     # True for placeholder scores on unscoreable items; excluded from summary stats.
     unscoreable: NotRequired[bool]
 
