@@ -221,6 +221,8 @@ class Settings(BaseSettings):
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 
+    EVAL_SUMMARY_MODEL: str = "gpt-5-mini"
+
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
     # (EVAL_FAST_MAX_UNIQUE_ROWS x duplication) well under CELERY_TASK_SOFT_TIME_LIMIT.

@@ -192,6 +192,17 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
     )
 
 
+# Default plain-text stub for the best-effort run-level AI summary. It rides a
+# separate `responses.create` call (the judge is patched at _create_judge_response,
+# so it never reaches this mock). A bare MagicMock output would poison the score
+# JSONB, so every judged run's summary boundary is stubbed with a real string.
+DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
+
+
+def _summary_response(text: str):
+    return SimpleNamespace(output_text=text, output=[])
+
+
 @pytest.fixture
 def _s3_store() -> Iterator[dict[str, list[dict[str, Any]]]]:
     store: dict[str, list[dict[str, Any]]] = {}
@@ -240,7 +251,12 @@ def _seed_chunk(
 def _persist_score_into(db: Session):
     def _fake_save_score(*, eval_run_id, score, **_):
         run = db.get(EvaluationRun, eval_run_id)
-        run.score = {"summary_scores": score["summary_scores"]}
+        # Mirror save_score's S3 path: traces go to S3, the DB score keeps the
+        # summary plus the run-level overall (when present).
+        db_score: dict[str, Any] = {"summary_scores": score["summary_scores"]}
+        if score.get("overall") is not None:
+            db_score["overall"] = score["overall"]
+        run.score = db_score
         run.score_trace_url = f"s3://bucket/traces_{eval_run_id}.json"
         db.add(run)
         db.commit()
@@ -256,6 +272,7 @@ def _run_pipeline(
     eval_run: EvaluationRun,
     judge_side_effect,
     mock_cost: bool = False,
+    summary_side_effect=None,
 ) -> tuple[EvaluationRun, MagicMock]:
     """Run `run_fast_evaluation` for a judged run with all externals stubbed.
 
@@ -263,9 +280,19 @@ def _run_pipeline(
     key by item_id. The judge completion is driven by `judge_side_effect(params)`.
     Returns the run plus the OpenAI mock so callers can assert the embedding path
     was (v1) or was not (v2 judge) exercised.
+
+    The run-level AI summary is a separate `responses.create` call; by default it
+    returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an exception) to
+    drive the best-effort failure path.
     """
     fake_openai = MagicMock()
     fake_openai.embeddings.create.return_value = _fake_embedding_response()
+    if summary_side_effect is not None:
+        fake_openai.responses.create.side_effect = summary_side_effect
+    else:
+        fake_openai.responses.create.return_value = _summary_response(
+            DEFAULT_RUN_SUMMARY
+        )
 
     def _judge(_client, params):
         return judge_side_effect(params)
@@ -833,6 +860,135 @@ class TestV1PipelineUnchanged:
         assert GROUND_TRUTH_SCORE_NAME not in summary_names
         assert PROMPT_SCORE_NAME not in summary_names
         assert COSINE_SCORE_NAME in summary_names
+
+
+class TestRunOverallSummary:
+    """The run-level weighted overall rides the v2 judge run's score."""
+
+    def _seed_all_three_metrics_run(
+        self, *, db: Session, user_api_key: TestAuthContext, store
+    ) -> EvaluationRun:
+        # Instructions enable the prompt metric; retrieved chunks enable KB; so a
+        # single judged row scores all three metrics.
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=True,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting chunk", "filename": "kb.pdf"}
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=store)
+        return eval_run
+
+    def _all_three_judge(self, _params):
+        return _raw_judge_response(
+            json.dumps(
+                {
+                    "ground_truth": {"score": 0.8, "reasoning": "gt"},
+                    "prompt": {"score": 0.4, "reasoning": "p"},
+                    "knowledge_base": {"score": 0.6, "reasoning": "kb"},
+                }
+            )
+        )
+
+    def test_judged_run_overall_matches_metric_averages(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db, eval_run=eval_run, judge_side_effect=self._all_three_judge
+        )
+
+        assert result.status == "completed"
+        overall = result.score["overall"]
+        # 0.8*0.5 + 0.6*0.3 + 0.4*0.2 = 0.66.
+        assert overall["overall_score"] == 0.66
+        assert overall["verdict"] == "Good"
+        # The successful summary boundary flows into ai_summary.
+        assert overall["ai_summary"] == DEFAULT_RUN_SUMMARY
+
+        # Each breakdown dimension mirrors its run-level summary average.
+        summary_avgs = {
+            s["name"]: s["avg"] for s in result.score["summary_scores"] if "avg" in s
+        }
+        breakdown_by_name = {dim["name"]: dim for dim in overall["breakdown"]}
+        assert set(breakdown_by_name) == set(summary_avgs)
+        for name, avg in summary_avgs.items():
+            assert breakdown_by_name[name]["score"] == round(avg, 2)
+
+    def test_summary_failure_leaves_overall_intact_with_null_ai_summary(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_side_effect=RuntimeError("summary provider down"),
+        )
+
+        # The run still completes and the deterministic overall survives whole —
+        # only the best-effort ai_summary is lost.
+        assert result.status == "completed"
+        overall = result.score["overall"]
+        assert overall["ai_summary"] is None
+        assert overall["overall_score"] == 0.66
+        assert overall["verdict"] == "Good"
+        assert len(overall["breakdown"]) == 3
+
+    def test_overall_survives_into_the_persisted_db_score(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """Re-fetch the run: save_score's S3 path must keep the overall in the DB
+        score column, not clobber it with the summary alone."""
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db, eval_run=eval_run, judge_side_effect=self._all_three_judge
+        )
+
+        db.expire_all()
+        persisted = db.get(EvaluationRun, result.id).score["overall"]
+        assert persisted["overall_score"] == 0.66
+        assert persisted["verdict"] == "Good"
+        assert {dim["key"] for dim in persisted["breakdown"]} == {
+            "ground_truth",
+            "prompt",
+            "knowledge_base",
+        }
+
+    def test_v1_run_has_no_overall_in_score(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=False,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[_resp_result("item-1", "Q1", "golden-1")],
+            store=_s3_store,
+        )
+
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _judge_response(0.9, "never runs"),
+        )
+
+        assert result.status == "completed"
+        assert "overall" not in result.score
 
 
 def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
