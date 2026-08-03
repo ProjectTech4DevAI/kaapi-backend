@@ -49,6 +49,10 @@ from app.crud.evaluations.core import (
     update_evaluation_run,
 )
 from app.crud.evaluations.cost import attach_cost
+from app.crud.evaluations.dataset import (
+    DATASET_META_DUPLICATION_FACTOR,
+    get_dataset_by_id,
+)
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
     calculate_cosine_similarity,
@@ -81,10 +85,13 @@ from app.crud.evaluations.score import (
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMPTY_OUTPUT,
     EvaluationScore,
+    OverallSummary,
     TraceData,
     TraceScore,
+    compute_overall_summary,
     verdict_from_score,
 )
+from app.crud.evaluations.summary import generate_run_ai_summary
 from app.crud.job import (
     create_batch_job,
     delete_batch_job,
@@ -953,6 +960,7 @@ def _stage3_score_and_trace(
     unscoreable: dict[str, str] = {}  # {ref: reason}
     write_items: list[dict[str, Any]] = []
     summary_scores: list[dict[str, Any]] = []
+    overall: OverallSummary | None = None
 
     if is_judge_run:
         # v2: no cosine. A row is judgeable only with a non-empty generated AND
@@ -1109,6 +1117,40 @@ def _stage3_score_and_trace(
                 summary_scores=summary_scores,
             )
 
+        avg_by_name = {s["name"]: s["avg"] for s in summary_scores if "avg" in s}
+        metric_avgs = {
+            spec.key.value: avg_by_name[spec.score_name]
+            for spec in metrics
+            if spec.score_name in avg_by_name
+        }
+        overall = compute_overall_summary(
+            metric_avgs=metric_avgs,
+            metric_weights={spec.key.value: spec.weight for spec in metrics},
+            metric_names={spec.key.value: spec.score_name for spec in metrics},
+        )
+        if overall is not None:
+            # Falls back to 1 (no repetition) if the dataset/metadata can't be
+            # resolved, so the summary still generates.
+            dataset = get_dataset_by_id(
+                session=session,
+                dataset_id=eval_run.dataset_id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            metadata = dataset.dataset_metadata if dataset else None
+            duplication_factor = max(
+                1, int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1))
+            )
+            overall["ai_summary"] = generate_run_ai_summary(
+                session=session,
+                openai_client=openai_client,
+                model=settings.EVAL_SUMMARY_MODEL,
+                overall=overall,
+                run_name=eval_run.run_name,
+                summary_scores=summary_scores,
+                duplication_factor=duplication_factor,
+            )
+
         # One combined call grades every metric, so its tokens can't be split per
         # metric — they land in a single "judge" cost stage.
         if judge_results and judge_model:
@@ -1230,6 +1272,8 @@ def _stage3_score_and_trace(
         "summary_scores": summary_scores,
         "traces": traces,
     }
+    if overall is not None:
+        score["overall"] = overall
     return eval_run, score, write_items
 
 
@@ -1312,7 +1356,12 @@ def run_fast_evaluation(
         eval_run=eval_run,
         update=EvaluationRunUpdate(
             status="completed",
-            score={"summary_scores": score["summary_scores"]},
+            # Persist the overall alongside the summary so GET run status shows the
+            # run-level score/verdict/breakdown without loading the S3 trace unit.
+            score={
+                "summary_scores": score["summary_scores"],
+                "overall": score.get("overall"),
+            },
             cost=eval_run.cost,
         ),
     )
