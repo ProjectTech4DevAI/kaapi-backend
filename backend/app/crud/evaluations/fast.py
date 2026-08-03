@@ -758,6 +758,51 @@ def _stage2_embeddings(
     return eval_run, embedding_results
 
 
+def _resolve_config_prompt(
+    *, session: Session, eval_run: EvaluationRun, log_prefix: str
+) -> str | None:
+    """The evaluated bot's own configured prompt, or None if unresolvable.
+
+    The prompt template is appended when the config carries one, since it is equally
+    part of what the bot was told to do. Returns None when the config carries no
+    instructions, so the caller drops the prompt metric rather than grading against "".
+    """
+    if not eval_run.config_id or not eval_run.config_version:
+        return None
+
+    config, error = resolve_evaluation_config(
+        session=session,
+        config_id=eval_run.config_id,
+        config_version=eval_run.config_version,
+        project_id=eval_run.project_id,
+    )
+    if error or config is None:
+        return None
+
+    # Native/proxy params aren't TextLLMParams-shaped; a mismatch just means there are
+    # no instructions to grade against, not a run failure.
+    try:
+        params = TextLLMParams.model_validate(config.completion.params)
+    except ValidationError as exc:
+        logger.info(
+            f"[_resolve_config_prompt] {log_prefix} Completion params are not "
+            f"text params; prompt metric unscoreable | error={exc}"
+        )
+        return None
+
+    sections: list[str] = []
+    if params.instructions:
+        sections.append(params.instructions.strip())
+    if config.prompt_template and config.prompt_template.template:
+        sections.append(
+            f"{PROMPT_TEMPLATE_LABEL}\n{config.prompt_template.template.strip()}"
+        )
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
 def _judge_rows(
     *,
     session: Session,
@@ -860,24 +905,6 @@ def _attach_metric_scores(
                 "data_type": "NUMERIC",
             }
         )
-
-
-def _resolve_duplication_factor(*, session: Session, eval_run: EvaluationRun) -> int:
-    """How many times each question was asked, from the run's dataset metadata.
-
-    Feeds only the best-effort AI summary, so it never fails the run: an
-    unresolvable dataset or missing metadata falls back to 1 (no repetition).
-    """
-    dataset = get_dataset_by_id(
-        session=session,
-        dataset_id=eval_run.dataset_id,
-        organization_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
-    if dataset is None:
-        return 1
-    metadata = dataset.dataset_metadata or {}
-    return max(1, int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1)))
 
 
 def _stage3_score_and_trace(
