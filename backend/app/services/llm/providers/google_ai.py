@@ -518,9 +518,11 @@ class GoogleVertexAIProvider(BaseProvider):
         }
         if language:
             speech_config["languageCode"] = language
-
+        decorate_resolved_input = f"<transcript>{resolved_input}</transcript>"
         payload: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": [{"text": resolved_input}]}],
+            "contents": [
+                {"role": "user", "parts": [{"text": decorate_resolved_input}]}
+            ],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": speech_config,
