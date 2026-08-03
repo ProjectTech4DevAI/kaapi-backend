@@ -330,10 +330,10 @@ class GoogleAIProvider(BaseProvider):
             config_kwargs["system_instruction"] = director_notes
 
         config = GenerateContentConfig(**config_kwargs)
-
+        decorated_resolved_input = f"<transcript>{resolved_input}</transcript>"
         # Execute TTS
         response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=resolved_input, config=config
+            model=model, contents=decorated_resolved_input, config=config
         )
         if not response.response_id:
             error_message = (

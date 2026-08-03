@@ -83,6 +83,7 @@ from app.crud.evaluations.score import (
     EvaluationScore,
     TraceData,
     TraceScore,
+    verdict_from_score,
 )
 from app.crud.job import (
     create_batch_job,
@@ -1171,12 +1172,14 @@ def _stage3_score_and_trace(
                     comment = metric_score.reasoning
                     if is_kb:
                         comment = f"{comment} | Top matches: {top_matches}"
+                    rounded_score = round(metric_score.score, 2)
                     trace_scores.append(
                         {
                             "name": spec.score_name,
-                            "value": round(metric_score.score, 2),
+                            "value": rounded_score,
                             "data_type": "NUMERIC",
                             "comment": comment,
+                            "verdict": verdict_from_score(rounded_score),
                         }
                     )
                 elif is_kb:
