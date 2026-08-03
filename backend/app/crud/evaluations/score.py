@@ -73,16 +73,7 @@ JUDGE_SYSTEM_PREAMBLE: str = (
     "percentages. The metrics are independent — judge each only against its own inputs "
     "and rules; do not let one metric's verdict bleed into another. Score EVERY metric "
     "listed below. Never omit a metric from the output, even if some input blocks are "
-    "irrelevant to it.\n\n"
-    'Write every "reasoning" value in English, regardless of what language the '
-    "question, generated answer, golden answer, or configured instructions are in. "
-    "This is a requirement on the reasoning TEXT only — it never changes what you are "
-    "judging. In particular, Metric 3 (Adherence to Prompt) may require you to judge "
-    "whether the answer itself is in Hindi, Tamil, or any other language the configured "
-    "instructions specify — keep judging that exactly as instructed, and simply write "
-    'your explanation of that judgment in English (e.g. "The answer is in Hindi as '
-    'required" is correct; do not switch the reasoning itself into Hindi). Never mix '
-    "languages within a single reasoning string."
+    "irrelevant to it."
 )
 
 GROUND_TRUTH_JUDGE_PROMPT: str = (
