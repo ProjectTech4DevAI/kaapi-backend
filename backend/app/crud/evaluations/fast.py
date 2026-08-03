@@ -907,24 +907,6 @@ def _attach_metric_scores(
         )
 
 
-def _resolve_duplication_factor(*, session: Session, eval_run: EvaluationRun) -> int:
-    """How many times each question was asked, from the run's dataset metadata.
-
-    Feeds only the best-effort AI summary, so it never fails the run: an
-    unresolvable dataset or missing metadata falls back to 1 (no repetition).
-    """
-    dataset = get_dataset_by_id(
-        session=session,
-        dataset_id=eval_run.dataset_id,
-        organization_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
-    if dataset is None:
-        return 1
-    metadata = dataset.dataset_metadata or {}
-    return max(1, int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1)))
-
-
 def _stage3_score_and_trace(
     *,
     session: Session,
@@ -1147,10 +1129,17 @@ def _stage3_score_and_trace(
             metric_names={spec.key.value: spec.score_name for spec in metrics},
         )
         if overall is not None:
-            # Falls back to 1 (no repetition) if the dataset can't be resolved, so
-            # the summary still generates.
-            duplication_factor = _resolve_duplication_factor(
-                session=session, eval_run=eval_run
+            # Falls back to 1 (no repetition) if the dataset/metadata can't be
+            # resolved, so the summary still generates.
+            dataset = get_dataset_by_id(
+                session=session,
+                dataset_id=eval_run.dataset_id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            metadata = dataset.dataset_metadata if dataset else None
+            duplication_factor = max(
+                1, int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1))
             )
             overall["ai_summary"] = generate_run_ai_summary(
                 session=session,

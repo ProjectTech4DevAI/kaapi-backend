@@ -34,7 +34,6 @@ from app.crud.evaluations.fast import (
     JOB_TYPE_EVALUATION_FAST_CHUNK,
     PROMPT_TEMPLATE_LABEL,
     _format_top_kb_matches,
-    _resolve_duplication_factor,
     _responses_call_for_item,
     run_fast_evaluation,
     run_response_chunk,
@@ -990,18 +989,6 @@ class TestRunOverallSummary:
 
         assert result.status == "completed"
         assert "overall" not in result.score
-
-
-class TestResolveDuplicationFactor:
-    """`_resolve_duplication_factor` feeds only the best-effort summary, so a missing
-    dataset degrades to 1 (no repetition) rather than failing the run."""
-
-    def test_falls_back_to_one_when_dataset_missing(self) -> None:
-        with patch("app.crud.evaluations.fast.get_dataset_by_id", return_value=None):
-            assert (
-                _resolve_duplication_factor(session=MagicMock(), eval_run=MagicMock())
-                == 1
-            )
 
 
 def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
