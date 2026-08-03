@@ -163,10 +163,16 @@ def _check_previous_probe(project_id: int) -> JobStatus | None:
         )
         return None
 
-    with Session(engine) as session:
-        job = JobCrud(session=session).get(
-            job_id=UUID(str(last_job_id)), project_id=project_id
+    try:
+        job_uuid = UUID(str(last_job_id))
+    except ValueError as e:
+        logger.warning(
+            f"[_check_previous_probe] Malformed job id | value: {last_job_id!r}, error: {e}"
         )
+        return None
+
+    with Session(engine) as session:
+        job = JobCrud(session=session).get(job_id=job_uuid, project_id=project_id)
 
     if job is None:
         logger.warning(f"[_check_previous_probe] Job not found | job_id: {last_job_id}")
