@@ -31,11 +31,11 @@ def _summary(metric_avgs: dict[str, float]):
 
 class TestAllThreeMetrics:
     def test_weighted_overall_and_per_dimension_breakdown(self) -> None:
-        # 0.8*0.5 + 0.6*0.3 + 0.4*0.2 = 0.40 + 0.18 + 0.08 = 0.66.
-        result = _summary({"ground_truth": 0.8, "knowledge_base": 0.6, "prompt": 0.4})
+        # 4*0.5 + 3*0.3 + 2*0.2 = 2.0 + 0.9 + 0.4 = 3.3.
+        result = _summary({"ground_truth": 4, "knowledge_base": 3, "prompt": 2})
         assert result is not None
-        assert result["overall_score"] == 0.66
-        assert result["verdict"] == "Good"
+        assert result["overall_score"] == 3.3
+        assert result["verdict"] == "Needs Refinement"
         assert result["ai_summary"] is None
 
         by_key = {dim["key"]: dim for dim in result["breakdown"]}
@@ -49,21 +49,21 @@ class TestAllThreeMetrics:
         assert by_key["prompt"]["weight"] == 0.2
         assert sum(dim["weight"] for dim in result["breakdown"]) == 1.0
 
-        assert by_key["ground_truth"]["score"] == 0.8
-        assert by_key["knowledge_base"]["score"] == 0.6
-        assert by_key["prompt"]["score"] == 0.4
+        assert by_key["ground_truth"]["score"] == 4
+        assert by_key["knowledge_base"]["score"] == 3
+        assert by_key["prompt"]["score"] == 2
 
-        # delta = dimension score - overall (0.66), sign shows pull vs the run.
-        assert by_key["ground_truth"]["delta"] == 0.14
-        assert by_key["knowledge_base"]["delta"] == -0.06
-        assert by_key["prompt"]["delta"] == -0.26
+        # delta = dimension score - overall (3.3), sign shows pull vs the run.
+        assert by_key["ground_truth"]["delta"] == 0.7
+        assert by_key["knowledge_base"]["delta"] == -0.3
+        assert by_key["prompt"]["delta"] == -1.3
 
         assert by_key["ground_truth"]["verdict"] == "Good"
-        assert by_key["knowledge_base"]["verdict"] == "Good"
+        assert by_key["knowledge_base"]["verdict"] == "Needs Refinement"
         assert by_key["prompt"]["verdict"] == "Needs Refinement"
 
     def test_per_dimension_verdict_matches_the_rounded_dimension_score(self) -> None:
-        result = _summary({"ground_truth": 0.55, "knowledge_base": 0.25, "prompt": 0.9})
+        result = _summary({"ground_truth": 2.75, "knowledge_base": 1.25, "prompt": 4.5})
         assert result is not None
         for dim in result["breakdown"]:
             assert dim["verdict"] == verdict_from_score(dim["score"]).value
@@ -71,7 +71,7 @@ class TestAllThreeMetrics:
 
 class TestRenormalizationWhenAMetricIsAbsent:
     def test_ground_truth_and_knowledge_base_only(self) -> None:
-        result = _summary({"ground_truth": 0.8, "knowledge_base": 0.6})
+        result = _summary({"ground_truth": 4, "knowledge_base": 3})
         assert result is not None
         by_key = {dim["key"]: dim for dim in result["breakdown"]}
         assert set(by_key) == {"ground_truth", "knowledge_base"}
@@ -82,11 +82,11 @@ class TestRenormalizationWhenAMetricIsAbsent:
         # overall still sums to 1.0).
         assert by_key["ground_truth"]["weight"] == 0.62
         assert by_key["knowledge_base"]["weight"] == 0.37
-        # 0.625*0.8 + 0.375*0.6 = 0.5 + 0.225 = 0.725 → 0.72.
-        assert result["overall_score"] == 0.72
+        # 0.625*4 + 0.375*3 = 2.5 + 1.125 = 3.625 → 3.62.
+        assert result["overall_score"] == 3.62
 
     def test_ground_truth_and_prompt_only(self) -> None:
-        result = _summary({"ground_truth": 0.8, "prompt": 0.4})
+        result = _summary({"ground_truth": 4, "prompt": 2})
         assert result is not None
         by_key = {dim["key"]: dim for dim in result["breakdown"]}
         assert set(by_key) == {"ground_truth", "prompt"}
@@ -97,10 +97,10 @@ class TestRenormalizationWhenAMetricIsAbsent:
         assert sum(dim["weight"] for dim in result["breakdown"]) == 1.0
 
     def test_absent_metric_never_drags_the_overall_down(self) -> None:
-        # A missing metric is dropped, not scored 0: two perfect metrics stay at 1.0.
-        result = _summary({"ground_truth": 1.0, "knowledge_base": 1.0})
+        # A missing metric is dropped, not scored 0: two perfect metrics stay at 5.0.
+        result = _summary({"ground_truth": 5, "knowledge_base": 5})
         assert result is not None
-        assert result["overall_score"] == 1.0
+        assert result["overall_score"] == 5.0
 
 
 class TestNothingScored:
@@ -111,17 +111,17 @@ class TestNothingScored:
 class TestBadgeBoundaries:
     def test_overall_exactly_on_needs_refinement_lower_bound(self) -> None:
         # Equal dimension averages → the weighted overall equals that value exactly.
-        result = _summary({"ground_truth": 0.3, "knowledge_base": 0.3, "prompt": 0.3})
+        result = _summary({"ground_truth": 2, "knowledge_base": 2, "prompt": 2})
         assert result is not None
-        assert result["overall_score"] == 0.3
+        assert result["overall_score"] == 2.0
         assert result["verdict"] == "Needs Refinement"
         for dim in result["breakdown"]:
             assert dim["verdict"] == "Needs Refinement"
 
     def test_overall_exactly_on_good_lower_bound(self) -> None:
-        result = _summary({"ground_truth": 0.6, "knowledge_base": 0.6, "prompt": 0.6})
+        result = _summary({"ground_truth": 4, "knowledge_base": 4, "prompt": 4})
         assert result is not None
-        assert result["overall_score"] == 0.6
+        assert result["overall_score"] == 4.0
         assert result["verdict"] == "Good"
         for dim in result["breakdown"]:
             assert dim["verdict"] == "Good"

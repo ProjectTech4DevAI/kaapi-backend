@@ -2,7 +2,7 @@ Enqueue a v2 prompt-recommendation job for the configuration evaluated by a judg
 
 Unlike v1 (which reads cosine similarity + correctness), this consumes the native
 three-metric judge results — **Adherence to Ground Truth**, **Adherence to Prompt**,
-and **Adherence to Knowledge Base** — each carrying a 0–1 score and the judge's
+and **Adherence to Knowledge Base** — each carrying an integer 0–5 score and the judge's
 reasoning. The worker reads both the score and the reasoning per metric, focuses the
 rewrite on rows where Adherence to Prompt / Ground Truth are low, and changes only
 `completion.params.instructions`; model, knowledge base, and all other settings are

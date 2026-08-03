@@ -151,7 +151,7 @@ _retry_judge_call = retry(
 
 @dataclass
 class MetricScore:
-    """One metric's outcome for a row: score in [0, 1] and its reasoning."""
+    """One metric's outcome for a row: integer score in 0–5 and its reasoning."""
 
     score: float
     reasoning: str
@@ -246,8 +246,11 @@ def _parse_metric_score(key: JudgeMetricEnum, raw: Any) -> MetricScore:
         raise ValueError(
             f"metric '{key.value}' score is not a number: {raw.get('score')!r}"
         ) from exc
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"metric '{key.value}' score out of [0, 1]: {score}")
+    if score != int(score) or not 0 <= score <= 5:
+        raise ValueError(
+            f"metric '{key.value}' score must be an integer 0-5: {raw.get('score')!r}"
+        )
+    score = int(score)
 
     reasoning = str(raw.get("reasoning") or "").strip()
     if not reasoning:

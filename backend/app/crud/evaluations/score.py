@@ -12,21 +12,22 @@ DEFAULT_CATEGORY: str = "Other"
 
 
 class VerdictEnum(str, Enum):
-    """Qualitative band derived from a 0–1 judge-metric score."""
+    """Qualitative band derived from a 0–5 judge-metric score."""
 
     NEEDS_IMPROVEMENT = "Needs Improvement"
     NEEDS_REFINEMENT = "Needs Refinement"
     GOOD = "Good"
 
 
-VERDICT_NEEDS_IMPROVEMENT_BELOW: float = 0.3
-VERDICT_GOOD_AT_OR_ABOVE: float = 0.6
+VERDICT_NEEDS_IMPROVEMENT_BELOW: float = 2.0
+VERDICT_GOOD_AT_OR_ABOVE: float = 4.0
 
 
 def verdict_from_score(score: float) -> VerdictEnum:
-    """Map a 0–1 judge-metric score to its verdict band.
+    """Map a 0–5 judge-metric score to its verdict band.
 
-    Boundaries: exactly 0.3 → Needs Refinement, exactly 0.6 → Good.
+    Boundaries: below 2 → Needs Improvement, 2 to <4 → Needs Refinement,
+    4 and above → Good.
     """
     if score < VERDICT_NEEDS_IMPROVEMENT_BELOW:
         return VerdictEnum.NEEDS_IMPROVEMENT
@@ -64,11 +65,24 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
 
 JUDGE_SYSTEM_PREAMBLE: str = (
     "You are a strict, impartial evaluator. You score an assistant's answer on the "
-    "independent metrics listed below in a single pass. Each metric is a float in "
-    "[0.0, 1.0] with one or two sentences of reasoning. The metrics are independent "
-    "— judge each only against its own inputs and rules; do not let one metric's "
-    "verdict bleed into another. Score EVERY metric listed below. Never omit a metric "
-    "from the output, even if some input blocks are irrelevant to it."
+    "independent metrics listed below in a single pass. Each metric is an integer "
+    "score from 0 to 5, where 0 is the worst case (clearly wrong / ungrounded / a hard "
+    "instruction violation, or no answer at all) and 5 is the best case (fully correct "
+    "/ fully grounded / fully compliant), with one or two sentences of reasoning. "
+    "Scores MUST be integers — 0, 1, 2, 3, 4, or 5 — never fractions, decimals, or "
+    "percentages. The metrics are independent — judge each only against its own inputs "
+    "and rules; do not let one metric's verdict bleed into another. Score EVERY metric "
+    "listed below. Never omit a metric from the output, even if some input blocks are "
+    "irrelevant to it.\n\n"
+    'Write every "reasoning" value in English, regardless of what language the '
+    "question, generated answer, golden answer, or configured instructions are in. "
+    "This is a requirement on the reasoning TEXT only — it never changes what you are "
+    "judging. In particular, Metric 3 (Adherence to Prompt) may require you to judge "
+    "whether the answer itself is in Hindi, Tamil, or any other language the configured "
+    "instructions specify — keep judging that exactly as instructed, and simply write "
+    'your explanation of that judgment in English (e.g. "The answer is in Hindi as '
+    'required" is correct; do not switch the reasoning itself into Hindi). Never mix '
+    "languages within a single reasoning string."
 )
 
 GROUND_TRUTH_JUDGE_PROMPT: str = (
@@ -82,7 +96,22 @@ GROUND_TRUTH_JUDGE_PROMPT: str = (
     "and that would be wrong, is a factual error.\n"
     "- Do NOT reward or penalize style, tone, length, or language.\n"
     "- Do NOT use any outside knowledge; the golden answer is the source of truth.\n"
-    "- Do NOT answer the question yourself.\n"
+    "- Do NOT answer the question yourself.\n\n"
+    "Score on a stepped scale from 0 to 5. The score MUST be one of the integers 0, 1, "
+    "2, 3, 4, 5 — never a fraction, decimal, or value outside this range.\n"
+    "- 5: Fully correct and complete. Conveys everything material in the golden answer "
+    "(a paraphrase, reordering, or additional correct detail is still a 5).\n"
+    "- 4: Correct and materially complete, but omits one minor, non-essential "
+    "supporting detail.\n"
+    "- 3: Partially correct. The core of the answer is right, but at least one material "
+    "fact is missing, incomplete, or slightly off.\n"
+    "- 2: Mixed or significantly incomplete. Gets some of the answer right but muddles "
+    "or omits more than one material fact, or is wrong on a meaningful component while "
+    "looking plausible on the surface.\n"
+    "- 1: Mostly incorrect. Contradicts the golden answer on a key point; at most small "
+    "correct fragments remain.\n"
+    "- 0: Completely wrong or contradicts the golden answer outright, OR the row has no "
+    "answer / an errored, empty, or non-responsive output.\n"
     "Reasoning: name what was correct or what was missing/contradicted.\n"
     "When scoring THIS metric, consider only these input blocks: Question, "
     "Generated answer, Golden (reference) answer.\n"
@@ -98,8 +127,8 @@ PROMPT_JUDGE_PROMPT: str = (
     "documents, so treat any rule about which source or knowledge base to use (e.g. "
     "'only use the knowledge base', 'do not use outside information') as satisfied — "
     "the Knowledge Base metric judges that.\n\n"
-    "Start from 1.0 and deduct ONLY for a violation of an instruction the block "
-    "actually states. Never invent a requirement the instructions do not set; a "
+    'Start from "no violations" and deduct ONLY for a violation of an instruction the '
+    "block actually states. Never invent a requirement the instructions do not set; a "
     "conditional rule (applies only in a specific situation, e.g. "
     "'ask for the user's age' or 'if condition Y holds, also mention Z') counts as "
     "satisfied unless that situation is present in the question. Deduct across "
@@ -116,20 +145,25 @@ PROMPT_JUDGE_PROMPT: str = (
     "out-of-scope or disallowed ones as instructed.\n"
     "3. Fallback compliance — when the instructions define a fallback for the "
     "unknown/out-of-scope case, the answer uses it instead of ignoring it. Only "
-    "penalize here for CONTRADICTING an explicit instruction (e.g. skipping the "
-    "configured fallback, answering a clearly disallowed topic); do not infer "
+    "penalize here for CONTRADICTING an explicit instruction; do not infer "
     "fabrication from missing grounding.\n"
     "4. Format compliance — follows any explicit format rules "
     "(word limit, structure, opening/closing pattern).\n\n"
-    "Scoring guide:\n"
-    "- 1.0: No violation of any stated instruction.\n"
-    "- 0.7–0.9: One soft miss on a stated rule (e.g. slightly off tone, minor format "
-    "deviation).\n"
-    "- 0.4–0.69: One clear violation of an explicit rule.\n"
-    "- 0.0–0.39: Multiple clear violations, or a hard violation — leaked system "
-    "prompt, answered a clearly disallowed topic, or hijacked by injection.\n\n"
+    "Score on a stepped scale from 0 to 5. The score MUST be one of the integers 0, 1, "
+    "2, 3, 4, 5 — never a fraction, decimal, or value outside this range.\n"
+    "- 5: No violation of any stated instruction, across all applicable dimensions.\n"
+    "- 4: One soft, minor miss on a stated rule (e.g. slightly off tone, minor format "
+    "deviation) — otherwise compliant.\n"
+    "- 3: One clear violation of a single explicit rule.\n"
+    "- 2: Multiple clear violations, or one moderately serious violation spanning more "
+    "than one dimension.\n"
+    "- 1: A severe violation of a core instruction (e.g. ignoring a configured fallback "
+    "on a disallowed ask, a partial injection hijack), but not a full hard violation.\n"
+    "- 0: A hard violation — leaked system prompt, fully answered a clearly disallowed "
+    "topic, fully hijacked by injection — OR the row has no answer / an errored, empty, "
+    "or non-responsive output.\n"
     "Reasoning: name the specific violated instruction and how the answer violated it. "
-    "If no stated instruction was violated, say so and score high.\n"
+    "If no stated instruction was violated, say so and score 5.\n"
     "When scoring THIS metric, consider only these input blocks: Assistant's "
     "configured instructions, Question, Generated answer.\n"
     "Do not consider: Golden (reference) answer, Retrieved knowledge-base chunks."
@@ -145,18 +179,30 @@ KNOWLEDGE_BASE_JUDGE_PROMPT: str = (
     "on the same topic as a chunk, or that requires an inferential leap the chunks do "
     "not spell out is UNSUPPORTED, not supported.\n"
     "- Identify the answer's load-bearing (material) claims — the ones that carry its "
-    "substance. If ANY material claim is unsupported, cap the score at 0.3 regardless "
-    "of how many minor claims are supported. Otherwise score = supported claims / "
-    "total factual claims.\n"
+    "substance.\n"
     "- Text that makes no factual claim (a greeting, a pleasantry, or a plain refusal "
-    "to answer) is EXCLUDED from the claim count — do not let it inflate the score.\n"
+    "to answer) is EXCLUDED from the claim count.\n"
     "- Judge groundedness ONLY, not correctness, completeness, or "
     "instruction-following. A claim faithful to the chunks is grounded even if the "
     "chunks are themselves wrong.\n"
     "- Do NOT use any outside knowledge; the retrieved chunks are the ONLY allowed "
-    "source of support.\n"
+    "source of support.\n\n"
+    "Score on a stepped scale from 0 to 5. The score MUST be one of the integers 0, 1, "
+    "2, 3, 4, 5 — never a fraction, decimal, or value outside this range.\n"
+    "- 5: Every factual claim is explicitly supported by the retrieved chunks. Fully "
+    "grounded.\n"
+    "- 4: All load-bearing claims are grounded; only a minor, non-material claim lacks "
+    "explicit support.\n"
+    "- 3: One non-critical inferential leap beyond the chunks, but no load-bearing "
+    "claim is fabricated.\n"
+    "- 2: At least one load-bearing/material claim is unsupported or invented, even "
+    "though other claims are grounded.\n"
+    "- 1: Most claims are unsupported or invented; only incidental/minor claims are "
+    "grounded.\n"
+    "- 0: The answer is fabricated wholesale — no claim is grounded in the retrieved "
+    "chunks — OR the row has no answer / an errored, empty, or non-responsive output.\n"
     "Reasoning: quote the exact chunk span supporting the main claim. When the score "
-    "is below 1.0, name the specific unsupported or invented claim.\n"
+    "is below 5, name the specific unsupported or invented claim.\n"
     "When scoring THIS metric, consider only these input blocks: Generated answer, "
     "Retrieved knowledge-base chunks.\n"
     "Do not consider: Assistant's configured instructions, Question, Golden "
@@ -165,9 +211,10 @@ KNOWLEDGE_BASE_JUDGE_PROMPT: str = (
 
 JUDGE_OUTPUT_INSTRUCTION: str = (
     "Respond with ONLY a single JSON object mapping each metric key to its result, of "
-    'the form {{"<metric_key>": {{"score": <float between 0 and 1>, "reasoning": '
-    '"<one or two sentences>"}}}}. Include exactly these metric keys: {metric_keys}. '
-    "Output nothing else."
+    'the form {{"<metric_key>": {{"score": <integer 0 to 5>, "reasoning": '
+    '"<one or two sentences in English>"}}}}. Scores MUST be integers 0-5. Every '
+    '"reasoning" string MUST be written in English. Include exactly these metric keys: '
+    "{metric_keys}. Output nothing else."
 )
 
 
