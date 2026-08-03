@@ -1129,8 +1129,8 @@ def _stage3_score_and_trace(
             metric_names={spec.key.value: spec.score_name for spec in metrics},
         )
         if overall is not None:
-            # Falls back to 1 (no repetition) if the dataset can't be resolved, so
-            # the summary still generates.
+            # Falls back to 1 (no repetition) if the dataset/metadata can't be
+            # resolved, so the summary still generates.
             dataset = get_dataset_by_id(
                 session=session,
                 dataset_id=eval_run.dataset_id,
