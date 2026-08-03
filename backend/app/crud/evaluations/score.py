@@ -235,8 +235,82 @@ class CategoricalSummaryScore(TypedDict):
 SummaryScore = NumericSummaryScore | CategoricalSummaryScore
 
 
+class OverallDimension(TypedDict):
+    """One judge metric's contribution to the run-level overall score."""
+
+    name: str
+    key: str
+    score: float
+    weight: float
+    delta: float
+    verdict: str
+
+
+class OverallSummary(TypedDict):
+    """Run-level weighted quality view for a v2 judge run.
+
+    `ai_summary` is filled by a best-effort LLM step after the deterministic
+    fields; it stays None when no summary was generated.
+    """
+
+    overall_score: float
+    verdict: str
+    ai_summary: str | None
+    breakdown: list[OverallDimension]
+
+
+def compute_overall_summary(
+    *,
+    metric_avgs: dict[str, float],
+    metric_weights: dict[str, float],
+    metric_names: dict[str, str],
+) -> OverallSummary | None:
+    """Weighted run-level overall score + per-dimension breakdown. No LLM.
+
+    All three dicts are keyed by metric key value. Only metrics present in
+    `metric_avgs` (i.e. that actually scored ≥1 row) count; a metric with no
+    scoreable rows is dropped and the remaining base weights are renormalized to
+    sum to 1, so a missing metric never drags the overall down. Returns None when
+    nothing scored. `ai_summary` is None here — the LLM step fills it later.
+    """
+    scored_keys = [key for key in metric_avgs if key in metric_weights]
+    weight_total = sum(metric_weights[key] for key in scored_keys)
+    if not scored_keys or weight_total <= 0:
+        return None
+
+    renorm_weights = {key: metric_weights[key] / weight_total for key in scored_keys}
+    # Round the overall once, then reuse it everywhere so the badge and the number
+    # (and every delta) are computed from the same value and can never disagree.
+    overall_score = round(
+        sum(renorm_weights[key] * metric_avgs[key] for key in scored_keys), 2
+    )
+    verdict = verdict_from_score(overall_score).value
+
+    breakdown: list[OverallDimension] = []
+    for key in scored_keys:
+        avg = round(metric_avgs[key], 2)
+        breakdown.append(
+            {
+                "name": metric_names.get(key, key),
+                "key": key,
+                "score": avg,
+                "weight": round(renorm_weights[key], 2),
+                "delta": round(avg - overall_score, 2),
+                "verdict": verdict_from_score(avg).value,
+            }
+        )
+
+    return {
+        "overall_score": overall_score,
+        "verdict": verdict,
+        "ai_summary": None,
+        "breakdown": breakdown,
+    }
+
+
 class EvaluationScore(TypedDict):
     """Complete evaluation score data with traces and summary statistics."""
 
     summary_scores: list[SummaryScore]
     traces: list[TraceData]
+    overall: NotRequired[OverallSummary]

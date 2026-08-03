@@ -82,6 +82,7 @@ class JudgeMetricSpec:
     score_name: str
     prompt_fragment: str
     required_inputs: tuple[JudgeInputEnum, ...]
+    weight: float
 
 
 # All metrics are graded by one combined call, so they share a single judge model
@@ -97,6 +98,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.GOLDEN_ANSWER,
         ),
+        weight=0.5,
     ),
     JudgeMetricEnum.PROMPT: JudgeMetricSpec(
         key=JudgeMetricEnum.PROMPT,
@@ -107,6 +109,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.QUESTION,
             JudgeInputEnum.GENERATED_ANSWER,
         ),
+        weight=0.2,
     ),
     JudgeMetricEnum.KNOWLEDGE_BASE: JudgeMetricSpec(
         key=JudgeMetricEnum.KNOWLEDGE_BASE,
@@ -117,6 +120,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.RETRIEVED_CHUNKS,
         ),
+        weight=0.3,
     ),
 }
 
