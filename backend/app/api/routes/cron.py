@@ -129,9 +129,8 @@ async def evaluation_cron_job(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def health_probes_cron_job() -> dict[str, Any]:
-    # Runs synchronously (no Celery task of its own) — the probe rides the
-    # existing LLM_API job pipeline via `start_job`.
-    logger.info("[health_probes_cron_job] Cron job invoked")
+    # Runs synchronously (no Celery task of its own) — the probe makes an
+    # authenticated HTTP call to this app's own `/llm/call` endpoint.
     try:
         result = run_health_probe_tick()
         logger.info(

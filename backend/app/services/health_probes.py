@@ -5,37 +5,27 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+import httpx
 import redis
+import sentry_sdk
 from sentry_sdk.crons import MonitorStatus, capture_checkin
 from sentry_sdk.types import MonitorConfig
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import engine
-from app.crud.jobs import JobCrud
-from app.models.job import JobStatus
-from app.models.llm.constants import CompletionType
-from app.models.llm.request import (
-    AudioContent,
-    AudioInput,
-    ConfigBlob,
-    KaapiCompletionConfig,
-    LLMCallConfig,
-    LLMCallRequest,
-    QueryParams,
-)
-from app.services.llm.jobs import start_job
+from app.models.job import Job, JobStatus
 
 logger = logging.getLogger(__name__)
 
-_PROBE_INPUT = "ping"
+PROBE_INPUT = "ping"
 
 # ~1sec "Hello" clip used as the STT probe's input audio.
-_STT_AUDIO_PATH = (
+STT_AUDIO_PATH = (
     Path(__file__).resolve().parents[1] / "assets" / "health_probe_hello.ogg"
 )
-_STT_AUDIO_MIME = "audio/ogg"
-_stt_audio_b64: str | None = None
+STT_AUDIO_MIME = "audio/ogg"
+stt_audio_cache: dict[str, str | None] = {"value": None}
 
 HEALTH_PROBES_MONITOR_SLUG = "health-probes-cron-job"
 HEALTH_PROBES_MONITOR_CONFIG: MonitorConfig = {
@@ -51,11 +41,11 @@ HEALTH_PROBES_MONITOR_CONFIG: MonitorConfig = {
     "recovery_threshold": 1,
 }
 
-# Rotation state lives in Redis, not a table — no CRUD, no tenant isolation needed.
-_LAST_JOB_ID_KEY = "health_probe:last_job_id"
-_INDEX_KEY = "health_probe:index"
+# Rotation state lives in Redis
+LAST_JOB_ID_KEY = "health_probe:last_job_id"
+INDEX_KEY = "health_probe:index"
 
-_redis_client: redis.Redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client: redis.Redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 Modality = Literal["text", "tts", "stt"]
 
@@ -70,7 +60,7 @@ class Probe:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-_PROBES: list[Probe] = [
+PROBES: list[Probe] = [
     # Text
     Probe(provider="openai", model="gpt-4o-mini", modality="text"),
     Probe(provider="google", model="gemini-2.5-flash", modality="text"),
@@ -84,7 +74,7 @@ _PROBES: list[Probe] = [
         provider="sarvamai",
         model="bulbul:v3",
         modality="tts",
-        params={"language": "en-IN"},
+        params={"voice": "simran", "language": "en-IN"},
     ),
     Probe(
         provider="elevenlabs",
@@ -101,65 +91,87 @@ _PROBES: list[Probe] = [
 ]
 
 
-def _load_stt_audio_b64() -> str:
-    global _stt_audio_b64
-    if _stt_audio_b64 is None:
-        with open(_STT_AUDIO_PATH, "rb") as f:
-            _stt_audio_b64 = base64.b64encode(f.read()).decode("ascii")
-    return _stt_audio_b64
+def load_stt_audio_b64() -> str:
+    if stt_audio_cache["value"] is None:
+        with open(STT_AUDIO_PATH, "rb") as f:
+            stt_audio_cache["value"] = base64.b64encode(f.read()).decode("ascii")
+    return stt_audio_cache["value"]
 
 
-def _build_probe_request(probe: Probe, index: int) -> LLMCallRequest:
-    completion_type = {
-        "text": CompletionType.TEXT,
-        "tts": CompletionType.TTS,
-        "stt": CompletionType.STT,
-    }[probe.modality]
-
-    kaapi_config = KaapiCompletionConfig(
-        provider=probe.provider,
-        type=completion_type,
-        params={"model": probe.model, **probe.params},
-    )
-
+def build_probe_payload(probe: Probe, index: int) -> dict[str, Any]:
     if probe.modality == "stt":
-        query_input: str | AudioInput = AudioInput(
-            content=AudioContent(
-                format="base64",
-                value=_load_stt_audio_b64(),
-                mime_type=_STT_AUDIO_MIME,
-            )
-        )
+        query_input: Any = {
+            "type": "audio",
+            "content": {
+                "format": "base64",
+                "value": load_stt_audio_b64(),
+                "mime_type": STT_AUDIO_MIME,
+            },
+        }
     else:
-        query_input = _PROBE_INPUT
+        query_input = PROBE_INPUT
 
     # No callback_url: the probe reads its result by polling `Job.status` on
     # the next tick, so callback delivery (a best-effort side channel that
     # never affects Job.status) buys nothing here.
-    return LLMCallRequest(
-        query=QueryParams(input=query_input),
-        config=LLMCallConfig(blob=ConfigBlob(completion=kaapi_config)),
-        request_metadata={
+    return {
+        "query": {"input": query_input},
+        "config": {
+            "blob": {
+                "completion": {
+                    "provider": probe.provider,
+                    "type": probe.modality,
+                    "params": {"model": probe.model, **probe.params},
+                }
+            }
+        },
+        "include_provider_raw_response": False,
+        "request_metadata": {
             "health_probe": True,
             "probe_index": index,
             "provider": probe.provider,
             "modality": probe.modality,
             "model": probe.model,
         },
+    }
+
+
+def call_llm_probe(payload: dict[str, Any]) -> UUID:
+    if not settings.HEALTH_PROBE_API_KEY or not settings.HEALTH_PROBE_LLM_CALL_URL:
+        raise RuntimeError(
+            "[call_llm_probe] HEALTH_PROBE_API_KEY and HEALTH_PROBE_LLM_CALL_URL "
+            "must both be set to fire a health probe"
+        )
+
+    headers = {"X-API-KEY": settings.HEALTH_PROBE_API_KEY}
+    response = httpx.post(
+        settings.HEALTH_PROBE_LLM_CALL_URL,
+        json=payload,
+        headers=headers,
+        timeout=30.0,
     )
+    response.raise_for_status()
+    body = response.json()
+    job_id_str = body["data"]["job_id"]
+    return UUID(job_id_str)
 
 
-def _check_previous_probe(project_id: int) -> JobStatus | None:
+def check_previous_probe() -> JobStatus | None:
     # Missing key (first run, Redis eviction) means skip the check-in, not fail the tick.
     try:
-        last_job_id = _redis_client.get(_LAST_JOB_ID_KEY)
+        last_job_id = redis_client.get(LAST_JOB_ID_KEY)
     except redis.RedisError as e:
-        logger.warning(f"[_check_previous_probe] Redis GET failed | error: {e}")
+        logger.warning(f"[check_previous_probe] Redis GET failed | error: {e}")
+        sentry_sdk.capture_exception(e, level="warning")
         return None
 
     if last_job_id is None:
         logger.warning(
-            f"[_check_previous_probe] {_LAST_JOB_ID_KEY} missing — skipping check-in"
+            f"[check_previous_probe] {LAST_JOB_ID_KEY} missing — skipping check-in"
+        )
+        sentry_sdk.capture_message(
+            f"[check_previous_probe] {LAST_JOB_ID_KEY} missing — skipping check-in",
+            level="warning",
         )
         return None
 
@@ -167,21 +179,26 @@ def _check_previous_probe(project_id: int) -> JobStatus | None:
         job_uuid = UUID(str(last_job_id))
     except ValueError as e:
         logger.warning(
-            f"[_check_previous_probe] Malformed job id | value: {last_job_id!r}, error: {e}"
+            f"[check_previous_probe] Malformed job id | value: {last_job_id!r}, error: {e}"
         )
+        sentry_sdk.capture_exception(e, level="warning")
         return None
 
     with Session(engine) as session:
-        job = JobCrud(session=session).get(job_id=job_uuid, project_id=project_id)
+        job = session.get(Job, job_uuid)
 
     if job is None:
-        logger.warning(f"[_check_previous_probe] Job not found | job_id: {last_job_id}")
+        logger.warning(f"[check_previous_probe] Job not found | job_id: {last_job_id}")
+        sentry_sdk.capture_message(
+            f"[check_previous_probe] Job not found | job_id: {last_job_id}",
+            level="warning",
+        )
         return None
 
     return job.status
 
 
-def _capture_previous_result_checkin(previous_status: JobStatus | None) -> None:
+def capture_previous_result_checkin(previous_status: JobStatus | None) -> None:
     if previous_status is None:
         return
     # SUCCESS means the probe actually ran and returned; FAILED or a
@@ -198,62 +215,45 @@ def _capture_previous_result_checkin(previous_status: JobStatus | None) -> None:
     )
 
 
-def _claim_next_probe_index() -> int:
+def claim_next_probe_index() -> int:
     # Redis INCR is atomic, so two overlapping ticks can never claim the same
     # slot (which would fire the same probe twice while skipping another).
     try:
-        count = _redis_client.incr(_INDEX_KEY)
+        count = redis_client.incr(INDEX_KEY)
     except redis.RedisError as e:
-        logger.warning(f"[_claim_next_probe_index] Redis INCR failed | error: {e}")
+        logger.warning(f"[claim_next_probe_index] Redis INCR failed | error: {e}")
+        sentry_sdk.capture_exception(e, level="warning")
         return 0
 
     try:
-        return (int(count) - 1) % len(_PROBES)
-    except (TypeError, ValueError):
-        logger.warning(f"[_claim_next_probe_index] Non-integer index | raw: {count!r}")
+        return (int(count) - 1) % len(PROBES)
+    except (TypeError, ValueError) as e:
+        logger.warning(f"[claim_next_probe_index] Non-integer index | raw: {count!r}")
+        sentry_sdk.capture_exception(e, level="warning")
         return 0
 
 
-def _store_last_job_id(job_id: UUID) -> None:
+def store_last_job_id(job_id: UUID) -> None:
     try:
-        _redis_client.set(_LAST_JOB_ID_KEY, str(job_id))
+        redis_client.set(LAST_JOB_ID_KEY, str(job_id))
     except redis.RedisError as e:
         logger.error(
-            f"[_store_last_job_id] Redis SET failed | job_id: {job_id}, error: {e}"
+            f"[store_last_job_id] Redis SET failed | job_id: {job_id}, error: {e}"
         )
+        sentry_sdk.capture_exception(e)
 
 
 def run_health_probe_tick() -> dict[str, Any]:
-    """Check the previous probe's result, then fire the next one round-robin."""
-    org_id = settings.HEALTH_PROBE_ORG_ID
-    project_id = settings.HEALTH_PROBE_PROJECT_ID
-    if org_id is None or project_id is None:
-        logger.warning(
-            "[run_health_probe_tick] Health probe org/project not configured — skipping"
-        )
-        return {
-            "enqueued": False,
-            "job_id": None,
-            "probe_index": None,
-            "previous_job_status": None,
-        }
+    previous_status = check_previous_probe()
+    capture_previous_result_checkin(previous_status)
 
-    previous_status = _check_previous_probe(project_id)
-    _capture_previous_result_checkin(previous_status)
+    index = claim_next_probe_index()
+    probe = PROBES[index]
+    payload = build_probe_payload(probe, index)
 
-    index = _claim_next_probe_index()
-    probe = _PROBES[index]
-    request = _build_probe_request(probe, index)
+    job_id = call_llm_probe(payload)
 
-    with Session(engine) as session:
-        job_id = start_job(
-            db=session,
-            request=request,
-            project_id=project_id,
-            organization_id=org_id,
-        )
-
-    _store_last_job_id(job_id)
+    store_last_job_id(job_id)
 
     logger.info(
         f"[run_health_probe_tick] Fired probe | provider: {probe.provider}, "
