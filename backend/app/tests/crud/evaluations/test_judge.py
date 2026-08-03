@@ -1,7 +1,7 @@
 """Unit tests for the native LLM-as-judge scoring primitives (`crud/evaluations/judge.py`).
 
 Covers the ground-truth and adherence-to-prompt judge slices of the three-metric
-SRD: FR-2 (score in [0,1] + reasoning), FR-3 (ground truth judged against the
+SRD: FR-2 (integer 0–5 score + reasoning), FR-3 (ground truth judged against the
 golden answer), FR-9 (zero-config default prompt), FR-15 (malformed → raises so
 the row isolates), plus the per-row gating that drops a metric whose inputs the row
 cannot supply. The single external boundary — the OpenAI judge completion — is
@@ -66,24 +66,36 @@ class TestParseJudgeOutput:
     def test_parses_well_formed_ground_truth(self) -> None:
         specs = _ALL_METRICS
         result = _parse_judge_output(
-            json.dumps(
-                {"ground_truth": {"score": 0.75, "reasoning": "close paraphrase"}}
-            ),
+            json.dumps({"ground_truth": {"score": 4, "reasoning": "close paraphrase"}}),
             specs,
         )
         assert set(result) == {JudgeMetricEnum.GROUND_TRUTH}
         score = result[JudgeMetricEnum.GROUND_TRUTH]
-        assert score.score == 0.75
+        assert score.score == 4
         assert score.reasoning == "close paraphrase"
 
     def test_extracts_json_from_prose_wrapper(self) -> None:
         specs = _ALL_METRICS
         wrapped = (
-            'Here is my grade:\n{"ground_truth": {"score": 0.4, "reasoning": '
+            'Here is my grade:\n{"ground_truth": {"score": 2, "reasoning": '
             '"missing a key fact"}}\nThanks.'
         )
         result = _parse_judge_output(wrapped, specs)
-        assert result[JudgeMetricEnum.GROUND_TRUTH].score == 0.4
+        assert result[JudgeMetricEnum.GROUND_TRUTH].score == 2
+
+    def test_integer_score_accepted_fraction_rejected(self) -> None:
+        # 0–5 is a stepped integer scale: an in-range integer parses, a fraction that
+        # was legal on the old 0–1 scale is now rejected.
+        result = _parse_judge_output(
+            json.dumps({"ground_truth": {"score": 4, "reasoning": "ok"}}),
+            _ALL_METRICS,
+        )
+        assert result[JudgeMetricEnum.GROUND_TRUTH].score == 4
+        with pytest.raises(ValueError, match="integer 0-5"):
+            _parse_judge_output(
+                json.dumps({"ground_truth": {"score": 0.5, "reasoning": "x"}}),
+                _ALL_METRICS,
+            )
 
     def test_drops_only_the_missing_metric_when_others_present(self) -> None:
         # Grade against two specs (ground_truth + a synthetic sibling); a reply that
@@ -93,7 +105,7 @@ class TestParseJudgeOutput:
         sibling = replace(gt_spec, key=sibling_key)
 
         result = _parse_judge_output(
-            json.dumps({"ground_truth": {"score": 0.9, "reasoning": "correct"}}),
+            json.dumps({"ground_truth": {"score": 5, "reasoning": "correct"}}),
             [gt_spec, sibling],
         )
         assert list(result) == [JudgeMetricEnum.GROUND_TRUTH]
@@ -102,9 +114,9 @@ class TestParseJudgeOutput:
         result = _parse_judge_output(
             json.dumps(
                 {
-                    "ground_truth": {"score": 0.8, "reasoning": "same facts"},
+                    "ground_truth": {"score": 4, "reasoning": "same facts"},
                     "knowledge_base": {
-                        "score": 0.6,
+                        "score": 3,
                         "reasoning": "one unsupported claim",
                     },
                 }
@@ -115,13 +127,13 @@ class TestParseJudgeOutput:
             JudgeMetricEnum.GROUND_TRUTH,
             JudgeMetricEnum.KNOWLEDGE_BASE,
         }
-        assert result[JudgeMetricEnum.KNOWLEDGE_BASE].score == 0.6
+        assert result[JudgeMetricEnum.KNOWLEDGE_BASE].score == 3
 
     def test_missing_knowledge_base_leaves_only_ground_truth(self) -> None:
         # Both metrics requested but the reply omits knowledge_base: that metric is
         # silently unscoreable for the row — no raise, ground_truth still parsed.
         result = _parse_judge_output(
-            json.dumps({"ground_truth": {"score": 0.9, "reasoning": "correct"}}),
+            json.dumps({"ground_truth": {"score": 5, "reasoning": "correct"}}),
             [_GROUND_TRUTH_SPEC, _KNOWLEDGE_BASE_SPEC],
         )
         assert set(result) == {JudgeMetricEnum.GROUND_TRUTH}
@@ -129,7 +141,7 @@ class TestParseJudgeOutput:
     def test_raises_when_no_enabled_metric_scored(self) -> None:
         specs = _ALL_METRICS
         with pytest.raises(ValueError, match="scored no enabled metric"):
-            _parse_judge_output(json.dumps({"unrelated": {"score": 0.5}}), specs)
+            _parse_judge_output(json.dumps({"unrelated": {"score": 3}}), specs)
 
     def test_raises_on_empty_response(self) -> None:
         with pytest.raises(ValueError, match="empty judge response"):
@@ -139,17 +151,18 @@ class TestParseJudgeOutput:
         with pytest.raises(ValueError, match="no JSON object"):
             _parse_judge_output("the answer is basically fine", _ALL_METRICS)
 
-    def test_raises_on_score_out_of_range(self) -> None:
-        with pytest.raises(ValueError, match="out of .0, 1."):
+    @pytest.mark.parametrize("bad_score", [6, -1])
+    def test_raises_on_score_out_of_range(self, bad_score: int) -> None:
+        with pytest.raises(ValueError, match="integer 0-5"):
             _parse_judge_output(
-                json.dumps({"ground_truth": {"score": 1.4, "reasoning": "x"}}),
+                json.dumps({"ground_truth": {"score": bad_score, "reasoning": "x"}}),
                 _ALL_METRICS,
             )
 
     def test_raises_on_empty_reasoning(self) -> None:
         with pytest.raises(ValueError, match="empty 'reasoning'"):
             _parse_judge_output(
-                json.dumps({"ground_truth": {"score": 0.8, "reasoning": "  "}}),
+                json.dumps({"ground_truth": {"score": 4, "reasoning": "  "}}),
                 _ALL_METRICS,
             )
 
@@ -319,7 +332,7 @@ class TestJudgeRow:
         with patch(
             "app.crud.evaluations.judge._create_judge_response",
             return_value=_judge_response(
-                {"ground_truth": {"score": 0.9, "reasoning": "same meaning"}}
+                {"ground_truth": {"score": 5, "reasoning": "same meaning"}}
             ),
         ):
             result = judge_row(
@@ -330,7 +343,7 @@ class TestJudgeRow:
             )
 
         assert result.metrics[JudgeMetricEnum.GROUND_TRUTH] == MetricScore(
-            score=0.9, reasoning="same meaning"
+            score=5, reasoning="same meaning"
         )
         assert result.usage == {
             "input_tokens": 15,
@@ -343,7 +356,7 @@ class TestJudgeRow:
 
         def _capture(_client, params):
             captured.update(params)
-            return _judge_response({"ground_truth": {"score": 0.9, "reasoning": "ok"}})
+            return _judge_response({"ground_truth": {"score": 5, "reasoning": "ok"}})
 
         with patch(
             "app.crud.evaluations.judge._create_judge_response", side_effect=_capture
@@ -367,8 +380,8 @@ class TestJudgeRow:
             "app.crud.evaluations.judge._create_judge_response",
             return_value=_judge_response(
                 {
-                    "ground_truth": {"score": 0.8, "reasoning": "gt"},
-                    "knowledge_base": {"score": 0.7, "reasoning": "kb"},
+                    "ground_truth": {"score": 4, "reasoning": "gt"},
+                    "knowledge_base": {"score": 3, "reasoning": "kb"},
                 }
             ),
         ):
@@ -386,7 +399,7 @@ class TestJudgeRow:
             JudgeMetricEnum.GROUND_TRUTH,
             JudgeMetricEnum.KNOWLEDGE_BASE,
         }
-        assert result.metrics[JudgeMetricEnum.KNOWLEDGE_BASE].score == 0.7
+        assert result.metrics[JudgeMetricEnum.KNOWLEDGE_BASE].score == 3
 
     def test_chunkless_prompt_is_byte_identical_to_ground_truth_only(
         self, db: Session
@@ -396,7 +409,7 @@ class TestJudgeRow:
 
         def _capture(_client, params):
             captured.update(params)
-            return _judge_response({"ground_truth": {"score": 0.5, "reasoning": "x"}})
+            return _judge_response({"ground_truth": {"score": 3, "reasoning": "x"}})
 
         with patch(
             "app.crud.evaluations.judge._create_judge_response", side_effect=_capture
@@ -421,7 +434,7 @@ class TestJudgeRow:
         def _capture(_client, params):
             captured.update(params)
             return _judge_response(
-                {"ground_truth": {"score": 0.5, "reasoning": "partial"}}
+                {"ground_truth": {"score": 3, "reasoning": "partial"}}
             )
 
         with patch(
