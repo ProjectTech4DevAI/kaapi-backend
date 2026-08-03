@@ -42,7 +42,9 @@ class TextLLMParams(SQLModel):
         default=None,
         description="Reasoning configuration or instructions",
     )
-    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = Field(
+    effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max"
+    ] | None = Field(
         default=None,
         description="Model-specific reasoning effort setting for reasoning-capable models",
     )
