@@ -87,6 +87,15 @@ ai-cli = "app.cli.main:cli"
 strict = true
 exclude = ["venv", ".venv", "alembic"]
 
+[tool.pyright]
+include = ["app"]
+exclude = ["**/__pycache__", ".venv", "venv", "app/alembic"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+# Resolve project deps from the local venv (pyright runs in an isolated uvx env).
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 target-version = "py312"
 exclude = ["alembic"]
