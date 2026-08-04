@@ -322,6 +322,33 @@ class TestGoogleVertexAIProvider:
 
 
 # ---------------------------------------------------------------------------
+# TTS payload shape — not routing-dependent, kept unskipped for coverage.
+# ---------------------------------------------------------------------------
+def test_tts_wraps_input_in_transcript_tags():
+    client = VertexClient(
+        api_key="k",
+        project_id="p",
+        location="us-central1",
+        sa_info={"type": "service_account", "project_id": "p"},
+        gcs_bucket="test-bucket",
+    )
+    provider = GoogleVertexAIProvider(client=client)
+    config = NativeCompletionConfig(
+        provider="google-native",
+        type=CompletionType.TTS,
+        params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+    )
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ) as mock_post:
+        provider.execute(config, QueryParams(input="ignored"), "Say this text")
+
+    parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+    assert parts[0]["text"] == "<transcript>Say this text</transcript>"
+
+
+# ---------------------------------------------------------------------------
 # VertexClient.endpoint — host changes by location
 # ---------------------------------------------------------------------------
 class TestVertexEndpoint:

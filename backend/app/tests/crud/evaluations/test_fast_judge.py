@@ -2,7 +2,7 @@
 
 Drives the ground-truth + adherence-to-prompt slices of the three-metric SRD
 through the real fast pipeline with a judged run (`is_judge_run=True`,
-`langfuse=None` as v2 dispatches): FR-2 (trace scores in [0,1] + reasoning), FR-9
+`langfuse=None` as v2 dispatches): FR-2 (integer 0–5 trace scores + reasoning), FR-9
 (zero-config uses the fallback model + built-in prompts), FR-14 (run-level summary
 scores + per-row scores on the trace records), FR-15 (per-row isolation), FR-16
 (judge cost stage), FR-18 (v1 never judges).
@@ -43,6 +43,7 @@ from app.crud.evaluations.score import (
     JUDGE_FAILED_REASON,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
+    verdict_from_score,
 )
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
@@ -167,8 +168,8 @@ def _judge_response(score: float, reasoning: str, *, usage=(12, 6, 18)):
 
 def _both_metrics_response(
     *,
-    ground_truth: tuple[float, str] = (0.8, "conveys the same facts"),
-    prompt: tuple[float, str] = (0.6, "answered in the wrong language"),
+    ground_truth: tuple[float, str] = (4, "conveys the same facts"),
+    prompt: tuple[float, str] = (3, "answered in the wrong language"),
     usage=(12, 6, 18),
 ):
     gt_score, gt_reason = ground_truth
@@ -189,6 +190,17 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
         output=[],
         usage=SimpleNamespace(input_tokens=i, output_tokens=o, total_tokens=t),
     )
+
+
+# Default plain-text stub for the best-effort run-level AI summary. It rides a
+# separate `responses.create` call (the judge is patched at _create_judge_response,
+# so it never reaches this mock). A bare MagicMock output would poison the score
+# JSONB, so every judged run's summary boundary is stubbed with a real string.
+DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
+
+
+def _summary_response(text: str):
+    return SimpleNamespace(output_text=text, output=[])
 
 
 @pytest.fixture
@@ -239,7 +251,12 @@ def _seed_chunk(
 def _persist_score_into(db: Session):
     def _fake_save_score(*, eval_run_id, score, **_):
         run = db.get(EvaluationRun, eval_run_id)
-        run.score = {"summary_scores": score["summary_scores"]}
+        # Mirror save_score's S3 path: traces go to S3, the DB score keeps the
+        # summary plus the run-level overall (when present).
+        db_score: dict[str, Any] = {"summary_scores": score["summary_scores"]}
+        if score.get("overall") is not None:
+            db_score["overall"] = score["overall"]
+        run.score = db_score
         run.score_trace_url = f"s3://bucket/traces_{eval_run_id}.json"
         db.add(run)
         db.commit()
@@ -255,6 +272,7 @@ def _run_pipeline(
     eval_run: EvaluationRun,
     judge_side_effect,
     mock_cost: bool = False,
+    summary_side_effect=None,
 ) -> tuple[EvaluationRun, MagicMock]:
     """Run `run_fast_evaluation` for a judged run with all externals stubbed.
 
@@ -262,9 +280,19 @@ def _run_pipeline(
     key by item_id. The judge completion is driven by `judge_side_effect(params)`.
     Returns the run plus the OpenAI mock so callers can assert the embedding path
     was (v1) or was not (v2 judge) exercised.
+
+    The run-level AI summary is a separate `responses.create` call; by default it
+    returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an exception) to
+    drive the best-effort failure path.
     """
     fake_openai = MagicMock()
     fake_openai.embeddings.create.return_value = _fake_embedding_response()
+    if summary_side_effect is not None:
+        fake_openai.responses.create.side_effect = summary_side_effect
+    else:
+        fake_openai.responses.create.return_value = _summary_response(
+            DEFAULT_RUN_SUMMARY
+        )
 
     def _judge(_client, params):
         return judge_side_effect(params)
@@ -354,7 +382,7 @@ class TestGroundTruthScoring:
         result, fake_openai = _run_pipeline(
             db=db,
             eval_run=eval_run,
-            judge_side_effect=lambda _p: _judge_response(0.8, "conveys the same facts"),
+            judge_side_effect=lambda _p: _judge_response(4, "conveys the same facts"),
         )
 
         assert result.status == "completed"
@@ -367,8 +395,8 @@ class TestGroundTruthScoring:
             gt = _score_named(traces[ref], GROUND_TRUTH_SCORE_NAME)
             assert _score_named(traces[ref], COSINE_SCORE_NAME) is None
             assert gt is not None
-            assert 0.0 <= gt["value"] <= 1.0
-            assert gt["value"] == pytest.approx(0.8, abs=0.01)
+            assert 0 <= gt["value"] <= 5
+            assert gt["value"] == 4
             assert gt["comment"] == "conveys the same facts"
 
         summary_names = {s["name"] for s in result.score["summary_scores"]}
@@ -379,12 +407,12 @@ class TestGroundTruthScoring:
             for s in result.score["summary_scores"]
             if s["name"] == GROUND_TRUTH_SCORE_NAME
         )
-        assert gt_summary["avg"] == pytest.approx(0.8, abs=0.01)
+        assert gt_summary["avg"] == pytest.approx(4, abs=0.01)
         assert gt_summary["total_pairs"] == 2
 
         assert _metric_values(result, GROUND_TRUTH_SCORE_NAME) == {
-            "item-1": 0.8,
-            "item-2": 0.8,
+            "item-1": 4,
+            "item-2": 4,
         }
 
         run = db.get(EvaluationRun, result.id)
@@ -408,7 +436,7 @@ class TestGroundTruthScoring:
 
         def _capture(params):
             captured.update(params)
-            return _judge_response(0.6, "partially correct")
+            return _judge_response(3, "partially correct")
 
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_capture)
 
@@ -441,7 +469,7 @@ class TestGroundTruthScoring:
         def _judge(params):
             if "Q-bad" in params["input"]:
                 return _raw_judge_response("totally not json")
-            return _judge_response(0.9, "correct")
+            return _judge_response(5, "correct")
 
         result, fake_openai = _run_pipeline(
             db=db, eval_run=eval_run, judge_side_effect=_judge
@@ -485,9 +513,7 @@ class TestGroundTruthScoring:
         result, _ = _run_pipeline(
             db=db,
             eval_run=eval_run,
-            judge_side_effect=lambda _p: _judge_response(
-                0.7, "close", usage=(12, 6, 18)
-            ),
+            judge_side_effect=lambda _p: _judge_response(3, "close", usage=(12, 6, 18)),
             mock_cost=True,
         )
 
@@ -544,7 +570,7 @@ class TestAdherenceToPromptScoring:
         for ref in ("item-1", "item-2"):
             prompt_score = _score_named(traces[ref], PROMPT_SCORE_NAME)
             assert prompt_score is not None
-            assert prompt_score["value"] == pytest.approx(0.6, abs=0.01)
+            assert prompt_score["value"] == 3
             assert prompt_score["comment"] == "answered in the wrong language"
             assert _score_named(traces[ref], GROUND_TRUTH_SCORE_NAME) is not None
 
@@ -608,7 +634,7 @@ class TestAdherenceToPromptScoring:
             db=db,
             eval_run=eval_run,
             judge_side_effect=lambda _p: _both_metrics_response(
-                ground_truth=(0.9, "same facts"), prompt=(0.25, "answered in English")
+                ground_truth=(5, "same facts"), prompt=(1, "answered in English")
             ),
         )
 
@@ -617,14 +643,15 @@ class TestAdherenceToPromptScoring:
             prompt_score = _score_named(traces[ref], PROMPT_SCORE_NAME)
             assert prompt_score == {
                 "name": PROMPT_SCORE_NAME,
-                "value": 0.25,
+                "value": 1,
                 "data_type": "NUMERIC",
                 "comment": "answered in English",
+                "verdict": "Needs Improvement",
             }
-            assert _score_named(traces[ref], GROUND_TRUTH_SCORE_NAME)["value"] == 0.9
+            assert _score_named(traces[ref], GROUND_TRUTH_SCORE_NAME)["value"] == 5
 
         prompt_summary = _summary_named(result, PROMPT_SCORE_NAME)
-        assert prompt_summary["avg"] == 0.25
+        assert prompt_summary["avg"] == 1
         assert prompt_summary["total_pairs"] == 2
 
     def test_prompt_template_is_appended_to_the_config_prompt_block(
@@ -707,7 +734,7 @@ class TestPromptMetricUnscoreable:
 
         trace = _trace_by_ref(result)["item-1"]
         assert _score_named(trace, PROMPT_SCORE_NAME) is None
-        assert _score_named(trace, GROUND_TRUTH_SCORE_NAME)["value"] == 0.8
+        assert _score_named(trace, GROUND_TRUTH_SCORE_NAME)["value"] == 4
 
     def test_config_without_instructions_drops_the_prompt_metric(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
@@ -729,8 +756,10 @@ class TestPromptMetricUnscoreable:
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
 
         self._assert_only_ground_truth_scored(result)
-        # The dropped metric leaves no trace in the judge request either.
-        assert "Adherence to Prompt" not in captured["instructions"]
+        # The dropped metric's rubric fragment (uniquely marked by its score key)
+        # leaves no trace in the judge request. The shared preamble still names the
+        # metric in passing, so match the fragment marker, not the bare label.
+        assert '(score key "prompt")' not in captured["instructions"]
         assert "Assistant's configured instructions" not in captured["input"]
 
     def test_empty_instructions_drop_the_prompt_metric(
@@ -807,7 +836,7 @@ class TestV1PipelineUnchanged:
 
         def _judge(params):
             judge_calls.append(params)
-            return _judge_response(0.9, "should never run")
+            return _judge_response(5, "should never run")
 
         result, fake_openai = _run_pipeline(
             db=db, eval_run=eval_run, judge_side_effect=_judge
@@ -831,6 +860,135 @@ class TestV1PipelineUnchanged:
         assert GROUND_TRUTH_SCORE_NAME not in summary_names
         assert PROMPT_SCORE_NAME not in summary_names
         assert COSINE_SCORE_NAME in summary_names
+
+
+class TestRunOverallSummary:
+    """The run-level weighted overall rides the v2 judge run's score."""
+
+    def _seed_all_three_metrics_run(
+        self, *, db: Session, user_api_key: TestAuthContext, store
+    ) -> EvaluationRun:
+        # Instructions enable the prompt metric; retrieved chunks enable KB; so a
+        # single judged row scores all three metrics.
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=True,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting chunk", "filename": "kb.pdf"}
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=store)
+        return eval_run
+
+    def _all_three_judge(self, _params):
+        return _raw_judge_response(
+            json.dumps(
+                {
+                    "ground_truth": {"score": 4, "reasoning": "gt"},
+                    "prompt": {"score": 2, "reasoning": "p"},
+                    "knowledge_base": {"score": 3, "reasoning": "kb"},
+                }
+            )
+        )
+
+    def test_judged_run_overall_matches_metric_averages(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db, eval_run=eval_run, judge_side_effect=self._all_three_judge
+        )
+
+        assert result.status == "completed"
+        overall = result.score["overall"]
+        # 4*0.5 + 3*0.3 + 2*0.2 = 2.0 + 0.9 + 0.4 = 3.3.
+        assert overall["overall_score"] == 3.3
+        assert overall["verdict"] == "Needs Refinement"
+        # The successful summary boundary flows into ai_summary.
+        assert overall["ai_summary"] == DEFAULT_RUN_SUMMARY
+
+        # Each breakdown dimension mirrors its run-level summary average.
+        summary_avgs = {
+            s["name"]: s["avg"] for s in result.score["summary_scores"] if "avg" in s
+        }
+        breakdown_by_name = {dim["name"]: dim for dim in overall["breakdown"]}
+        assert set(breakdown_by_name) == set(summary_avgs)
+        for name, avg in summary_avgs.items():
+            assert breakdown_by_name[name]["score"] == round(avg, 2)
+
+    def test_summary_failure_leaves_overall_intact_with_null_ai_summary(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_side_effect=RuntimeError("summary provider down"),
+        )
+
+        # The run still completes and the deterministic overall survives whole —
+        # only the best-effort ai_summary is lost.
+        assert result.status == "completed"
+        overall = result.score["overall"]
+        assert overall["ai_summary"] is None
+        assert overall["overall_score"] == 3.3
+        assert overall["verdict"] == "Needs Refinement"
+        assert len(overall["breakdown"]) == 3
+
+    def test_overall_survives_into_the_persisted_db_score(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """Re-fetch the run: save_score's S3 path must keep the overall in the DB
+        score column, not clobber it with the summary alone."""
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        result, _ = _run_pipeline(
+            db=db, eval_run=eval_run, judge_side_effect=self._all_three_judge
+        )
+
+        db.expire_all()
+        persisted = db.get(EvaluationRun, result.id).score["overall"]
+        assert persisted["overall_score"] == 3.3
+        assert persisted["verdict"] == "Needs Refinement"
+        assert {dim["key"] for dim in persisted["breakdown"]} == {
+            "ground_truth",
+            "prompt",
+            "knowledge_base",
+        }
+
+    def test_v1_run_has_no_overall_in_score(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=False,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[_resp_result("item-1", "Q1", "golden-1")],
+            store=_s3_store,
+        )
+
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _judge_response(5, "never runs"),
+        )
+
+        assert result.status == "completed"
+        assert "overall" not in result.score
 
 
 def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
@@ -926,12 +1084,12 @@ class TestKnowledgeBaseScoring:
                 return _raw_judge_response(
                     json.dumps(
                         {
-                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
-                            "knowledge_base": {"score": 0.6, "reasoning": "kb"},
+                            "ground_truth": {"score": 4, "reasoning": "gt"},
+                            "knowledge_base": {"score": 3, "reasoning": "kb"},
                         }
                     )
                 )
-            return _judge_response(0.9, "gt only")
+            return _judge_response(5, "gt only")
 
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
 
@@ -941,7 +1099,7 @@ class TestKnowledgeBaseScoring:
         traces = _trace_by_ref(result)
         kb_chunked = _score_named(traces["item-chunked"], KNOWLEDGE_BASE_SCORE_NAME)
         assert kb_chunked is not None
-        assert kb_chunked["value"] == 0.6
+        assert kb_chunked["value"] == 3
 
         # The judged-but-chunkless row surfaces a human N/A placeholder that stays out
         # of the summary avg (it is not a numeric 0).
@@ -969,18 +1127,18 @@ class TestKnowledgeBaseScoring:
                 return _raw_judge_response(
                     json.dumps(
                         {
-                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
-                            "knowledge_base": {"score": 0.7, "reasoning": "grounded"},
+                            "ground_truth": {"score": 4, "reasoning": "gt"},
+                            "knowledge_base": {"score": 3, "reasoning": "grounded"},
                         }
                     )
                 )
-            return _judge_response(0.9, "gt only")
+            return _judge_response(5, "gt only")
 
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
 
         kb = _score_named(_trace_by_ref(result)["item-1"], KNOWLEDGE_BASE_SCORE_NAME)
         assert kb["data_type"] == "NUMERIC"
-        assert kb["value"] == 0.7
+        assert kb["value"] == 3
         # No relevance gate: every retrieved chunk names a match, low scores included.
         assert (
             kb["comment"]
@@ -1004,18 +1162,18 @@ class TestKnowledgeBaseScoring:
                 return _raw_judge_response(
                     json.dumps(
                         {
-                            "ground_truth": {"score": 0.9, "reasoning": "gt"},
-                            "knowledge_base": {"score": 0.6, "reasoning": "partial"},
+                            "ground_truth": {"score": 5, "reasoning": "gt"},
+                            "knowledge_base": {"score": 3, "reasoning": "partial"},
                         }
                     )
                 )
-            return _judge_response(0.9, "gt only")
+            return _judge_response(5, "gt only")
 
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
 
         kb = _score_named(_trace_by_ref(result)["item-1"], KNOWLEDGE_BASE_SCORE_NAME)
         assert kb["data_type"] == "NUMERIC"
-        assert kb["value"] == 0.6
+        assert kb["value"] == 3
         assert kb["comment"] == "partial | Top matches: a.pdf (55.0%), b.pdf (30.0%)"
 
     def test_kb_na_placeholder_stays_out_of_summary_avg(
@@ -1037,12 +1195,12 @@ class TestKnowledgeBaseScoring:
                 return _raw_judge_response(
                     json.dumps(
                         {
-                            "ground_truth": {"score": 0.8, "reasoning": "gt"},
-                            "knowledge_base": {"score": 0.6, "reasoning": "grounded"},
+                            "ground_truth": {"score": 4, "reasoning": "gt"},
+                            "knowledge_base": {"score": 3, "reasoning": "grounded"},
                         }
                     )
                 )
-            return _judge_response(0.9, "gt only")
+            return _judge_response(5, "gt only")
 
         result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
 
@@ -1051,8 +1209,8 @@ class TestKnowledgeBaseScoring:
             for s in result.score["summary_scores"]
             if s["name"] == KNOWLEDGE_BASE_SCORE_NAME
         )
-        # Only item-scored (0.6) is a real KB score; the N/A row never enters the avg.
-        assert kb_summary["avg"] == 0.6
+        # Only item-scored (3) is a real KB score; the N/A row never enters the avg.
+        assert kb_summary["avg"] == 3
         assert kb_summary["total_pairs"] == 1
 
     def test_non_kb_metric_none_is_skipped_not_placeholdered(
@@ -1072,7 +1230,7 @@ class TestKnowledgeBaseScoring:
             db=db,
             eval_run=eval_run,
             judge_side_effect=lambda _p: _raw_judge_response(
-                json.dumps({"knowledge_base": {"score": 0.7, "reasoning": "grounded"}})
+                json.dumps({"knowledge_base": {"score": 3, "reasoning": "grounded"}})
             ),
         )
 
@@ -1080,6 +1238,107 @@ class TestKnowledgeBaseScoring:
         assert _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME) is not None
         # No ground_truth score is emitted — not even an N/A placeholder.
         assert _score_named(trace, GROUND_TRUTH_SCORE_NAME) is None
+
+
+class TestVerdictBandOnTraceScores:
+    """each scored judge metric on a v2 trace carries a verdict band;
+    the cosine (v1) score and the KB N/A placeholder never do."""
+
+    def test_each_scored_judge_metric_carries_its_verdict_band(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=True,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        row = _resp_result("item-1", "Q1", "golden-1")
+        row["retrieved_chunks"] = [
+            {"score": 0.9, "text": "supporting", "filename": "kb.pdf"}
+        ]
+        _seed_chunk(db=db, eval_run=eval_run, results=[row], store=_s3_store)
+
+        # One score per band: 1 → Needs Improvement, 3 → Needs Refinement,
+        # 5 → Good, so the three metrics land in three different bands.
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _raw_judge_response(
+                json.dumps(
+                    {
+                        "ground_truth": {"score": 1, "reasoning": "gt"},
+                        "prompt": {"score": 3, "reasoning": "p"},
+                        "knowledge_base": {"score": 5, "reasoning": "kb"},
+                    }
+                )
+            ),
+        )
+
+        trace = _trace_by_ref(result)["item-1"]
+        gt = _score_named(trace, GROUND_TRUTH_SCORE_NAME)
+        prompt = _score_named(trace, PROMPT_SCORE_NAME)
+        kb = _score_named(trace, KNOWLEDGE_BASE_SCORE_NAME)
+
+        assert gt["verdict"] == "Needs Improvement"
+        assert prompt["verdict"] == "Needs Refinement"
+        assert kb["verdict"] == "Good"
+
+        for score in (gt, prompt, kb):
+            assert score["verdict"] == verdict_from_score(score["value"])
+
+    def test_cosine_score_carries_no_verdict(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(
+            db=db,
+            user_api_key=user_api_key,
+            is_judge_run=False,
+            instructions=BOT_INSTRUCTIONS,
+        )
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[_resp_result("item-1", "Q1", "golden-1")],
+            store=_s3_store,
+        )
+
+        result, _ = _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=lambda _p: _judge_response(5, "never runs"),
+        )
+
+        cosine = _score_named(_trace_by_ref(result)["item-1"], COSINE_SCORE_NAME)
+        assert cosine is not None
+        assert "verdict" not in cosine
+
+    def test_kb_na_placeholder_carries_no_verdict(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        plain = _resp_result("item-plain", "Q1", "golden-1")  # no retrieved_chunks
+        _seed_chunk(db=db, eval_run=eval_run, results=[plain], store=_s3_store)
+
+        def _judge(params):
+            if KNOWLEDGE_BASE_SCORE_NAME in params["instructions"]:
+                return _raw_judge_response(
+                    json.dumps(
+                        {
+                            "ground_truth": {"score": 4, "reasoning": "gt"},
+                            "knowledge_base": {"score": 3, "reasoning": "kb"},
+                        }
+                    )
+                )
+            return _judge_response(4, "gt only")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        kb = _score_named(
+            _trace_by_ref(result)["item-plain"], KNOWLEDGE_BASE_SCORE_NAME
+        )
+        assert kb["value"] == "N/A"
+        assert "verdict" not in kb
 
 
 class TestFormatTopKbMatches:
