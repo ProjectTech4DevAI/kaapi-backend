@@ -3,7 +3,7 @@ body with Kaapi's native LLM-as-Judge built in — v1 is left unchanged.
 
 v2 runs are **always fast** and always judged (there is no `run_mode`; batch is
 deferred to a later phase). Every scoreable row is automatically judged (no opt-in
-flag) by one combined LLM-judge call scoring each applicable metric in [0, 1] with
+flag) by one combined LLM-judge call scoring each applicable metric on an integer 0–5 scale with
 reasoning: **Adherence to Ground Truth** (answer conveys the same correct
 information as the golden answer), **Adherence to Prompt** (answer obeys the
 assistant's configured instructions; applies only when the run resolves a config

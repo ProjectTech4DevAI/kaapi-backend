@@ -18,16 +18,16 @@ from app.services.evaluations.evaluation import (
 # A v2 judge run's deterministic run-level overall — not trace-derived, so the
 # trace-merge reconstructions must preserve it rather than rebuild it away.
 _OVERALL_BLOCK = {
-    "overall_score": 0.66,
-    "verdict": "Good",
+    "overall_score": 3.3,
+    "verdict": "Needs Refinement",
     "ai_summary": "The run performed well overall.",
     "breakdown": [
         {
             "name": "Adherence to Ground Truth",
             "key": "ground_truth",
-            "score": 0.8,
+            "score": 4,
             "weight": 0.5,
-            "delta": 0.14,
+            "delta": 0.7,
             "verdict": "Good",
         }
     ],
@@ -200,7 +200,7 @@ class TestGetEvaluationWithScoresS3:
             id=200,
             status="completed",
             score={
-                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 0.8}],
+                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 4}],
                 "overall": _OVERALL_BLOCK,
             },
             score_trace_url="s3://bucket/traces.json",
@@ -223,8 +223,8 @@ class TestGetEvaluationWithScoresS3:
         assert error is None
         assert result.score["traces"] == [{"trace_id": "t1"}]
         overall = result.score["overall"]
-        assert overall["overall_score"] == 0.66
-        assert overall["verdict"] == "Good"
+        assert overall["overall_score"] == 3.3
+        assert overall["verdict"] == "Needs Refinement"
         assert overall["breakdown"] == _OVERALL_BLOCK["breakdown"]
 
     @patch("app.services.evaluations.evaluation.save_score")
@@ -249,7 +249,7 @@ class TestGetEvaluationWithScoresS3:
             id=201,
             status="completed",
             score={
-                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 0.8}],
+                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 4}],
                 "overall": _OVERALL_BLOCK,
             },
             score_trace_url="s3://bucket/traces.json",

@@ -1,8 +1,8 @@
 """`verdict_from_score` — the per-metric verdict band on v2 judge runs.
 
-Bands are upper-bound exclusive: [0, 0.3) Needs Improvement, [0.3, 0.6) Needs
-Refinement, [0.6, 1] Good. The enum serializes by value into the trace JSON, so the
-display string is part of the contract.
+Bands are upper-bound exclusive on the 0–5 integer scale: [0, 2) Needs Improvement,
+[2, 4) Needs Refinement, [4, 5] Good. The enum serializes by value into the trace
+JSON, so the display string is part of the contract.
 """
 
 import pytest
@@ -14,12 +14,12 @@ class TestVerdictFromScore:
     @pytest.mark.parametrize(
         ("score", "expected"),
         [
-            (0.0, VerdictEnum.NEEDS_IMPROVEMENT),
-            (0.29, VerdictEnum.NEEDS_IMPROVEMENT),
-            (0.3, VerdictEnum.NEEDS_REFINEMENT),
-            (0.59, VerdictEnum.NEEDS_REFINEMENT),
-            (0.6, VerdictEnum.GOOD),
-            (1.0, VerdictEnum.GOOD),
+            (0, VerdictEnum.NEEDS_IMPROVEMENT),
+            (1, VerdictEnum.NEEDS_IMPROVEMENT),
+            (2, VerdictEnum.NEEDS_REFINEMENT),
+            (3, VerdictEnum.NEEDS_REFINEMENT),
+            (4, VerdictEnum.GOOD),
+            (5, VerdictEnum.GOOD),
         ],
     )
     def test_bands_and_boundaries(self, score: float, expected: VerdictEnum) -> None:
