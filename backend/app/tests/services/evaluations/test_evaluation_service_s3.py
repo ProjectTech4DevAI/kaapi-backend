@@ -15,6 +15,25 @@ from app.services.evaluations.evaluation import (
 )
 
 
+# A v2 judge run's deterministic run-level overall — not trace-derived, so the
+# trace-merge reconstructions must preserve it rather than rebuild it away.
+_OVERALL_BLOCK = {
+    "overall_score": 3.3,
+    "verdict": "Needs Refinement",
+    "ai_summary": "The run performed well overall.",
+    "breakdown": [
+        {
+            "name": "Adherence to Ground Truth",
+            "key": "ground_truth",
+            "score": 4,
+            "weight": 0.5,
+            "delta": 0.7,
+            "verdict": "Good",
+        }
+    ],
+}
+
+
 class TestGetEvaluationWithScoresS3:
     """Test get_evaluation_with_scores() S3 retrieval."""
 
@@ -163,6 +182,102 @@ class TestGetEvaluationWithScoresS3:
         saved_score = mock_save_score.call_args.kwargs["score"]
         saved_ids = {t["trace_id"] for t in saved_score["traces"]}
         assert saved_ids == {"old", "new"}
+
+    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
+    def test_overall_block_survives_cached_trace_serve(
+        self,
+        mock_get_storage: MagicMock,
+        mock_load: MagicMock,
+        mock_get_eval: MagicMock,
+        eval_run_factory: Callable[..., MagicMock],
+    ) -> None:
+        """v2 judge run: the run-level `overall` block must survive the cached-serve
+        trace reconstruction (the path the frontend hits), not get dropped when the
+        score is rebuilt from summary_scores + traces."""
+        eval_run = eval_run_factory(
+            id=200,
+            status="completed",
+            score={
+                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 4}],
+                "overall": _OVERALL_BLOCK,
+            },
+            score_trace_url="s3://bucket/traces.json",
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+        mock_get_eval.return_value = eval_run
+        mock_get_storage.return_value = MagicMock()
+        mock_load.return_value = [{"trace_id": "t1"}]
+
+        result, error = get_evaluation_with_scores(
+            session=MagicMock(),
+            evaluation_id=200,
+            organization_id=1,
+            project_id=1,
+            get_trace_info=True,
+            resync_score=False,
+        )
+
+        assert error is None
+        assert result.score["traces"] == [{"trace_id": "t1"}]
+        overall = result.score["overall"]
+        assert overall["overall_score"] == 3.3
+        assert overall["verdict"] == "Needs Refinement"
+        assert overall["breakdown"] == _OVERALL_BLOCK["breakdown"]
+
+    @patch("app.services.evaluations.evaluation.save_score")
+    @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")
+    @patch("app.services.evaluations.evaluation.get_langfuse_client")
+    @patch("app.services.evaluations.evaluation.get_evaluation_run_by_id")
+    @patch("app.services.evaluations.evaluation.load_json_from_object_store")
+    @patch("app.services.evaluations.evaluation.get_cloud_storage")
+    def test_overall_block_survives_resync_merge_and_persists(
+        self,
+        mock_get_storage: MagicMock,
+        mock_load: MagicMock,
+        mock_get_eval: MagicMock,
+        mock_get_langfuse: MagicMock,
+        mock_fetch_langfuse: MagicMock,
+        mock_save_score: MagicMock,
+        eval_run_factory: Callable[..., MagicMock],
+    ) -> None:
+        """Resync path: the merged score handed to save_score (which re-persists to
+        DB) must carry the run-level `overall` block, not just the merged traces."""
+        eval_run = eval_run_factory(
+            id=201,
+            status="completed",
+            score={
+                "summary_scores": [{"name": "Adherence to Ground Truth", "avg": 4}],
+                "overall": _OVERALL_BLOCK,
+            },
+            score_trace_url="s3://bucket/traces.json",
+            dataset_name="test_dataset",
+            run_name="test_run",
+        )
+        mock_get_eval.return_value = eval_run
+        mock_get_storage.return_value = MagicMock()
+        mock_load.return_value = [{"trace_id": "old", "scores": []}]
+        mock_get_langfuse.return_value = MagicMock()
+        mock_fetch_langfuse.return_value = {
+            "summary_scores": [],
+            "traces": [{"trace_id": "new", "scores": []}],
+        }
+        mock_save_score.return_value = eval_run
+
+        get_evaluation_with_scores(
+            session=MagicMock(),
+            evaluation_id=201,
+            organization_id=1,
+            project_id=1,
+            get_trace_info=True,
+            resync_score=True,
+        )
+
+        saved_score = mock_save_score.call_args.kwargs["score"]
+        assert {t["trace_id"] for t in saved_score["traces"]} == {"old", "new"}
+        assert saved_score["overall"] == _OVERALL_BLOCK
 
     @patch("app.services.evaluations.evaluation.save_score")
     @patch("app.services.evaluations.evaluation.fetch_trace_scores_from_langfuse")

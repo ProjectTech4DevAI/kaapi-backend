@@ -213,9 +213,10 @@ class Settings(BaseSettings):
 
     EVAL_JUDGE_MODEL: str = "gpt-5-mini"
 
-    # Reasoning effort for the judge model. "medium":
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
+
+    EVAL_SUMMARY_MODEL: str = "gpt-5-mini"
 
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
