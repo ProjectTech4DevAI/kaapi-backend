@@ -47,9 +47,12 @@ class TopicRelevanceFilter(PreFilterBase):
             "run mode substitutes per dataset row (batch) or pre-fills (response)."
         ),
     )
-    gate: bool = Field(
+    stop_on_fail: bool = Field(
         default=True,
-        description="Hard-stop: a failing verdict skips the assessment for that item.",
+        description=(
+            "If true, a failing verdict stops the chain and skips the assessment for "
+            "that item; if false, the verdict is just recorded and the assessment runs."
+        ),
     )
 
 
@@ -67,9 +70,12 @@ class DuplicateDetectionFilter(PreFilterBase):
         default=None,
         description="Vector store to compare against; defaults to the platform corpus when unset.",
     )
-    gate: bool = Field(
+    stop_on_fail: bool = Field(
         default=False,
-        description="Pass-through: verdict recorded in metadata, does not stop the assessment.",
+        description=(
+            "If true, a failing verdict stops the chain and skips the assessment for "
+            "that item; if false, the verdict is just recorded and the assessment runs."
+        ),
     )
 
 

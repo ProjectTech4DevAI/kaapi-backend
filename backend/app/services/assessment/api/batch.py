@@ -140,12 +140,12 @@ def build_pipeline(pre_filters: Any | None) -> list[dict[str, str]]:
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
         for stage, flt in present
-        if flt.gate
+        if flt.stop_on_fail
     ]
     passthrough = [
         {"stage": stage.value, "kind": StageKind.PASS_THROUGH.value}
         for stage, flt in present
-        if not flt.gate
+        if not flt.stop_on_fail
     ]
     return [
         *gates,
