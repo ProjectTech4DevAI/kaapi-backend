@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
@@ -21,8 +20,14 @@ from app.crud.assessment import (
     update_assessment_run_prefilter_stats,
     update_assessment_run_status,
 )
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.job import get_batch_job
-from app.models.assessment import Assessment, AssessmentRun, StageStatus
+from app.models.assessment import (
+    Assessment,
+    AssessmentRun,
+    AssessmentStatus,
+    StageStatus,
+)
 from app.services.assessment.stages import (
     GATE_STAGES,
     STAGE_PARSERS,
@@ -328,8 +333,9 @@ def _record_gate_stats(
 ) -> None:
     """For a go/no-go stage, persist passed/rejected counts and accepted row indices.
 
-    The accepted indices are stored on ``run.pipeline`` so the next stage's batch
-    build reads them directly instead of re-downloading and re-parsing this batch.
+    The accepted indices are stored in the exec bag's ``pipeline`` so the next
+    stage's batch build reads them directly instead of re-downloading and
+    re-parsing this batch.
     """
     try:
         raw = load_raw_batch_results(session, batch_job, project_id)
@@ -347,13 +353,12 @@ def _record_gate_stats(
 
         # Persist the cumulative accepted set (intersect with prior gates).
         accepted = {idx for idx, r in parsed.items() if r.get("verdict")}
-        prev = (run.pipeline or {}).get("accepted_indices")
+        pipeline = dict(_read_exec(run).get("pipeline") or {})
+        prev = pipeline.get("accepted_indices")
         if prev is not None:
             accepted &= set(prev)
-        pipeline = dict(run.pipeline or {})
         pipeline["accepted_indices"] = sorted(accepted)
-        run.pipeline = pipeline
-        flag_modified(run, "pipeline")
+        _write_exec(run, pipeline=pipeline)
     except Exception as exc:
         logger.warning(
             "[_record_gate_stats] run_id=%s stage=%s — %s", run.id, stage, exc
@@ -365,9 +370,9 @@ def _fail_run_stage(
 ) -> dict[str, Any]:
     # Keep run.stage at the failed stage so a resume knows where to restart;
     # stage_status == FAILED is the failure marker.
-    run.stage_status = StageStatus.FAILED
+    _write_exec(run, stage_status=StageStatus.FAILED)
     update_assessment_run_status(
-        session=session, run=run, status="failed", error_message=message
+        session=session, run=run, status=AssessmentStatus.FAILED, error_message=message
     )
     recompute_assessment_status(session=session, assessment_id=run.assessment_id)
     return {"run_id": run.id, "current_status": "failed", "action": "failed"}
@@ -379,11 +384,12 @@ async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str,
     if not parent:
         raise ValueError(f"Parent assessment {run.assessment_id} not found")
 
-    stage = run.stage
-    if not stage or run.stage_status != StageStatus.PROCESSING:
+    execution = _read_exec(run)
+    stage = execution.get("stage")
+    if not stage or execution.get("stage_status") != StageStatus.PROCESSING:
         return {"run_id": run.id, "current_status": run.status, "action": "no_change"}
 
-    batch_id = (run.stage_batches or {}).get(stage)
+    batch_id = (execution.get("stage_batches") or {}).get(stage)
     batch_job = (
         get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
     )
@@ -416,7 +422,7 @@ async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str,
             session, run, batch_job.error_message or f"Stage {stage} failed"
         )
 
-    run.stage_status = StageStatus.COMPLETED
+    _write_exec(run, stage_status=StageStatus.COMPLETED)
     if stage in GATE_STAGES:
         _record_gate_stats(session, run, stage, batch_job, parent.project_id)
 
@@ -437,7 +443,7 @@ async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str,
             logger.error(
                 "[process_run_batches] run_id=%s stage=%s enqueue failed — marking failed for resume: %s",
                 run.id,
-                run.stage,
+                _read_exec(run).get("stage"),
                 exc,
                 exc_info=True,
             )

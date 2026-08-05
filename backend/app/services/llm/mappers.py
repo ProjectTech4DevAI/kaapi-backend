@@ -17,6 +17,7 @@ from app.models.llm.constants import (
     CompletionType,
     Provider,
 )
+from google.genai import _transformers as genai_transformers
 
 SARVAM_DEFAULTS_BY_TYPE = {
     "stt": DEFAULT_SARVAM_STT_MODEL,
@@ -51,6 +52,73 @@ def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
         ISO 639-1 code (e.g. "en", "hi", "ta") or None if unsupported
     """
     return BCP47_TO_ELEVENLABS_LANG.get(bcp47_code)
+
+
+def _ensure_openai_strict_schema(schema: dict) -> dict:
+    """Recursively add additionalProperties: false for OpenAI strict JSON schema validation."""
+    normalized = dict(schema)
+
+    if normalized.get("type") == "object":
+        normalized["additionalProperties"] = False
+
+    if "properties" in normalized:
+        normalized["properties"] = {
+            key: _ensure_openai_strict_schema(value)
+            if isinstance(value, dict)
+            else value
+            for key, value in normalized["properties"].items()
+        }
+
+    items = normalized.get("items")
+    if isinstance(items, dict):
+        normalized["items"] = _ensure_openai_strict_schema(items)
+
+    return normalized
+
+
+def _strip_additional_properties(schema: dict) -> dict:
+    """Recursively strip additionalProperties — unsupported by Google GenAI."""
+    normalized_schema = dict(schema)
+    normalized_schema.pop("additionalProperties", None)
+
+    if "properties" in normalized_schema:
+        normalized_schema["properties"] = {
+            property_name: _strip_additional_properties(property_schema)
+            if isinstance(property_schema, dict)
+            else property_schema
+            for property_name, property_schema in normalized_schema[
+                "properties"
+            ].items()
+        }
+
+    if "items" in normalized_schema and isinstance(normalized_schema["items"], dict):
+        normalized_schema["items"] = _strip_additional_properties(
+            normalized_schema["items"]
+        )
+
+    return normalized_schema
+
+
+def _convert_json_schema_to_google(schema: dict) -> dict:
+    """Convert a JSON Schema dict to Google GenAI's OpenAPI-style schema.
+
+    Strips unsupported fields, then normalizes the schema through the Gemini SDK
+    so enum/type values match Gemini's expected OpenAPI-flavored shape.
+    """
+    normalized_schema = _strip_additional_properties(schema)
+    converted = genai_transformers.t_schema(None, normalized_schema)
+    google_schema = (
+        converted.model_dump(mode="json", exclude_none=True)
+        if converted is not None
+        else normalized_schema
+    )
+
+    if "properties" in google_schema and "propertyOrdering" not in google_schema:
+        google_schema["propertyOrdering"] = list(
+            normalized_schema.get("required", [])
+        ) or list(google_schema["properties"].keys())
+
+    return google_schema
 
 
 def map_kaapi_to_openai_params(
@@ -91,6 +159,8 @@ def map_kaapi_to_openai_params(
     instructions = kaapi_params.get("instructions")
     knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
     max_num_results = kaapi_params.get("max_num_results")
+    # NOTE: Json Schema can only be used for the assessment pipeline
+    json_schema = kaapi_params.get("json_schema")
 
     support_reasoning = bool(model) and is_reasoning_model(
         session=session, provider="openai", model_name=model
@@ -138,6 +208,16 @@ def map_kaapi_to_openai_params(
                 "max_num_results": max_num_results or 20,
             }
         ]
+
+    if json_schema:
+        openai_params["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": "output",
+                "strict": True,
+                "schema": _ensure_openai_strict_schema(json_schema),
+            }
+        }
 
     return openai_params, warnings
 
@@ -201,6 +281,11 @@ def map_kaapi_to_google_params(
                 "Parameter 'max_num_results' is not supported by the Gemini "
                 "FileSearch tool and was ignored."
             )
+
+        # NOTE: Json Schema can only be used for the assessment pipeline
+        json_schema = kaapi_params.get("json_schema")
+        if json_schema:
+            google_params["json_schema"] = _convert_json_schema_to_google(json_schema)
 
     elif completion_type == CompletionType.TTS:
         # TTS mode - voice, language, response_format

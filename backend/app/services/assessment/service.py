@@ -68,8 +68,8 @@ def _build_retry_request(
             )
         configs.append(
             AssessmentConfigRef(
-                config_id=UUID(str(run.config_id)),
-                config_version=run.config_version,
+                id=UUID(str(run.config_id)),
+                version=run.config_version,
             )
         )
 
@@ -132,7 +132,7 @@ def start_assessment(
 
     resolved_configs = []
     for cfg in request.configs:
-        parent_config = config_crud.read_one(cfg.config_id)
+        parent_config = config_crud.read_one(cfg.id)
         if parent_config is not None and parent_config.tag != ConfigTag.ASSESSMENT:
             tag_value = (
                 parent_config.tag.value
@@ -142,7 +142,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} has tag '{tag_value}' "
+                    f"Config {cfg.id} has tag '{tag_value}' "
                     f"and cannot be used for assessment. "
                     f"Only configs tagged 'ASSESSMENT' are allowed."
                 ),
@@ -150,8 +150,8 @@ def start_assessment(
 
         config_blob, error = resolve_evaluation_config(
             session=session,
-            config_id=cfg.config_id,
-            config_version=cfg.config_version,
+            config_id=cfg.id,
+            config_version=cfg.version,
             project_id=project_id,
             tag=ConfigTag.ASSESSMENT,
         )
@@ -159,8 +159,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Failed to resolve config {cfg.config_id} "
-                    f"v{cfg.config_version}: {error}"
+                    f"Failed to resolve config {cfg.id} " f"v{cfg.version}: {error}"
                 ),
             )
         provider = config_blob.completion.provider or LLMProvider.OPENAI
@@ -168,7 +167,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} v{cfg.config_version} uses provider "
+                    f"Config {cfg.id} v{cfg.version} uses provider "
                     f"'{provider}', which is not supported for batch assessment. "
                     f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
                 ),
@@ -190,8 +189,8 @@ def start_assessment(
         run = create_assessment_run(
             session=session,
             assessment_id=assessment.id,
-            config_id=cfg.config_id,
-            config_version=cfg.config_version,
+            config_id=cfg.id,
+            config_version=cfg.version,
             assessment_input=assessment_input,
         )
         runs.append(run)
@@ -206,7 +205,7 @@ def start_assessment(
         logger.info(
             "[start_assessment] Dispatched Celery task | run_id=%s | config_id=%s",
             run.id,
-            cfg.config_id,
+            cfg.id,
         )
 
     recompute_assessment_status(session=session, assessment_id=assessment.id)
@@ -229,7 +228,7 @@ def start_assessment(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
                 config_id=str(run.config_id),
-                config_version=run.config_version,
+                version=run.config_version,
                 status=run.status,
             )
             for run in runs
@@ -355,7 +354,7 @@ def resume_assessment_run(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
                 config_id=str(run.config_id),
-                config_version=run.config_version,
+                version=run.config_version,
                 status=run.status,
             )
         ],

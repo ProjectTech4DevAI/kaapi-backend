@@ -1,16 +1,43 @@
-from pydantic import JsonValue, field_validator, model_validator
-from sqlmodel import Field, SQLModel
 from typing import Literal
 
-from app.models.llm.constants import TextProvider
-from app.models.llm.request import KaapiCompletionConfig, CompletionType, TextLLMParams
+from pydantic import JsonValue, model_validator
+from sqlmodel import Field, SQLModel
 
-# json_schema is validated shallowly at config time: it must be a non-empty
+from app.models.llm.constants import Provider, TextProvider
+from app.models.llm.request import CompletionType, KaapiCompletionConfig, TextLLMParams
+
+# json_schema_output is validated shallowly at config time: it must be a non-empty
 # object-typed dict. Provider strict-mode normalisation is a run-mode concern.
 JSON_SCHEMA_OBJECT_TYPE = "object"
 
+# Default llm for a pre-filter call when the config does not override it.
+DEFAULT_PREFILTER_PROVIDER = Provider.OPENAI
+DEFAULT_PREFILTER_MODEL = "gpt-5.6-luna"
 
-class TopicRelevanceFilter(SQLModel):
+
+class InputColumn(SQLModel):
+    """One BATCH input column: its type, whether it must be present in every
+    submission (`strict`), and how an attachment value is provided (`format`)."""
+
+    type: Literal["text", "image", "pdf"] = "text"
+    strict: bool = False
+    format: Literal["url", "base64"] | None = None
+
+
+class PreFilterBase(SQLModel):
+    """Shared pre-filter fields — each pre-filter runs its own llm call."""
+
+    provider: TextProvider = Field(
+        default=DEFAULT_PREFILTER_PROVIDER,
+        description="Provider for this pre-filter's llm call.",
+    )
+    model: str = Field(
+        default=DEFAULT_PREFILTER_MODEL,
+        description="Model for this pre-filter's llm call.",
+    )
+
+
+class TopicRelevanceFilter(PreFilterBase):
     """Pre-filter that scores each item's relevance to the assessment topic."""
 
     prompt: str = Field(
@@ -20,9 +47,13 @@ class TopicRelevanceFilter(SQLModel):
             "run mode substitutes per dataset row (batch) or pre-fills (response)."
         ),
     )
+    gate: bool = Field(
+        default=True,
+        description="Hard-stop: a failing verdict skips the assessment for that item.",
+    )
 
 
-class DuplicateDetectionFilter(SQLModel):
+class DuplicateDetectionFilter(PreFilterBase):
     """Pre-filter that flags items duplicating prior corpus content."""
 
     content: str | None = Field(
@@ -36,6 +67,10 @@ class DuplicateDetectionFilter(SQLModel):
         default=None,
         description="Vector store to compare against; defaults to the platform corpus when unset.",
     )
+    gate: bool = Field(
+        default=False,
+        description="Pass-through: verdict recorded in metadata, does not stop the assessment.",
+    )
 
 
 class AssessmentPreFilters(SQLModel):
@@ -46,9 +81,16 @@ class AssessmentPreFilters(SQLModel):
 
 
 class AssessmentTextParams(TextLLMParams):
-    """Text params + structured-output schema, scoped to assessment."""
+    """Text params + structured input/output schemas, scoped to assessment."""
 
-    json_schema: dict[str, JsonValue] | None = Field(
+    input_schema: dict[str, InputColumn] | None = Field(
+        default=None,
+        description=(
+            "Per-column spec for BATCH submissions ({type, strict, format}). A column "
+            "marked strict must be present in every submission."
+        ),
+    )
+    json_schema_output: dict[str, JsonValue] | None = Field(
         default=None,
         description="Object-typed JSON schema for structured output. Omit for free-form text.",
     )

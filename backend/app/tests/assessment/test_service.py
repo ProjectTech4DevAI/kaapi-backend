@@ -32,7 +32,7 @@ def _make_request(provider_config_id: UUID) -> AssessmentCreate:
         text_columns=["question"],
         attachments=[],
         configs=[
-            AssessmentConfigRef(config_id=provider_config_id, config_version=1),
+            AssessmentConfigRef(id=provider_config_id, version=1),
         ],
     )
 

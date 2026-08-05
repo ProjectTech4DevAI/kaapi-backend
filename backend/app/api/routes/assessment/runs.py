@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -180,7 +181,7 @@ def resume_assessment_run(
 def list_assessment_runs(
     session: SessionDep,
     auth_context: AuthContextDep,
-    assessment_id: int | None = Query(default=None, ge=1),
+    assessment_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> APIResponse[list[AssessmentRunPublic]]:
