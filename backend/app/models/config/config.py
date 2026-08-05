@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from pydantic import model_validator
+from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy.dialects import postgresql
 from sqlmodel import Field, Index, SQLModel, text
 
@@ -122,8 +123,7 @@ class Config(ConfigBase, table=True):
 class ConfigCreate(ConfigBase):
     """Create new configuration"""
 
-    # Shape picked by `tag`; `_check_blob_matches_tag` enforces the pairing.
-    config_blob: ConfigBlob | AssessmentConfigBlob = Field(
+    config_blob: ConfigBlob | SkipJsonSchema[AssessmentConfigBlob] = Field(
         description="Provider-specific parameters; shape must match `tag`"
     )
     commit_message: str | None = Field(

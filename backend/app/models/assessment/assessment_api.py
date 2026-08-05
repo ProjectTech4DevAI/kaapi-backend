@@ -109,7 +109,7 @@ class PreFilter(BaseModel):
 class AssessmentOutput(BaseModel):
     """Per-item output: parsed assessment plus grouped pre-filter verdicts.
 
-    ``assessment`` is a dict when the config emits a structured (json_schema_output)
+    ``assessment`` is a dict when the config emits a structured (json_output_schema)
     output, a raw string for free-text output, or null for gated/failed rows with no result.
     """
 

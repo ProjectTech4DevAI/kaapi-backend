@@ -213,33 +213,39 @@ def _stage_prompt(
     return blob.pre_filters.duplicate_detection.content
 
 
-def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
-    """Kaapi params for a stage: assessment keeps its output schema; pre-filters get the verdict schema."""
-    params = dict(blob.assessment.params)
-    json_schema = params.pop("json_schema_output", None)
-    params.pop("input_schema", None)  # request-validation only, not a provider param
+def _prefilter_for_stage(blob: AssessmentConfigBlob, stage: str) -> Any:
+    """The pre-filter config object for a pre-filter stage (topic_relevance / duplicate_detection)."""
+    pre = blob.pre_filters
+    if stage == ApiStage.TOPIC_RELEVANCE:
+        return pre.topic_relevance
+    return pre.duplicate_detection
 
+
+def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
+    """Kaapi params for a stage: the assessment uses its own params + output schema; each
+    pre-filter uses ITS own params, with the verdict schema + gate instruction layered on."""
     if stage == ApiStage.ASSESSMENT:
+        params = dict(blob.assessment.params)
+        json_schema = params.pop("json_output_schema", None)
+        params.pop("input_schema", None)  # request-validation only, not a provider param
         if json_schema is not None:
-            params["output_schema"] = json_schema
+            params["output_schema"] = json_schema  # provider param name
         return params
 
+    flt = _prefilter_for_stage(blob, stage)
+    params = dict(flt.params)
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     params["instructions"] = _PREFILTER_INSTRUCTION
-    if stage == ApiStage.DUPLICATE_DETECTION:
-        kb_id = blob.pre_filters.duplicate_detection.knowledge_base_id
-        if kb_id:
-            params["knowledge_base_ids"] = [kb_id]
+    if stage == ApiStage.DUPLICATE_DETECTION and flt.knowledge_base_id:
+        params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
 
 
 def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
-    pre = blob.pre_filters
-    if stage == ApiStage.TOPIC_RELEVANCE and pre and pre.topic_relevance:
-        return pre.topic_relevance.provider, pre.topic_relevance.model
-    if stage == ApiStage.DUPLICATE_DETECTION and pre and pre.duplicate_detection:
-        return pre.duplicate_detection.provider, pre.duplicate_detection.model
+    if stage in (ApiStage.TOPIC_RELEVANCE, ApiStage.DUPLICATE_DETECTION):
+        flt = _prefilter_for_stage(blob, stage)
+        return flt.provider, flt.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
 
 

@@ -29,10 +29,16 @@ TTSProvider = Literal[
 ]
 RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
-TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
+KaapiProvider = Literal[
+    Provider.OPENAI,
+    Provider.GOOGLE,
+    Provider.SARVAMAI,
+    Provider.ELEVENLABS,
+    Provider.ANTHROPIC,
+    Provider.GOOGLE_AISTUDIO,
+]
 
-# Union of every text/STT/TTS provider literal (derived, not hand-listed).
-KaapiProvider = TextProvider | STTProvider | TTSProvider
+TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
 
 # Native provider names are the Kaapi providers with a "-native" suffix.
 # Kept as explicit strings since there's no corresponding enum member.

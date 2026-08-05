@@ -6,7 +6,7 @@ from sqlmodel import Field, SQLModel
 from app.models.llm.constants import Provider, TextProvider
 from app.models.llm.request import CompletionType, KaapiCompletionConfig, TextLLMParams
 
-# json_schema_output is validated shallowly at config time: it must be a non-empty
+# json_output_schema is validated shallowly at config time: it must be a non-empty
 # object-typed dict. Provider strict-mode normalisation is a run-mode concern.
 JSON_SCHEMA_OBJECT_TYPE = "object"
 
@@ -31,10 +31,18 @@ class PreFilterBase(SQLModel):
         default=DEFAULT_PREFILTER_PROVIDER,
         description="Provider for this pre-filter's llm call.",
     )
-    model: str = Field(
-        default=DEFAULT_PREFILTER_MODEL,
-        description="Model for this pre-filter's llm call.",
+    params: dict[str, JsonValue] = Field(
+        default_factory=lambda: {"model": DEFAULT_PREFILTER_MODEL},
+        description="TextLLMParams for this pre-filter's llm call (model, temperature, ...).",
     )
+
+    @model_validator(mode="after")
+    def _validate_prefilter_params(self):
+        validated = TextLLMParams.model_validate(self.params)
+        dumped = validated.model_dump(exclude_none=True)
+        dumped.setdefault("model", DEFAULT_PREFILTER_MODEL)
+        self.params = dumped
+        return self
 
 
 class TopicRelevanceFilter(PreFilterBase):
@@ -96,7 +104,7 @@ class AssessmentTextParams(TextLLMParams):
             "marked strict must be present in every submission."
         ),
     )
-    json_schema_output: dict[str, JsonValue] | None = Field(
+    json_output_schema: dict[str, JsonValue] | None = Field(
         default=None,
         description="Object-typed JSON schema for structured output. Omit for free-form text.",
     )
