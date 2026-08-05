@@ -223,11 +223,14 @@ def _prefilter_for_stage(blob: AssessmentConfigBlob, stage: str) -> Any:
 
 def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     """Kaapi params for a stage: the assessment uses its own params + output schema; each
-    pre-filter uses ITS own params, with the verdict schema + gate instruction layered on."""
+    pre-filter uses ITS own params, with the verdict schema + gate instruction layered on.
+    """
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
-        params.pop("input_schema", None)  # request-validation only, not a provider param
+        params.pop(
+            "input_schema", None
+        )  # request-validation only, not a provider param
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
         return params

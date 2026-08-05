@@ -145,9 +145,7 @@ class ConfigCreate(ConfigBase):
             AssessmentConfigBlob if self.tag == ConfigTag.ASSESSMENT else ConfigBlob
         )
         if not isinstance(self.config_blob, expected):
-            raise ValueError(
-                f"config_blob shape does not match tag '{self.tag.value}'"
-            )
+            raise ValueError(f"config_blob shape does not match tag '{self.tag.value}'")
         return self
 
 
