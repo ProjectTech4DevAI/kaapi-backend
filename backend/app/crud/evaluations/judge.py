@@ -1,9 +1,10 @@
 """Native LLM-as-a-judge for v2 fast evaluations.
 
-One OpenAI call per row scores all enabled metrics together. v2 runs are judge-only
-(no cosine, no embeddings) and v1 never invokes this judge. A per-row failure is
-isolated to that row; a metric whose run-level input cannot be resolved is dropped
-for the run, which still completes on the remaining metrics.
+One OpenAI call per row scores every metric in METRIC_REGISTRY together. v2 runs are
+judge-only (no cosine, no embeddings) and v1 never invokes this judge. A per-row
+failure is isolated to that row; a metric whose inputs a row cannot supply (e.g. no
+config prompt, no retrieved chunks) is dropped for that row, which still scores the
+remaining metrics.
 """
 
 import json
@@ -24,9 +25,7 @@ from tenacity import (
 )
 
 from app.core.config import settings
-from app.crud.evaluations.response_parsing import (
-    extract_response_text as _extract_response_text,
-)
+from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.score import (
     GROUND_TRUTH_JUDGE_PROMPT,
     GROUND_TRUTH_SCORE_NAME,
@@ -64,6 +63,8 @@ class JudgeInputEnum(str, Enum):
     RETRIEVED_CHUNKS = "retrieved_chunks"
 
 
+# Also the block headings rendered into the judge input; each metric's prompt
+# fragment names these labels verbatim in its own CONSIDER/IGNORE scoping lines.
 _INPUT_LABELS: dict[JudgeInputEnum, str] = {
     JudgeInputEnum.CONFIG_PROMPT: "Assistant's configured instructions",
     JudgeInputEnum.QUESTION: "Question",
@@ -71,17 +72,6 @@ _INPUT_LABELS: dict[JudgeInputEnum, str] = {
     JudgeInputEnum.GOLDEN_ANSWER: "Golden (reference) answer",
     JudgeInputEnum.RETRIEVED_CHUNKS: "Retrieved knowledge-base chunks",
 }
-
-RUN_LEVEL_INPUTS: frozenset[JudgeInputEnum] = frozenset({JudgeInputEnum.CONFIG_PROMPT})
-
-# Every input block is visible to every metric, so each metric section states its own
-# scope — at the input level, never the metric level, so it can never be read as
-# permission to skip the metric itself.
-_CONSIDER_INPUTS_TEMPLATE: str = (
-    "When scoring THIS metric, consider only these input blocks: {labels}."
-)
-_IGNORE_INPUTS_TEMPLATE: str = "Do not consider: {labels}."
-_LABEL_SEPARATOR: str = ", "
 
 
 @dataclass(frozen=True)
@@ -92,6 +82,7 @@ class JudgeMetricSpec:
     score_name: str
     prompt_fragment: str
     required_inputs: tuple[JudgeInputEnum, ...]
+    weight: float
 
 
 # All metrics are graded by one combined call, so they share a single judge model
@@ -107,6 +98,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.GOLDEN_ANSWER,
         ),
+        weight=0.5,
     ),
     JudgeMetricEnum.PROMPT: JudgeMetricSpec(
         key=JudgeMetricEnum.PROMPT,
@@ -117,6 +109,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.QUESTION,
             JudgeInputEnum.GENERATED_ANSWER,
         ),
+        weight=0.2,
     ),
     JudgeMetricEnum.KNOWLEDGE_BASE: JudgeMetricSpec(
         key=JudgeMetricEnum.KNOWLEDGE_BASE,
@@ -127,21 +120,9 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
             JudgeInputEnum.GENERATED_ANSWER,
             JudgeInputEnum.RETRIEVED_CHUNKS,
         ),
+        weight=0.3,
     ),
 }
-
-
-def enabled_metric_specs(
-    *, available_run_inputs: frozenset[JudgeInputEnum] = frozenset()
-) -> list[JudgeMetricSpec]:
-    """The metrics a run scores: those whose run-level inputs it could resolve."""
-    specs: list[JudgeMetricSpec] = []
-    for spec in METRIC_REGISTRY.values():
-        missing = (set(spec.required_inputs) & RUN_LEVEL_INPUTS) - available_run_inputs
-        if missing:
-            continue
-        specs.append(spec)
-    return specs
 
 
 # Per-call retry mechanism (mirrors the fast-eval Responses/Embeddings stages).
@@ -170,7 +151,7 @@ _retry_judge_call = retry(
 
 @dataclass
 class MetricScore:
-    """One metric's outcome for a row: score in [0, 1] and its reasoning."""
+    """One metric's outcome for a row: integer score in 0–5 and its reasoning."""
 
     score: float
     reasoning: str
@@ -185,35 +166,9 @@ class JudgeResult:
 
 
 def _required_input_union(metrics: list[JudgeMetricSpec]) -> list[JudgeInputEnum]:
-    """Inputs needed by at least one enabled metric, in stable enum order.
-
-    Single source for both the rendered input blocks and the per-metric scoping lines,
-    so the stated scope can never drift from what is actually sent.
-    """
+    """Inputs needed by at least one enabled metric, in stable enum order."""
     required = {key for spec in metrics for key in spec.required_inputs}
     return [key for key in JudgeInputEnum if key in required]
-
-
-def _format_input_labels(keys: list[JudgeInputEnum]) -> str:
-    return _LABEL_SEPARATOR.join(_INPUT_LABELS[key] for key in keys)
-
-
-def _build_metric_section(*, spec: JudgeMetricSpec, union: list[JudgeInputEnum]) -> str:
-    """One metric's rubric fragment plus its registry-derived input scoping."""
-    considered = [key for key in union if key in spec.required_inputs]
-    ignored = [key for key in union if key not in spec.required_inputs]
-
-    lines = [
-        spec.prompt_fragment,
-        _CONSIDER_INPUTS_TEMPLATE.format(labels=_format_input_labels(considered)),
-    ]
-    # With nothing out of scope (single enabled metric), an "ignore nothing" sentence
-    # would be noise the model could misread.
-    if ignored:
-        lines.append(
-            _IGNORE_INPUTS_TEMPLATE.format(labels=_format_input_labels(ignored))
-        )
-    return "\n".join(lines)
 
 
 def build_judge_params(*, session: Session) -> dict[str, Any]:
@@ -239,16 +194,12 @@ def build_judge_params(*, session: Session) -> dict[str, Any]:
 
 
 def _compose_system_prompt(metrics: list[JudgeMetricSpec]) -> str:
-    """Shared preamble plus each metric's fragment and its input scoping.
+    """Shared preamble plus each metric's rubric fragment.
 
-    The combined call shows every input block to every metric, so each section
-    states its own CONSIDER/IGNORE scope over the union of these metrics' inputs —
-    keeping the stated scope aligned with what `_compose_judge_input` actually sends.
+    The combined call shows every input block to every metric, so each fragment
+    carries its own CONSIDER/IGNORE scoping lines naming the `_INPUT_LABELS` blocks.
     """
-    union = _required_input_union(metrics)
-    sections = "\n\n".join(
-        _build_metric_section(spec=spec, union=union) for spec in metrics
-    )
+    sections = "\n\n".join(spec.prompt_fragment for spec in metrics)
     return f"{JUDGE_SYSTEM_PREAMBLE}\n\n{sections}"
 
 
@@ -295,8 +246,11 @@ def _parse_metric_score(key: JudgeMetricEnum, raw: Any) -> MetricScore:
         raise ValueError(
             f"metric '{key.value}' score is not a number: {raw.get('score')!r}"
         ) from exc
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"metric '{key.value}' score out of [0, 1]: {score}")
+    if score != int(score) or not 0 <= score <= 5:
+        raise ValueError(
+            f"metric '{key.value}' score must be an integer 0-5: {raw.get('score')!r}"
+        )
+    score = int(score)
 
     reasoning = str(raw.get("reasoning") or "").strip()
     if not reasoning:
@@ -397,5 +351,5 @@ def judge_row(
         "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0),
     }
 
-    metric_scores = _parse_judge_output(_extract_response_text(response), applicable)
+    metric_scores = _parse_judge_output(extract_response_text(response), applicable)
     return JudgeResult(metrics=metric_scores, usage=usage)
