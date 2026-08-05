@@ -534,18 +534,12 @@ def kaapi_params_as_dict(
     """Normalize a Kaapi completion config's `params` to a plain dict for the
     provider mappers below, which are dict-in/dict-out.
 
-    Strips `temperature` when the caller didn't explicitly set it, even
-    though the params model defaults it to 0.1 — mirrors the pre-refactor
-    behavior of KaapiCompletionConfig, where an unset temperature was never
-    forwarded to the provider mapper (e.g. it triggers a spurious "suppressed
-    because reasoning is enabled" warning for reasoning models otherwise).
+    The dump already drops None fields and an unset temperature —
+    `_CompactParamsSerializerMixin` on the params models owns that wire format.
     """
     if isinstance(params, dict):
         return dict(params)
-    dumped = params.model_dump(exclude_none=True)
-    if "temperature" in dumped and "temperature" not in params.model_fields_set:
-        dumped.pop("temperature")
-    return dumped
+    return params.model_dump()
 
 
 def transform_kaapi_config_to_native(

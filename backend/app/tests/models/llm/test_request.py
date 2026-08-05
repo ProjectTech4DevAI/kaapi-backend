@@ -45,3 +45,25 @@ class TestKaapiCompletionConfigTemperature:
 
         assert config.params.temperature == 0.0
         assert kaapi_params_as_dict(config.params)["temperature"] == 0.0
+
+    def test_unset_temperature_survives_json_round_trip(self) -> None:
+        """A dump -> revalidate cycle (Celery request_data, persisted config
+        blobs) must not bake the temperature default into the wire format,
+        or the worker would forward temperature=0.1 the user never set."""
+        from app.models.llm.request import ConfigBlob
+
+        blob = ConfigBlob(
+            completion=build_kaapi_completion_config(
+                provider="openai",
+                type="text",
+                params={"model": "gpt-4o"},
+            )
+        )
+        dumped = blob.model_dump(mode="json")
+        assert "temperature" not in dumped["completion"]["params"]
+        assert None not in dumped["completion"]["params"].values()
+
+        round_tripped = ConfigBlob.model_validate(dumped)
+        assert "temperature" not in kaapi_params_as_dict(
+            round_tripped.completion.params
+        )

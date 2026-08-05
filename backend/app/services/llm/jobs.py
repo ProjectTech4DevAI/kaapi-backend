@@ -573,6 +573,14 @@ def execute_llm_call(
                     organization_id=organization_id,
                 )
                 if guardrail_direct_response is not None:
+                    # Runs before the Kaapi->native transform, so params may be
+                    # a typed model (Kaapi/proxy variants) rather than a dict.
+                    completion_params = config_blob.completion.params
+                    guardrail_model = (
+                        completion_params.get("model")
+                        if isinstance(completion_params, dict)
+                        else getattr(completion_params, "model", None)
+                    )
                     guardrail_usage = Usage(
                         input_tokens=0,
                         output_tokens=0,
@@ -582,7 +590,7 @@ def execute_llm_call(
                         response=LLMResponse(
                             provider_response_id=str(job_id),
                             provider=str(config_blob.completion.provider),
-                            model=str(config_blob.completion.params.get("model") or ""),
+                            model=str(guardrail_model or ""),
                             output=TextOutput(
                                 content=TextContent(value=guardrail_direct_response)
                             ),

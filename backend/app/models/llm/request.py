@@ -4,7 +4,12 @@ from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from pydantic import HttpUrl, model_validator
+from pydantic import (
+    HttpUrl,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
 
@@ -24,7 +29,25 @@ from app.models.llm.constants import (
 )
 
 
-class TextLLMParams(SQLModel):
+class _CompactParamsSerializerMixin:
+    """Serialize params in the pre-typed wire format: None fields dropped, and
+    the defaulted `temperature` dropped when the caller never set it.
+
+    Every dump site (Celery `request_data`, persisted config blobs, responses)
+    relies on this — without it, a JSON round-trip bakes `temperature: 0.1`
+    into `model_fields_set` and the unset-temperature semantics are lost, so
+    providers would receive a temperature the user never asked for.
+    """
+
+    @model_serializer(mode="wrap")
+    def _dump_compact(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = {k: v for k, v in handler(self).items() if v is not None}
+        if "temperature" not in self.model_fields_set:
+            data.pop("temperature", None)
+        return data
+
+
+class TextLLMParams(_CompactParamsSerializerMixin, SQLModel):
     model: str | None = Field(
         default=None,
         description=(
@@ -78,7 +101,7 @@ class TextLLMParams(SQLModel):
     )
 
 
-class STTLLMParams(SQLModel):
+class STTLLMParams(_CompactParamsSerializerMixin, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_STT_MODEL
@@ -97,7 +120,7 @@ class STTLLMParams(SQLModel):
     )
 
 
-class TTSLLMParams(SQLModel):
+class TTSLLMParams(_CompactParamsSerializerMixin, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_TTS_MODEL
@@ -363,9 +386,9 @@ _KAAPI_CONFIG_BY_TYPE: dict[CompletionType, type[SQLModel]] = {
 
 def build_kaapi_completion_config(
     *,
-    provider: KaapiProvider | None,
-    type: CompletionType,
-    params: TextLLMParams | STTLLMParams | TTSLLMParams,
+    provider: KaapiProvider | str | None,
+    type: CompletionType | str,
+    params: TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any],
 ) -> KaapiTextCompletionConfig | KaapiSTTCompletionConfig | KaapiTTSCompletionConfig:
     """Construct the KaapiCompletionConfig variant matching `type`."""
     config_class = _KAAPI_CONFIG_BY_TYPE[CompletionType(type)]
