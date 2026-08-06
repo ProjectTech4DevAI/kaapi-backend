@@ -671,7 +671,7 @@ def _draft_improved_prompt(
             "metric objects; each has `name`, `value`, and `comment`, where:\n"
             f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
             f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
-            "- `value` is the metric's score from 0 (worst) to 1 (best). Metrics that "
+            "- `value` is the metric's score, an integer from 0 (worst) to 5 (best). Metrics that "
             'could not be scored appear with `value` = "N/A" and `unscoreable` = true; '
             "ignore those.\n"
             "- `comment` is the judge's reasoning for that score — read it, not just "
