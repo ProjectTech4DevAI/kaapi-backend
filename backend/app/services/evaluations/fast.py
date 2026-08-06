@@ -266,7 +266,7 @@ def validate_and_start_fast_evaluation(
     # Persist the judge marker + callback_url before dispatch: the aggregate (which
     # only knows eval_run_id) reads is_judge_run at judge time, and the terminal
     # hook reads callback_url to fire the webhook.
-    creation_update: dict[str, Any] = {}
+    creation_update: dict[str, bool | str] = {}
     if is_judge_run:
         creation_update["is_judge_run"] = True
     if callback_url:
