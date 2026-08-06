@@ -17,7 +17,7 @@ from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.cloud import get_cloud_storage
 from app.crud.assessment.core import _read_exec, _write_exec
-from app.models.assessment import AssessmentRun, Stage, StageStatus
+from app.models.assessment import AssessmentRun, AssessmentStatus, Stage, StageStatus
 from app.models.batch_job import BatchJob, BatchJobType
 from app.services.assessment.prefilter import constants, resolve_prefilter_settings
 from app.services.assessment.prefilter.duplicate_detection import (
@@ -200,5 +200,5 @@ def advance_or_finalize(run: AssessmentRun) -> str | None:
         _write_exec(run, stage=nxt, stage_status=StageStatus.PENDING)
         return nxt
     _write_exec(run, stage=Stage.COMPLETED, stage_status=StageStatus.COMPLETED)
-    run.status = "completed"
+    run.status = AssessmentStatus.COMPLETED
     return None

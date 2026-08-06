@@ -7,7 +7,7 @@ import pytest
 
 from app.crud.assessment import core as assessment_core
 from app.crud.assessment.core import _read_exec
-from app.models.assessment import Stage, StageStatus
+from app.models.assessment import AssessmentStatus, Stage, StageStatus
 from app.services.assessment.prefilter import resolve_prefilter_settings
 from app.services.assessment.stages import (
     advance_or_finalize,
@@ -106,7 +106,7 @@ class TestAdvanceOrFinalize:
             assert advance_or_finalize(run) is None
         assert _read_exec(run).get("stage") == Stage.COMPLETED
         assert _read_exec(run).get("stage_status") == StageStatus.COMPLETED
-        assert run.status == "completed"
+        assert run.status == AssessmentStatus.COMPLETED
 
 
 class TestBuildPrefilterRequests:

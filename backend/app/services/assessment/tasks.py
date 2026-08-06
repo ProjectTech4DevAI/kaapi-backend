@@ -22,6 +22,7 @@ from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentRun,
+    AssessmentStatus,
     Stage,
     StageStatus,
 )
@@ -183,7 +184,7 @@ def _orchestrate(run_id: int, organization_id: int, project_id: int) -> None:
                 stage=next_stage(_read_exec(run).get("pipeline")),
                 stage_status=StageStatus.PENDING,
             )
-            run.status = "processing"
+            run.status = AssessmentStatus.PROCESSING
         if _read_exec(run).get("stage_status") != StageStatus.PENDING:
             session.add(run)
             session.commit()
@@ -269,7 +270,7 @@ def _submit_stage(
     stage_batches = dict(_read_exec(run).get("stage_batches") or {})
     stage_batches[stage] = batch_job.id
     _write_exec(run, stage_batches=stage_batches, stage_status=StageStatus.PROCESSING)
-    run.status = "processing"
+    run.status = AssessmentStatus.PROCESSING
     session.add(run)
     session.commit()
     recompute_assessment_status(session=session, assessment_id=run.assessment_id)

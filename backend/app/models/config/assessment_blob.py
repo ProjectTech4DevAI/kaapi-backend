@@ -58,9 +58,15 @@ class PreFilterBase(SQLModel):
                 "pre-filter params must not set 'instructions'; use the pre-filter's "
                 "own 'prompt'/'content' field as its system prompt"
             )
-        self.params = PreFilterParams.model_validate(self.params).model_dump(
+        params = PreFilterParams.model_validate(self.params).model_dump(
             exclude_none=True
         )
+        # if default pre-filter model is used, then set the default effort and summary params, and remove temperature (which is not used for pre-filtering)
+        if params.get("model") == DEFAULT_PREFILTER_MODEL:
+            params.setdefault("effort", "high")
+            params.setdefault("summary", "auto")
+            params.pop("temperature", None)
+        self.params = params
         return self
 
 
