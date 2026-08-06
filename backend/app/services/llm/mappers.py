@@ -55,7 +55,7 @@ def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
 
 
 def _ensure_openai_strict_schema(schema: dict) -> dict:
-    """Recursively add additionalProperties: false for OpenAI strict JSON schema validation."""
+    """Recursively add additionalProperties: false and require every property, for OpenAI strict JSON schema validation."""
     normalized = dict(schema)
 
     if normalized.get("type") == "object":
@@ -68,6 +68,12 @@ def _ensure_openai_strict_schema(schema: dict) -> dict:
             else value
             for key, value in normalized["properties"].items()
         }
+        # OpenAI strict mode requires every property to be listed in `required`.
+        required = list(normalized.get("required", []))
+        for key in normalized["properties"]:
+            if key not in required:
+                required.append(key)
+        normalized["required"] = required
 
     items = normalized.get("items")
     if isinstance(items, dict):

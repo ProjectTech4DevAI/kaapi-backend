@@ -21,6 +21,7 @@ from app.models.assessment import (
     Assessment,
     AssessmentExportRow,
     AssessmentRun,
+    AssessmentStatus,
     Stage,
 )
 from app.models.batch_job import BatchJob
@@ -56,8 +57,8 @@ def _load_dataset_rows(
 def _stage_batch_job(
     session: Session, run: AssessmentRun, stage: str
 ) -> BatchJob | None:
-    """The batch job a run produced for a given stage, via stage_batches."""
-    batch_id = (run.stage_batches or {}).get(stage)
+    """The batch job a run produced for a given stage, via the execution bag's stage_batches."""
+    batch_id = ((run.execution or {}).get("stage_batches") or {}).get(stage)
     return get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
 
 
@@ -401,10 +402,11 @@ def _load_parsed_results_for_run(
         return None
 
     # 1. Try object store (S3)
-    if run.object_store_url:
+    object_store_url = (run.execution or {}).get("object_store_url")
+    if object_store_url:
         try:
             storage = get_cloud_storage(session, project_id=parent.project_id)
-            body = storage.stream(run.object_store_url)
+            body = storage.stream(object_store_url)
             raw_results = parse_stored_results(body.read().decode("utf-8"))
             if raw_results:
                 return parse_assessment_output(raw_results, batch_job.provider)
@@ -442,7 +444,7 @@ def _load_parsed_results_for_run(
         "[_load_parsed_results_for_run] No results available for run id=%s "
         "(object_store_url=%s, provider_output_file_id=%s)",
         run.id,
-        run.object_store_url,
+        object_store_url,
         batch_job.provider_output_file_id,
     )
     return None
@@ -567,13 +569,13 @@ def _load_l2_results_for_run(
 def _row_result_status(
     prefilter_passed: bool,
     l2_item: dict[str, Any] | None,
-    run_status: str,
+    run_status: AssessmentStatus,
 ) -> str:
     """Per-row status: rejected, failed, passed, or processing (batch not done)."""
     if not prefilter_passed:
         return "prefilter_rejected"
     if l2_item is None:
-        return "failed" if run_status == "failed" else "processing"
+        return "failed" if run_status == AssessmentStatus.FAILED else "processing"
     return "failed" if l2_item.get("error") else "passed"
 
 
@@ -592,8 +594,6 @@ def load_export_rows_for_run(
         )
         return []
 
-    dataset = session.get(EvaluationDataset, assessment.dataset_id)
-    dataset_name = dataset.name if dataset else None
     dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
 
     prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
@@ -605,7 +605,6 @@ def load_export_rows_for_run(
             _build_export_row(
                 run=run,
                 assessment=assessment,
-                dataset_name=dataset_name,
                 row_id=f"row_{row_idx}",
                 input_data=input_data,
                 prefilter_item=prefilter_by_row_id.get(f"row_{row_idx}"),
@@ -624,7 +623,6 @@ def load_export_rows_for_run(
         _build_export_row(
             run=run,
             assessment=assessment,
-            dataset_name=dataset_name,
             row_id=row_id,
             input_data=None,
             prefilter_item=prefilter_by_row_id.get(row_id),
@@ -638,7 +636,6 @@ def load_export_rows_for_run(
 def _build_export_row(
     run: AssessmentRun,
     assessment: Assessment,
-    dataset_name: str | None,
     row_id: str,
     input_data: dict[str, str] | None,
     prefilter_item: dict[str, Any] | None,
@@ -657,11 +654,8 @@ def _build_export_row(
     return AssessmentExportRow(
         assessment_id=run.assessment_id,
         experiment_name=assessment.experiment_name,
-        dataset_id=assessment.dataset_id,
-        dataset_name=dataset_name,
-        run_id=run.id,
-        run_name=assessment.experiment_name,
-        run_status=run.status,
+        execution_id=run.id,
+        execution_status=run.status,
         config_id=run.config_id,
         config_version=run.config_version,
         row_id=row_id,
@@ -696,7 +690,7 @@ def sort_export_rows(
         key=lambda row: (
             row.config_version or 0,
             _row_index(row.row_id),
-            row.run_id,
+            row.execution_id,
         )
     )
     return export_rows

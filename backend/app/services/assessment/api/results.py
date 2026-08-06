@@ -82,22 +82,27 @@ def _verdict_obj(verdict: dict[str, Any] | None) -> PreFilterVerdict | None:
 
 def _load_assessment_outputs(
     session: Session, bag: dict[str, Any], project_id: int
-) -> dict[int, dict[str, Any]]:
-    """Stream + parse the assessment stage's stored batch output. Empty if unavailable."""
+) -> tuple[dict[int, dict[str, Any]], str | None]:
+    """Stream + parse the assessment stage output. Returns ``(outputs, load_error)``.
+
+    ``load_error`` is set only on a failed read of a present URL, so the caller
+    can flag it per-row instead of mistaking it for a clean run. Missing URL
+    (all rows gated) is a legit empty, not an error.
+    """
     url = (bag.get("stage_output_urls") or {}).get(ApiStage.ASSESSMENT.value)
     if not url:
-        return {}
+        return {}, None
     try:
         storage = get_cloud_storage(session=session, project_id=project_id)
         raw = parse_stored_results(storage.stream(url).read().decode("utf-8"))
-        return parse_batch_results(raw, bag.get("provider"))
+        return parse_batch_results(raw, bag.get("provider")), None
     except Exception as exc:
         logger.warning(
             "[_load_assessment_outputs] Could not read assessment output | url=%s | %s",
             url,
             exc,
         )
-        return {}
+        return {}, "Assessment output could not be read from storage."
 
 
 def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatchResult:
@@ -120,7 +125,7 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     verdicts = bag.get("verdicts") or {}
     provider = bag.get("provider") or ""
     model = bag.get("model") or ""
-    outputs = _load_assessment_outputs(session, bag, assessment.project_id)
+    outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
 
     tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
     dd_verdicts = verdicts.get(ApiStage.DUPLICATE_DETECTION.value, {})
@@ -131,11 +136,14 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
         assessment_output: dict[str, Any] | str | None = None
         metadata: AssessmentMeta | None = None
         error: str | None = None
-        if gate_passed[idx] and idx in outputs:
-            out = outputs[idx]
-            assessment_output = _parse_assessment(out)
-            metadata = _to_meta(out, provider, model)
-            error = out.get("error")
+        if gate_passed[idx]:
+            if idx in outputs:
+                out = outputs[idx]
+                assessment_output = _parse_assessment(out)
+                metadata = _to_meta(out, provider, model)
+                error = out.get("error")
+            elif load_error:
+                error = load_error
 
         topic_relevance = _verdict_obj(tr_verdicts.get(str(idx)))
         duplicate_detection = _verdict_obj(dd_verdicts.get(str(idx)))

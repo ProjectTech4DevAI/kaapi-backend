@@ -1,7 +1,7 @@
 """Assessment run orchestration service."""
 
 import logging
-from uuid import UUID
+from typing import Any
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
@@ -20,10 +20,11 @@ from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentConfigRef,
-    AssessmentCreate,
-    AssessmentResponse,
     AssessmentRun,
+    AssessmentRunCreate,
+    AssessmentRunResponse,
     AssessmentRunSummary,
+    InputBinding,
     StageStatus,
 )
 from app.models.config.config import ConfigTag
@@ -45,20 +46,28 @@ def _build_retry_request(
     *,
     experiment_name: str,
     dataset_id: int,
+    input_binding: dict[str, Any] | None,
     runs: list[AssessmentRun],
-) -> AssessmentCreate:
+) -> AssessmentRunCreate:
     if not runs:
         raise HTTPException(status_code=400, detail="No assessment runs found to retry")
 
-    first_run = runs[0]
-    assessment_input = first_run.input
-    if not isinstance(assessment_input, dict):
+    # The RUN binding now lives on the parent assessment.input, not the child run.
+    if not isinstance(input_binding, dict):
         raise HTTPException(
             status_code=400,
             detail="Assessment input configuration is missing for retry",
         )
 
-    attachments = assessment_input.get("attachments") or []
+    binding = InputBinding(
+        prompt=input_binding.get("prompt", ""),
+        text_columns=list(input_binding.get("text_columns") or []),
+        attachments=[
+            AssessmentAttachment.model_validate(item)
+            for item in (input_binding.get("attachments") or [])
+        ],
+    )
+
     configs: list[AssessmentConfigRef] = []
     for run in runs:
         if not run.config_id or run.config_version is None:
@@ -67,32 +76,24 @@ def _build_retry_request(
                 detail=f"Config reference is missing for run {run.id}",
             )
         configs.append(
-            AssessmentConfigRef(
-                id=UUID(str(run.config_id)),
-                version=run.config_version,
-            )
+            AssessmentConfigRef(id=run.config_id, version=run.config_version)
         )
 
-    return AssessmentCreate(
+    return AssessmentRunCreate(
         experiment_name=experiment_name,
         dataset_id=dataset_id,
-        prompt_template=assessment_input.get("prompt_template"),
-        system_instruction=assessment_input.get("system_instruction"),
-        text_columns=list(assessment_input.get("text_columns") or []),
-        attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
-        output_schema=assessment_input.get("output_schema"),
+        input_binding=binding,
         configs=configs,
-        prefilter_config=assessment_input.get("prefilter_config"),
-        post_processing_config=assessment_input.get("post_processing_config"),
+        post_processing_config=input_binding.get("post_processing_config"),
     )
 
 
 def start_assessment(
     session: Session,
-    request: AssessmentCreate,
+    request: AssessmentRunCreate,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Validate, create Assessment + AssessmentRun records, dispatch Celery tasks.
 
     Each run is created with status='pending' and handed off to a Celery worker
@@ -115,16 +116,9 @@ def start_assessment(
         project_id=project_id,
     )
 
-    assessment_input: dict = {
-        "prompt_template": request.prompt_template,
-        "system_instruction": request.system_instruction,
-        "text_columns": request.text_columns,
-        "attachments": [att.model_dump() for att in request.attachments],
-    }
-    if request.output_schema:
-        assessment_input["output_schema"] = request.output_schema
-    if request.prefilter_config:
-        assessment_input["prefilter_config"] = request.prefilter_config
+    # InputBinding (prompt/text_columns/attachments) is stored on the parent
+    # assessment.input; post_processing_config rides alongside so retry can rebuild it.
+    assessment_input: dict[str, Any] = request.input_binding.model_dump()
     if request.post_processing_config:
         assessment_input["post_processing_config"] = request.post_processing_config
 
@@ -180,6 +174,7 @@ def start_assessment(
         dataset_id=request.dataset_id,
         organization_id=organization_id,
         project_id=project_id,
+        input_binding=assessment_input,
     )
 
     runs: list[AssessmentRun] = []
@@ -191,7 +186,6 @@ def start_assessment(
             assessment_id=assessment.id,
             config_id=cfg.id,
             config_version=cfg.version,
-            assessment_input=assessment_input,
         )
         runs.append(run)
 
@@ -217,7 +211,7 @@ def start_assessment(
         [run.id for run in runs],
     )
 
-    return AssessmentResponse(
+    return AssessmentRunResponse(
         assessment_id=assessment.id,
         experiment_name=request.experiment_name,
         dataset_id=request.dataset_id,
@@ -227,8 +221,8 @@ def start_assessment(
             AssessmentRunSummary(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
-                config_id=str(run.config_id),
-                version=run.config_version,
+                config_id=run.config_id,
+                config_version=run.config_version,
                 status=run.status,
             )
             for run in runs
@@ -241,7 +235,7 @@ def retry_assessment(
     assessment: Assessment,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Create a new assessment using the same parent assessment inputs."""
     runs = get_assessment_runs_for_assessment(
         session=session, assessment_id=assessment.id
@@ -249,6 +243,7 @@ def retry_assessment(
     request = _build_retry_request(
         experiment_name=assessment.experiment_name,
         dataset_id=assessment.dataset_id,
+        input_binding=assessment.input,
         runs=runs,
     )
     return start_assessment(
@@ -264,7 +259,7 @@ def retry_assessment_run(
     run: AssessmentRun,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Create a new assessment using the same inputs as a single child run."""
     parent = getattr(run, "assessment", None) or session.get(
         Assessment, run.assessment_id
@@ -277,6 +272,7 @@ def retry_assessment_run(
     request = _build_retry_request(
         experiment_name=parent.experiment_name,
         dataset_id=parent.dataset_id,
+        input_binding=parent.input,
         runs=[run],
     )
     return start_assessment(
@@ -292,7 +288,7 @@ def resume_assessment_run(
     run: AssessmentRun,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Re-run a failed run from its failed stage, reusing completed upstream batches."""
     from app.celery.tasks.job_execution import run_assessment_pipeline
     from app.services.assessment.stages import ordered_stages
@@ -343,7 +339,7 @@ def resume_assessment_run(
         trace_id=correlation_id.get() or "",
     )
 
-    return AssessmentResponse(
+    return AssessmentRunResponse(
         assessment_id=parent.id,
         experiment_name=parent.experiment_name,
         dataset_id=parent.dataset_id,
@@ -353,8 +349,8 @@ def resume_assessment_run(
             AssessmentRunSummary(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
-                config_id=str(run.config_id),
-                version=run.config_version,
+                config_id=run.config_id,
+                config_version=run.config_version,
                 status=run.status,
             )
         ],

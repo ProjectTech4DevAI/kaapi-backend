@@ -13,8 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
-from app.api.permissions import Permission, require_feature, require_permission
-from app.core.feature_flags import FeatureFlag
+from app.api.permissions import Permission, require_permission
 from app.models.assessment import (
     AssessmentCreate,
     AssessmentSubmitResponse,
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/assessments",
     tags=["Assessment (API)"],
-    dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))],
 )
 
 _RESPONSE_NOT_WIRED = "RESPONSE-mode assessment is not wired yet."

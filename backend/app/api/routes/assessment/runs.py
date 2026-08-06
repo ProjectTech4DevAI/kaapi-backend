@@ -21,10 +21,10 @@ from app.crud.assessment import (
 )
 from app.models.assessment import (
     Assessment,
-    AssessmentCreate,
-    AssessmentResponse,
     AssessmentRun,
+    AssessmentRunCreate,
     AssessmentRunPublic,
+    AssessmentRunResponse,
 )
 from app.models.evaluation import EvaluationDataset
 from app.services.assessment.service import (
@@ -90,14 +90,14 @@ def _build_run_public(
 @router.post(
     "/runs",
     description=load_description("assessment/create_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def create_assessment_runs(
-    request: AssessmentCreate,
+    request: AssessmentRunCreate,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Submit an assessment and create one child run per config."""
     logger.info(
         "[create_assessment_runs] Assessment run submission | experiment=%s | dataset_id=%s | configs=%s",
@@ -119,14 +119,14 @@ def create_assessment_runs(
 @router.post(
     "/runs/{run_id}/retry",
     description=load_description("assessment/retry_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def retry_assessment_run(
     run_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Retry a single child assessment run using the same inputs."""
     run = get_run_by_id(
         session=session,
@@ -147,14 +147,14 @@ def retry_assessment_run(
 @router.post(
     "/runs/{run_id}/resume",
     description=load_description("assessment/resume_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def resume_assessment_run(
     run_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Resume a failed child run from its failed stage, reusing completed stages."""
     run = get_run_by_id(
         session=session,

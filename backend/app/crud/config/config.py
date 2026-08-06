@@ -145,10 +145,8 @@ class ConfigCrud:
         )
         return config
 
-    def delete_or_raise(
-        self, config_id: UUID, tag: ConfigTag = ConfigTag.DEFAULT
-    ) -> None:
-        config = self.exists_in_tag_scope_or_raise(config_id, tag)
+    def delete_or_raise(self, config_id: UUID) -> None:
+        config = self.exists_or_raise(config_id)
 
         config.deleted_at = now()
         self.session.add(config)

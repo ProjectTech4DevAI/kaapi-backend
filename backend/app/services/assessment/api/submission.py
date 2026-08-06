@@ -156,12 +156,29 @@ def submit(
     )
 
     trace_id = correlation_id.get() or ""
-    run_assessment_api_batch.delay(
-        execution_id=execution.id,
-        organization_id=organization_id,
-        project_id=project_id,
-        trace_id=trace_id,
-    )
+    try:
+        run_assessment_api_batch.delay(
+            execution_id=execution.id,
+            organization_id=organization_id,
+            project_id=project_id,
+            trace_id=trace_id,
+        )
+    except Exception as exc:
+        logger.exception(
+            "[submit] Failed to enqueue BATCH task | assessment_id=%s | execution_id=%s",
+            assessment.id,
+            execution.id,
+        )
+        api.update_status(
+            session=session, obj=execution, status=AssessmentStatus.FAILED
+        )
+        api.update_status(
+            session=session, obj=assessment, status=AssessmentStatus.FAILED
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to dispatch the assessment for processing. Please retry.",
+        ) from exc
     logger.info(
         "[submit] Dispatched BATCH assessment | assessment_id=%s | execution_id=%s | "
         "provider=%s | stages=%s | rows=%s",

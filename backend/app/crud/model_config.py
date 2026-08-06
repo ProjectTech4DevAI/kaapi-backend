@@ -156,17 +156,51 @@ def validate_config_blob_for_tag(
 def validate_blob_completion_models(
     session: Session, blob: ConfigBlob | AssessmentConfigBlob
 ) -> None:
-    """Run the model-existence check on an already-parsed blob (create path)."""
+    """Run the model-existence check on an already-parsed blob (create path).
+
+    For an assessment blob every present pre-filter runs its own completion, so
+    each is validated on the same path as the main completion.
+    """
     completion = (
         blob.assessment if isinstance(blob, AssessmentConfigBlob) else blob.completion
     )
     _validate_completion_model_or_raise(session, completion)
 
+    if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
+        pre_filters = (
+            blob.pre_filters.topic_relevance,
+            blob.pre_filters.duplicate_detection,
+        )
+        for flt in pre_filters:
+            if flt is not None:
+                _validate_model_or_raise(
+                    session,
+                    raw_provider=flt.provider,
+                    completion_type=CompletionType.TEXT,
+                    params=flt.params,
+                )
+
 
 def _validate_completion_model_or_raise(
     session: Session, completion: CompletionConfig
 ) -> None:
-    """Reject a completion whose params.model is not in model_config.
+    """Reject a completion whose params.model is not in model_config."""
+    _validate_model_or_raise(
+        session,
+        raw_provider=completion.provider,
+        completion_type=completion.type,
+        params=completion.params,
+    )
+
+
+def _validate_model_or_raise(
+    session: Session,
+    *,
+    raw_provider: str | None,
+    completion_type: str,
+    params: dict[str, Any] | None,
+) -> None:
+    """Reject a (provider, type, params) whose params.model is not in model_config.
 
     model_config is the source of truth — all providers/types validated.
     Native configs are exempt (they forward raw params to the provider).
@@ -174,8 +208,6 @@ def _validate_completion_model_or_raise(
     # As of now - this whole validation is liberal
     # change this if we want to be more strict about unsupported models/providers or missing model configs.
     """
-    raw_provider = completion.provider
-    completion_type = completion.type
 
     # Proxy forwards the request to the client's own LLM endpoint — no model
     # lookup, no provider mapping.
@@ -190,7 +222,7 @@ def _validate_completion_model_or_raise(
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model") or None
+    model_name = (params or {}).get("model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -204,12 +236,12 @@ def _validate_completion_model_or_raise(
     )
     if model_row is None:
         logger.warning(
-            f"[_validate_completion_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            f"[_validate_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
             "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
         )
 
     if completion_type == "tts" and model_row is not None:
-        voice = (completion.params or {}).get("voice")
+        voice = (params or {}).get("voice")
         voice_spec = (
             model_row.config.get("voice")
             if isinstance(model_row.config, dict)
@@ -220,7 +252,7 @@ def _validate_completion_model_or_raise(
         )
         if voice and allowed_voices and voice not in allowed_voices:
             logger.warning(
-                f"[_validate_completion_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"[_validate_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
                 f"model='{model_name}'. Allowed: {allowed_voices}."
             )
 

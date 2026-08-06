@@ -90,19 +90,12 @@ def get_config(
     config_id: UUID,
     current_user: AuthContextDep,
     session: SessionDep,
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs. Supported values: 'default', 'ASSESSMENT'."
-        ),
-    ),
 ):
     """
-    Get a specific configuration by its ID.
+    Get a specific configuration by its ID (by-id lookup is not tag-scoped).
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    config = config_crud.exists_in_tag_scope_or_raise(config_id=config_id, tag=tag)
+    config = config_crud.exists_or_raise(config_id)
     return APIResponse.success_response(
         data=config,
     )
@@ -145,19 +138,12 @@ def delete_config(
     config_id: UUID,
     current_user: AuthContextDep,
     session: SessionDep,
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs. Supported values: 'default', 'ASSESSMENT'."
-        ),
-    ),
 ):
     """
-    Delete a specific configuration.
+    Delete a specific configuration (by-id lookup is not tag-scoped).
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    config_crud.delete_or_raise(config_id=config_id, tag=tag)
+    config_crud.delete_or_raise(config_id=config_id)
 
     return APIResponse.success_response(
         data=Message(message="Config deleted successfully"),
