@@ -405,6 +405,20 @@ class EvaluationRun(SQLModel, table=True):
         description="True if all per-item scores were synced to Langfuse, else False",
     )
 
+    callback_url: str | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Text,
+            nullable=True,
+            comment=(
+                "Optional HTTPS webhook (v2 runs only) POSTed the run's "
+                "APIResponse[EvaluationRunPublic] once the run reaches a terminal "
+                "state (completed/failed). NULL when no callback was requested"
+            ),
+        ),
+        description="Optional HTTPS webhook fired on terminal (completed/failed) state",
+    )
+
     # Cost tracking field
     cost: dict[str, Any] | None = SQLField(
         default=None,
@@ -503,6 +517,19 @@ class EvaluationRunUpdate(SQLModel):
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
     is_judge_run: bool | None = None
+    callback_url: str | None = None
+
+
+class EvalCompletionCallbackData(SQLModel):
+    """Slim run snapshot for the completion webhook — identity + status only."""
+
+    id: int
+    run_name: str
+    dataset_name: str
+    status: str
+    run_mode: RunModeEnum
+    inserted_at: datetime
+    updated_at: datetime
 
 
 class EvaluationRunPublic(SQLModel):

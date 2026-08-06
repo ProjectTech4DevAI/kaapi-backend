@@ -147,6 +147,7 @@ def validate_and_start_fast_evaluation(
     project_id: int,
     trace_id: str = "N/A",
     is_judge_run: bool = False,
+    callback_url: str | None = None,
 ) -> EvaluationRun:
     """Validate + create + dispatch a fast evaluation run.
 
@@ -167,6 +168,10 @@ def validate_and_start_fast_evaluation(
     time. It defaults to the v1 behavior — no judging, Langfuse sync as today —
     so the v1 call path is unchanged. Judging is system-config only: the judge
     always uses the fallback model + built-in prompt, so there is no per-run config.
+
+    `callback_url` is an optional HTTPS webhook (v2 only) persisted on the run so
+    the terminal-transition hook can POST the result. v1 callers pass nothing, so
+    it stays NULL and no webhook fires.
     """
     logger.info(
         f"[validate_and_start_fast_evaluation] Starting fast eval | "
@@ -258,13 +263,19 @@ def validate_and_start_fast_evaluation(
         log_context="validate_and_start_fast_evaluation",
     )
 
-    # Persist the judge marker before dispatch so the post-barrier aggregate reads
-    # it. Skipped for v1 runs (is_judge_run=False), keeping that path unchanged.
+    # Persist the judge marker + callback_url before dispatch: the aggregate (which
+    # only knows eval_run_id) reads is_judge_run at judge time, and the terminal
+    # hook reads callback_url to fire the webhook.
+    creation_update: dict[str, Any] = {}
     if is_judge_run:
+        creation_update["is_judge_run"] = True
+    if callback_url:
+        creation_update["callback_url"] = callback_url
+    if creation_update:
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            update=EvaluationRunUpdate(is_judge_run=True),
+            update=EvaluationRunUpdate(**creation_update),
         )
 
     # Fetch the dataset items now to size the fan-out: ceil(total / chunk_size)

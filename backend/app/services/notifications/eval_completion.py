@@ -29,11 +29,20 @@ from app.models import (
     NotificationProvider,
     Project,
 )
-from app.utils import generate_eval_completion_email, send_email
+from app.models.evaluation import EvalCompletionCallbackData
+from app.utils import (
+    APIResponse,
+    generate_eval_completion_email,
+    get_webhook_secret,
+    send_callback,
+    send_email,
+)
 
 logger = logging.getLogger(__name__)
 
 EVAL_COMPLETION_TEMPLATE = "eval_completion_v1"
+
+_FAILED_STATUS = "failed"
 
 
 def execute_eval_completion_notification(evaluation_id: int) -> dict:
@@ -201,3 +210,51 @@ def execute_eval_completion_notification(evaluation_id: int) -> dict:
             "sent": sent_count,
             "failed": failed_count,
         }
+
+
+def _build_eval_completion_callback_payload(eval_run: EvaluationRun) -> dict:
+    """Wrap the slim run snapshot in an APIResponse envelope for the webhook."""
+    run_data = EvalCompletionCallbackData.model_validate(eval_run).model_dump(
+        mode="json"
+    )
+    if eval_run.status == _FAILED_STATUS:
+        envelope = APIResponse.failure_response(
+            error=eval_run.error_message, data=run_data
+        )
+    else:
+        envelope = APIResponse.success_response(data=run_data)
+    return envelope.model_dump()
+
+
+def execute_eval_completion_callback(evaluation_id: int) -> dict:
+    """POST the terminal run's status to its registered webhook (best-effort)."""
+    with Session(engine) as session:
+        eval_run = session.get(EvaluationRun, evaluation_id)
+        if eval_run is None:
+            logger.error(
+                f"[execute_eval_completion_callback] EvaluationRun not found | "
+                f"evaluation_id={evaluation_id}"
+            )
+            return {"evaluation_id": evaluation_id, "delivered": False, "skipped": True}
+
+        if not eval_run.callback_url:
+            return {"evaluation_id": evaluation_id, "delivered": False, "skipped": True}
+
+        payload = _build_eval_completion_callback_payload(eval_run)
+        webhook_secret = get_webhook_secret(
+            eval_run.project_id, eval_run.organization_id
+        )
+
+        try:
+            delivered = send_callback(
+                eval_run.callback_url, payload, webhook_secret=webhook_secret
+            )
+        except Exception as e:
+            logger.warning(
+                f"[execute_eval_completion_callback] Delivery raised; ignoring | "
+                f"evaluation_id={evaluation_id} | status={eval_run.status} | error={e}",
+                exc_info=True,
+            )
+            return {"evaluation_id": evaluation_id, "delivered": False}
+
+        return {"evaluation_id": evaluation_id, "delivered": delivered}

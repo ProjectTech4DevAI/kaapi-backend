@@ -443,3 +443,14 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
     )
 
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
+
+
+@celery_app.task(bind=True, queue="default", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
+def send_eval_completion_callback(self, evaluation_id: int) -> dict:
+    """POST the run's status to its registered webhook once it is terminal."""
+    from app.services.notifications.eval_completion import (
+        execute_eval_completion_callback,
+    )
+
+    return execute_eval_completion_callback(evaluation_id=evaluation_id)

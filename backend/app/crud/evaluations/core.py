@@ -241,6 +241,8 @@ def update_evaluation_run(
 
     if should_notify:
         _enqueue_eval_completion_notification(eval_run)
+        if eval_run.callback_url:
+            _enqueue_eval_completion_callback(eval_run)
 
     return eval_run
 
@@ -263,6 +265,19 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     except Exception as e:
         logger.error(
             f"[update_evaluation_run] Failed to enqueue completion notification | "
+            f"evaluation_id={eval_run.id} | error={e}",
+            exc_info=True,
+        )
+
+
+def _enqueue_eval_completion_callback(eval_run: EvaluationRun) -> None:
+    try:
+        from app.celery.tasks.job_execution import send_eval_completion_callback
+
+        send_eval_completion_callback.delay(eval_run.id)
+    except Exception as e:
+        logger.error(
+            f"[update_evaluation_run] Failed to enqueue completion callback | "
             f"evaluation_id={eval_run.id} | error={e}",
             exc_info=True,
         )
