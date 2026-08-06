@@ -80,7 +80,10 @@ shape is documented here:
   every row; `format`: `url` | `base64` for attachment columns).
 * `pre_filters` (optional) — `topic_relevance` and/or `duplicate_detection`. Each runs its
   own llm call, so it carries `provider` (default `openai`) + its own `params`
-  (TextLLMParams: `model`, `temperature`, …), plus its prompt (`topic_relevance.prompt` /
+  (a `TextLLMParams` object: `model`, `temperature`, …). `params` is optional — when
+  omitted it defaults to `{ "model": "gpt-5.6-luna" }`, and even if you pass `params`
+  without a `model`, the default `gpt-5.6-luna` is filled in. Set `params.model` to use a
+  different model. Each pre-filter also carries its prompt (`topic_relevance.prompt` /
   `duplicate_detection.content`, with an optional `knowledge_base_id` for duplicates) and
   `stop_on_fail` (`true` = a failing verdict stops the chain and skips the assessment for
   that row; `false` = the verdict is just recorded).

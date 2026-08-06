@@ -24,6 +24,21 @@ class InputColumn(SQLModel):
     format: Literal["url", "base64"] | None = None
 
 
+class PreFilterParams(TextLLMParams):
+    """Flat, mapper-ready LLM params for a pre-filter call.
+
+    Same knobs as ``TextLLMParams`` (so ``mappers.py`` maps them unchanged) minus
+    ``instructions``: a pre-filter's system prompt is its own ``prompt``/``content``
+    field, and the pipeline layers its gate instruction on at submit time. Unknown
+    keys are rejected so a mistyped param fails loudly instead of silently no-op'ing.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    model: str = Field(default=DEFAULT_PREFILTER_MODEL)
+    instructions: None = Field(default=None, exclude=True)
+
+
 class PreFilterBase(SQLModel):
     """Shared pre-filter fields — each pre-filter runs its own llm call."""
 
@@ -33,15 +48,19 @@ class PreFilterBase(SQLModel):
     )
     params: dict[str, JsonValue] = Field(
         default_factory=lambda: {"model": DEFAULT_PREFILTER_MODEL},
-        description="TextLLMParams for this pre-filter's llm call (model, temperature, ...).",
+        description="PreFilterParams for this pre-filter's llm call (model, temperature, ...).",
     )
 
     @model_validator(mode="after")
     def _validate_prefilter_params(self):
-        validated = TextLLMParams.model_validate(self.params)
-        dumped = validated.model_dump(exclude_none=True)
-        dumped.setdefault("model", DEFAULT_PREFILTER_MODEL)
-        self.params = dumped
+        if self.params.get("instructions") is not None:
+            raise ValueError(
+                "pre-filter params must not set 'instructions'; use the pre-filter's "
+                "own 'prompt'/'content' field as its system prompt"
+            )
+        self.params = PreFilterParams.model_validate(self.params).model_dump(
+            exclude_none=True
+        )
         return self
 
 

@@ -16,6 +16,7 @@ from app.core.batch import (
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.cloud import get_cloud_storage
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.models.assessment import AssessmentRun, Stage, StageStatus
 from app.models.batch_job import BatchJob, BatchJobType
 from app.services.assessment.prefilter import constants, resolve_prefilter_settings
@@ -193,12 +194,11 @@ def load_raw_batch_results(
 
 def advance_or_finalize(run: AssessmentRun) -> str | None:
     """Advance the run to the next stage (returned) or finalize it (returns None)."""
-    nxt = next_stage(run.pipeline, run.stage)
+    exec_bag = _read_exec(run)
+    nxt = next_stage(exec_bag.get("pipeline"), exec_bag.get("stage"))
     if nxt:
-        run.stage = nxt
-        run.stage_status = StageStatus.PENDING
+        _write_exec(run, stage=nxt, stage_status=StageStatus.PENDING)
         return nxt
-    run.stage = Stage.COMPLETED
-    run.stage_status = StageStatus.COMPLETED
+    _write_exec(run, stage=Stage.COMPLETED, stage_status=StageStatus.COMPLETED)
     run.status = "completed"
     return None

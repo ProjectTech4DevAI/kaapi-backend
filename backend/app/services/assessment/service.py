@@ -14,6 +14,7 @@ from app.crud.assessment import (
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
 )
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.config import ConfigCrud
 from app.crud.evaluations.core import resolve_evaluation_config
 from app.models.assessment import (
@@ -24,6 +25,7 @@ from app.models.assessment import (
     AssessmentRunCreate,
     AssessmentRunResponse,
     AssessmentRunSummary,
+    AssessmentStatus,
     InputBinding,
     StageStatus,
 )
@@ -293,12 +295,13 @@ def resume_assessment_run(
     from app.celery.tasks.job_execution import run_assessment_pipeline
     from app.services.assessment.stages import ordered_stages
 
-    if run.stage_status != StageStatus.FAILED:
+    exec_bag = _read_exec(run)
+    if exec_bag.get("stage_status") != StageStatus.FAILED:
         raise HTTPException(
             status_code=400,
             detail=f"Run {run.id} is not in a failed state and cannot be resumed",
         )
-    if run.stage not in ordered_stages(run.pipeline):
+    if exec_bag.get("stage") not in ordered_stages(exec_bag.get("pipeline")):
         raise HTTPException(
             status_code=400,
             detail=f"Run {run.id} has no resumable failed stage",
@@ -319,8 +322,8 @@ def resume_assessment_run(
         project_id=project_id,
     )
 
-    run.stage_status = StageStatus.PENDING
-    run.status = "processing"
+    _write_exec(run, stage_status=StageStatus.PENDING)
+    run.status = AssessmentStatus.PROCESSING
     run.error_message = None
     session.add(run)
     session.commit()
@@ -330,7 +333,7 @@ def resume_assessment_run(
     logger.info(
         "[resume_assessment_run] Resuming run_id=%s from stage=%s",
         run.id,
-        run.stage,
+        _read_exec(run).get("stage"),
     )
     run_assessment_pipeline.delay(
         run_id=run.id,
