@@ -38,8 +38,19 @@ class TestMapKaapiToOpenAIParams:
             session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        # TextLLMParams has default temperature=0.1
-        assert result == {"model": "gpt-4o", "temperature": 0.1}
+        # Unset temperature is dropped from the dump (_CompactParamsSerializerMixin),
+        # so the provider decides the default — never a temperature the user didn't set.
+        assert result == {"model": "gpt-4o"}
+        assert warnings == []
+
+    def test_explicit_temperature_forwarded(self, db: Session):
+        kaapi_params = TextLLMParams(model="gpt-4o", temperature=0.7)
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result == {"model": "gpt-4o", "temperature": 0.7}
         assert warnings == []
 
     def test_reasoning_mapping_for_reasoning_models(self, db: Session):
@@ -55,10 +66,11 @@ class TestMapKaapiToOpenAIParams:
 
         assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high"}
-        # Temperature is suppressed for reasoning models (even default value)
         assert "temperature" not in result
-        assert len(warnings) == 1
-        assert "temperature" in warnings[0].lower()
+        # Unset temperature never reaches the mapper, so no spurious
+        # "suppressed" warning for reasoning models (explicit-temperature
+        # suppression is covered by test_temperature_suppressed_for_reasoning_models).
+        assert warnings == []
 
     def test_knowledge_base_ids_mapping(self, db: Session):
         """Test knowledge_base_ids mapping to OpenAI tools format."""
