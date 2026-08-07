@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import timedelta
 
 import boto3
@@ -11,6 +13,7 @@ from app.core.config import settings
 from app.core.security import (
     ALGORITHM,
     KMS_CIPHERTEXT_PREFIX,
+    KMS_ENVELOPE_PREFIX,
     APIKeyManager,
     create_access_token,
     create_refresh_token,
@@ -65,7 +68,7 @@ class TestCredentialEncryption:
 
         encrypted = encrypt_credentials(creds)
 
-        assert encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
+        assert encrypted.startswith(KMS_ENVELOPE_PREFIX)
         assert decrypt_credentials(encrypted) == creds
 
     def test_dual_read_fernet_row_with_kms_active(self, monkeypatch, kms_key):
@@ -77,6 +80,64 @@ class TestCredentialEncryption:
 
         monkeypatch.setattr(settings, "ENVIRONMENT", "staging")
         assert decrypt_credentials(fernet_encrypted) == creds
+
+    def test_kms_v2_envelope_roundtrip(self, kms_key):
+        creds = {"openai": {"api_key": "sk-envelope-123"}}
+
+        encrypted = encrypt_credentials(creds)
+
+        assert encrypted.startswith(KMS_ENVELOPE_PREFIX)
+        segments = encrypted[len(KMS_ENVELOPE_PREFIX) :].split(":")
+        assert len(segments) == 3
+        for seg in segments:
+            base64.b64decode(seg)  # each segment must be valid base64
+        assert decrypt_credentials(encrypted) == creds
+
+    def test_kms_v2_large_payload_over_4096_bytes(self, kms_key):
+        # Direct KMS encrypt caps at 4096 bytes; envelope encryption has no such limit.
+        creds = {
+            "service_account": {"private_key": "k" * 5000, "client_email": "svc@x"}
+        }
+        assert len(json.dumps(creds).encode()) > 4096
+
+        encrypted = encrypt_credentials(creds)
+
+        assert encrypted.startswith(KMS_ENVELOPE_PREFIX)
+        assert decrypt_credentials(encrypted) == creds
+
+    def test_v1_row_still_decrypts_with_v2_active(self, kms_key):
+        creds = {"api_key": "sk-v1-legacy"}
+        blob = security._kms_client.encrypt(
+            KeyId=kms_key, Plaintext=json.dumps(creds).encode()
+        )["CiphertextBlob"]
+        v1_ciphertext = KMS_CIPHERTEXT_PREFIX + base64.b64encode(blob).decode()
+
+        assert decrypt_credentials(v1_ciphertext) == creds
+
+    def test_new_writes_produce_v2(self, kms_key):
+        encrypted = encrypt_credentials({"api_key": "sk-new"})
+
+        assert encrypted.startswith(KMS_ENVELOPE_PREFIX)
+        assert not encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
+
+    def test_v2_tampered_ciphertext_raises(self, kms_key):
+        encrypted = encrypt_credentials({"api_key": "sk-tamper"})
+        wrapped_b64, nonce_b64, ct_b64 = encrypted[len(KMS_ENVELOPE_PREFIX) :].split(
+            ":"
+        )
+        ct = bytearray(base64.b64decode(ct_b64))
+        ct[0] ^= 0xFF
+        tampered = (
+            f"{KMS_ENVELOPE_PREFIX}{wrapped_b64}:{nonce_b64}:"
+            f"{base64.b64encode(bytes(ct)).decode()}"
+        )
+
+        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+            decrypt_credentials(tampered)
+
+    def test_v2_wrong_segment_count_raises(self, kms_key):
+        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+            decrypt_credentials(f"{KMS_ENVELOPE_PREFIX}onlyoneseg")
 
 
 class TestAPIKeyManager:
