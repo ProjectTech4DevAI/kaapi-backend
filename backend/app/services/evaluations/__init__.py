@@ -6,12 +6,15 @@ from app.services.evaluations.evaluation import (
     validate_and_start_batch_evaluation,
 )
 from app.services.evaluations.fast import (
-    execute_fast_evaluation,
+    execute_fast_evaluation_aggregate,
+    execute_fast_evaluation_chunk,
     is_dataset_fast_eligible,
     validate_and_start_fast_evaluation,
 )
 from app.services.evaluations.prompt_improvement import (
-    improve_prompt,
+    execute_prompt_improvement,
+    start_prompt_improvement_job,
+    validate_improve_prompt,
 )
 from app.services.evaluations.validators import (
     ALLOWED_EXTENSIONS,

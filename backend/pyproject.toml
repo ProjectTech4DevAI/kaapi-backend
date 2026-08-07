@@ -34,7 +34,7 @@ dependencies = [
     "openai>=1.100.1",
     "pre-commit>=3.8.0",
     "openai_responses",
-    "langfuse==2.60.3",
+    "langfuse==4.7.1",
     "asgi-correlation-id>=4.3.4",
     "py-zerox>=0.0.7,<1.0.0",
     "pandas>=2.3.2",

@@ -53,12 +53,8 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
     Provider.GOOGLE: ProviderConfig(
         required_fields=[
             "api_key",
-            "project_id",
-            "location",
-            "sa_key",
-            "gcs_bucket",
         ],
-        sensitive_fields=["api_key", "sa_key"],
+        sensitive_fields=["api_key"],
     ),
     Provider.GOOGLE_VERTEX: ProviderConfig(
         required_fields=[
