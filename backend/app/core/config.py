@@ -120,7 +120,7 @@ class Settings(BaseSettings):
 
     # google aistudio api key
     GEMINI_API_KEY: str = ""
-    GEMINI_DEFAULT_INFERENCE_ROUTE: str = "aistudio"
+    GEMINI_DEFAULT_INFERENCE_ROUTE: Literal["aistudio", "vertex"]
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672

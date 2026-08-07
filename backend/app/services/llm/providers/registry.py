@@ -55,8 +55,10 @@ class LLMProvider:
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         if provider_type in cls._GOOGLE_ROUTED:
+            # Only an explicit "vertex" opts into the new route; anything else
+            # (default, unset, typo) keeps today's aistudio behavior.
             route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE
-            return GoogleAIProvider if route == "aistudio" else GoogleVertexAIProvider
+            return GoogleVertexAIProvider if route == "vertex" else GoogleAIProvider
         provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
@@ -76,27 +78,40 @@ def get_llm_provider(
     from app.crud.credentials import get_provider_credential
 
     provider_class = LLMProvider.get_provider_class(provider_type)
-    is_platform_routed = provider_type in LLMProvider._GOOGLE_ROUTED
-
-    if is_platform_routed:
-        credential_provider = (
-            LLMProvider.GOOGLE_AISTUDIO
-            if provider_class is GoogleAIProvider
-            else LLMProvider.GOOGLE_VERTEX
-        )
-    else:
-        credential_provider = provider_type.replace("-native", "")
-
-    credentials = get_provider_credential(
-        session=session,
-        provider=credential_provider,
-        project_id=project_id,
-        org_id=organization_id,
+    is_vertex_routed = (
+        provider_type in LLMProvider._GOOGLE_ROUTED
+        and provider_class is GoogleVertexAIProvider
     )
 
-    if not credentials and not is_platform_routed:
+    if is_vertex_routed:
+        # Platform-routed vertex: tenant row, else platform GCP settings.
+        credential_chain = [LLMProvider.GOOGLE_VERTEX]
+    elif provider_type in LLMProvider._GOOGLE_ROUTED:
+        # Platform-routed aistudio keeps today's `google` row semantics verbatim.
+        credential_chain = [LLMProvider.GOOGLE]
+    elif provider_type in (
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+    ):
+        # Explicit aistudio falls back to the legacy `google` row.
+        credential_chain = [LLMProvider.GOOGLE_AISTUDIO, LLMProvider.GOOGLE]
+    else:
+        credential_chain = [provider_type.replace("-native", "")]
+
+    credentials = None
+    for credential_provider in credential_chain:
+        credentials = get_provider_credential(
+            session=session,
+            provider=credential_provider,
+            project_id=project_id,
+            org_id=organization_id,
+        )
+        if credentials:
+            break
+
+    if not credentials and not is_vertex_routed:
         raise ValueError(
-            f"Credentials for provider '{credential_provider}' not configured for this project."
+            f"Credentials for provider '{credential_chain[0]}' not configured for this project."
         )
 
     credentials = credentials or {}

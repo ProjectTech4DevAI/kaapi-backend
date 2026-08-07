@@ -225,7 +225,7 @@ class TestGetLLMProvider:
             assert isinstance(provider, GoogleAIProvider)
             mock_get_creds.assert_called_once_with(
                 session=db,
-                provider="google-aistudio",
+                provider="google",
                 project_id=project.id,
                 org_id=project.organization_id,
             )
@@ -259,25 +259,74 @@ class TestGetLLMProvider:
             assert provider.client.api_key == "platform-key"
             assert provider.client.project_id == "platform-project"
 
-    def test_google_aistudio_route_falls_back_to_platform_defaults(self, db: Session):
+    def test_google_aistudio_route_without_google_row_raises(self, db: Session):
+        """env=aistudio keeps today's behavior: tenant `google` row or error."""
         project = get_project(db)
 
         with patch(
             "app.services.llm.providers.registry.settings"
         ) as registry_settings, patch(
-            "app.services.llm.providers.google_aistudio.settings"
-        ) as aistudio_settings, patch(
             "app.crud.credentials.get_provider_credential"
         ) as mock_get_creds:
             registry_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "aistudio"
-            aistudio_settings.GEMINI_API_KEY = "platform-gemini-key"
             mock_get_creds.return_value = None
+
+            with pytest.raises(ValueError) as exc_info:
+                get_llm_provider(
+                    session=db,
+                    provider_type="google",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )
+
+            assert "'google'" in str(exc_info.value)
+
+    def test_explicit_google_aistudio_falls_back_to_google_row(self, db: Session):
+        project = get_project(db)
+
+        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
+            mock_get_creds.side_effect = lambda **kwargs: (
+                {"api_key": "legacy-google-key"}
+                if kwargs["provider"] == "google"
+                else None
+            )
 
             provider = get_llm_provider(
                 session=db,
-                provider_type="google",
+                provider_type="google-aistudio",
                 project_id=project.id,
                 organization_id=project.organization_id,
             )
 
             assert isinstance(provider, GoogleAIProvider)
+            assert [c.kwargs["provider"] for c in mock_get_creds.call_args_list] == [
+                "google-aistudio",
+                "google",
+            ]
+
+    def test_unknown_route_value_defaults_to_aistudio(self, db: Session):
+        """Typo/unset env must not silently flip traffic onto vertex."""
+        project = get_project(db)
+
+        with patch(
+            "app.services.llm.providers.registry.settings"
+        ) as registry_settings, patch(
+            "app.crud.credentials.get_provider_credential"
+        ) as mock_get_creds:
+            registry_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = ""
+            mock_get_creds.return_value = {"api_key": "byok-key"}
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google-native",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+            assert isinstance(provider, GoogleAIProvider)
+            mock_get_creds.assert_called_once_with(
+                session=db,
+                provider="google",
+                project_id=project.id,
+                org_id=project.organization_id,
+            )
