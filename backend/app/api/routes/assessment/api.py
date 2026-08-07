@@ -20,7 +20,7 @@ from app.models.assessment import (
     BatchInput,
 )
 from app.services.assessment.api import submission
-from app.utils import APIResponse
+from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ _RESPONSE_NOT_WIRED = "RESPONSE-mode assessment is not wired yet."
 
 @router.post(
     "",
+    description=load_description("assessment/create.md"),
     response_model=APIResponse[AssessmentSubmitResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
