@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlmodel import func, select
@@ -37,7 +36,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
     response_model=UsersPublic,
     include_in_schema=False,
 )
-def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
+def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> UsersPublic:
     count = session.exec(select(func.count()).select_from(User)).one()
     users = session.exec(select(User).offset(skip).limit(limit)).all()
     return UsersPublic(data=users, count=count)
@@ -49,7 +48,7 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
     response_model=UserPublic,
     include_in_schema=False,
 )
-def create_user_endpoint(*, session: SessionDep, user_in: UserCreate) -> Any:
+def create_user_endpoint(*, session: SessionDep, user_in: UserCreate) -> User:
     if get_user_by_email(session=session, email=user_in.email):
         logger.warning(
             f"[create_user_endpoint] Attempting to create user with existing email | email: {user_in.email}"
@@ -76,7 +75,7 @@ def create_user_endpoint(*, session: SessionDep, user_in: UserCreate) -> Any:
 @router.patch("/me", response_model=UserPublic)
 def update_user_me(
     *, session: SessionDep, user_in: UserUpdateMe, current_user_dep: AuthContextDep
-) -> Any:
+) -> User:
     current_user = current_user_dep.user
     if user_in.email:
         existing_user = get_user_by_email(session=session, email=user_in.email)
@@ -99,7 +98,7 @@ def update_user_me(
 @router.patch("/me/password", response_model=Message)
 def update_password_me(
     *, session: SessionDep, body: UpdatePassword, current_user_dep: AuthContextDep
-) -> Any:
+) -> Message:
     current_user = current_user_dep.user
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect password")
@@ -123,7 +122,7 @@ def update_password_me(
 def read_user_me(
     session: SessionDep,
     current_user_dep: AuthContextDep,
-) -> Any:
+) -> UserPublic:
     user = current_user_dep.user
     features: list[str] = []
     org = current_user_dep.organization
@@ -139,7 +138,7 @@ def read_user_me(
 
 
 @router.delete("/me", response_model=Message)
-def delete_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Any:
+def delete_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Message:
     current_user = current_user_dep.user
     if current_user.is_superuser:
         logger.warning(
@@ -159,7 +158,7 @@ def delete_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Any
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=UserPublic,
 )
-def register_user(session: SessionDep, user_in: UserRegister) -> Any:
+def register_user(session: SessionDep, user_in: UserRegister) -> User:
     """
     This endpoint allows the registration of a new user and is accessible only by a superuser.
     """
@@ -179,7 +178,7 @@ def register_user(session: SessionDep, user_in: UserRegister) -> Any:
 @router.get("/{user_id}", response_model=UserPublic, include_in_schema=False)
 def read_user_by_id(
     user_id: int, session: SessionDep, current_user: AuthContextDep
-) -> Any:
+) -> User | None:
     user = session.get(User, user_id)
     if user == current_user.user:
         return user
@@ -204,7 +203,7 @@ def update_user_endpoint(
     session: SessionDep,
     user_id: int,
     user_in: UserUpdate,
-) -> Any:
+) -> User:
     db_user = session.get(User, user_id)
     if not db_user:
         raise HTTPException(

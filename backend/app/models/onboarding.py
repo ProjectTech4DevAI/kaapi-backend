@@ -5,7 +5,11 @@ from typing import Any
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
 
-from app.core.providers import validate_provider, validate_provider_credentials
+from app.core.providers import (
+    Provider,
+    ProviderCredentials,
+    parse_provider_credentials,
+)
 
 
 class OnboardingRequest(SQLModel):
@@ -52,9 +56,13 @@ class OnboardingRequest(SQLModel):
         min_length=3,
         max_length=50,
     )
-    credentials: list[dict[str, Any]] | None = Field(
+    credentials: list[dict[Provider, ProviderCredentials]] | None = Field(
         default=None,
-        description="Optional credential(s) to link with the project",
+        description=(
+            "Optional credential(s) to link with the project. Each entry maps "
+            "exactly one provider to its credential payload, e.g. "
+            "{'openai': {'api_key': '...'}}"
+        ),
     )
 
     @staticmethod
@@ -82,40 +90,29 @@ class OnboardingRequest(SQLModel):
             self.password = secrets.token_urlsafe(12)
         return self
 
-    @field_validator("credentials")
+    @field_validator("credentials", mode="before")
     @classmethod
-    def _validate_credential_list(cls, v: list[dict[str, dict[str, str]]] | None):
-        if v is None:
-            return v
+    def _parse_credential_list(cls, value: Any) -> Any:
+        # Ill-typed containers are handed back untouched so Pydantic reports
+        # the shape mismatch ("Input should be a valid list/dictionary").
+        if not isinstance(value, list) or any(
+            not isinstance(item, dict) for item in value
+        ):
+            return value
 
-        if not isinstance(v, list):
-            raise TypeError(
-                "Credential must be a list of single-key dicts (e.g., {'openai': {...}})."
-            )
-
-        for item in v:
-            if not isinstance(item, dict):
-                raise TypeError(
-                    "Credential must be a dict with a single provider key like {'openai': {...}}."
-                )
+        parsed: list[dict[str, Any]] = []
+        for item in value:
             if len(item) != 1:
                 raise ValueError(
                     "Credential must have exactly one provider key like {'openai': {...}}."
                 )
 
-            (provider_key,) = item.keys()
-            values = item[provider_key]
+            (provider,) = item.keys()
+            parsed.append(
+                {provider: parse_provider_credentials(provider, item[provider])}
+            )
 
-            validate_provider(provider_key)
-
-            if not isinstance(values, dict):
-                raise ValueError(
-                    f"Value for provider '{provider_key}' must be an object/dict."
-                )
-
-            validate_provider_credentials(provider_key, values)
-
-        return v
+        return parsed
 
 
 class OnboardingResponse(SQLModel):
