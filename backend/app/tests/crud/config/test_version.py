@@ -85,25 +85,19 @@ def test_create_version_auto_increment(
     assert version4.version == 4
 
 
-def test_create_version_config_not_found(
-    db: Session, example_config_blob: ConfigBlob
-) -> None:
+def test_create_version_config_not_found(db: Session) -> None:
     """Test creating a version for a non-existent config raises HTTPException."""
     project = create_test_project(db)
     non_existent_config_id = uuid4()
 
-    version_crud = ConfigVersionCrud(
-        session=db, project_id=project.id, config_id=non_existent_config_id
-    )
-
-    version_update = ConfigVersionUpdate(
-        config_blob=example_config_blob.model_dump(), commit_message="Test"
-    )
-
+    # Tag is inherited from the parent config, so a missing config is rejected at
+    # construction time.
     with pytest.raises(
         HTTPException, match=f"config with id '{non_existent_config_id}' not found"
     ):
-        version_crud.create_or_raise(version_update)
+        ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=non_existent_config_id
+        )
 
 
 def test_read_one_version(db: Session, example_config_blob: ConfigBlob) -> None:
@@ -498,14 +492,12 @@ def test_read_all_versions_config_not_found(db: Session) -> None:
     project = create_test_project(db)
     non_existent_config_id = uuid4()
 
-    version_crud = ConfigVersionCrud(
-        session=db, project_id=project.id, config_id=non_existent_config_id
-    )
-
     with pytest.raises(
         HTTPException, match=f"config with id '{non_existent_config_id}' not found"
     ):
-        version_crud.read_all()
+        ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=non_existent_config_id
+        )
 
 
 def test_read_all_versions_without_tag_uses_default_scope(

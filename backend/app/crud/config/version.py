@@ -32,11 +32,25 @@ class ConfigVersionCrud:
         session: Session,
         config_id: UUID,
         project_id: int,
-        tag: ConfigTag = ConfigTag.DEFAULT,
+        tag: ConfigTag | None = None,
     ):
+        """A version always shares its parent config's scope. When ``tag`` is
+        omitted it is inherited from the config, so callers can't pass a
+        mismatched tag (e.g. DEFAULT against an ASSESSMENT config). Pass an
+        explicit tag only to assert an expected scope."""
         self.session = session
         self.project_id = project_id
         self.config_id = config_id
+        if tag is None:
+            config = ConfigCrud(session=session, project_id=project_id).read_one(
+                config_id
+            )
+            if config is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"config with id '{config_id}' not found",
+                )
+            tag = config.tag
         self.tag = tag
 
     def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:

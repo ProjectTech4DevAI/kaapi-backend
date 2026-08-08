@@ -4,6 +4,7 @@ This operation performs a delete, marking the configuration and all
 associated versions as deleted in the database while retaining records
 for audit purposes.
 
-The lookup is scoped by `tag`. It defaults to `default`; pass
-`ASSESSMENT` to delete an assessment config. A config that exists under a
-different tag is reported as not found.
+The lookup is by ID alone (within your project) and is **not** tag-scoped —
+there is no `tag` parameter. A `default` or `ASSESSMENT` config is deleted by
+its ID either way, along with all of its versions. Only a config that does not
+exist in your project returns 404.

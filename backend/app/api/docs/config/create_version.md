@@ -6,10 +6,6 @@ create a new version under the same configuration with an incremented version nu
 Version numbers are automatically incremented sequentially (1, 2, 3, etc.)
 and cannot be manually set or skipped.
 
-When `tag` is omitted, this endpoint only resolves general configurations:
-configs tagged `default`. Pass an explicit
-tag such as `ASSESSMENT` for tagged config surfaces.
-
 ## Important
 - This endpoint accepts partial updates using dict[str, Any] for config_blob.
 - Only the fields that need to be updated should be provided.

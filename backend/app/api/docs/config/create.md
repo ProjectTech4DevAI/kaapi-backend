@@ -3,6 +3,15 @@ Create a new LLM configuration with an initial version.
 Configurations allow you to store and manage reusable LLM parameters
 (such as temperature, max_tokens, model selection, etc.) with version control.
 
+**The `tag` field** classifies the config and selects which `config_blob` shape is valid.
+It is a body field, defaults to `"default"`, and is fixed once set (new versions inherit it
+and it cannot be changed later). Available values:
+
+* `"default"` — general LLM configs, using the `completion` shape. Consumed by LLM call /
+  chain / response, evaluations, and prompt improvement. Omit `tag` to get this.
+* `"ASSESSMENT"` — grading / assessment configs, using the `assessment` shape. Consumed
+  only by the assessment submit pipeline.
+
 **Key Features:**
 * Automatically creates an initial version (v1) with the provided configuration
 * Enforces unique configuration names per project
@@ -12,6 +21,8 @@ Configurations allow you to store and manage reusable LLM parameters
 * Native providers (`openai-native`, `google-native`, `sarvamai-native`) — params are passed through as-is
 * Supports three completion types: `"text"`, `"stt"` and `"tts"`
 * Supports both `input_guardrails` and `output_guardrails`
+
+## `tag: "default"` — config blob examples (completion shape)
 
 **Example for the config blob: OpenAI Responses API with File Search -**
 
@@ -65,7 +76,7 @@ Configurations allow you to store and manage reusable LLM parameters
 }
 ```
 
-**Assessment configs (`tag: "ASSESSMENT"`)**
+## `tag: "ASSESSMENT"` — assessment config
 
 When `tag` is `"ASSESSMENT"`, `config_blob` uses the assessment shape instead of the
 `completion` shape above. Its full schema is validated on the server but is intentionally
