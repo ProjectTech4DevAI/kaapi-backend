@@ -145,8 +145,8 @@ def _get_batch_provider(
             )
         )
     if provider_name in (
-        LLMProvider.GOOGLE_AISTUDIO,
-        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_NATIVE,
     ):
         gemini_client = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id

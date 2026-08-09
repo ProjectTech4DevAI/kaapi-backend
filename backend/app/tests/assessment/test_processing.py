@@ -180,7 +180,7 @@ class TestParseAssessmentOutputGoogle:
             raw = [
                 {"key": "row_0", "response": {"text": "gemini output"}, "error": None}
             ]
-            results = parse_assessment_output(raw, "google-aistudio")
+            results = parse_assessment_output(raw, "google")
 
         assert results[0]["row_id"] == "row_0"
         assert results[0]["output"] == "gemini output"
@@ -188,13 +188,13 @@ class TestParseAssessmentOutputGoogle:
 
     def test_google_error_result(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": "quota exceeded"}]
-        results = parse_assessment_output(raw, "google-aistudio")
+        results = parse_assessment_output(raw, "google")
         assert results[0]["error"] == "quota exceeded"
         assert results[0]["output"] is None
 
     def test_google_empty_response(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": None}]
-        results = parse_assessment_output(raw, "google-aistudio")
+        results = parse_assessment_output(raw, "google")
         assert results[0]["error"] == "Empty response"
 
     def test_google_empty_text_from_response(self) -> None:
@@ -205,7 +205,7 @@ class TestParseAssessmentOutputGoogle:
             return_value="",
         ):
             raw = [{"key": "row_0", "response": {"candidates": []}, "error": None}]
-            results = parse_assessment_output(raw, "google-aistudio")
+            results = parse_assessment_output(raw, "google")
         assert results[0]["output"] is None
         assert results[0]["error"] == "Empty response output"
 
@@ -217,7 +217,7 @@ class TestParseAssessmentOutputGoogle:
             return_value="out",
         ):
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
-            results = parse_assessment_output(raw, "google-aistudio-native")
+            results = parse_assessment_output(raw, "google-native")
         assert results[0]["output"] == "out"
 
 
@@ -379,7 +379,7 @@ class TestGetBatchProvider:
             mock_cls.from_credentials.return_value = mock_gemini
             _get_batch_provider(
                 session=session,
-                provider_name="google-aistudio",
+                provider_name="google",
                 organization_id=1,
                 project_id=1,
             )

@@ -460,7 +460,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
+    elif base_provider == LLMProvider.GOOGLE:
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
@@ -492,7 +492,7 @@ def submit_assessment_batch(
         batch_job = start_batch_job(
             session=session,
             provider=provider,
-            provider_name="google-aistudio",
+            provider_name=LLMProvider.GOOGLE,
             job_type=BatchJobType.ASSESSMENT,
             organization_id=organization_id,
             project_id=project_id,

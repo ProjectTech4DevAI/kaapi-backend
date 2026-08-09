@@ -178,7 +178,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
-                provider="google-aistudio-native",
+                provider="google-native",
                 params={"instructions": "config system"},
             )
         )
@@ -229,7 +229,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         assert result.id == 2
         assert map_params.call_args.args[0]["instructions"] == "config system"
-        assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
+        assert start_batch.call_args.kwargs["provider_name"] == "google"
 
     def test_anthropic_native_routes_to_anthropic_batch(self) -> None:
         session = MagicMock()

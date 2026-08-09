@@ -154,9 +154,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
-                provider="google-aistudio", params={"model": "gemini"}
-            )
+            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
         )
 
         with (
@@ -197,8 +195,8 @@ class TestStartAssessment:
         [
             "openai",
             "openai-native",
-            "google-aistudio",
-            "google-aistudio-native",
+            "google",
+            "google-native",
             "anthropic",
             "anthropic-native",
         ],
