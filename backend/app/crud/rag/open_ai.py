@@ -1,16 +1,46 @@
 import json
 import logging
+import time
 import functools as ft
 
 import openai
 from openai import OpenAI, OpenAIError
+from openai.types import VectorStore
+from openai.types.vector_stores import VectorStoreFileBatch
 from pydantic import BaseModel
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.models import Document, ProviderType
 
 logger = logging.getLogger(__name__)
 
 OPENAI_PROVIDER = ProviderType.openai.value
+
+# Under the Celery soft time limit so a hung call can't eat the whole task window.
+# SDK-level retries are off (registry.py: max_retries=0); tenacity is the sole
+# retry layer, wrapping batch create+index.
+OPENAI_TIMEOUT_SECONDS = 30
+
+BATCH_POLL_INTERVAL_SECONDS = 2
+
+# Retry batch create+index on any OpenAI/indexing failure, exponential backoff
+# (~2s, 4s, 8s), all inside one Celery soft-time-limit window.
+BATCH_INDEX_MAX_ATTEMPTS = 4
+BATCH_RETRY_BACKOFF_BASE_SECONDS = 2
+
+
+def _log_batch_retry(retry_state: RetryCallState) -> None:
+    logger.warning(
+        f"[OpenAIVectorStoreCrud._create_and_index_batch] Batch attempt failed, retrying | "
+        f"attempt={retry_state.attempt_number}, "
+        f"error={retry_state.outcome.exception() if retry_state.outcome else None}"
+    )
 
 
 def vs_ls(client: OpenAI, vector_store_id: str):
@@ -85,7 +115,7 @@ class OpenAICrud:
 
 
 class OpenAIVectorStoreCrud(OpenAICrud):
-    def create(self):
+    def create(self) -> VectorStore:
         logger.info(
             f"[OpenAIVectorStoreCrud.create] Creating vector store | {{'action': 'create'}}"
         )
@@ -101,6 +131,100 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
         yield from vs_ls(self.client, vector_store_id)
 
+    def _create_file_batch(self, vector_store_id: str, file_ids: list[str]) -> str:
+        """Returns the vsfb_ id. poll()'s return deserializes a vector-store body,
+        so its .id is the vs_ id - take the batch id from create()."""
+        created = self.client.vector_stores.file_batches.create(
+            vector_store_id=vector_store_id,
+            file_ids=file_ids,
+        )
+        return created.id
+
+    def _retrieve_file_batch(
+        self, batch_id: str, vector_store_id: str
+    ) -> VectorStoreFileBatch:
+        return self.client.vector_stores.file_batches.retrieve(
+            batch_id, vector_store_id=vector_store_id
+        )
+
+    def _poll_file_batch(
+        self, batch_id: str, vector_store_id: str
+    ) -> VectorStoreFileBatch:
+        """Poll until indexing finishes; the Celery soft time limit is the deadline."""
+        while True:
+            batch = self._retrieve_file_batch(batch_id, vector_store_id)
+            if batch.status != "in_progress":
+                return batch
+            time.sleep(BATCH_POLL_INTERVAL_SECONDS)
+
+    def _raise_if_batch_incomplete(
+        self,
+        batch: VectorStoreFileBatch,
+        batch_id: str,
+        vector_store_id: str,
+        docs: list[Document],
+    ) -> None:
+        """Raise on any indexing failure so the batch attempt is retried."""
+        if batch.file_counts.failed > 0:
+            try:
+                failed_files = self.client.vector_stores.file_batches.list_files(
+                    vector_store_id=vector_store_id,
+                    batch_id=batch_id,
+                    filter="failed",
+                )
+                doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
+                parts = []
+                for f in failed_files:
+                    d = doc_by_file_id.get(f.id)
+                    label = d.fname if d else f.id
+                    msg = f.last_error.message if f.last_error else "no error detail"
+                    parts.append(f"{label}: {msg}")
+                logger.error(
+                    f"[OpenAIVectorStoreCrud._raise_if_batch_incomplete] Files failed to index | "
+                    f"{{'batch_id': '{batch_id}', 'failed_files': '{', '.join(parts)}'}}"
+                )
+                raise RuntimeError("; ".join(parts))
+            except OpenAIError as err:
+                logger.warning(
+                    f"[OpenAIVectorStoreCrud._raise_if_batch_incomplete] Could not fetch per-file errors | "
+                    f"{{'batch_id': '{batch_id}', 'error': '{str(err)}'}}"
+                )
+                raise
+
+        # Only 'completed' is success; a 'cancelled'/'failed' batch with no per-file
+        # failures slips past the failed-count check above.
+        if batch.status != "completed":
+            error_message = (
+                f"[OPENAI] Vector store indexing did not complete "
+                f"(status: {batch.status}). Retry the collection."
+            )
+            logger.error(
+                f"[OpenAIVectorStoreCrud._raise_if_batch_incomplete] {error_message} | "
+                f"vector_store_id={vector_store_id}, batch_id={batch_id}, "
+                f"status={batch.status}"
+            )
+            raise RuntimeError(error_message)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(BATCH_INDEX_MAX_ATTEMPTS),
+        wait=wait_exponential(multiplier=BATCH_RETRY_BACKOFF_BASE_SECONDS),
+        retry=retry_if_exception_type((OpenAIError, RuntimeError)),
+        before_sleep=_log_batch_retry,
+    )
+    def _create_and_index_batch(
+        self, vector_store_id: str, docs: list[Document]
+    ) -> tuple[VectorStoreFileBatch, str]:
+        """Create the file batch, wait for indexing, verify it completed. Retried as
+        a unit on any OpenAI/indexing failure; SoftTimeLimitExceeded is not retried
+        (not an OpenAIError/RuntimeError) so it aborts the task inside the window."""
+        batch_id = self._create_file_batch(
+            vector_store_id, [doc.file_id[OPENAI_PROVIDER] for doc in docs]
+        )
+        batch = self._poll_file_batch(batch_id, vector_store_id)
+        self._raise_if_batch_incomplete(batch, batch_id, vector_store_id, docs)
+        return batch, batch_id
+
     def update(
         self,
         vector_store_id: str,
@@ -115,11 +239,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
 
         try:
-            batch = self.client.vector_stores.file_batches.upload_and_poll(
-                vector_store_id=vector_store_id,
-                files=[],
-                file_ids=[doc.file_id[OPENAI_PROVIDER] for doc in docs],
-            )
+            batch, batch_id = self._create_and_index_batch(vector_store_id, docs)
         except openai.RateLimitError as e:
             error_message = (
                 f"[OPENAI] Rate limit exceeded (code: {e.status_code}): "
@@ -215,30 +335,9 @@ class OpenAIVectorStoreCrud(OpenAICrud):
 
         logger.info(
             f"[OpenAIVectorStoreCrud.update] Batch complete | "
-            f"{{'vector_store_id': '{vector_store_id}', "
+            f"{{'vector_store_id': '{vector_store_id}', 'batch_id': '{batch_id}', "
             f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
         )
-        if batch.file_counts.failed > 0:
-            try:
-                failed_files = self.client.vector_stores.file_batches.list_files(
-                    vector_store_id=vector_store_id,
-                    batch_id=batch.id,
-                    filter="failed",
-                )
-                doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
-                parts = []
-                for f in failed_files:
-                    d = doc_by_file_id.get(f.id)
-                    label = d.fname if d else f.id
-                    msg = f.last_error.message if f.last_error else "no error detail"
-                    parts.append(f"{label}: {msg}")
-                raise RuntimeError("; ".join(parts))
-            except OpenAIError as err:
-                logger.warning(
-                    f"[OpenAIVectorStoreCrud.update] Could not fetch per-file errors | "
-                    f"{{'batch_id': '{batch.id}', 'error': '{str(err)}'}}"
-                )
-                raise
 
     def delete(self, vector_store_id: str, retries: int = 3):
         if retries < 1:
