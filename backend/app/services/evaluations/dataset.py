@@ -11,6 +11,12 @@ from app.crud.evaluations import (
     upload_csv_to_object_store,
     upload_dataset_to_langfuse,
 )
+from app.crud.evaluations.dataset import (
+    DATASET_META_DUPLICATE_AT_RUNTIME,
+    DATASET_META_DUPLICATION_FACTOR,
+    DATASET_META_ORIGINAL_ITEMS,
+    DATASET_META_TOTAL_ITEMS,
+)
 from app.models.evaluation import EvaluationDataset
 from app.services.evaluations.validators import (
     parse_csv_items,
@@ -29,6 +35,7 @@ def upload_dataset(
     duplication_factor: int,
     organization_id: int,
     project_id: int,
+    use_langfuse: bool = True,
 ) -> EvaluationDataset:
     """
     Orchestrate dataset upload workflow.
@@ -48,6 +55,10 @@ def upload_dataset(
         duplication_factor: Number of times to duplicate each item
         organization_id: Organization ID
         project_id: Project ID
+        use_langfuse: v1 default. False is the v2 Langfuse-free upload: the items
+            are duplicated at run time rather than physically, so only the original
+            CSV is stored and the object-store upload becomes mandatory (it is the
+            only copy of the data, with no Langfuse fallback).
 
     Returns:
         Created EvaluationDataset record
@@ -83,7 +94,8 @@ def upload_dataset(
         f"total_with_duplication={total_items_count}"
     )
 
-    # Step 3: Upload to object store (if credentials configured)
+    # Step 3: Upload to object store. Best-effort when Langfuse also holds the items
+    # (v1); the sole copy, so mandatory, when it doesn't (v2).
     object_store_url = None
     try:
         storage = get_cloud_storage(session=session, project_id=project_id)
@@ -107,42 +119,52 @@ def upload_dataset(
         )
         object_store_url = None
 
+    if not use_langfuse and not object_store_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to store dataset CSV in object store",
+        )
+
     # Step 4: Upload to Langfuse
     langfuse_dataset_id = None
-    try:
-        langfuse = get_langfuse_client(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-        )
+    if use_langfuse:
+        try:
+            langfuse = get_langfuse_client(
+                session=session,
+                org_id=organization_id,
+                project_id=project_id,
+            )
 
-        langfuse_dataset_id, _ = upload_dataset_to_langfuse(
-            langfuse=langfuse,
-            items=original_items,
-            dataset_name=dataset_name,
-            duplication_factor=duplication_factor,
-        )
+            langfuse_dataset_id, _ = upload_dataset_to_langfuse(
+                langfuse=langfuse,
+                items=original_items,
+                dataset_name=dataset_name,
+                duplication_factor=duplication_factor,
+            )
 
-        logger.info(
-            f"[upload_dataset] Successfully uploaded dataset to Langfuse | "
-            f"dataset={dataset_name} | id={langfuse_dataset_id}"
-        )
+            logger.info(
+                f"[upload_dataset] Successfully uploaded dataset to Langfuse | "
+                f"dataset={dataset_name} | id={langfuse_dataset_id}"
+            )
 
-    except Exception as e:
-        logger.error(
-            f"[upload_dataset] Failed to upload dataset to Langfuse | {e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=500, detail=f"Failed to upload dataset to Langfuse: {e}"
-        )
+        except Exception as e:
+            logger.error(
+                f"[upload_dataset] Failed to upload dataset to Langfuse | {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Failed to upload dataset to Langfuse: {e}"
+            )
 
     # Step 5: Store metadata in database
     metadata = {
-        "original_items_count": original_items_count,
-        "total_items_count": total_items_count,
-        "duplication_factor": duplication_factor,
+        DATASET_META_ORIGINAL_ITEMS: original_items_count,
+        DATASET_META_TOTAL_ITEMS: total_items_count,
+        DATASET_META_DUPLICATION_FACTOR: duplication_factor,
     }
+    if not use_langfuse:
+        # The stored CSV holds only the original rows; the run expands them.
+        metadata[DATASET_META_DUPLICATE_AT_RUNTIME] = True
 
     dataset = create_evaluation_dataset(
         session=session,

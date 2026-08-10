@@ -453,6 +453,8 @@ def get_evaluation_with_scores(
     if not get_trace_info:
         return eval_run, None
 
+    run_overall = (eval_run.score or {}).get("overall")
+
     # Caching strategy: trace scores are fetched from Langfuse once, then cached
     # (traces in S3, summary in the DB). Normal reads serve from that cache, which is
     # much faster than hitting Langfuse. resync_score=true bypasses the cache.
@@ -485,6 +487,8 @@ def get_evaluation_with_scores(
             unscoreable=eval_run.unscoreable,
         )
         eval_run.score = _attach_category_metrics(cached_score)
+        if run_overall is not None:
+            eval_run.score["overall"] = run_overall
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -562,6 +566,9 @@ def get_evaluation_with_scores(
     # rollup stays in sync with the new traces, not just the cached ones.
     # `_attach_category_metrics` mutates in place and is idempotent.
     _attach_category_metrics(merged_score)
+
+    if run_overall is not None:
+        merged_score["overall"] = run_overall
 
     logger.info(
         f"[get_evaluation_with_scores] Merged traces step-forward | "

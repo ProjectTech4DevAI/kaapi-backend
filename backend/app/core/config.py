@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     )
 
     API_V1_STR: str = "/api/v1"
+    # v2 hosts
+    API_V2_STR: str = "/api/v2"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 1 days = 1 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 1
@@ -208,6 +210,19 @@ class Settings(BaseSettings):
     # Items per responses chunk task; smaller = more parallel workers and each
     # task well under CELERY_TASK_SOFT_TIME_LIMIT.
     EVAL_FAST_CHUNK_SIZE: int = 50
+
+    EVAL_JUDGE_MODEL: str = "gpt-5-mini"
+
+    # One of: none | minimal | low | medium | high | xhigh.
+    EVAL_JUDGE_REASONING_EFFORT: str = "medium"
+
+    EVAL_SUMMARY_MODEL: str = "gpt-5-mini"
+
+    # Judge runs alone in the single aggregate task (no response calls competing),
+    # so it uses a larger pool than the response stage to finish the max dataset
+    # (EVAL_FAST_MAX_UNIQUE_ROWS x duplication) well under CELERY_TASK_SOFT_TIME_LIMIT.
+    # Threads are network-bound (idle-waiting on OpenAI), so a high count is cheap.
+    EVAL_JUDGE_CONCURRENCY: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
     @property
