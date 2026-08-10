@@ -5,6 +5,7 @@ from sqlmodel import Session
 from openai import OpenAI
 
 from app.crud import get_provider_credential
+from app.crud.rag.open_ai import OPENAI_TIMEOUT_SECONDS
 from app.services.collections.providers.base import BaseProvider
 from app.services.collections.providers.gemini import GeminiAIStudioProvider
 from app.services.collections.providers.openai import OpenAIProvider
@@ -63,7 +64,11 @@ def get_llm_provider(
     if provider == LLMProvider.OPENAI:
         if "api_key" not in credentials:
             raise ValueError("OpenAI credentials not configured for this project.")
-        client = OpenAI(api_key=credentials["api_key"])
+        client = OpenAI(
+            api_key=credentials["api_key"],
+            max_retries=0,
+            timeout=OPENAI_TIMEOUT_SECONDS,
+        )
     elif provider == LLMProvider.GOOGLE_AISTUDIO:
         if "api_key" not in credentials:
             raise ValueError(
