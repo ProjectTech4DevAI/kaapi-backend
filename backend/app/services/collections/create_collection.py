@@ -403,9 +403,11 @@ def execute_batch_job(
                 collection_job_crud = CollectionJobCrud(session, project_id)
                 collection_job = collection_job_crud.read_one(job_uuid)
                 already_uploaded = collection_job.documents_uploaded or []
-                now_uploaded = already_uploaded + [
-                    str(d) for d in all_doc_ids_this_batch
-                ]
+                now_uploaded = list(
+                    dict.fromkeys(
+                        already_uploaded + [str(d) for d in all_doc_ids_this_batch]
+                    )
+                )
 
                 collection_job = collection_job_crud.update(
                     job_uuid,
@@ -507,7 +509,10 @@ def execute_batch_job(
                     webhook_secret=webhook_secret,
                 )
 
-        except (Timeout, SoftTimeLimitExceeded) as err:
+        except (Timeout, SoftTimeLimitExceeded):
+            # Batch-level retries happen in-task (tenacity in OpenAIVectorStoreCrud),
+            # so hitting the soft time limit means the window is spent — fail, don't
+            # re-queue.
             timeout_err = TimeoutError("Task exceeded soft time limit")
             logger.warning(
                 "[create_collection.execute_batch_job] Collection Creation Timed Out | {'collection_job_id': '%s', 'error': '%s'}",
