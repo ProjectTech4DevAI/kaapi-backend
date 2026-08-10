@@ -2,7 +2,6 @@
 """
 
 import logging
-from typing import Any
 
 import openai
 from openai import OpenAI
@@ -10,7 +9,7 @@ from sqlmodel import Session
 
 from app.crud.evaluations.judge import JudgeMetricEnum
 from app.crud.evaluations.response_parsing import extract_response_text
-from app.crud.evaluations.score import OverallSummary
+from app.crud.evaluations.score import OverallSummary, SummaryScore
 from app.services.llm.mappers import map_kaapi_to_openai_params
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,7 @@ def _format_overall_for_prompt(
     *,
     overall: OverallSummary,
     run_name: str,
-    summary_scores: list[dict[str, Any]],
+    summary_scores: list[SummaryScore],
     duplication_factor: int,
 ) -> str:
     """Compact qualitative brief for the summary model — bands, not raw scores.
@@ -106,7 +105,7 @@ def generate_run_ai_summary(
     model: str,
     overall: OverallSummary,
     run_name: str,
-    summary_scores: list[dict[str, Any]],
+    summary_scores: list[SummaryScore],
     duplication_factor: int,
 ) -> str | None:
     """Best-effort one-shot natural-language note on the run's overall quality."""

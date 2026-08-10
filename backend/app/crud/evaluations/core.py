@@ -1,9 +1,10 @@
 import logging
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 from uuid import UUID
 
 from langfuse import Langfuse
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
@@ -119,7 +120,7 @@ def list_evaluation_runs(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
-) -> list[EvaluationRun]:
+) -> Sequence[EvaluationRun]:
     """
     List all evaluation runs for an organization and project.
 
@@ -138,7 +139,7 @@ def list_evaluation_runs(
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
         .where(EvaluationRun.type == EvaluationType.TEXT.value)
-        .order_by(EvaluationRun.inserted_at.desc())
+        .order_by(col(EvaluationRun.inserted_at).desc())
         .limit(limit)
         .offset(offset)
     )
@@ -301,7 +302,7 @@ def get_or_fetch_score(
         logger.info(
             f"[get_or_fetch_score] Returning existing score | evaluation_id={eval_run.id}"
         )
-        return eval_run.score
+        return cast(EvaluationScore, eval_run.score)
 
     logger.info(
         f"[get_or_fetch_score] Fetching score from Langfuse | "
@@ -339,7 +340,7 @@ def get_or_fetch_score(
     update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(score=score),
+        update=EvaluationRunUpdate(score=cast(dict[str, Any], score)),
     )
 
     total_traces = len(score.get("traces", []))
@@ -356,7 +357,7 @@ def _upload_score_traces(
     session: Session,
     eval_run_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[Mapping[str, Any]],
 ) -> str | None:
     """Upload per-trace records to S3 for an evaluation run.
 
@@ -399,7 +400,7 @@ def persist_score_traces(
     eval_run_id: int,
     organization_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[Mapping[str, Any]],
 ) -> EvaluationRun | None:
     """Persist the Q&A trace skeleton to S3 and record the ``score_trace_url``
     pointer, WITHOUT touching the ``score`` column (keeps the run score-less
@@ -484,12 +485,13 @@ def save_score(
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
-            db_score = {"summary_scores": summary_score}
-            if score.get("overall") is not None:
-                db_score["overall"] = score["overall"]
+            db_score: dict[str, Any] = {"summary_scores": summary_score}
+            overall = score.get("overall")
+            if overall is not None:
+                db_score["overall"] = overall
         else:
             # fallback to store data in db if failed to store in s3
-            db_score = score
+            db_score = cast(dict[str, Any], score)
 
         update_evaluation_run(
             session=session,
@@ -539,6 +541,8 @@ def group_traces_by_question_id(
 
     for trace in traces:
         question_id = trace.get("question_id")
+        if question_id is None:
+            continue
         if question_id not in groups:
             groups[question_id] = []
         groups[question_id].append(trace)

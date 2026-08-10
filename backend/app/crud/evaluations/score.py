@@ -229,7 +229,7 @@ class TraceData(TypedDict):
     llm_answer: str
     question_id: int | None
     ground_truth_answer: str
-    category: str
+    category: NotRequired[str]
     scores: list[TraceScore]
 
 

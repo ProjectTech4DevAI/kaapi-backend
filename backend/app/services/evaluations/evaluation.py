@@ -1,7 +1,7 @@
 """Evaluation run orchestration service."""
 
 import logging
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -277,7 +277,7 @@ def validate_and_start_batch_evaluation(
         config_version=config_version,
         project_id=project_id,
     )
-    if error:
+    if error or config is None:
         raise HTTPException(
             status_code=400,
             detail=f"Failed to resolve config from stored config: {error}",
@@ -375,7 +375,7 @@ def _load_cached_traces(
                 storage=storage, url=eval_run.score_trace_url
             )
             if traces is not None:
-                return traces, False
+                return cast(list[TraceData], traces), False
             logger.warning(
                 f"[_load_cached_traces] Cached traces URL returned no data | "
                 f"evaluation_id={eval_run.id} | url={eval_run.score_trace_url}"
@@ -486,8 +486,8 @@ def get_evaluation_with_scores(
             total_items=eval_run.total_items,
             unscoreable=eval_run.unscoreable,
         )
-        eval_run.score = _attach_category_metrics(cached_score)
-        if run_overall is not None:
+        eval_run.score = _attach_category_metrics(cast(dict[str, Any], cached_score))
+        if run_overall is not None and eval_run.score is not None:
             eval_run.score["overall"] = run_overall
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
@@ -565,7 +565,7 @@ def get_evaluation_with_scores(
     # Recompute `category_metrics` from the merged trace set so the per-category
     # rollup stays in sync with the new traces, not just the cached ones.
     # `_attach_category_metrics` mutates in place and is idempotent.
-    _attach_category_metrics(merged_score)
+    _attach_category_metrics(cast(dict[str, Any], merged_score))
 
     if run_overall is not None:
         merged_score["overall"] = run_overall
@@ -586,6 +586,6 @@ def get_evaluation_with_scores(
     )
 
     if eval_run:
-        eval_run.score = merged_score
+        eval_run.score = cast(dict[str, Any], merged_score)
 
     return eval_run, None

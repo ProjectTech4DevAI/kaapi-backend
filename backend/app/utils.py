@@ -74,7 +74,7 @@ class APIResponse(BaseModel, Generic[T]):
         error: str | list,
         data: Optional[T] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> "APIResponse[None]":
+    ) -> "APIResponse[T]":
         if isinstance(error, list):  # to handle cases when error is a list of errors
             structured_errors = []
             for err in error:
