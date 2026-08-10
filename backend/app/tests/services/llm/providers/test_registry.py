@@ -10,7 +10,7 @@ from openai import OpenAI
 
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.open_ai import OpenAIProvider
-from app.services.llm.providers.google_ai import GoogleVertexAIProvider
+from app.services.llm.providers.google_gcp import GoogleGCPProvider
 from app.services.llm.providers.google_aistudio import GoogleAIProvider
 from app.services.llm.providers.registry import (
     LLMProvider,
@@ -82,9 +82,9 @@ class TestGetLLMProvider:
 
             assert "not configured for this project" in str(exc_info.value)
 
-    # ---- Explicit google-vertex / google-aistudio: bypass env, need creds ----
+    # ---- Explicit google-gcp / google-aistudio: bypass env, need creds ----
 
-    def test_explicit_google_vertex_bypasses_env(self, db: Session):
+    def test_explicit_google_gcp_bypasses_env(self, db: Session):
         project = get_project(db)
 
         with patch(
@@ -101,15 +101,15 @@ class TestGetLLMProvider:
 
             provider = get_llm_provider(
                 session=db,
-                provider_type="google-vertex",
+                provider_type="google-gcp",
                 project_id=project.id,
                 organization_id=project.organization_id,
             )
 
-            assert isinstance(provider, GoogleVertexAIProvider)
+            assert isinstance(provider, GoogleGCPProvider)
             mock_get_creds.assert_called_once_with(
                 session=db,
-                provider="google-vertex",
+                provider="google-gcp",
                 project_id=project.id,
                 org_id=project.organization_id,
             )
@@ -122,7 +122,7 @@ class TestGetLLMProvider:
         ) as mock_settings, patch(
             "app.crud.credentials.get_provider_credential"
         ) as mock_get_creds:
-            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "gcp"
             mock_get_creds.return_value = {"api_key": "byok-key"}
 
             provider = get_llm_provider(
@@ -140,7 +140,7 @@ class TestGetLLMProvider:
                 org_id=project.organization_id,
             )
 
-    def test_explicit_google_vertex_without_creds_raises(self, db: Session):
+    def test_explicit_google_gcp_without_creds_raises(self, db: Session):
         project = get_project(db)
 
         with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
@@ -149,12 +149,12 @@ class TestGetLLMProvider:
             with pytest.raises(ValueError) as exc_info:
                 get_llm_provider(
                     session=db,
-                    provider_type="google-vertex",
+                    provider_type="google-gcp",
                     project_id=project.id,
                     organization_id=project.organization_id,
                 )
 
-            assert "google-vertex" in str(exc_info.value)
+            assert "google-gcp" in str(exc_info.value)
 
     def test_explicit_google_aistudio_without_creds_raises(self, db: Session):
         project = get_project(db)
@@ -174,7 +174,7 @@ class TestGetLLMProvider:
 
     # ---- Platform-routed `google`: env decides, platform fallback allowed ----
 
-    def test_google_routes_to_vertex_when_env_vertex(self, db: Session):
+    def test_google_routes_to_gcp_when_env_gcp(self, db: Session):
         project = get_project(db)
 
         with patch(
@@ -182,7 +182,7 @@ class TestGetLLMProvider:
         ) as mock_settings, patch(
             "app.crud.credentials.get_provider_credential"
         ) as mock_get_creds:
-            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            mock_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "gcp"
             mock_get_creds.return_value = {
                 "api_key": "byok-key",
                 "project_id": "byok-project",
@@ -196,10 +196,10 @@ class TestGetLLMProvider:
                 organization_id=project.organization_id,
             )
 
-            assert isinstance(provider, GoogleVertexAIProvider)
+            assert isinstance(provider, GoogleGCPProvider)
             mock_get_creds.assert_called_once_with(
                 session=db,
-                provider="google-vertex",
+                provider="google-gcp",
                 project_id=project.id,
                 org_id=project.organization_id,
             )
@@ -230,17 +230,17 @@ class TestGetLLMProvider:
                 org_id=project.organization_id,
             )
 
-    def test_google_vertex_route_falls_back_to_platform_defaults(self, db: Session):
+    def test_google_gcp_route_falls_back_to_platform_defaults(self, db: Session):
         project = get_project(db)
 
         with patch(
             "app.services.llm.providers.registry.settings"
         ) as registry_settings, patch(
-            "app.services.llm.providers.google_ai.settings"
+            "app.services.llm.providers.google_gcp.settings"
         ) as google_settings, patch(
             "app.crud.credentials.get_provider_credential"
         ) as mock_get_creds:
-            registry_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "vertex"
+            registry_settings.GEMINI_DEFAULT_INFERENCE_ROUTE = "gcp"
             google_settings.GCP_VERTEX_API_KEY = "platform-key"
             google_settings.GCP_PROJECT_ID = "platform-project"
             google_settings.GCP_VERTEX_LOCATION = "us-central1"
@@ -255,7 +255,7 @@ class TestGetLLMProvider:
                 organization_id=project.organization_id,
             )
 
-            assert isinstance(provider, GoogleVertexAIProvider)
+            assert isinstance(provider, GoogleGCPProvider)
             assert provider.client.api_key == "platform-key"
             assert provider.client.project_id == "platform-project"
 

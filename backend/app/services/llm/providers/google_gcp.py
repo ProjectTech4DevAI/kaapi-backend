@@ -105,7 +105,7 @@ class VertexClient:
         )
 
 
-class GoogleVertexAIProvider(BaseProvider):
+class GoogleGCPProvider(BaseProvider):
     """Google Vertex AI provider using REST + API key auth.
 
     Supports STT (audio → text) and TTS (text → audio) via Gemini multimodal
@@ -179,7 +179,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
@@ -191,7 +191,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"Kaapi backend. If the issue persists, contact Kaapi."
             )
             logger.error(
-                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
@@ -202,7 +202,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"error — contact Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
@@ -269,7 +269,7 @@ class GoogleVertexAIProvider(BaseProvider):
             # are caller's fault and only need a warning.
             log = logger.error if 500 <= status_code < 600 else logger.warning
             log(
-                f"[GoogleVertexAIProvider._post] {error_message} | "
+                f"[GoogleGCPProvider._post] {error_message} | "
                 f"model={model}, {log_context}"
             )
             return None, error_message
@@ -283,7 +283,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"retry the request. If the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._post] {error_message} | "
+                f"[GoogleGCPProvider._post] {error_message} | "
                 f"model={model}, {log_context}"
             )
             return None, error_message
@@ -325,7 +325,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"Ensure the audio is uploaded and resolved before invoking STT."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -337,7 +337,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"{', '.join(sorted(SUPPORTED_AUDIO_MIMES))}."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -348,10 +348,10 @@ class GoogleVertexAIProvider(BaseProvider):
                 "[KAAPI] Vertex STT staging failed: ``google`` sa_key is "
                 "not configured on this project's credentials, so audio "
                 "cannot be uploaded to GCS for transcription. Add the "
-                "service-account key to the project's ``google-vertex`` credentials."
+                "service-account key to the project's ``google-gcp`` credentials."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -372,7 +372,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"'{self.client.project_id}'."
             )
             logger.error(
-                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}",
+                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}",
                 exc_info=True,
             )
             return None, error_message
@@ -439,7 +439,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 "retry."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_stt] {error_message} | "
+                f"[GoogleGCPProvider._execute_stt] {error_message} | "
                 f"provider={provider}, model={model}, response_id={data.get('responseId')}"
             )
             return None, error_message
@@ -459,7 +459,7 @@ class GoogleVertexAIProvider(BaseProvider):
             llm_response.provider_raw_response = data
 
         logger.info(
-            f"[GoogleVertexAIProvider._execute_stt] Transcribed audio | provider={provider}, model={model}"
+            f"[GoogleGCPProvider._execute_stt] Transcribed audio | provider={provider}, model={model}"
         )
         return llm_response, None
 
@@ -487,7 +487,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"synthesize as a plain string."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider._execute_tts] {error_message} | provider={provider}"
             )
             return None, error_message
         if not resolved_input.strip():
@@ -496,7 +496,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 "whitespace-only. Provide non-empty text to synthesize."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider._execute_tts] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -546,7 +546,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 "and does not contain unsupported control sequences."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
+                f"[GoogleGCPProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}, response_id={data.get('responseId')}"
             )
             return None, error_message
@@ -561,7 +561,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
+                f"[GoogleGCPProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}",
                 exc_info=True,
             )
@@ -575,7 +575,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 "a minute and retry; if the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
+                f"[GoogleGCPProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}"
             )
             return None, error_message
@@ -593,7 +593,7 @@ class GoogleVertexAIProvider(BaseProvider):
                     f"to WAV is possible by setting response_format='wav'."
                 )
                 logger.error(
-                    f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
+                    f"[GoogleGCPProvider._execute_tts] {error_message} | "
                     f"provider={provider}, model={model}, pcm_bytes={len(raw_pcm)}"
                 )
                 return None, error_message
@@ -608,7 +608,7 @@ class GoogleVertexAIProvider(BaseProvider):
                     f"to WAV is possible by setting response_format='wav'."
                 )
                 logger.error(
-                    f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
+                    f"[GoogleGCPProvider._execute_tts] {error_message} | "
                     f"provider={provider}, model={model}, pcm_bytes={len(raw_pcm)}"
                 )
                 return None, error_message
@@ -616,7 +616,7 @@ class GoogleVertexAIProvider(BaseProvider):
             actual_format = "ogg"
         elif response_format and response_format != "wav":
             logger.warning(
-                f"[GoogleVertexAIProvider._execute_tts] Unsupported response_format "
+                f"[GoogleGCPProvider._execute_tts] Unsupported response_format "
                 f"'{response_format}', returning native WAV | provider={provider}"
             )
 
@@ -641,7 +641,7 @@ class GoogleVertexAIProvider(BaseProvider):
             llm_response.provider_raw_response = data
 
         logger.info(
-            f"[GoogleVertexAIProvider._execute_tts] Synthesised audio | "
+            f"[GoogleGCPProvider._execute_tts] Synthesised audio | "
             f"provider={provider}, model={model}, format={actual_format}, "
             f"raw_pcm_bytes={len(raw_pcm)}"
         )
@@ -675,7 +675,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"use the 'google-aistudio' provider for text completions."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider.execute] {error_message} | provider={provider}"
+                f"[GoogleGCPProvider.execute] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -686,7 +686,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"not match the Vertex provider's expected signature."
             )
             logger.warning(
-                f"[GoogleVertexAIProvider.execute] {error_message} | "
+                f"[GoogleGCPProvider.execute] {error_message} | "
                 f"provider={provider}, type={completion_type}",
                 exc_info=True,
             )
@@ -700,7 +700,7 @@ class GoogleVertexAIProvider(BaseProvider):
                 f"failure. Contact Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleVertexAIProvider.execute] {error_message} | "
+                f"[GoogleGCPProvider.execute] {error_message} | "
                 f"provider={provider}, type={completion_type}",
                 exc_info=True,
             )

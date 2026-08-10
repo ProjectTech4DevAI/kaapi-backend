@@ -28,6 +28,7 @@ All paths relative to `backend/app/`.
 
 ## Services / CRUD
 - `services/llm/` — `mappers.py` (Kaapi params → provider API), `providers/`, `chain/`, `guardrails.py`, `jobs.py`
+- `services/llm/providers/` — `registry.py` routes `google`/`google-native` by `GEMINI_DEFAULT_INFERENCE_ROUTE` (`aistudio` | `gcp`); explicit `google-aistudio` → `google_aistudio.py` (`GoogleAIProvider`), `google-gcp` → `google_gcp.py` (`GoogleGCPProvider`, Vertex AI REST). Flows: `backend/docs/gemini-routing-flows.md`
 - `services/guardrails/` — validator execution
 - `crud/llm.py`, `crud/llm_chain.py`, `crud/config/` — persistence
 

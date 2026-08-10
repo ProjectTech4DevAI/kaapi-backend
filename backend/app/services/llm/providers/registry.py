@@ -5,7 +5,7 @@ from app.core.config import settings
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.open_ai import OpenAIProvider
 from app.services.llm.providers.google_aistudio import GoogleAIProvider
-from app.services.llm.providers.google_ai import GoogleVertexAIProvider
+from app.services.llm.providers.google_gcp import GoogleGCPProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.claude import ClaudeProvider
@@ -23,8 +23,8 @@ class LLMProvider:
     GOOGLE = "google"
     GOOGLE_NATIVE = "google-native"
     # Explicit Google backends. Bypass env routing; use caller's own creds.
-    GOOGLE_VERTEX = "google-vertex"
-    GOOGLE_VERTEX_NATIVE = "google-vertex-native"
+    GOOGLE_GCP = "google-gcp"
+    GOOGLE_GCP_NATIVE = "google-gcp-native"
     GOOGLE_AISTUDIO = "google-aistudio"
     GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
 
@@ -38,10 +38,10 @@ class LLMProvider:
         SARVAMAI: SarvamAIProvider,
         ELEVENLABS: ElevenlabsAIProvider,
         ANTHROPIC: ClaudeProvider,
-        GOOGLE: GoogleVertexAIProvider,  # placeholder; env decides at resolve time
-        GOOGLE_NATIVE: GoogleVertexAIProvider,
-        GOOGLE_VERTEX: GoogleVertexAIProvider,
-        GOOGLE_VERTEX_NATIVE: GoogleVertexAIProvider,
+        GOOGLE: GoogleGCPProvider,  # placeholder; env decides at resolve time
+        GOOGLE_NATIVE: GoogleGCPProvider,
+        GOOGLE_GCP: GoogleGCPProvider,
+        GOOGLE_GCP_NATIVE: GoogleGCPProvider,
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
         OPENAI_NATIVE: OpenAIProvider,
@@ -55,10 +55,13 @@ class LLMProvider:
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         if provider_type in cls._GOOGLE_ROUTED:
-            # Only an explicit "vertex" opts into the new route; anything else
+            # Only an explicit "gcp" opts into the new route; anything else
             # (default, unset, typo) keeps today's aistudio behavior.
-            route = settings.GEMINI_DEFAULT_INFERENCE_ROUTE
-            return GoogleVertexAIProvider if route == "vertex" else GoogleAIProvider
+            return (
+                GoogleGCPProvider
+                if cls.effective_provider(provider_type) == cls.GOOGLE_GCP
+                else GoogleAIProvider
+            )
         provider = cls._registry.get(provider_type)
         if not provider:
             raise ValueError(
@@ -66,6 +69,17 @@ class LLMProvider:
                 f"Supported providers: {', '.join(cls._registry.keys())}"
             )
         return provider
+
+    @classmethod
+    def effective_provider(cls, provider_type: str) -> str:
+        """Backend actually used after routing, for monitoring/grouping."""
+        if provider_type in cls._GOOGLE_ROUTED:
+            return (
+                cls.GOOGLE_GCP
+                if settings.GEMINI_DEFAULT_INFERENCE_ROUTE == "gcp"
+                else cls.GOOGLE_AISTUDIO
+            )
+        return provider_type.replace("-native", "")
 
     @classmethod
     def supported_providers(cls) -> list[str]:
@@ -78,14 +92,14 @@ def get_llm_provider(
     from app.crud.credentials import get_provider_credential
 
     provider_class = LLMProvider.get_provider_class(provider_type)
-    is_vertex_routed = (
+    is_gcp_routed = (
         provider_type in LLMProvider._GOOGLE_ROUTED
-        and provider_class is GoogleVertexAIProvider
+        and provider_class is GoogleGCPProvider
     )
 
-    if is_vertex_routed:
-        # Platform-routed vertex: tenant row, else platform GCP settings.
-        credential_chain = [LLMProvider.GOOGLE_VERTEX]
+    if is_gcp_routed:
+        # Platform-routed GCP: tenant row, else platform GCP settings.
+        credential_chain = [LLMProvider.GOOGLE_GCP]
     elif provider_type in LLMProvider._GOOGLE_ROUTED:
         # Platform-routed aistudio keeps today's `google` row semantics verbatim.
         credential_chain = [LLMProvider.GOOGLE]
@@ -109,7 +123,7 @@ def get_llm_provider(
         if credentials:
             break
 
-    if not credentials and not is_vertex_routed:
+    if not credentials and not is_gcp_routed:
         raise ValueError(
             f"Credentials for provider '{credential_chain[0]}' not configured for this project."
         )

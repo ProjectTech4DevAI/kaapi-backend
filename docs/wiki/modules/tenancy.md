@@ -9,7 +9,7 @@ All paths relative to `backend/app/`.
 - `api/routes/users.py`, `api/routes/user_project.py` — users + membership
 - `api/routes/organization.py`, `api/routes/project.py`
 - `api/routes/api_keys.py`
-- `api/routes/onboarding.py`
+- `api/routes/onboarding.py` — `router` (v1 `POST /onboard`, deprecated), `router_v2` (v2 `POST /onboard`, `OnboardingRequestV2`, 32 KB cap)
 - `api/routes/private.py` — internal endpoints
 
 ## Tables (SQLModel)

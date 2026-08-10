@@ -30,9 +30,12 @@
 - We’ve also included a list of the providers currently supported by kaapi.
 
    ### Supported Providers
-   - **LLM:** openai, google, sarvamai
+   - **LLM:** openai, google (deprecated on v2), google-aistudio, google-gcp, anthropic, sarvamai
    - **Observability:** langfuse
    - **Audio:** elevenlabs
+
+   `google-gcp` (Gemini on Vertex AI) requires all of: `api_key`, `project_id`, `location`,
+   `sa_key` (the service-account key JSON as an object), `gcs_bucket`.
 
    ### Example: For sending multiple credentials -
    ```
@@ -58,6 +61,20 @@
        }
      },
      {
+       "google-gcp": {
+         "api_key": "AQ.Ab8...",
+         "project_id": "my-gcp-project",
+         "location": "us-central1",
+         "sa_key": {
+           "type": "service_account",
+           "project_id": "my-gcp-project",
+           "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+           "client_email": "svc@my-gcp-project.iam.gserviceaccount.com"
+         },
+         "gcs_bucket": "my-audio-staging-bucket"
+       }
+     },
+     {
        "langfuse": {
          "public_key": "pk-lf-....",
          "secret_key": "sk-lf-...",
@@ -66,6 +83,13 @@
      }
    ]
    ```
+---
+
+## 🆕 v2 differences (`/api/v2/onboard`)
+- The vanilla `google` provider is **rejected** — send `google-aistudio` or `google-gcp` so the Gemini backend is explicit. Existing `google` credential rows keep working.
+- The request body is capped at **32 KB**; larger payloads return **413**.
+- The v1 `/api/v1/onboard` route is deprecated.
+
 ---
 
 ## 🔄 Transactional Guarantee

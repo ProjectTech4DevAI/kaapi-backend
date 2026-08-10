@@ -29,7 +29,7 @@ The `credential` field accepts **two formats** (both work the same):
 ```
 
 ### Supported Providers:
-- **LLM:** openai, sarvamai, google(gemini)
+- **LLM:** openai, sarvamai, google(gemini), google-aistudio, google-gcp
 - **Observability:** langfuse
 - **Audio:** elevenlabs
 - **Miscellaneous** webhook_secret

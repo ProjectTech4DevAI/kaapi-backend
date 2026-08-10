@@ -12,7 +12,7 @@ class Provider(str, Enum):
     OPENAI = "openai"
     LANGFUSE = "langfuse"
     GOOGLE_AISTUDIO = "google-aistudio"
-    GOOGLE_VERTEX = "google-vertex"
+    GOOGLE_GCP = "google-gcp"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
@@ -56,7 +56,7 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
         ],
         sensitive_fields=["api_key"],
     ),
-    Provider.GOOGLE_VERTEX: ProviderConfig(
+    Provider.GOOGLE_GCP: ProviderConfig(
         required_fields=[
             "api_key",
             "project_id",

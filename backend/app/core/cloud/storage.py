@@ -307,7 +307,7 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
     Method to create and configure a cloud storage instance.
     """
     # Lazy import to avoid a top-level cycle: storage.py is imported from
-    # app.services.llm.providers.google_ai, which itself is wired into the
+    # app.services.llm.providers.google_gcp, which itself is wired into the
     # provider registry that app.crud transitively pulls in.
     from app.crud import get_project_by_id
 
