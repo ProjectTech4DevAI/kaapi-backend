@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Tuple, Iterable, Union
 from uuid import UUID
 
@@ -11,6 +12,10 @@ from app.services.doctransform.registry import (
 )
 from app.crud import DocTransformationJobCrud, DocumentCrud
 from app.services.doctransform import job as transformation_job
+from app.services.documents.validator import (
+    DocumentValidationError,
+    validate_document_content,
+)
 from app.models import (
     DocTransformJobCreate,
     TransformationStatus,
@@ -21,6 +26,39 @@ from app.models import (
     DocTransformationJobPublic,
     TransformedDocumentPublic,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def validate_upload(
+    *,
+    src: UploadFile,
+    target_format: str | None,
+    transformer: str | None,
+) -> Tuple[str, str | None]:
+    """
+    Full pre-storage gate: extension and transformer validation plus a content
+    sanity check. Returns (source_format, actual_transformer_or_none).
+
+    Raises: HTTPException(400) on client errors.
+    """
+    source_format, actual_transformer = pre_transform_validation(
+        src_filename=src.filename,
+        target_format=target_format,
+        transformer=transformer,
+    )
+
+    try:
+        validate_document_content(file=src, source_format=source_format)
+    except DocumentValidationError as e:
+        logger.warning(
+            f"[validate_upload] Document failed sanity check | "
+            f"filename: {e.filename} | format: {source_format} | reason: {e.reason}"
+        )
+        raise HTTPException(status_code=400, detail=e.client_message)
+
+    return source_format, actual_transformer
 
 
 def calculate_file_size(file: UploadFile) -> float:

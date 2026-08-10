@@ -33,7 +33,7 @@ from app.services.collections.helpers import MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,
-    pre_transform_validation,
+    validate_upload,
     build_document_schema,
     build_document_schemas,
 )
@@ -126,8 +126,8 @@ async def upload_doc(
     if callback_url:
         validate_callback_url(callback_url)
 
-    source_format, actual_transformer = pre_transform_validation(
-        src_filename=src.filename,
+    source_format, actual_transformer = validate_upload(
+        src=src,
         target_format=target_format,
         transformer=transformer,
     )
