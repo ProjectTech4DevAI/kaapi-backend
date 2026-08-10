@@ -10,7 +10,12 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import engine
-from app.core.security import _use_kms, decrypt_credentials, encrypt_credentials
+from app.core.security import (
+    KMS_ENVELOPE_PREFIX,
+    _use_kms,
+    decrypt_credentials,
+    encrypt_credentials,
+)
 from app.core.util import now
 from app.crud.credentials import list_all_credentials
 
@@ -39,6 +44,9 @@ def _reencrypt(session: Session) -> dict[str, int]:
     converted = 0
     try:
         for row in rows:
+            if row.credential.startswith(KMS_ENVELOPE_PREFIX):
+                # Already in the new envelope format; skip.
+                continue
             plaintext = decrypt_credentials(row.credential)
             new_ciphertext = encrypt_credentials(plaintext)
             if decrypt_credentials(new_ciphertext) != plaintext:
