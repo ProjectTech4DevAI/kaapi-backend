@@ -96,7 +96,9 @@ class TestApiCrudRoundTrip:
         db.add(job)
         db.commit()
         db.refresh(job)
-        api.set_execution_batch_job(session=db, execution=execution, batch_job_id=job.id)
+        api.set_execution_batch_job(
+            session=db, execution=execution, batch_job_id=job.id
+        )
         db.refresh(execution)
         assert execution.batch_job_id == job.id
 
@@ -157,7 +159,9 @@ class TestApiCrudRoundTrip:
 
 class TestDeriveMethod:
     def test_response_input(self) -> None:
-        assert derive_method(ResponseInput(query="hi"), None) == AssessmentMethod.RESPONSE
+        assert (
+            derive_method(ResponseInput(query="hi"), None) == AssessmentMethod.RESPONSE
+        )
 
     def test_batch_input(self) -> None:
         assert (

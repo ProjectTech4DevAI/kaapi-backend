@@ -462,19 +462,15 @@ class TestRecordStage:
 class TestRowSubset:
     def test_assessment_only_gate_passed(self) -> None:
         bag = {"gate_passed": [True, False, True]}
-        assert (
-            _row_subset(bag, ApiStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, 3)
-            == [0, 2]
-        )
+        assert _row_subset(
+            bag, ApiStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, 3
+        ) == [0, 2]
 
     def test_prefilter_all_rows(self) -> None:
         bag = {"gate_passed": [True, False, True]}
-        assert (
-            _row_subset(
-                bag, ApiStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, 3
-            )
-            == [0, 1, 2]
-        )
+        assert _row_subset(
+            bag, ApiStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, 3
+        ) == [0, 1, 2]
 
 
 class _SessionCtx:
@@ -598,9 +594,7 @@ class TestRunBatchStageFullWalk:
                 "response": {
                     "status_code": 200,
                     "body": {
-                        "output_text": json.dumps(
-                            {"verdict": True, "reasoning": "ok"}
-                        )
+                        "output_text": json.dumps({"verdict": True, "reasoning": "ok"})
                     },
                 },
             },
@@ -725,9 +719,9 @@ class TestRunBatchStageEarlyReturns:
             data=[{"a": "1"}],
             status=AssessmentStatus.COMPLETED,
         )
-        assert self._tick(
-            db, execution.id, auth.organization_id, auth.project_id
-        ) == {"requeue": False}
+        assert self._tick(db, execution.id, auth.organization_id, auth.project_id) == {
+            "requeue": False
+        }
 
     def test_uninitialised_bag_returns_no_requeue(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -747,9 +741,9 @@ class TestRunBatchStageEarlyReturns:
             bag={"stage": None, "pipeline": []},
             data=[{"a": "1"}],
         )
-        assert self._tick(
-            db, execution.id, auth.organization_id, auth.project_id
-        ) == {"requeue": False}
+        assert self._tick(db, execution.id, auth.organization_id, auth.project_id) == {
+            "requeue": False
+        }
 
     def test_processing_batch_missing_fails(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -774,9 +768,9 @@ class TestRunBatchStageEarlyReturns:
             data=[{"a": "1"}],
             status=AssessmentStatus.PROCESSING,
         )
-        assert self._tick(
-            db, execution.id, auth.organization_id, auth.project_id
-        ) == {"requeue": False}
+        assert self._tick(db, execution.id, auth.organization_id, auth.project_id) == {
+            "requeue": False
+        }
         db.refresh(execution)
         assert execution.status == AssessmentStatus.FAILED
         assert "batch not found" in execution.error_message
@@ -868,9 +862,7 @@ class TestBuildBatchProvider:
         auth = get_user_test_auth_context(db)
         gemini = MagicMock()
         gemini.client = MagicMock()
-        with patch(
-            "app.services.assessment.api.batch.GeminiClient"
-        ) as gemini_cls:
+        with patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls:
             gemini_cls.from_credentials.return_value = gemini
             provider = _build_batch_provider(
                 session=db,
@@ -929,9 +921,7 @@ class TestSubmitProviderBatch:
             db, org_id=auth.organization_id, project_id=auth.project_id
         )
         with (
-            patch(
-                "app.services.assessment.api.batch.GeminiClient"
-            ) as gemini_cls,
+            patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls,
             patch(
                 "app.services.assessment.api.batch.start_batch_job",
                 return_value=job,
@@ -960,18 +950,14 @@ class TestSubmitProviderBatch:
             ) as start,
         ):
             _submit_provider_batch(
-                **self._kwargs(
-                    db, auth, "anthropic", {"model": "claude-sonnet-4-6"}
-                )
+                **self._kwargs(db, auth, "anthropic", {"model": "claude-sonnet-4-6"})
             )
         assert start.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
 
     def test_unsupported_provider_raises(self, db) -> None:
         auth = get_user_test_auth_context(db)
         with pytest.raises(ValueError, match="Unsupported provider"):
-            _submit_provider_batch(
-                **self._kwargs(db, auth, "cohere", {"model": "m"})
-            )
+            _submit_provider_batch(**self._kwargs(db, auth, "cohere", {"model": "m"}))
 
     def test_empty_jsonl_raises(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -1132,7 +1118,9 @@ class TestRunBatchStageProcessingBranches:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(blob.pre_filters if stage_pipeline_prefilter else None)
+        pipeline = build_pipeline(
+            blob.pre_filters if stage_pipeline_prefilter else None
+        )
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )

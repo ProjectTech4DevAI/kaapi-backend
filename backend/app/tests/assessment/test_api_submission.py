@@ -23,8 +23,16 @@ from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
 
 
-def _assessment_config(db, project_id, *, provider="openai", model="gpt-4o", strict=None):
-    params = {"model": model, "json_output_schema": {"type": "object", "properties": {"s": {"type": "integer"}}}}
+def _assessment_config(
+    db, project_id, *, provider="openai", model="gpt-4o", strict=None
+):
+    params = {
+        "model": model,
+        "json_output_schema": {
+            "type": "object",
+            "properties": {"s": {"type": "integer"}},
+        },
+    }
     if strict is not None:
         params["input_schema"] = strict
     blob = AssessmentConfigBlob.model_validate(
@@ -56,9 +64,7 @@ class TestSubmit:
         config = _assessment_config(db, auth.project_id)
         request = _request(config, [{"a": "one"}, {"a": "two"}])
 
-        with patch(
-            "app.celery.tasks.job_execution.run_assessment_api_batch"
-        ) as task:
+        with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
             response = submission.submit(
                 session=db,
                 request=request,
@@ -73,7 +79,9 @@ class TestSubmit:
         # Parent + execution persisted with the seeded runtime bag and PROCESSING status.
         assessment = db.get(Assessment, response.assessment_id)
         assert assessment.status == AssessmentStatus.PROCESSING
-        executions = api.list_executions(session=db, assessment_id=response.assessment_id)
+        executions = api.list_executions(
+            session=db, assessment_id=response.assessment_id
+        )
         assert len(executions) == 1
         execution = executions[0]
         assert execution.total_items == 2
@@ -180,9 +188,7 @@ class TestSubmit:
         config = _assessment_config(db, auth.project_id)
         request = _request(config, [{"a": "one"}])
 
-        with patch(
-            "app.celery.tasks.job_execution.run_assessment_api_batch"
-        ) as task:
+        with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
             task.delay.side_effect = RuntimeError("broker down")
             with pytest.raises(HTTPException) as exc:
                 submission.submit(
@@ -212,9 +218,7 @@ class TestCreateAssessmentRoute:
             "input": {"query": "assess {a}", "data": [{"a": "one"}]},
             "callback_url": "https://hook.example/cb",
         }
-        with patch(
-            "app.celery.tasks.job_execution.run_assessment_api_batch"
-        ) as task:
+        with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
             resp = client.post(
                 f"{settings.API_V1_STR}/assessments",
                 headers=superuser_api_key_header,
