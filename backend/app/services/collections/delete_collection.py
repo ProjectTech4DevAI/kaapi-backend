@@ -1,8 +1,11 @@
 import logging
+from typing import Any
 from uuid import UUID
 
 from gevent import Timeout
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import (
+    SoftTimeLimitExceeded,
+)  # pyright: ignore[reportMissingTypeStubs]
 from opentelemetry import trace
 from sqlmodel import Session
 from asgi_correlation_id import correlation_id
@@ -19,7 +22,9 @@ from app.models import (
 from app.models.collection import DeletionRequest
 from app.services.collections.helpers import extract_error_message
 from app.services.collections.providers.registry import get_llm_provider
-from app.celery.utils import start_delete_collection_job
+from app.celery.utils import (
+    start_delete_collection_job,
+)  # pyright: ignore[reportUnknownVariableType]
 from app.core.telemetry import log_context
 from app.utils import send_callback, get_webhook_secret, APIResponse
 
@@ -34,22 +39,20 @@ def start_job(
     project_id: int,
     collection_job_id: UUID,
     organization_id: int,
-) -> str:
+) -> UUID:
     with log_context(
         tag="collection",
         lifecycle="collection.delete.start_job",
         action="delete",
-        collection_job_id=collection_job_id,
-        collection_id=request.collection_id,
+        collection_job_id=str(collection_job_id),
+        collection_id=str(request.collection_id),
         project_id=project_id,
         organization_id=organization_id,
     ):
         trace_id = correlation_id.get() or "N/A"
 
         job_crud = CollectionJobCrud(db, project_id)
-        collection_job = job_crud.update(
-            collection_job_id, CollectionJobUpdate(trace_id=trace_id)
-        )
+        job_crud.update(collection_job_id, CollectionJobUpdate(trace_id=trace_id))
 
         task_id = start_delete_collection_job(
             project_id=project_id,
@@ -67,7 +70,9 @@ def start_job(
         return collection_job_id
 
 
-def build_success_payload(collection_job: CollectionJob, collection_id: UUID) -> dict:
+def build_success_payload(
+    collection_job: CollectionJob, collection_id: UUID
+) -> dict[str, Any]:
     """
     success: true
     data: { job_id, status, collection: { id } }
@@ -79,15 +84,19 @@ def build_success_payload(collection_job: CollectionJob, collection_id: UUID) ->
         collection_job,
         update={"collection": collection_public},
     )
-    return APIResponse.success_response(job_public).model_dump(
-        mode="json",
-        exclude_none=True,
+    return (
+        APIResponse[CollectionJobPublic]
+        .success_response(job_public)
+        .model_dump(
+            mode="json",
+            exclude_none=True,
+        )
     )
 
 
 def build_failure_payload(
     collection_job: CollectionJob, collection_id: UUID, error_message: str
-) -> dict:
+) -> dict[str, Any]:
     """
     success: false
     data: { job_id, status, collection: { id } }
@@ -99,9 +108,13 @@ def build_failure_payload(
         collection_job,
         update={"collection": collection_public},
     )
-    return APIResponse.failure_response(
-        extract_error_message(error_message), job_public
-    ).model_dump(mode="json", exclude={"data": {"error_message"}})
+    return (
+        APIResponse[CollectionJobPublic]
+        .failure_response(  # pyright: ignore[reportUnknownMemberType]
+            extract_error_message(error_message), job_public
+        )
+        .model_dump(mode="json", exclude={"data": {"error_message"}})
+    )
 
 
 def _mark_job_failed_and_callback(
@@ -154,17 +167,17 @@ def _mark_job_failed_and_callback(
 
 
 def execute_job(
-    request: dict,
+    request: dict[str, Any],
     project_id: int,
     organization_id: int,
     task_id: str,
     job_id: str,
     collection_id: str,
-    task_instance,
+    task_instance: object,
 ) -> None:
     """Celery worker entrypoint for deleting a collection (both remote and local)."""
 
-    deletion_request = DeletionRequest(**request)
+    deletion_request = DeletionRequest.model_validate(request)
 
     collection_uuid = UUID(collection_id)
     job_uuid = UUID(job_id)

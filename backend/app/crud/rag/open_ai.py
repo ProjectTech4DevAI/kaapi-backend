@@ -2,11 +2,12 @@ import json
 import logging
 import time
 import functools as ft
+from typing import Any, Iterator
 
 import openai
 from openai import OpenAI, OpenAIError
 from openai.types import VectorStore
-from openai.types.vector_stores import VectorStoreFileBatch
+from openai.types.vector_stores import VectorStoreFile, VectorStoreFileBatch
 from pydantic import BaseModel
 from tenacity import (
     RetryCallState,
@@ -43,41 +44,43 @@ def _log_batch_retry(retry_state: RetryCallState) -> None:
     )
 
 
-def vs_ls(client: OpenAI, vector_store_id: str):
-    kwargs = {}
-    while True:
-        page = client.vector_stores.files.list(
-            vector_store_id=vector_store_id,
-            **kwargs,
+def vs_ls(client: OpenAI, vector_store_id: str) -> Iterator[VectorStoreFile]:
+    # SyncCursorPage auto-paginates on iteration (it has no `last_id`).
+    yield from client.vector_stores.files.list(vector_store_id=vector_store_id)
+
+
+def _provider_file_id(doc: Document) -> str:
+    if not doc.file_id or OPENAI_PROVIDER not in doc.file_id:
+        raise RuntimeError(
+            f"Document {doc.id} has no OpenAI file id; upload it before indexing."
         )
-        yield from page
-        if not page.has_more:
-            break
-        kwargs["after"] = page.last_id
+    return doc.file_id[OPENAI_PROVIDER]
 
 
 class BaseModelEncoder(json.JSONEncoder):
     @ft.singledispatchmethod
-    def default(self, o):
+    def default(
+        self, o: Any
+    ) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
         return super().default(o)
 
     @default.register
-    def _(self, o: BaseModel):
+    def _(self, o: BaseModel) -> Any:
         return o.model_dump()
 
 
 class ResourceCleaner:
-    def __init__(self, client):
+    def __init__(self, client: OpenAI) -> None:
         self.client = client
 
-    def __str__(self):
+    def __str__(self) -> str:
         return type(self).__name__
 
-    def __call__(self, resource, retries=1):
+    def __call__(self, resource: str, retries: int = 1) -> None:
         logger.info(
             f"[ResourceCleaner.call] Starting resource cleanup | {{'cleaner_type': '{self}', 'resource': '{resource}', 'retries': {retries}}}"
         )
-        for i in range(retries):
+        for _ in range(retries):
             try:
                 self.clean(resource)
                 logger.info(
@@ -93,12 +96,12 @@ class ResourceCleaner:
             f"[ResourceCleaner.call] Cleanup failure after retries | {{'cleaner_type': '{self}', 'resource': '{resource}'}}"
         )
 
-    def clean(self, resource):
+    def clean(self, resource: str) -> None:
         raise NotImplementedError()
 
 
 class VectorStoreCleaner(ResourceCleaner):
-    def clean(self, resource):
+    def clean(self, resource: str) -> None:
         logger.info(
             f"[VectorStoreCleaner.clean] Deleting vector store | {{'vector_store_id': '{resource}'}}"
         )
@@ -106,8 +109,8 @@ class VectorStoreCleaner(ResourceCleaner):
 
 
 class OpenAICrud:
-    def __init__(self, client):
-        if client is None:
+    def __init__(self, client: OpenAI) -> None:
+        if client is None:  # pyright: ignore[reportUnnecessaryComparison]
             logger.error("[OpenAICrud] OpenAI client is not configured")
             raise ValueError("OpenAI client is not configured")
 
@@ -125,7 +128,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         )
         return vector_store
 
-    def read(self, vector_store_id: str):
+    def read(self, vector_store_id: str) -> Iterator[VectorStoreFile]:
         logger.info(
             f"[OpenAIVectorStoreCrud.read] Reading files from vector store | {{'vector_store_id': '{vector_store_id}'}}"
         )
@@ -172,8 +175,8 @@ class OpenAIVectorStoreCrud(OpenAICrud):
                     batch_id=batch_id,
                     filter="failed",
                 )
-                doc_by_file_id = {d.file_id[OPENAI_PROVIDER]: d for d in docs}
-                parts = []
+                doc_by_file_id = {_provider_file_id(d): d for d in docs}
+                parts: list[str] = []
                 for f in failed_files:
                     d = doc_by_file_id.get(f.id)
                     label = d.fname if d else f.id
@@ -219,7 +222,7 @@ class OpenAIVectorStoreCrud(OpenAICrud):
         a unit on any OpenAI/indexing failure; SoftTimeLimitExceeded is not retried
         (not an OpenAIError/RuntimeError) so it aborts the task inside the window."""
         batch_id = self._create_file_batch(
-            vector_store_id, [doc.file_id[OPENAI_PROVIDER] for doc in docs]
+            vector_store_id, [_provider_file_id(doc) for doc in docs]
         )
         batch = self._poll_file_batch(batch_id, vector_store_id)
         self._raise_if_batch_incomplete(batch, batch_id, vector_store_id, docs)
@@ -339,16 +342,12 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             f"'completed': {batch.file_counts.completed}, 'failed': {batch.file_counts.failed}}}"
         )
 
-    def delete(self, vector_store_id: str, retries: int = 3):
+    def delete(self, vector_store_id: str, retries: int = 3) -> None:
         if retries < 1:
-            try:
-                raise ValueError("Retries must be greater-than 1")
-            except ValueError as err:
-                logger.error(
-                    f"[OpenAIVectorStoreCrud.delete] Invalid retries value | {{'vector_store_id': '{vector_store_id}', 'retries': {retries}}}",
-                    exc_info=True,
-                )
-                raise
+            logger.error(
+                f"[OpenAIVectorStoreCrud.delete] Invalid retries value | {{'vector_store_id': '{vector_store_id}', 'retries': {retries}}}",
+            )
+            raise ValueError("Retries must be greater-than 1")
 
         cleaner = VectorStoreCleaner(self.client)
         cleaner(vector_store_id)

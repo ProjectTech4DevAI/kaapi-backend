@@ -3,6 +3,9 @@ from typing import Optional, Tuple, Iterable, Union
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile
+from sqlmodel import Session
+
+from app.core.cloud.storage import CloudStorage
 
 from app.services.doctransform.registry import (
     get_available_transformers,
@@ -43,6 +46,9 @@ def validate_upload(
 
     Raises: HTTPException(400) on client errors.
     """
+    if src.filename is None:
+        raise HTTPException(status_code=400, detail="Uploaded file has no filename")
+
     source_format, actual_transformer = pre_transform_validation(
         src_filename=src.filename,
         target_format=target_format,
@@ -126,7 +132,7 @@ def pre_transform_validation(
 
 def schedule_transformation(
     *,
-    session,
+    session: Session,
     project_id: int,
     source_format: str,
     target_format: str | None,
@@ -157,7 +163,7 @@ def schedule_transformation(
 
     return TransformationJobInfo(
         message=f"Document accepted for transformation from {source_format} to {target_format}.",
-        job_id=str(transformation_job_id),
+        job_id=str(transformation_job_id),  # pyright: ignore[reportArgumentType]
         status=TransformationStatus.PENDING,
         transformer=actual_transformer,
         status_check_url=f"/documents/transformation/{transformation_job_id}",
@@ -177,7 +183,7 @@ def build_document_schema(
     *,
     document: Document,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
 ) -> PublicDoc:
     schema = _to_public_schema(document)
     if include_url and storage:
@@ -189,7 +195,7 @@ def build_document_schemas(
     *,
     documents: Iterable[Document],
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
 ) -> list[PublicDoc]:
     out: list[PublicDoc] = []
     for doc in documents:
@@ -205,7 +211,7 @@ def build_job_schema(
     job: DocTransformationJob,
     doc_crud: DocumentCrud,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
 ) -> DocTransformationJobPublic:
     """Build a single job schema, optionally attaching a signed URL."""
     transformed_doc_schema: TransformedDocumentPublic | None = None
@@ -232,7 +238,7 @@ def build_job_schemas(
     jobs: Iterable[DocTransformationJob],
     doc_crud: DocumentCrud,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
 ) -> list[DocTransformationJobPublic]:
     """Build many job schemas efficiently."""
     out: list[DocTransformationJobPublic] = []

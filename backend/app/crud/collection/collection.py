@@ -1,11 +1,11 @@
 import logging
 import functools as ft
 from uuid import UUID
-from typing import Optional
-import logging
+from typing import Protocol
+from collections.abc import Sequence
 
 from fastapi import HTTPException
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, select, and_, col
 from sqlalchemy.exc import IntegrityError
 
 from app.models import Document, Collection, CollectionUpdate, DocumentCollection
@@ -13,6 +13,13 @@ from app.core.util import now
 from app.crud.document_collection import DocumentCollectionCrud
 
 logger = logging.getLogger(__name__)
+
+
+class _RemoteVectorStore(Protocol):
+    """Remote store passed to `delete` (e.g. OpenAIVectorStoreCrud)."""
+
+    def delete(self, resource_id: str, /) -> None:
+        ...
 
 
 class CollectionNameConflictError(Exception):
@@ -24,11 +31,11 @@ class CollectionNameConflictError(Exception):
 
 
 class CollectionCrud:
-    def __init__(self, session: Session, project_id: int):
+    def __init__(self, session: Session, project_id: int) -> None:
         self.session = session
         self.project_id = project_id
 
-    def _update(self, collection: Collection):
+    def _update(self, collection: Collection) -> Collection:
         self.session.add(collection)
         self.session.commit()
         self.session.refresh(collection)
@@ -44,7 +51,7 @@ class CollectionCrud:
             & (Collection.knowledge_base_id == collection.knowledge_base_id)
             & (Collection.knowledge_base_provider == collection.knowledge_base_provider)
         )
-        present = self.session.exec(stmt).scalar_one_or_none() is not None
+        present = self.session.exec(stmt).one_or_none() is not None
 
         return present
 
@@ -69,7 +76,7 @@ class CollectionCrud:
             and_(
                 Collection.project_id == self.project_id,
                 Collection.id == collection_id,
-                Collection.deleted_at.is_(None),
+                col(Collection.deleted_at).is_(None),
             )
         )
 
@@ -115,11 +122,11 @@ class CollectionCrud:
 
         return collection
 
-    def read_all(self):
+    def read_all(self) -> Sequence[Collection]:
         statement = select(Collection).where(
             and_(
                 Collection.project_id == self.project_id,
-                Collection.deleted_at.is_(None),
+                col(Collection.deleted_at).is_(None),
             )
         )
 
@@ -157,7 +164,7 @@ class CollectionCrud:
             select(Collection.id)
             .where(Collection.project_id == self.project_id)
             .where(Collection.name == collection_name)
-            .where(Collection.deleted_at.is_(None))
+            .where(col(Collection.deleted_at).is_(None))
         )
         result = self.session.exec(statement).first()
         return result is not None
@@ -169,18 +176,14 @@ class CollectionCrud:
         return self._update(coll)
 
     @ft.singledispatchmethod
-    def delete(self, model, remote):  # remote should be an OpenAICrud
-        try:
-            raise TypeError(type(model))
-        except TypeError as err:
-            logger.error(
-                f"[CollectionCrud.delete] Invalid model type | {{'model_type': '{type(model).__name__}'}}",
-                exc_info=True,
-            )
-            raise
+    def delete(self, model: object, remote: _RemoteVectorStore) -> object:
+        logger.error(
+            f"[CollectionCrud.delete] Invalid model type | {{'model_type': '{type(model).__name__}'}}",
+        )
+        raise TypeError(type(model))
 
     @delete.register
-    def _(self, model: Collection, remote):
+    def _(self, model: Collection, remote: _RemoteVectorStore) -> Collection:
         if model.deleted_at is not None:
             logger.info(
                 f"[CollectionCrud.delete] Collection already deleted | {{'collection_id': '{model.id}'}}"
@@ -195,16 +198,16 @@ class CollectionCrud:
         return collection
 
     @delete.register
-    def _(self, model: Document, remote):
+    def _(self, model: Document, remote: _RemoteVectorStore) -> Document:
         statement = (
             select(Collection)
             .join(
                 DocumentCollection,
-                DocumentCollection.collection_id == Collection.id,
+                col(DocumentCollection.collection_id) == col(Collection.id),
             )
             .where(
-                DocumentCollection.document_id == model.id,
-                Collection.deleted_at.is_(None),
+                col(DocumentCollection.document_id) == model.id,
+                col(Collection.deleted_at).is_(None),
             )
             .distinct()
         )

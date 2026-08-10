@@ -1,10 +1,13 @@
 import logging
 import time
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlmodel import Session
 from gevent import Timeout
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import (
+    SoftTimeLimitExceeded,
+)  # pyright: ignore[reportMissingTypeStubs]
 from opentelemetry import trace
 from asgi_correlation_id import correlation_id
 
@@ -24,6 +27,7 @@ from app.models import (
     CollectionJobUpdate,
     CollectionJobPublic,
     CreationRequest,
+    Document,
 )
 from app.services.collections.helpers import (
     batch_documents,
@@ -31,8 +35,12 @@ from app.services.collections.helpers import (
     get_service_name,
     to_collection_public,
 )
+from app.services.collections.providers import BaseProvider
 from app.services.collections.providers.registry import get_llm_provider
-from app.celery.utils import start_collection_setup_job, start_collection_batch_job
+from app.celery.utils import (
+    start_collection_setup_job,
+    start_collection_batch_job,
+)  # pyright: ignore[reportUnknownVariableType]
 from app.utils import send_callback, APIResponse, get_webhook_secret
 
 
@@ -70,7 +78,7 @@ def start_job(
 
 def build_success_payload(
     collection_job: CollectionJob, collection: Collection
-) -> dict:
+) -> dict[str, Any]:
     collection_public = to_collection_public(collection)
     collection_dict = collection_public.model_dump(mode="json", exclude_none=True)
 
@@ -78,21 +86,29 @@ def build_success_payload(
         collection_job,
         update={"collection": collection_dict},
     )
-    return APIResponse.success_response(job_public).model_dump(
-        mode="json", exclude={"data": {"error_message"}}
+    return (
+        APIResponse[CollectionJobPublic]
+        .success_response(job_public)
+        .model_dump(mode="json", exclude={"data": {"error_message"}})
     )
 
 
-def build_failure_payload(collection_job: CollectionJob, error_message: str) -> dict:
+def build_failure_payload(
+    collection_job: CollectionJob, error_message: str
+) -> dict[str, Any]:
     job_public = CollectionJobPublic.model_validate(
         collection_job,
         update={"collection": None},
     )
-    return APIResponse.failure_response(
-        extract_error_message(error_message), job_public
-    ).model_dump(
-        mode="json",
-        exclude={"data": {"error_message"}},
+    return (
+        APIResponse[CollectionJobPublic]
+        .failure_response(  # pyright: ignore[reportUnknownMemberType]
+            extract_error_message(error_message), job_public
+        )
+        .model_dump(
+            mode="json",
+            exclude={"data": {"error_message"}},
+        )
     )
 
 
@@ -122,15 +138,15 @@ def _mark_job_failed(
 
 
 def _handle_job_failure(
-    span,
+    span: trace.Span,
     project_id: int,
     organization_id: int,
     job_id: str,
     err: Exception,
     collection_job: CollectionJob | None,
     creation_request: CreationRequest | None,
-    provider=None,
-    result=None,
+    provider: BaseProvider | None = None,
+    result: Collection | None = None,
 ) -> None:
     """Record failure on span, clean up provider, mark job failed, and send failure callback."""
     span.record_exception(err)
@@ -160,12 +176,12 @@ def _handle_job_failure(
 
 
 def execute_setup_job(
-    request: dict,
+    request: dict[str, Any],
     project_id: int,
     organization_id: int,
     task_id: str,
     job_id: str,
-    task_instance,
+    task_instance: object,
 ) -> None:
     """
     Phase 1: Fetch documents, split into batches, create the vector store,
@@ -190,7 +206,7 @@ def execute_setup_job(
         span.set_attribute("kaapi.organization_id", organization_id)
 
         try:
-            creation_request = CreationRequest(**request)
+            creation_request = CreationRequest.model_validate(request)
             span.set_attribute("collection.provider", str(creation_request.provider))
 
             job_uuid = UUID(job_id)
@@ -227,7 +243,7 @@ def execute_setup_job(
                     ),
                 )
 
-            total_size_kb = sum(doc.file_size_kb for doc in flat_docs)
+            total_size_kb = sum(doc.file_size_kb or 0.0 for doc in flat_docs)
             total_size_mb = round(total_size_kb / 1024, 2)
 
             docs_batches = batch_documents(flat_docs)
@@ -235,7 +251,7 @@ def execute_setup_job(
             batch_doc_ids = [[str(doc.id) for doc in batch] for batch in docs_batches]
 
             vector_store_id = provider.create_vector_store()
-            result = Collection(
+            result = Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
                 knowledge_base_provider=get_service_name(creation_request.provider),
             )
@@ -312,12 +328,12 @@ def execute_setup_job(
 
 
 def execute_batch_job(
-    request: dict,
+    request: dict[str, Any],
     project_id: int,
     organization_id: int,
     task_id: str,
     job_id: str,
-    task_instance,
+    task_instance: object,
     vector_store_id: str,
     batch_number: int,
     batch_doc_ids: list[str],
@@ -350,10 +366,10 @@ def execute_batch_job(
 
         try:
             batch_start_time = time.time()
-            creation_request = CreationRequest(**request)
+            creation_request = CreationRequest.model_validate(request)
             span.set_attribute("collection.provider", str(creation_request.provider))
 
-            result = Collection(
+            result = Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
                 knowledge_base_provider=get_service_name(creation_request.provider),
             )
@@ -382,7 +398,7 @@ def execute_batch_job(
 
             with Session(engine) as session:
                 document_crud = DocumentCrud(session, project_id)
-                batch_docs = (
+                batch_docs: list[Document] = (
                     document_crud.read_each(all_doc_ids_this_batch)
                     if all_doc_ids_this_batch
                     else []
@@ -453,7 +469,7 @@ def execute_batch_job(
             with Session(engine) as session:
                 all_uploaded_ids = [UUID(d) for d in now_uploaded]
                 document_crud = DocumentCrud(session, project_id)
-                all_docs = (
+                all_docs: list[Document] = (
                     document_crud.read_each(all_uploaded_ids)
                     if all_uploaded_ids
                     else []
