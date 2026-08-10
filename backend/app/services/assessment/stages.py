@@ -1,4 +1,4 @@
-"""Stage registry, pipeline ordering, and Batch API executor."""
+"""Stage registry, pipeline ordering, and Batch API executor (LEGACY RUN pipeline)."""
 
 import logging
 from collections.abc import Callable

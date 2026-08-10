@@ -1,4 +1,4 @@
-"""Orchestrator: submit the run's current PENDING stage as a batch, then exit."""
+"""Orchestrator: submit the run's current PENDING stage as a batch, then exit (LEGACY RUN pipeline)."""
 
 import logging
 

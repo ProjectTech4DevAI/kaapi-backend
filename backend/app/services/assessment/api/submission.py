@@ -20,6 +20,7 @@ from app.models.assessment import (
     AssessmentStatus,
     AssessmentSubmitResponse,
     BatchInput,
+    BatchRunState,
     derive_method,
 )
 from app.models.config.assessment_blob import AssessmentConfigBlob
@@ -135,7 +136,7 @@ def submit(
     )
 
     pipeline = batch_service.build_pipeline(blob.pre_filters)
-    bag = {
+    bag: BatchRunState = {
         "pipeline": pipeline,
         "stage": pipeline[0]["stage"],
         "stage_status": AssessmentStatus.PENDING.value,

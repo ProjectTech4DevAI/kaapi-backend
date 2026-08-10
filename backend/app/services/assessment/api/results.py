@@ -8,7 +8,7 @@ the execution bag; assessment outputs are streamed back from object storage.
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from sqlmodel import Session
 
@@ -22,8 +22,11 @@ from app.models.assessment import (
     AssessmentOutput,
     AssessmentResult,
     BatchInput,
+    BatchRunState,
+    ParsedResult,
     PreFilter,
     PreFilterVerdict,
+    Verdict,
 )
 from app.models.llm.response import Usage
 from app.services.assessment.api.batch import (
@@ -36,7 +39,7 @@ from app.services.assessment.utils.parsing import parse_stored_results, usage_to
 logger = logging.getLogger(__name__)
 
 
-def _to_usage(raw: Any) -> Usage | None:
+def _to_usage(raw: dict[str, Any] | None) -> Usage | None:
     input_tokens, output_tokens, total_tokens = usage_totals(raw)
     if input_tokens is None and output_tokens is None and total_tokens is None:
         return None
@@ -47,7 +50,7 @@ def _to_usage(raw: Any) -> Usage | None:
     )
 
 
-def _parse_assessment(out: dict[str, Any]) -> dict[str, Any] | str | None:
+def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
     """Stored assessment text as a dict (structured json_schema output) or raw string.
 
     Null when the row produced no assessment text (gated out or empty/failed call).
@@ -62,7 +65,7 @@ def _parse_assessment(out: dict[str, Any]) -> dict[str, Any] | str | None:
     return parsed if isinstance(parsed, dict) else text
 
 
-def _to_meta(out: dict[str, Any], provider: str, model: str) -> AssessmentMeta:
+def _to_meta(out: ParsedResult, provider: str, model: str) -> AssessmentMeta:
     return AssessmentMeta(
         provider=provider,
         model=model,
@@ -71,7 +74,7 @@ def _to_meta(out: dict[str, Any], provider: str, model: str) -> AssessmentMeta:
     )
 
 
-def _verdict_obj(verdict: dict[str, Any] | None) -> PreFilterVerdict | None:
+def _verdict_obj(verdict: Verdict | None) -> PreFilterVerdict | None:
     if not verdict:
         return None
     return PreFilterVerdict(
@@ -81,8 +84,8 @@ def _verdict_obj(verdict: dict[str, Any] | None) -> PreFilterVerdict | None:
 
 
 def _load_assessment_outputs(
-    session: Session, bag: dict[str, Any], project_id: int
-) -> tuple[dict[int, dict[str, Any]], str | None]:
+    session: Session, bag: BatchRunState, project_id: int
+) -> tuple[dict[int, ParsedResult], str | None]:
     """Stream + parse the assessment stage output. Returns ``(outputs, load_error)``.
 
     ``load_error`` is set only on a failed read of a present URL, so the caller
@@ -112,7 +115,7 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     result body carries only the rows and their tallies.
     """
     executions = api.list_executions(session=session, assessment_id=assessment.id)
-    bag = (executions[0].execution or {}) if executions else {}
+    bag = cast(BatchRunState, (executions[0].execution or {}) if executions else {})
 
     batch_input = (
         BatchInput.model_validate(assessment.input) if assessment.input else None
@@ -133,6 +136,8 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     items: list[AssessmentResult] = []
     counts = AssessmentCounts()
     for idx in range(total_items):
+        # dict shape is the config's own json_output_schema (runtime-defined, no fixed
+        # model); str for free-text output, None when gated/failed.
         assessment_output: dict[str, Any] | str | None = None
         metadata: AssessmentMeta | None = None
         error: str | None = None

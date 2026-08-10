@@ -1,4 +1,8 @@
-"""Assessment run endpoints — one row per config-run inside a parent assessment."""
+"""Assessment run endpoints — one row per config-run inside a parent assessment (LEGACY RUN pipeline).
+
+Serves dataset-based RUN assessments only. The new API-client BATCH path
+(`api.py`) delivers results by webhook and never surfaces here.
+"""
 
 import logging
 from typing import Any, Literal

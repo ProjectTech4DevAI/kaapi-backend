@@ -5,7 +5,7 @@ RUN models live in ``assessment.py``.
 """
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, NotRequired, TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -47,6 +47,48 @@ class BatchInput(SQLModel):
     data: list[Submission] = Field(
         ..., min_length=1, description="Submission rows; one assessed item each"
     )
+
+
+class Verdict(TypedDict):
+    """A pre-filter's parsed judgement for one row."""
+
+    verdict: bool
+    reasoning: str
+
+
+class ParsedResult(TypedDict):
+    """One provider batch response row, normalised across providers.
+
+    ``usage`` stays an open dict — the token-count keys differ per provider
+    (``input_tokens`` vs ``prompt_tokens``, ...)."""
+
+    output: str | None
+    error: str | None
+    usage: dict[str, Any] | None
+    response_id: str | None
+
+
+class BatchRunState(TypedDict):
+    """Persisted runtime state of the staged BATCH pipeline, stored on
+    ``AssessmentRun.execution`` (JSONB). Advanced one Celery tick at a time by
+    ``run_batch_stage``; keyed off ``stage_status`` for idempotent redelivery."""
+
+    pipeline: list[dict[str, str]]  # ordered [{"stage","kind"}]
+    stage: str  # current stage
+    stage_status: str  # PENDING | PROCESSING | COMPLETED | FAILED
+    # Values are None-typed at the write sites: batch_job.id is an ORM-optional PK and
+    # raw_output_url is Optional, so the map value types must admit None.
+    stage_batches: dict[str, int | None]  # stage -> provider batch_job id
+    stage_output_urls: dict[str, str | None]  # stage -> raw result url
+    verdicts: dict[str, dict[str, Verdict]]  # stage -> {item_idx -> verdict}
+    counters: dict[str, dict[str, int]]  # stage -> {total,passed,rejected}
+    gate_passed: list[bool]  # per-item still-eligible flag
+    provider: str
+    model: str
+    input_schema: dict[str, Any] | None
+    callback_url: str
+    request_metadata: dict[str, Any] | None
+    error: NotRequired[str]  # only set on failure (_fail)
 
 
 # Strict, tagless discrimination via extra=forbid: an input carrying `data` is a

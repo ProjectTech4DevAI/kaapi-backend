@@ -17,7 +17,7 @@ Conditional forwarding:
 import json
 import logging
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from sqlmodel import Session
 
@@ -50,10 +50,18 @@ from app.models.assessment import (
     AssessmentRun,
     AssessmentStatus,
     BatchInput,
+    BatchRunState,
+    ParsedResult,
     StageStatus,
+    Verdict,
 )
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.assessment_blob import (
+    AssessmentConfigBlob,
+    AssessmentPreFilters,
+    DuplicateDetectionFilter,
+    TopicRelevanceFilter,
+)
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.mappers import (
     map_kaapi_to_anthropic_params,
@@ -126,9 +134,11 @@ def is_supported_provider(provider_name: str) -> bool:
     return provider_name in _SUPPORTED_PROVIDERS
 
 
-def build_pipeline(pre_filters: Any | None) -> list[dict[str, str]]:
+def build_pipeline(
+    pre_filters: AssessmentPreFilters | None,
+) -> list[dict[str, str]]:
     """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
-    present: list[tuple[ApiStage, Any]] = []
+    present: list[tuple[ApiStage, TopicRelevanceFilter | DuplicateDetectionFilter]] = []
     if pre_filters is not None:
         if pre_filters.topic_relevance is not None:
             present.append((ApiStage.TOPIC_RELEVANCE, pre_filters.topic_relevance))
@@ -213,12 +223,22 @@ def _stage_prompt(
     return blob.pre_filters.duplicate_detection.content
 
 
-def _prefilter_for_stage(blob: AssessmentConfigBlob, stage: str) -> Any:
+def _prefilter_for_stage(
+    blob: AssessmentConfigBlob, stage: str
+) -> TopicRelevanceFilter | DuplicateDetectionFilter:
     """The pre-filter config object for a pre-filter stage (topic_relevance / duplicate_detection)."""
     pre = blob.pre_filters
-    if stage == ApiStage.TOPIC_RELEVANCE:
-        return pre.topic_relevance
-    return pre.duplicate_detection
+    if pre is not None:
+        if stage == ApiStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
+            return pre.topic_relevance
+        if (
+            stage == ApiStage.DUPLICATE_DETECTION
+            and pre.duplicate_detection is not None
+        ):
+            return pre.duplicate_detection
+    raise ValueError(
+        f"[_prefilter_for_stage] No pre-filter configured for stage {stage}"
+    )
 
 
 def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
@@ -239,7 +259,7 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     params = dict(flt.params)
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     params["instructions"] = _PREFILTER_INSTRUCTION
-    if stage == ApiStage.DUPLICATE_DETECTION and flt.knowledge_base_id:
+    if isinstance(flt, DuplicateDetectionFilter) and flt.knowledge_base_id:
         params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
 
@@ -387,7 +407,7 @@ def _openai_output_text(output: Any) -> str:
     return "".join(chunks)
 
 
-def _parse_one(result: dict[str, Any], provider_name: str) -> dict[str, Any]:
+def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
     error = result.get("error")
     if error:
         return {
@@ -450,9 +470,9 @@ def _parse_one(result: dict[str, Any], provider_name: str) -> dict[str, Any]:
 
 def parse_batch_results(
     raw_results: list[dict[str, Any]], provider_name: str
-) -> dict[int, dict[str, Any]]:
+) -> dict[int, ParsedResult]:
     """Raw provider results -> {row_index: {output, error, usage, response_id}}."""
-    parsed: dict[int, dict[str, Any]] = {}
+    parsed: dict[int, ParsedResult] = {}
     for result in raw_results:
         idx = _row_index(result.get(BATCH_KEY) or result.get("key"))
         if idx is None:
@@ -461,7 +481,7 @@ def parse_batch_results(
     return parsed
 
 
-def _parse_verdict(output: str | None) -> dict[str, Any]:
+def _parse_verdict(output: str | None) -> Verdict:
     """Read a pre-filter verdict. Unparseable output fails open (verdict=True)."""
     if not output:
         return {"verdict": True, "reasoning": ""}
@@ -480,13 +500,13 @@ def _parse_verdict(output: str | None) -> dict[str, Any]:
 
 
 def _record_stage(
-    bag: dict[str, Any], stage: str, kind: str, parsed: dict[int, dict[str, Any]]
+    bag: BatchRunState, stage: str, kind: str, parsed: dict[int, ParsedResult]
 ) -> None:
     """Fold a completed stage's parsed results into the bag per its kind."""
     if kind == StageKind.ASSESSMENT:
         return  # assessment outputs are read from object store at result time
 
-    verdicts: dict[str, dict[str, Any]] = {}
+    verdicts: dict[str, Verdict] = {}
     passed_count = 0
     for idx, out in parsed.items():
         verdict = _parse_verdict(out.get("output"))
@@ -504,7 +524,7 @@ def _record_stage(
     }
 
 
-def _row_subset(bag: dict[str, Any], stage: str, kind: str, total: int) -> list[int]:
+def _row_subset(bag: BatchRunState, stage: str, kind: str, total: int) -> list[int]:
     if kind == StageKind.ASSESSMENT:
         return [i for i in range(total) if bag["gate_passed"][i]]
     return list(range(total))
@@ -516,7 +536,7 @@ def _submit_stage(
     execution: AssessmentRun,
     blob: AssessmentConfigBlob,
     batch_input: BatchInput,
-    bag: dict[str, Any],
+    bag: BatchRunState,
     stage: str,
     organization_id: int,
     project_id: int,
@@ -603,7 +623,7 @@ def _finalize(
     session: Session,
     execution: AssessmentRun,
     assessment: Assessment,
-    bag: dict[str, Any],
+    bag: BatchRunState,
 ) -> None:
     from app.services.assessment.api.callbacks import deliver
     from app.services.assessment.api.results import build_result
@@ -645,7 +665,7 @@ def _fail(
     session: Session,
     execution: AssessmentRun,
     assessment: Assessment,
-    bag: dict[str, Any],
+    bag: BatchRunState,
     message: str,
 ) -> None:
     from app.services.assessment.api.callbacks import deliver
@@ -699,7 +719,7 @@ def run_batch_stage(
         ):
             return {"requeue": False}
 
-        bag = dict(execution.execution or {})
+        bag = cast(BatchRunState, dict(execution.execution or {}))
         stage = bag.get("stage")
         stage_status = bag.get("stage_status")
         if not stage or not bag.get("pipeline"):

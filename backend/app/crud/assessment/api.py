@@ -6,7 +6,7 @@ and `dataset_id` fields NULL.
 """
 
 import logging
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -18,6 +18,7 @@ from app.models.assessment import (
     AssessmentMethod,
     AssessmentRun,
     AssessmentStatus,
+    BatchRunState,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,14 +107,16 @@ def set_execution_batch_job(
 
 
 def save_execution_state(
-    *, session: Session, execution: AssessmentRun, state: dict[str, Any]
+    *, session: Session, execution: AssessmentRun, state: BatchRunState
 ) -> AssessmentRun:
     """Persist the whole staged-batch runtime bag onto ``execution.execution``.
 
     JSONB in-place mutation is invisible to SQLAlchemy, so we reassign the column
     and flag it modified rather than mutating the existing dict.
     """
-    execution.execution = state
+    # mypy treats a TypedDict as incompatible with the column's plain dict[str, Any];
+    # the cast is erased at runtime (a TypedDict already is a dict).
+    execution.execution = cast(dict[str, Any], state)
     flag_modified(execution, "execution")
     execution.updated_at = now()
     session.add(execution)

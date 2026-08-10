@@ -1,4 +1,8 @@
-"""Parent-assessment endpoints"""
+"""Parent-assessment endpoints (LEGACY RUN pipeline).
+
+Serves dataset-based RUN assessments only. The new API-client BATCH path
+(`api.py`) delivers results by webhook and never surfaces here.
+"""
 
 import logging
 from typing import Any, Literal
