@@ -75,8 +75,8 @@ those arrive on the webhook.
   "success": true,
   "data": {
     "assessment_id": "8a2a7bc1-359f-4b99-a94b-ecf7621a0704",
-    "status": "PENDING",
-    "message": "Assessment submitted",
+    "status": "PROCESSING",
+    "message": "Your assessment is being processed",
     "inserted_at": "2026-08-07T10:15:30Z",
     "updated_at": "2026-08-07T10:15:30Z"
   },
