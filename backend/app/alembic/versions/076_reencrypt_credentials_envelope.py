@@ -12,8 +12,10 @@ container needs the same role/creds the app uses, else the upgrade aborts.
 from alembic import op
 from sqlmodel import Session
 
-from app.services.credentials.reencrypt import execute_credential_reencrypt
-
+from app.services.credentials.reencrypt import (
+    execute_credential_reencrypt,
+    execute_credential_reencrypt_fernet,
+)
 
 # revision identifiers, used by Alembic.
 revision = "076"
@@ -29,5 +31,7 @@ def upgrade():
 
 
 def downgrade():
-    # Re-encryption is not reversible — the prior ciphertext is gone. No-op.
-    pass
+    # Reverse the envelope backfill: convert kms.v1/kms.v2 rows back to legacy Fernet.
+    bind = op.get_bind()
+    with Session(bind=bind) as session:
+        execute_credential_reencrypt_fernet(session=session)
