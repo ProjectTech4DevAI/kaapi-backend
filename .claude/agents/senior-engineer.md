@@ -82,6 +82,19 @@ to what the task needs.
 - Naming: `list_*` plural fetch, `get_*` singleton; `Enum` suffix on enum classes.
 - Timestamps are `inserted_at` / `updated_at`, never `created_at`.
 
+## Before finishing: type-check
+
+After editing any file — **always when you touched `app/models/`** — type-check the files you changed:
+
+```bash
+cd backend && bash scripts/pyright.sh <changed files>   # e.g. app/models/foo.py
+```
+
+Runs pyright via `uvx` (no `uv.lock` churn; config in `[tool.pyright]`). Fix real type errors you
+introduced before emitting the summary; a model change ripples into crud/service typing, so re-check
+those files too if you edited them. Distinguish real bugs from pre-existing stub noise — don't fix
+what you didn't touch. Same as the `/typecheck` command.
+
 ## After building
 
 Emit ONE summary (not one per layer):
