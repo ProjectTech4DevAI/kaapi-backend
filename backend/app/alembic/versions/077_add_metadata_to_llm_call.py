@@ -1,7 +1,7 @@
 """Add metadata to llm_call
 
-Revision ID: 076
-Revises: 075
+Revision ID: 077
+Revises: 076
 Create Date: 2026-08-10 00:00:00.000000
 
 `llm_call.provider` records what the client asked for; platform routing
@@ -18,8 +18,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "076"
-down_revision = "075"
+revision = "077"
+down_revision = "076"
 branch_labels = None
 depends_on = None
 

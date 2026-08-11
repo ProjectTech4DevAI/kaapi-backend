@@ -1,11 +1,13 @@
 import logging
+from typing import Iterable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.core.config import settings
 from app.core.exception_handlers import HTTPException
-from app.core.providers import mask_credential_fields, validate_provider
+from app.core.providers import Provider, mask_credential_fields, validate_provider
 from app.crud.credentials import (
     get_creds_by_org,
     get_provider_credential,
@@ -20,6 +22,37 @@ from app.utils import APIResponse, load_description
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/credentials", tags=["Credentials"])
 
+# Version-gated providers on write endpoints (the router is mounted at both
+# /api/v1 and /api/v2): google-gcp is v2-only, vanilla google is v1-only
+# (deprecated). Reads and deletes stay ungated so legacy rows remain manageable.
+_V1_DISALLOWED_WRITE_PROVIDERS = {
+    Provider.GOOGLE_GCP.value: (
+        f"Provider '{Provider.GOOGLE_GCP.value}' is not accepted on v1 credentials. "
+        "Use the v2 credentials API."
+    ),
+}
+_V2_DISALLOWED_WRITE_PROVIDERS = {
+    Provider.GOOGLE.value: (
+        f"Provider '{Provider.GOOGLE.value}' is not accepted on v2 credentials. "
+        f"Use '{Provider.GOOGLE_AISTUDIO.value}' or '{Provider.GOOGLE_GCP.value}' "
+        "to pin the Gemini backend explicitly."
+    ),
+}
+
+
+def _reject_version_gated_providers(request: Request, providers: Iterable[str]) -> None:
+    disallowed = (
+        _V2_DISALLOWED_WRITE_PROVIDERS
+        if request.url.path.startswith(settings.API_V2_STR)
+        else _V1_DISALLOWED_WRITE_PROVIDERS
+    )
+    for provider in providers:
+        if provider in disallowed:
+            logger.warning(
+                f"[_reject_version_gated_providers] Rejected provider | provider: {provider}, path: {request.url.path}"
+            )
+            raise HTTPException(status_code=400, detail=disallowed[provider])
+
 
 @router.post(
     "",
@@ -29,12 +62,14 @@ router = APIRouter(prefix="/credentials", tags=["Credentials"])
 )
 def create_new_credential(
     *,
+    request: Request,
     session: SessionDep,
     creds_in: CredsCreate,
     _current_user: AuthContextDep,
 ):
     # Project comes from API key context; no cross-org check needed here
     # Database unique constraint ensures no duplicate credentials per provider-org-project combination
+    _reject_version_gated_providers(request, creds_in.credential.keys())
 
     created_creds = set_creds_for_org(
         session=session,
@@ -110,6 +145,7 @@ def read_provider_credential(
 )
 def update_credential(
     *,
+    request: Request,
     session: SessionDep,
     creds_in: CredsUpdate,
     _current_user: AuthContextDep,
@@ -121,6 +157,7 @@ def update_credential(
         raise HTTPException(
             status_code=400, detail="Provider and credential must be provided"
         )
+    _reject_version_gated_providers(request, [creds_in.provider])
 
     # Pass project_id directly to the CRUD function since CredsUpdate no longer has this field
     updated_credential = update_creds_for_org(
@@ -249,6 +286,7 @@ def read_provider_credential_by_org_project(
 )
 def update_credential_by_org_project(
     *,
+    request: Request,
     session: SessionDep,
     org_id: int,
     project_id: int,
@@ -262,6 +300,7 @@ def update_credential_by_org_project(
         raise HTTPException(
             status_code=400, detail="Provider and credential must be provided"
         )
+    _reject_version_gated_providers(request, [creds_in.provider])
 
     updated_credential = update_creds_for_org(
         session=session,

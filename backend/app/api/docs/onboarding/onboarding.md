@@ -30,7 +30,7 @@
 - We’ve also included a list of the providers currently supported by kaapi.
 
    ### Supported Providers
-   - **LLM:** openai, google (deprecated on v2), google-aistudio, google-gcp, anthropic, sarvamai
+   - **LLM:** openai, google (v1 only, deprecated), google-aistudio, google-gcp (v2 only), anthropic, sarvamai
    - **Observability:** langfuse
    - **Audio:** elevenlabs
 
@@ -86,7 +86,7 @@
 ---
 
 ## 🆕 v2 differences (`/api/v2/onboard`)
-- The vanilla `google` provider is **rejected** — send `google-aistudio` or `google-gcp` so the Gemini backend is explicit. Existing `google` credential rows keep working.
+- The vanilla `google` provider is **rejected** — send `google-aistudio` or `google-gcp` so the Gemini backend is explicit. Existing `google` credential rows keep working. Conversely, `google-gcp` is rejected on v1.
 - The request body is capped at **32 KB**; larger payloads return **413**.
 - The v1 `/api/v1/onboard` route is deprecated.
 
