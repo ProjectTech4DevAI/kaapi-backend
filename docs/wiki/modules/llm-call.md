@@ -15,7 +15,7 @@ All paths relative to `backend/app/`.
 ## Tables (SQLModel)
 | Table | Model |
 |---|---|
-| `llm_call` (LlmCall), `llm_chain` (LlmChain) | `models/llm/request.py` |
+| `llm_call` (LlmCall), `llm_chain` (LlmChain) | `models/llm/request.py` — `metadata` JSONB (attr `call_metadata`): `{effective_provider}` stamped after routing, NULL pre-076 |
 | `config` (Config) | `models/config/config.py` |
 | `config_version` (ConfigVersion) | `models/config/version.py` |
 
