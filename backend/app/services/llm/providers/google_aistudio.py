@@ -58,7 +58,7 @@ class GoogleAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        api_key = credentials.get("api_key") or settings.GEMINI_API_KEY
+        api_key = credentials.get("api_key") or settings.GOOGLE_AISTUDIO_API_KEY
         if not api_key:
             raise ValueError("API Key for Google Gemini Not Set")
         return genai.Client(api_key=api_key)

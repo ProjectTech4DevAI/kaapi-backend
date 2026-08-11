@@ -1,4 +1,4 @@
-"""Tests for the Google GCP (Vertex AI) provider."""
+"""Tests for the Google GCP provider."""
 
 import base64
 import json
@@ -7,18 +7,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-# ponytail: Vertex provider is temporarily disabled in the registry; skip only
-# the routing/execute tests. Pure client tests (endpoint, sa_info, credential
-# fallback) still run for coverage.
-_vertex_disabled = pytest.mark.skip(
-    reason="Vertex provider disabled — routing swapped to GoogleAIProvider"
-)
-
 from app.core.audio_utils import AudioRef
 from app.models.llm import NativeCompletionConfig, QueryParams
 from app.services.llm.providers.google_gcp import (
     GoogleGCPProvider,
-    VertexClient,
+    GoogleGCPClient,
     _load_platform_sa_info,
 )
 from app.models.llm.constants import CompletionType
@@ -86,11 +79,10 @@ def _mock_gcs(monkeypatch):
     )
 
 
-@_vertex_disabled
 class TestGoogleGCPProvider:
     @pytest.fixture
-    def client(self) -> VertexClient:
-        return VertexClient(
+    def client(self) -> GoogleGCPClient:
+        return GoogleGCPClient(
             api_key="k",
             project_id="p",
             location="us-central1",
@@ -180,7 +172,7 @@ class TestGoogleGCPProvider:
         )
         resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Failed to stage audio for Vertex STT" in err
+        assert "Failed to stage audio for Google GCP STT" in err
         assert "bucket denied" in err
 
     def test_stt_http_error_returns_clean_message(
@@ -192,7 +184,7 @@ class TestGoogleGCPProvider:
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "[VERTEX]" in err
+        assert "[GOOGLE-GCP]" in err
         assert "403" in err
         assert "permission denied" in err
 
@@ -205,7 +197,7 @@ class TestGoogleGCPProvider:
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Vertex AI connection failed" in err
+        assert "Google GCP connection failed" in err
 
     def test_stt_missing_transcript_returns_error(
         self, provider, stt_config, query, audio_ref
@@ -297,15 +289,23 @@ class TestGoogleGCPProvider:
         assert speech["languageCode"] == "en-US"
 
     # ── execute dispatcher ───────────────────────────────────────────────────
-    def test_text_completion_is_rejected(self, provider, query):
+    def test_text_completion_succeeds(self, provider, query):
         config = NativeCompletionConfig(
             provider="google-native",
             type=CompletionType.TEXT,
-            params={"model": "gemini-2.5-flash"},
+            params={"model": "gemini-2.5-flash", "instructions": "be brief"},
         )
-        resp, err = provider.execute(config, query, "hello")
-        assert resp is None
-        assert "Unsupported completion type 'text'" in err
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hello back")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, "hello")
+
+        assert err is None
+        assert resp.response.output.content.value == "hello back"
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
+        assert payload["systemInstruction"] == {"parts": [{"text": "be brief"}]}
 
     def test_raw_response_included_when_requested(
         self, provider, stt_config, query, audio_ref
@@ -325,7 +325,7 @@ class TestGoogleGCPProvider:
 # TTS payload shape — not routing-dependent, kept unskipped for coverage.
 # ---------------------------------------------------------------------------
 def test_tts_wraps_input_in_transcript_tags():
-    client = VertexClient(
+    client = GoogleGCPClient(
         api_key="k",
         project_id="p",
         location="us-central1",
@@ -349,11 +349,11 @@ def test_tts_wraps_input_in_transcript_tags():
 
 
 # ---------------------------------------------------------------------------
-# VertexClient.endpoint — host changes by location
+# GoogleGCPClient.endpoint — host changes by location
 # ---------------------------------------------------------------------------
-class TestVertexEndpoint:
-    def _client(self, location: str) -> VertexClient:
-        return VertexClient(
+class TestGoogleGCPEndpoint:
+    def _client(self, location: str) -> GoogleGCPClient:
+        return GoogleGCPClient(
             api_key="k",
             project_id="my-proj",
             location=location,
@@ -435,11 +435,11 @@ class TestLoadPlatformSaInfo:
 class TestCreateClientFallback:
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_byok_overrides_platform_settings(self, mock_settings):
-        mock_settings.GCP_VERTEX_API_KEY = "platform-key"
-        mock_settings.GCP_PROJECT_ID = "platform-proj"
-        mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+        mock_settings.GOOGLE_GCP_API_KEY = "platform-key"
+        mock_settings.GOOGLE_GCP_PROJECT_ID = "platform-proj"
+        mock_settings.GOOGLE_GCP_PROJECT_LOCATION = "us-central1"
         mock_settings.GCP_SA_KEY = ""
-        mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+        mock_settings.GOOGLE_GCS_AUDIO_BUCKET = "platform-bucket"
 
         c = GoogleGCPProvider.create_client(
             {
@@ -457,11 +457,11 @@ class TestCreateClientFallback:
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_partial_byok_fills_from_platform(self, mock_settings):
         """When BYOK only supplies api_key, project/location come from settings."""
-        mock_settings.GCP_VERTEX_API_KEY = "platform-key"
-        mock_settings.GCP_PROJECT_ID = "platform-proj"
-        mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+        mock_settings.GOOGLE_GCP_API_KEY = "platform-key"
+        mock_settings.GOOGLE_GCP_PROJECT_ID = "platform-proj"
+        mock_settings.GOOGLE_GCP_PROJECT_LOCATION = "us-central1"
         mock_settings.GCP_SA_KEY = ""
-        mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+        mock_settings.GOOGLE_GCS_AUDIO_BUCKET = "platform-bucket"
 
         c = GoogleGCPProvider.create_client({"api_key": "byok-key"})
         assert c.api_key == "byok-key"
@@ -470,11 +470,11 @@ class TestCreateClientFallback:
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_missing_everything_raises_value_error(self, mock_settings):
-        mock_settings.GCP_VERTEX_API_KEY = ""
-        mock_settings.GCP_PROJECT_ID = ""
-        mock_settings.GCP_VERTEX_LOCATION = ""
+        mock_settings.GOOGLE_GCP_API_KEY = ""
+        mock_settings.GOOGLE_GCP_PROJECT_ID = ""
+        mock_settings.GOOGLE_GCP_PROJECT_LOCATION = ""
         mock_settings.GCP_SA_KEY = ""
-        mock_settings.GCS_AUDIO_BUCKET = ""
+        mock_settings.GOOGLE_GCS_AUDIO_BUCKET = ""
 
         with pytest.raises(ValueError) as exc_info:
             GoogleGCPProvider.create_client({})

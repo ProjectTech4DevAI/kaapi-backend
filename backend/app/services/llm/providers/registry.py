@@ -55,12 +55,12 @@ class LLMProvider:
     @classmethod
     def get_provider_class(cls, provider_type: str) -> type[BaseProvider]:
         if provider_type in cls._GOOGLE_ROUTED:
-            # Only an explicit "gcp" opts into the new route; anything else
-            # (default, unset, typo) keeps today's aistudio behavior.
+            # GCP is the default flow; only an explicit "google-aistudio"
+            # opts out of it.
             return (
-                GoogleGCPProvider
-                if cls.effective_provider(provider_type) == cls.GOOGLE_GCP
-                else GoogleAIProvider
+                GoogleAIProvider
+                if cls.effective_provider(provider_type) == cls.GOOGLE_AISTUDIO
+                else GoogleGCPProvider
             )
         provider = cls._registry.get(provider_type)
         if not provider:
@@ -75,9 +75,9 @@ class LLMProvider:
         """Backend actually used after routing, for monitoring/grouping."""
         if provider_type in cls._GOOGLE_ROUTED:
             return (
-                cls.GOOGLE_GCP
-                if settings.GEMINI_DEFAULT_INFERENCE_ROUTE == "gcp"
-                else cls.GOOGLE_AISTUDIO
+                cls.GOOGLE_AISTUDIO
+                if settings.GEMINI_DEFAULT_INFERENCE_ROUTE == cls.GOOGLE_AISTUDIO
+                else cls.GOOGLE_GCP
             )
         return provider_type.replace("-native", "")
 
@@ -92,16 +92,13 @@ def get_llm_provider(
     from app.crud.credentials import get_provider_credential
 
     provider_class = LLMProvider.get_provider_class(provider_type)
-    is_gcp_routed = (
-        provider_type in LLMProvider._GOOGLE_ROUTED
-        and provider_class is GoogleGCPProvider
-    )
+    # Platform-routed google: tenant row, else platform settings
+    # (GCP_* for gcp, GOOGLE_AISTUDIO_API_KEY for aistudio) via create_client.
+    is_platform_routed = provider_type in LLMProvider._GOOGLE_ROUTED
 
-    if is_gcp_routed:
-        # Platform-routed GCP: tenant row, else platform GCP settings.
+    if is_platform_routed and provider_class is GoogleGCPProvider:
         credential_chain = [LLMProvider.GOOGLE_GCP]
-    elif provider_type in LLMProvider._GOOGLE_ROUTED:
-        # Platform-routed aistudio keeps today's `google` row semantics verbatim.
+    elif is_platform_routed:
         credential_chain = [LLMProvider.GOOGLE]
     elif provider_type in (
         LLMProvider.GOOGLE_AISTUDIO,
@@ -123,7 +120,7 @@ def get_llm_provider(
         if credentials:
             break
 
-    if not credentials and not is_gcp_routed:
+    if not credentials and not is_platform_routed:
         raise ValueError(
             f"Credentials for provider '{credential_chain[0]}' not configured for this project."
         )

@@ -106,15 +106,15 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_PREFIX: str = ""
     # KMS key (ID, ARN, or alias) for credential encryption
     AWS_KMS_KEY_ID: str = ""
-    GCP_VERTEX_API_KEY: str = ""
-    GCP_VERTEX_LOCATION: str = ""
-    GCP_PROJECT_ID: str = ""
+    GOOGLE_GCP_API_KEY: str = ""
+    GOOGLE_GCP_PROJECT_LOCATION: str = ""
+    GOOGLE_GCP_PROJECT_ID: str = ""
     GCP_SA_KEY: str = ""
-    GCS_AUDIO_BUCKET: str = ""
+    GOOGLE_GCS_AUDIO_BUCKET: str = ""
 
     # google aistudio api key
-    GEMINI_API_KEY: str = ""
-    GEMINI_DEFAULT_INFERENCE_ROUTE: Literal["aistudio", "gcp"]
+    GOOGLE_AISTUDIO_API_KEY: str = ""
+    GEMINI_DEFAULT_INFERENCE_ROUTE: Literal["google-aistudio", "google-gcp"]
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672

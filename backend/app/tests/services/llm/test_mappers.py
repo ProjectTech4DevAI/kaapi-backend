@@ -952,20 +952,19 @@ class TestTransformGoogleGCPRouting:
 
         assert native_config.provider == "google-gcp-native"
 
-    def test_google_gcp_text_completion_raises(self, db: Session):
+    def test_google_gcp_text_maps_to_gcp_native(self, db: Session):
         kaapi_config = KaapiCompletionConfig(
             provider="google-gcp",
             type="text",
             params={"model": "gemini-2.5-pro"},
         )
 
-        with pytest.raises(ValueError) as exc_info:
-            transform_kaapi_config_to_native(session=db, kaapi_config=kaapi_config)
-
-        assert "google-gcp provider does not support completion type" in str(
-            exc_info.value
+        native_config, _ = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
         )
-        assert "Use the 'google' provider for text completions." in str(exc_info.value)
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.params["model"] == "gemini-2.5-pro"
 
 
 class TestBCP47ToElevenlabsLang:
