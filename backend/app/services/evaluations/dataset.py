@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
+from app.core.config import settings
 from app.crud.evaluations import (
     create_evaluation_dataset,
     upload_csv_to_object_store,
@@ -18,6 +19,10 @@ from app.crud.evaluations.dataset import (
     DATASET_META_TOTAL_ITEMS,
 )
 from app.models.evaluation import EvaluationDataset
+from app.services.evaluations.fast import (
+    ERR_DATASET_TOO_LARGE_FOR_FAST,
+    is_dataset_fast_eligible,
+)
 from app.services.evaluations.validators import (
     parse_csv_items,
     sanitize_dataset_name,
@@ -93,6 +98,20 @@ def upload_dataset(
         f"[upload_dataset] Parsed items from CSV | original={original_items_count} | "
         f"total_with_duplication={total_items_count}"
     )
+
+    # Fail at upload: the v2 run path is fast-mode only, whose gate rejects this
+    # row count at run creation anyway.
+    if not use_langfuse and not is_dataset_fast_eligible(
+        original_items_count=original_items_count
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{ERR_DATASET_TOO_LARGE_FOR_FAST}: dataset has "
+                f"{original_items_count} unique rows; uploads allow at most "
+                f"{settings.EVAL_FAST_MAX_UNIQUE_ROWS}."
+            ),
+        )
 
     # Step 3: Upload to object store. Best-effort when Langfuse also holds the items
     # (v1); the sole copy, so mandatory, when it doesn't (v2).

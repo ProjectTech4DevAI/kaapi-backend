@@ -8,7 +8,7 @@ All paths relative to `backend/app/`.
 ## Routes
 - `api/routes/evaluations/dataset.py`, `api/routes/evaluations/evaluation.py` — text datasets + runs (v1, `/api/v1`)
 - `api/routes/evaluations/evaluation_v2.py` — `POST /api/v2/evaluations`, replica of v1 run trigger + native ground-truth LLM judge (Langfuse-free); mounted under `settings.API_V2_STR`
-- `api/routes/evaluations/dataset_v2.py` — `POST /api/v2/evaluations/datasets`, Langfuse-free dataset upload; stores only the original CSV in S3 and records `duplication_factor` as metadata (rows expanded ×factor at run time, not physically duplicated)
+- `api/routes/evaluations/dataset_v2.py` — `POST /api/v2/evaluations/datasets`, Langfuse-free dataset upload; stores only the original CSV in S3 and records `duplication_factor` as metadata (rows expanded ×factor at run time, not physically duplicated); rejects (422) more than `EVAL_FAST_MAX_UNIQUE_ROWS` original rows at upload time (v1 upload has no such cap)
 - `api/routes/evaluations/prompt_improvement_v2.py` — `POST /api/v2/evaluations/{evaluation_id}/improve-prompt`, prompt iteration off the three-metric judge results (requires an `is_judge_run` run); same body as v1, returns a recommendation of type `prompt`
 - `api/routes/stt_evaluations/`, `api/routes/tts_evaluations/` — STT/TTS
 - `api/routes/cron.py` — batch polling trigger
@@ -26,7 +26,7 @@ v2 judge field on `EvaluationRun`: `is_judge_run` (bool marker gating native jud
 `score.overall` (`OverallSummary`, `crud/evaluations/score.py`): run-level weighted rollup for judge runs, computed by `compute_overall_summary` from each metric's `avg` + `METRIC_REGISTRY` weight (renormalized over metrics that actually scored ≥1 row) — `overall_score`, `verdict`, per-metric `breakdown` (score/weight/delta/verdict), plus `ai_summary` (best-effort natural-language note, `crud/evaluations/summary.py`, model = `settings.EVAL_SUMMARY_MODEL`; `None` on any failure, never fails the run). Persisted on `run_fast_evaluation`'s final `EvaluationRun.score` write and re-attached verbatim by `services/evaluations/evaluation.py::get_evaluation_with_scores` on every cache/resync path (trace merging never recomputes it).
 
 ## Services / CRUD
-- `services/evaluations/` — `evaluation.py`, `dataset.py` (`upload_dataset`; `use_langfuse=False` is the v2 Langfuse-free upload), `fast.py`, `batch_job.py`, `validators.py`, `prompt_improvement.py`
+- `services/evaluations/` — `evaluation.py`, `dataset.py` (`upload_dataset`; `use_langfuse=False` is the v2 Langfuse-free upload, gated by `is_dataset_fast_eligible`/`EVAL_FAST_MAX_UNIQUE_ROWS` from `fast.py`), `fast.py`, `batch_job.py`, `validators.py`, `prompt_improvement.py`
 - `services/stt_evaluations/`, `services/tts_evaluations/`
 - `crud/evaluations/` — `core.py`, `batch.py`, `fast.py`, `judge.py` (`METRIC_REGISTRY` + combined judge call; `ground_truth`, `prompt`, and `knowledge_base` metrics, applied per-row by which required inputs the row carries, each spec carrying a `weight` for the overall rollup), `score.py` (`VerdictEnum`/`verdict_from_score`, `OverallSummary`/`compute_overall_summary`), `summary.py` (`generate_run_ai_summary` — one-shot Responses call, qualitative brief only, no raw scores in the prompt), `embeddings.py`, `cost.py`, `langfuse.py`, `merge.py`, `processing.py`, `cron.py`
 - `core/batch/` — shared provider batch clients: `openai.py`, `gemini.py`, `anthropic.py`, `polling.py`, `operations.py`
