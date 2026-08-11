@@ -58,7 +58,7 @@ def enforce_onboarding_payload_limit(request: Request) -> None:
     "/onboard",
     response_model=APIResponse[OnboardingResponse],
     status_code=201,
-    description=load_description("onboarding/onboarding.md"),
+    description=load_description("onboarding/onboarding_v2.md"),
     dependencies=[
         Depends(require_permission(Permission.SUPERUSER)),
         Depends(enforce_onboarding_payload_limit),

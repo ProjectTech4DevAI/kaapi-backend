@@ -33,3 +33,6 @@ The `credential` field accepts **two formats** (both work the same):
 - **Observability:** langfuse
 - **Audio:** elevenlabs
 - **Miscellaneous** webhook_secret
+
+### API versions (v1 vs v2)
+Served at both `/api/v1/credentials` and `/api/v2/credentials`. Writes are version-gated with **400** on violation: `google` is v1-only (deprecated — use `google-aistudio`/`google-gcp` on v2), `google-gcp` is v2-only. Reads and deletes are ungated.

@@ -85,10 +85,8 @@
    ```
 ---
 
-## 🆕 v2 differences (`/api/v2/onboard`)
-- The vanilla `google` provider is **rejected** — send `google-aistudio` or `google-gcp` so the Gemini backend is explicit. Existing `google` credential rows keep working. Conversely, `google-gcp` is rejected on v1.
-- The request body is capped at **32 KB**; larger payloads return **413**.
-- The v1 `/api/v1/onboard` route is deprecated.
+## 🆕 v2 (`/api/v2/onboard`)
+This v1 route is **deprecated** — prefer `/api/v2/onboard` (see its own docs). v2 rejects vanilla `google` (use `google-aistudio`/`google-gcp`) and caps the body at 32 KB; conversely `google-gcp` is rejected here on v1.
 
 ---
 
