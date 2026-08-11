@@ -244,7 +244,7 @@ class TestGetLLMProvider:
             google_settings.GOOGLE_GCP_API_KEY = "platform-key"
             google_settings.GOOGLE_GCP_PROJECT_ID = "platform-project"
             google_settings.GOOGLE_GCP_PROJECT_LOCATION = "us-central1"
-            google_settings.GCP_SA_KEY = ""
+            google_settings.GOOGLE_GCP_SA_KEY = ""
             google_settings.GOOGLE_GCS_AUDIO_BUCKET = ""
             mock_get_creds.return_value = None
 

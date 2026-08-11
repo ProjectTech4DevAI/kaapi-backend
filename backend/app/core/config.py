@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     GOOGLE_GCP_API_KEY: str = ""
     GOOGLE_GCP_PROJECT_LOCATION: str = ""
     GOOGLE_GCP_PROJECT_ID: str = ""
-    GCP_SA_KEY: str = ""
+    GOOGLE_GCP_SA_KEY: str = ""
     GOOGLE_GCS_AUDIO_BUCKET: str = ""
 
     # google aistudio api key

@@ -54,11 +54,10 @@ SUPPORTED_AUDIO_MIMES = {
 def _load_platform_sa_info() -> dict | None:
     """Load the platform-default GCP SA JSON.
 
-    Supports two configuration shapes for settings.GCP_SA_KEY:
-      1. Raw JSON string (e.g. injected via env var / secret manager)
-      2. Filesystem path to a JSON key file
+    settings.GOOGLE_GCP_SA_KEY must be a raw JSON string (e.g. injected via
+    env var / secret manager); any other value is ignored and returns None.
     """
-    sa_value = settings.GCP_SA_KEY
+    sa_value = settings.GOOGLE_GCP_SA_KEY
     if not sa_value:
         return None
 
@@ -68,7 +67,7 @@ def _load_platform_sa_info() -> dict | None:
             return json.loads(stripped)
         except json.JSONDecodeError as e:
             logger.warning(
-                f"[_load_platform_sa_info] GCP_SA_KEY looks like JSON but "
+                f"[_load_platform_sa_info] GOOGLE_GCP_SA_KEY looks like JSON but "
                 f"failed to parse | error={e}"
             )
             return None
@@ -121,7 +120,7 @@ class GoogleGCPProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        # settings.GCP_SA_KEY; BYOK rows pass `sa_key` inline.
+        # settings.GOOGLE_GCP_SA_KEY; BYOK rows pass `sa_key` inline.
         credentials = credentials or {}
         api_key = credentials.get("api_key") or settings.GOOGLE_GCP_API_KEY
         project_id = credentials.get("project_id") or settings.GOOGLE_GCP_PROJECT_ID

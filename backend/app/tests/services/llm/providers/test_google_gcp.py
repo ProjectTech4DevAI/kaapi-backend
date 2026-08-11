@@ -398,34 +398,34 @@ class TestLoadPlatformSaInfo:
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_returns_none_when_unset(self, mock_settings):
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GOOGLE_GCP_SA_KEY = ""
         assert _load_platform_sa_info() is None
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_parses_raw_json_string(self, mock_settings):
         sa = self._sample_sa()
-        mock_settings.GCP_SA_KEY = json.dumps(sa)
+        mock_settings.GOOGLE_GCP_SA_KEY = json.dumps(sa)
         assert _load_platform_sa_info() == sa
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_strips_surrounding_whitespace(self, mock_settings):
         """env-var injection often leaves trailing newlines — must still parse."""
         sa = self._sample_sa()
-        mock_settings.GCP_SA_KEY = "\n  " + json.dumps(sa) + "  \n"
+        mock_settings.GOOGLE_GCP_SA_KEY = "\n  " + json.dumps(sa) + "  \n"
         assert _load_platform_sa_info() == sa
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_returns_none_on_malformed_json(self, mock_settings):
         """A JSON-looking but invalid value must not raise — it returns None
         and lets create_client raise the missing-fields ValueError later."""
-        mock_settings.GCP_SA_KEY = "{not valid json"
+        mock_settings.GOOGLE_GCP_SA_KEY = "{not valid json"
         assert _load_platform_sa_info() is None
 
     @patch("app.services.llm.providers.google_gcp.settings")
     def test_non_json_string_returns_none(self, mock_settings):
         """Anything not starting with '{' is treated as non-JSON and ignored —
         this guards against accidentally interpreting a path or sentinel as a key."""
-        mock_settings.GCP_SA_KEY = "/etc/secrets/sa.json"
+        mock_settings.GOOGLE_GCP_SA_KEY = "/etc/secrets/sa.json"
         assert _load_platform_sa_info() is None
 
 
@@ -438,7 +438,7 @@ class TestCreateClientFallback:
         mock_settings.GOOGLE_GCP_API_KEY = "platform-key"
         mock_settings.GOOGLE_GCP_PROJECT_ID = "platform-proj"
         mock_settings.GOOGLE_GCP_PROJECT_LOCATION = "us-central1"
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GOOGLE_GCP_SA_KEY = ""
         mock_settings.GOOGLE_GCS_AUDIO_BUCKET = "platform-bucket"
 
         c = GoogleGCPProvider.create_client(
@@ -460,7 +460,7 @@ class TestCreateClientFallback:
         mock_settings.GOOGLE_GCP_API_KEY = "platform-key"
         mock_settings.GOOGLE_GCP_PROJECT_ID = "platform-proj"
         mock_settings.GOOGLE_GCP_PROJECT_LOCATION = "us-central1"
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GOOGLE_GCP_SA_KEY = ""
         mock_settings.GOOGLE_GCS_AUDIO_BUCKET = "platform-bucket"
 
         c = GoogleGCPProvider.create_client({"api_key": "byok-key"})
@@ -473,7 +473,7 @@ class TestCreateClientFallback:
         mock_settings.GOOGLE_GCP_API_KEY = ""
         mock_settings.GOOGLE_GCP_PROJECT_ID = ""
         mock_settings.GOOGLE_GCP_PROJECT_LOCATION = ""
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GOOGLE_GCP_SA_KEY = ""
         mock_settings.GOOGLE_GCS_AUDIO_BUCKET = ""
 
         with pytest.raises(ValueError) as exc_info:

@@ -1,4 +1,4 @@
-"""Add metadata to llm_call
+"""Add metadata to llm_call; add google-gcp to provider_enum
 
 Revision ID: 077
 Revises: 076
@@ -12,6 +12,10 @@ grouped as unknown/legacy.
 
 The model attribute is `call_metadata` because `metadata` is reserved on
 SQLModel declarative classes; the column itself is plain `metadata`.
+
+Also registers the `google-gcp` provider in `global.provider_enum` and mirrors
+the `google` model catalog rows for it (google-gcp serves the same Gemini
+models).
 """
 
 from alembic import op
@@ -38,6 +42,28 @@ def upgrade():
         ),
     )
 
+    # A newly added enum value cannot be used in the same transaction,
+    # so the ADD VALUE must commit before the seed INSERT below.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TYPE global.provider_enum ADD VALUE IF NOT EXISTS 'google-gcp'"
+        )
+
+    op.execute(
+        """
+        INSERT INTO global.model_config
+            (provider, model_name, completion_type, config, input_modalities,
+             output_modalities, pricing, is_active, inserted_at, updated_at)
+        SELECT 'google-gcp', model_name, completion_type, config, input_modalities,
+               output_modalities, pricing, is_active, NOW(), NOW()
+        FROM global.model_config
+        WHERE provider = 'google'
+        ON CONFLICT (provider, model_name) DO NOTHING
+        """
+    )
+
 
 def downgrade():
     op.drop_column("llm_call", "metadata")
+    # PostgreSQL cannot remove a value from an enum; drop only the seeded rows.
+    op.execute("DELETE FROM global.model_config WHERE provider = 'google-gcp'")

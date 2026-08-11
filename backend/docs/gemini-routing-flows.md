@@ -2,7 +2,7 @@
 
 Registry: `app/services/llm/providers/registry.py`
 Env: `GEMINI_DEFAULT_INFERENCE_ROUTE` (`"google-aistudio"` | `"google-gcp"`) — boot-validated by a `Literal` in `app/core/config.py`, so a garbage value fails startup and can never reach the registry.
-Platform fallbacks: `GOOGLE_AISTUDIO_API_KEY` (aistudio), `GOOGLE_GCP_API_KEY` + `GOOGLE_GCP_PROJECT_ID` + `GOOGLE_GCP_PROJECT_LOCATION` + `GCP_SA_KEY` (gcp)
+Platform fallbacks: `GOOGLE_AISTUDIO_API_KEY` (aistudio), `GOOGLE_GCP_API_KEY` + `GOOGLE_GCP_PROJECT_ID` + `GOOGLE_GCP_PROJECT_LOCATION` + `GOOGLE_GCP_SA_KEY` (gcp)
 
 ## Provider names
 
@@ -29,7 +29,7 @@ Flow: `_GOOGLE_ROUTED` hit → env → gcp. Lookup key rewritten to `google-gcp`
 `_GOOGLE_ROUTED` hit → `GoogleAIProvider`. Lookup key is the tenant's `google` row (not `google-aistudio`). Row found → BYOK api_key.
 
 ### H5 — Platform-routed `google`, env=`google-gcp`, no BYOK → platform fallback
-Flow: creds = None. `is_platform_routed=True` so the missing-creds raise is skipped. `credentials={}` passed to `GoogleGCPProvider.create_client`, which per-field falls back to `GOOGLE_GCP_*` / `GCP_SA_KEY` settings.
+Flow: creds = None. `is_platform_routed=True` so the missing-creds raise is skipped. `credentials={}` passed to `GoogleGCPProvider.create_client`, which per-field falls back to `GOOGLE_GCP_*` / `GOOGLE_GCP_SA_KEY` settings.
 
 ### H6 — Any non-Google provider (e.g. `openai-native`)
 Unchanged: lookup key = `openai`, missing creds raise, present creds → client.
