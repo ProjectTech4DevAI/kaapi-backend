@@ -19,6 +19,7 @@ from app.core.security import (
     create_refresh_token,
     decrypt_credentials,
     encrypt_credentials,
+    encrypt_fernet,
     get_encryption_key,
 )
 from app.core.util import now
@@ -138,6 +139,24 @@ class TestCredentialEncryption:
     def test_v2_wrong_segment_count_raises(self, kms_key):
         with pytest.raises(ValueError, match="Failed to decrypt credentials"):
             decrypt_credentials(f"{KMS_ENVELOPE_PREFIX}onlyoneseg")
+
+    def test_encrypt_fernet_forces_fernet_even_with_kms_active(self, kms_key):
+        creds = {"api_key": "sk-force-fernet"}
+
+        encrypted = encrypt_fernet(creds)
+
+        # KMS is active, yet the output is Fernet (no KMS prefix) and roundtrips.
+        assert not encrypted.startswith(KMS_ENVELOPE_PREFIX)
+        assert not encrypted.startswith(KMS_CIPHERTEXT_PREFIX)
+        assert decrypt_credentials(encrypted) == creds
+
+    def test_encrypt_fernet_wraps_errors(self, monkeypatch):
+        def boom() -> None:
+            raise RuntimeError("fernet unavailable")
+
+        monkeypatch.setattr(security, "get_fernet", boom)
+        with pytest.raises(ValueError, match="Failed to encrypt credentials"):
+            encrypt_fernet({"api_key": "x"})
 
 
 class TestAPIKeyManager:
