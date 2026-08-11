@@ -213,14 +213,13 @@ def build_rows(
     return rows, text_columns, attachments
 
 
-def _stage_prompt(
-    blob: AssessmentConfigBlob, batch_input: BatchInput, stage: str
-) -> str | None:
+def _stage_prompt(batch_input: BatchInput, stage: str) -> str | None:
     if stage == ApiStage.ASSESSMENT:
         return batch_input.query
-    if stage == ApiStage.TOPIC_RELEVANCE:
-        return blob.pre_filters.topic_relevance.prompt
-    return blob.pre_filters.duplicate_detection.content
+    # Pre-filter criteria live in params.instructions (system prompt); the item's
+    # own columns + attachments are the user content, so there is no per-row
+    # prompt template for a pre-filter stage.
+    return None
 
 
 def _prefilter_for_stage(
@@ -243,7 +242,8 @@ def _prefilter_for_stage(
 
 def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     """Kaapi params for a stage: the assessment uses its own params + output schema; each
-    pre-filter uses ITS own params, with the verdict schema + gate instruction layered on.
+    pre-filter uses ITS own params (criteria in params.instructions), with the verdict
+    schema + gate directive layered on.
     """
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
@@ -258,7 +258,10 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     flt = _prefilter_for_stage(blob, stage)
     params = dict(flt.params)
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
-    params["instructions"] = _PREFILTER_INSTRUCTION
+    # The config's criteria (mandatory params.instructions) is the system prompt;
+    # append the gate directive so the model returns the verdict+reasoning contract.
+    criteria = params.get("instructions") or ""
+    params["instructions"] = f"{criteria}\n\n{_PREFILTER_INSTRUCTION}"
     if isinstance(flt, DuplicateDetectionFilter) and flt.knowledge_base_id:
         params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
@@ -565,7 +568,7 @@ def _submit_stage(
         rows=[rows[i] for i in subset],
         text_columns=text_columns,
         attachments=attachments,
-        prompt=_stage_prompt(blob, batch_input, stage),
+        prompt=_stage_prompt(batch_input, stage),
         params=_stage_params(blob, stage),
         row_indices=subset,
         organization_id=organization_id,

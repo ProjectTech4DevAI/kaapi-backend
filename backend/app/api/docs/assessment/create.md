@@ -52,10 +52,11 @@ shape** — you do not pass a mode flag.
 * `input` (required) — one of two shapes; the shape selects the method:
   * **BATCH** — `{ "query": "<template>", "data": [ {<column>: <value>}, ... ] }`
     * `query` (required, non-empty) — a template with `{column}` placeholders substituted per row.
-    * `data` (required, ≥ 1 row) — submission rows. Each row is a flat `column -> string` map; the
-      column names and their types (`text` / `image` / `pdf`, `strict`, attachment `format`) are
-      defined by the config's `assessment.params.input_schema`. Attachment columns carry a URL or a
-      base64 string per the schema's `format`.
+    * `data` (required, ≥ 1 row) — submission rows. Each row is a flat `column -> string` map. The
+      config's `assessment.params.input_schema` is **mandatory** and defines every column and its
+      `type` (`text` / `image` / `pdf`, with an attachment `format`). Every row is validated against
+      it: each declared column must be present, no undeclared columns are allowed, and `image`/`pdf`
+      columns must carry a URL. A row that does not match fails with `422` (see Errors).
   * **RESPONSE** — `{ "query": "<text>", "attachments": [ ... ] }` *(deferred — returns 501)*.
 * `callback_url` (required) — the webhook the result is POSTed to on completion.
 * `request_metadata` (optional) — arbitrary object passed through unchanged in the callback.
@@ -111,12 +112,6 @@ On completion the platform POSTs this payload to `callback_url`:
             "duplicate_detection": null
           }
         },
-        "metadata": {
-          "provider": "openai",
-          "model": "gpt-4o",
-          "response_id": "resp_...",
-          "usage": { "input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500 }
-        },
         "error": null
       }
     ]
@@ -138,10 +133,8 @@ On completion the platform POSTs this payload to `callback_url`:
         a raw string for free-text output, or `null` for a gated/failed row.
       * `output.pre_filter` — per-item `topic_relevance` / `duplicate_detection` verdicts, each
         `{ "verdict": bool, "reasoning": str }` or `null` if that pre-filter was not configured.
-      * `metadata` — `provider`, `model`, `response_id`, and token `usage`; `null` when no grading
-        call ran (e.g. the row was gated out).
       * `error` — a per-row error string, or `null`.
-  * **RESPONSE** — a single item object with the same `output` / `metadata` / `error` shape.
+  * **RESPONSE** — a single item object with the same `output` / `error` shape.
 
 ---
 
@@ -149,4 +142,6 @@ On completion the platform POSTs this payload to `callback_url`:
 
 * `501 Not Implemented` — RESPONSE-mode input (single object) is not wired yet; send a BATCH `data` list.
 * `422 Unprocessable Entity` — the body failed validation (e.g. `config.id`/`config.version` missing,
-  `callback_url` missing, or an input shape that carries both `data` and `attachments`).
+  `callback_url` missing, or an input shape that carries both `data` and `attachments`), or a
+  submission row does not match the config's `input_schema` (a missing declared column, an
+  undeclared extra column, or a non-URL `image`/`pdf` value). The row index is named in the error.

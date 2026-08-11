@@ -30,8 +30,7 @@ config: the `completion` shape for a `default` config, the `assessment` shape fo
   "config_blob": {
     "pre_filters": {
       "topic_relevance": {
-        "prompt": "Is this a Class 7 answer sheet?",
-        "params": { "model": "gpt-4o" }
+        "params": { "model": "gpt-4o", "instructions": "Is this a Class 7 answer sheet?" }
       }
     },
     "assessment": {

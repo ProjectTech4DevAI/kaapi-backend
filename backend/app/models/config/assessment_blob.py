@@ -16,27 +16,30 @@ DEFAULT_PREFILTER_MODEL = "gpt-5.6-luna"
 
 
 class InputColumn(SQLModel):
-    """One BATCH input column: its type, whether it must be present in every
-    submission (`strict`), and how an attachment value is provided (`format`)."""
+    """One BATCH input column: its type (required, no default — every column must
+    declare one), and how an attachment value is provided (`format`)."""
 
-    type: Literal["text", "image", "pdf"] = "text"
-    strict: bool = False
+    type: Literal["text", "image", "pdf"]
     format: Literal["url", "base64"] | None = None
 
 
 class PreFilterParams(TextLLMParams):
     """Flat, mapper-ready LLM params for a pre-filter call.
 
-    Same knobs as ``TextLLMParams`` (so ``mappers.py`` maps them unchanged) minus
-    ``instructions``: a pre-filter's system prompt is its own ``prompt``/``content``
-    field, and the pipeline layers its gate instruction on at submit time. Unknown
-    keys are rejected so a mistyped param fails loudly instead of silently no-op'ing.
+    Same knobs as ``TextLLMParams`` (so ``mappers.py`` maps them unchanged),
+    including ``instructions`` — a pre-filter carries its criteria in
+    ``params.instructions`` exactly like the assessment call. Unknown keys are
+    rejected so a mistyped param fails loudly instead of silently no-op'ing.
     """
 
     model_config = {"extra": "forbid"}
 
     model: str = Field(default=DEFAULT_PREFILTER_MODEL)
-    instructions: None = Field(default=None, exclude=True)
+    instructions: str = Field(
+        ...,
+        min_length=1,
+        description="The pre-filter's criteria (system instruction). Mandatory.",
+    )
 
 
 class PreFilterBase(SQLModel):
@@ -53,11 +56,6 @@ class PreFilterBase(SQLModel):
 
     @model_validator(mode="after")
     def _validate_prefilter_params(self):
-        if self.params.get("instructions") is not None:
-            raise ValueError(
-                "pre-filter params must not set 'instructions'; use the pre-filter's "
-                "own 'prompt'/'content' field as its system prompt"
-            )
         params = PreFilterParams.model_validate(self.params).model_dump(
             exclude_none=True
         )
@@ -71,15 +69,12 @@ class PreFilterBase(SQLModel):
 
 
 class TopicRelevanceFilter(PreFilterBase):
-    """Pre-filter that scores each item's relevance to the assessment topic."""
+    """Pre-filter that scores each item's relevance to the assessment topic.
 
-    prompt: str = Field(
-        ...,
-        description=(
-            "Relevance-scoring prompt. May embed {{col}} placeholders that the "
-            "run mode substitutes per dataset row (batch) or pre-fills (response)."
-        ),
-    )
+    Its criteria live in ``params.instructions`` (like the assessment call); the
+    item's own columns + attachments are the user content.
+    """
+
     stop_on_fail: bool = Field(
         default=True,
         description=(
@@ -90,15 +85,11 @@ class TopicRelevanceFilter(PreFilterBase):
 
 
 class DuplicateDetectionFilter(PreFilterBase):
-    """Pre-filter that flags items duplicating prior corpus content."""
+    """Pre-filter that flags items duplicating prior corpus content.
 
-    content: str | None = Field(
-        default=None,
-        description=(
-            "Duplicate-comparison template. May embed {{col}} placeholders "
-            "resolved by the run mode."
-        ),
-    )
+    Its criteria live in ``params.instructions`` (like the assessment call).
+    """
+
     knowledge_base_id: str | None = Field(
         default=None,
         description="Vector store to compare against; defaults to the platform corpus when unset.",
@@ -122,11 +113,12 @@ class AssessmentPreFilters(SQLModel):
 class AssessmentTextParams(TextLLMParams):
     """Text params + structured input/output schemas, scoped to assessment."""
 
-    input_schema: dict[str, InputColumn] | None = Field(
-        default=None,
+    input_schema: dict[str, InputColumn] = Field(
+        ...,
+        min_length=1,
         description=(
-            "Per-column spec for BATCH submissions ({type, strict, format}). A column "
-            "marked strict must be present in every submission."
+            "Per-column spec for BATCH submissions ({type, format}). Mandatory and "
+            "non-empty; every declared column must be present in every submission row."
         ),
     )
     json_output_schema: dict[str, JsonValue] | None = Field(

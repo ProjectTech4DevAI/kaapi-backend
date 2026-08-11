@@ -1,9 +1,9 @@
 """Assemble an AssessmentBatchResult for the BATCH API-client path.
 
-One result unit per input row. Gate-failed rows carry ``assessment=null`` +
-``metadata=null`` plus their pre-filter verdicts; gate-passed rows carry the
-assessment call's parsed output + provider metadata. Pre-filter verdicts live in
-the execution bag; assessment outputs are streamed back from object storage.
+One result unit per input row. Gate-failed rows carry ``assessment=null`` plus
+their pre-filter verdicts; gate-passed rows carry the assessment call's parsed
+output. Pre-filter verdicts live in the execution bag; assessment outputs are
+streamed back from object storage.
 """
 
 import json
@@ -18,7 +18,6 @@ from app.models.assessment import (
     Assessment,
     AssessmentBatchResult,
     AssessmentCounts,
-    AssessmentMeta,
     AssessmentOutput,
     AssessmentResult,
     BatchInput,
@@ -28,26 +27,14 @@ from app.models.assessment import (
     PreFilterVerdict,
     Verdict,
 )
-from app.models.llm.response import Usage
 from app.services.assessment.api.batch import (
     ApiStage,
     build_rows,
     parse_batch_results,
 )
-from app.services.assessment.utils.parsing import parse_stored_results, usage_totals
+from app.services.assessment.utils.parsing import parse_stored_results
 
 logger = logging.getLogger(__name__)
-
-
-def _to_usage(raw: dict[str, Any] | None) -> Usage | None:
-    input_tokens, output_tokens, total_tokens = usage_totals(raw)
-    if input_tokens is None and output_tokens is None and total_tokens is None:
-        return None
-    return Usage(
-        input_tokens=input_tokens or 0,
-        output_tokens=output_tokens or 0,
-        total_tokens=total_tokens or (input_tokens or 0) + (output_tokens or 0),
-    )
 
 
 def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
@@ -63,15 +50,6 @@ def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
     except (json.JSONDecodeError, TypeError):
         return text
     return parsed if isinstance(parsed, dict) else text
-
-
-def _to_meta(out: ParsedResult, provider: str, model: str) -> AssessmentMeta:
-    return AssessmentMeta(
-        provider=provider,
-        model=model,
-        response_id=out.get("response_id") or None,
-        usage=_to_usage(out.get("usage")),
-    )
 
 
 def _verdict_obj(verdict: Verdict | None) -> PreFilterVerdict | None:
@@ -126,8 +104,6 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
 
     gate_passed = bag.get("gate_passed") or [True] * total_items
     verdicts = bag.get("verdicts") or {}
-    provider = bag.get("provider") or ""
-    model = bag.get("model") or ""
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
 
     tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
@@ -139,13 +115,11 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
         # dict shape is the config's own json_output_schema (runtime-defined, no fixed
         # model); str for free-text output, None when gated/failed.
         assessment_output: dict[str, Any] | str | None = None
-        metadata: AssessmentMeta | None = None
         error: str | None = None
         if gate_passed[idx]:
             if idx in outputs:
                 out = outputs[idx]
                 assessment_output = _parse_assessment(out)
-                metadata = _to_meta(out, provider, model)
                 error = out.get("error")
             elif load_error:
                 error = load_error
@@ -166,7 +140,6 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
                     assessment=assessment_output,
                     pre_filter=pre_filter,
                 ),
-                metadata=metadata,
                 error=error,
             )
         )

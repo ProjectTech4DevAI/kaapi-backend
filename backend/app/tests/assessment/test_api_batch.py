@@ -51,6 +51,7 @@ from app.services.assessment.api.batch import (
     parse_batch_results,
     run_batch_stage,
 )
+from app.services.assessment.api.results import build_result
 from app.tests.utils.auth import get_user_test_auth_context
 from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
@@ -60,6 +61,11 @@ OUTPUT_SCHEMA = {
     "properties": {"score": {"type": "integer"}},
     "required": ["score"],
 }
+
+
+# Pre-filter criteria now live in params.instructions (mandatory), no top-level prompt/content.
+TOPIC_CRITERIA = "Is this on topic?"
+DUPLICATE_CRITERIA = "Is this a duplicate?"
 
 
 def _blob_dict(
@@ -76,21 +82,21 @@ def _blob_dict(
     if topic_relevance is not None:
         pre_filters["topic_relevance"] = {
             "provider": "openai",
-            "params": {"model": "gpt-4o"},
-            "prompt": "Is this on topic?",
+            "params": {"model": "gpt-4o", "instructions": TOPIC_CRITERIA},
             "stop_on_fail": topic_relevance,
         }
     if duplicate_detection is not None:
         pre_filters["duplicate_detection"] = {
             "provider": "openai",
-            "params": {"model": "gpt-4o"},
-            "content": "Is this a duplicate?",
+            "params": {"model": "gpt-4o", "instructions": DUPLICATE_CRITERIA},
             "stop_on_fail": duplicate_detection,
             "knowledge_base_id": "vs_dup",
         }
-    assessment_params: dict = {"model": model, "json_output_schema": OUTPUT_SCHEMA}
-    if input_schema is not None:
-        assessment_params["input_schema"] = input_schema
+    assessment_params: dict = {
+        "model": model,
+        "json_output_schema": OUTPUT_SCHEMA,
+        "input_schema": input_schema or {"a": {"type": "text"}},
+    }
     blob: dict = {
         "assessment": {
             "provider": provider,
@@ -201,30 +207,20 @@ class TestBuildRows:
 
 class TestStagePrompt:
     def test_assessment_uses_query(self) -> None:
-        blob = _blob()
         batch_input = BatchInput(query="assess me", data=[{"a": "1"}])
-        assert (
-            _stage_prompt(blob, batch_input, ApiStage.ASSESSMENT.value) == "assess me"
-        )
+        assert _stage_prompt(batch_input, ApiStage.ASSESSMENT.value) == "assess me"
 
-    def test_topic_relevance_and_duplicate_prompts(self) -> None:
-        blob = _blob(topic_relevance=True, duplicate_detection=False)
+    def test_prefilter_stages_have_no_prompt(self) -> None:
         batch_input = BatchInput(query="q", data=[{"a": "1"}])
-        assert (
-            _stage_prompt(blob, batch_input, ApiStage.TOPIC_RELEVANCE.value)
-            == "Is this on topic?"
-        )
-        assert (
-            _stage_prompt(blob, batch_input, ApiStage.DUPLICATE_DETECTION.value)
-            == "Is this a duplicate?"
-        )
+        assert _stage_prompt(batch_input, ApiStage.TOPIC_RELEVANCE.value) is None
+        assert _stage_prompt(batch_input, ApiStage.DUPLICATE_DETECTION.value) is None
 
 
 class TestPrefilterForStage:
     def test_returns_configured_filter(self) -> None:
         blob = _blob(topic_relevance=True, duplicate_detection=False)
         tr = _prefilter_for_stage(blob, ApiStage.TOPIC_RELEVANCE.value)
-        assert tr.prompt == "Is this on topic?"
+        assert tr.params["instructions"] == TOPIC_CRITERIA
 
     def test_missing_filter_raises(self) -> None:
         blob = _blob()  # no pre-filters
@@ -240,11 +236,14 @@ class TestStageParams:
         assert "json_output_schema" not in params
         assert "input_schema" not in params
 
-    def test_prefilter_layers_verdict_schema_and_instruction(self) -> None:
+    def test_prefilter_layers_verdict_schema_and_appends_gate_directive(self) -> None:
         blob = _blob(topic_relevance=True)
         params = _stage_params(blob, ApiStage.TOPIC_RELEVANCE.value)
         assert params["output_schema"] == batch_service.PREFILTER_VERDICT_SCHEMA
-        assert params["instructions"] == batch_service._PREFILTER_INSTRUCTION
+        assert (
+            params["instructions"]
+            == f"{TOPIC_CRITERIA}\n\n{batch_service._PREFILTER_INSTRUCTION}"
+        )
 
     def test_duplicate_detection_adds_knowledge_base_ids(self) -> None:
         blob = _blob(duplicate_detection=False)
@@ -1034,7 +1033,6 @@ class TestFinalizeAndFail:
     def _result(self, errors, total):
         from app.models.assessment import (
             AssessmentBatchResult,
-            AssessmentMeta,
             AssessmentOutput,
             AssessmentResult,
         )
@@ -1042,7 +1040,6 @@ class TestFinalizeAndFail:
         items = [
             AssessmentResult(
                 output=AssessmentOutput(assessment="x"),
-                metadata=AssessmentMeta(provider="openai", model="gpt-4o"),
                 error="boom" if i < errors else None,
             )
             for i in range(total)
@@ -1310,3 +1307,149 @@ class TestRunBatchStageProcessingBranches:
             patch.object(db, "get", side_effect=fake_get),
         ):
             assert self._tick(db, execution, auth) == {"requeue": False}
+
+
+def _openai_result(idx: int, *, output=None, status=200) -> dict:
+    body: dict = {}
+    if status >= 400:
+        body["error"] = {"message": "server error"}
+    elif output is not None:
+        body["output_text"] = output
+    return {
+        "custom_id": f"row_{idx}",
+        "response": {"status_code": status, "body": body},
+    }
+
+
+class TestBuildResult:
+    """results.build_result assembled from the bag (verdicts) + stored assessment output.
+    The cloud-storage read is the only external seam mocked."""
+
+    def _seed(self, db, auth, *, data, bag):
+        batch_input = BatchInput(query="assess {a}", data=data)
+        assessment = api.create_assessment(
+            session=db,
+            method=AssessmentMethod.BATCH,
+            input=batch_input.model_dump(mode="json"),
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+        execution = api.create_execution(
+            session=db,
+            assessment_id=assessment.id,
+            config_id=_make_config_id(db, auth.project_id),
+            config_version=1,
+            total_items=len(data),
+        )
+        api.save_execution_state(session=db, execution=execution, state=bag)
+        return assessment
+
+    def _bag(self, **overrides) -> dict:
+        bag = {
+            "gate_passed": [True],
+            "verdicts": {},
+            "stage_output_urls": {},
+            "input_schema": {"a": {"type": "text"}},
+            "provider": "openai",
+        }
+        bag.update(overrides)
+        return bag
+
+    def _storage_patch(self, jsonl: str):
+        storage = MagicMock()
+        storage.stream.return_value.read.return_value.decode.return_value = jsonl
+        return patch(
+            "app.services.assessment.api.results.get_cloud_storage",
+            return_value=storage,
+        )
+
+    def test_structured_output_and_verdict(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(
+            stage_output_urls={"assessment": "s3://b/out.jsonl"},
+            verdicts={"topic_relevance": {"0": {"verdict": True, "reasoning": "ok"}}},
+        )
+        assessment = self._seed(db, auth, data=[{"a": "1"}], bag=bag)
+        jsonl = json.dumps(_openai_result(0, output=json.dumps({"score": 7})))
+        with self._storage_patch(jsonl):
+            result = build_result(session=db, assessment=assessment)
+
+        assert result.total_items == 1
+        item = result.items[0]
+        assert item.output.assessment == {"score": 7}
+        assert item.output.pre_filter.topic_relevance.verdict is True
+        assert item.error is None
+        assert result.counts.assessed == 1
+        assert result.counts.filtered == 0
+
+    def test_gate_failed_row_has_null_assessment_and_is_filtered(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(
+            gate_passed=[True, False],
+            stage_output_urls={"assessment": "s3://b/out.jsonl"},
+            verdicts={
+                "topic_relevance": {
+                    "0": {"verdict": True, "reasoning": ""},
+                    "1": {"verdict": False, "reasoning": "off"},
+                }
+            },
+        )
+        assessment = self._seed(db, auth, data=[{"a": "1"}, {"a": "2"}], bag=bag)
+        # Only the gate-passed row is present in the assessment output.
+        jsonl = json.dumps(_openai_result(0, output=json.dumps({"score": 3})))
+        with self._storage_patch(jsonl):
+            result = build_result(session=db, assessment=assessment)
+
+        assert result.items[1].output.assessment is None
+        assert result.items[1].output.pre_filter.topic_relevance.verdict is False
+        assert result.counts.assessed == 1
+        assert result.counts.filtered == 1
+
+    def test_error_output_counts_as_error(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(stage_output_urls={"assessment": "s3://b/out.jsonl"})
+        assessment = self._seed(db, auth, data=[{"a": "1"}], bag=bag)
+        jsonl = json.dumps(_openai_result(0, status=500))
+        with self._storage_patch(jsonl):
+            result = build_result(session=db, assessment=assessment)
+
+        assert result.items[0].output.assessment is None
+        assert result.items[0].error == "server error"
+        assert result.counts.errors == 1
+        assert result.counts.assessed == 0
+
+    def test_free_text_output_kept_as_string(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(stage_output_urls={"assessment": "s3://b/out.jsonl"})
+        assessment = self._seed(db, auth, data=[{"a": "1"}], bag=bag)
+        jsonl = json.dumps(_openai_result(0, output="just prose"))
+        with self._storage_patch(jsonl):
+            result = build_result(session=db, assessment=assessment)
+
+        assert result.items[0].output.assessment == "just prose"
+
+    def test_storage_read_failure_flags_load_error(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(stage_output_urls={"assessment": "s3://b/out.jsonl"})
+        assessment = self._seed(db, auth, data=[{"a": "1"}], bag=bag)
+        storage = MagicMock()
+        storage.stream.side_effect = RuntimeError("s3 down")
+        with patch(
+            "app.services.assessment.api.results.get_cloud_storage",
+            return_value=storage,
+        ):
+            result = build_result(session=db, assessment=assessment)
+
+        assert (
+            result.items[0].error == "Assessment output could not be read from storage."
+        )
+        assert result.items[0].output.assessment is None
+
+    def test_no_output_url_is_clean_empty(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._seed(db, auth, data=[{"a": "1"}], bag=self._bag())
+        result = build_result(session=db, assessment=assessment)
+
+        assert result.items[0].output.assessment is None
+        assert result.items[0].error is None
+        assert result.counts.assessed == 0

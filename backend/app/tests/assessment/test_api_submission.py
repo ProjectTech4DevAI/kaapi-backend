@@ -24,17 +24,18 @@ from app.tests.utils.utils import random_lower_string
 
 
 def _assessment_config(
-    db, project_id, *, provider="openai", model="gpt-4o", strict=None
+    db, project_id, *, provider="openai", model="gpt-4o", input_schema=None
 ):
+    """ASSESSMENT config with the mandatory typed ``input_schema`` (default one text
+    column ``a``); callers pass ``input_schema`` to exercise row-validation branches."""
     params = {
         "model": model,
         "json_output_schema": {
             "type": "object",
             "properties": {"s": {"type": "integer"}},
         },
+        "input_schema": input_schema or {"a": {"type": "text"}},
     }
-    if strict is not None:
-        params["input_schema"] = strict
     blob = AssessmentConfigBlob.model_validate(
         {"assessment": {"provider": provider, "type": "text", "params": params}}
     )
@@ -92,12 +93,14 @@ class TestSubmit:
         assert bag["stage_status"] == AssessmentStatus.PENDING.value
         assert bag["callback_url"].startswith("https://hook.example")
 
-    def test_strict_column_missing_is_422(self, db) -> None:
+    def test_row_missing_declared_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(
-            db, auth.project_id, strict={"a": {"type": "text", "strict": True}}
+            db,
+            auth.project_id,
+            input_schema={"a": {"type": "text"}, "b": {"type": "text"}},
         )
-        request = _request(config, [{"b": "no a here"}])
+        request = _request(config, [{"a": "present"}, {"a": "present", "b": "here"}])
 
         with pytest.raises(HTTPException) as exc:
             submission.submit(
@@ -107,7 +110,46 @@ class TestSubmit:
                 project_id=auth.project_id,
             )
         assert exc.value.status_code == 422
-        assert "required column" in exc.value.detail
+        assert "input.data[0]" in exc.value.detail
+        assert "missing required column" in exc.value.detail
+
+    def test_row_undeclared_column_is_422(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(
+            db, auth.project_id, input_schema={"a": {"type": "text"}}
+        )
+        request = _request(config, [{"a": "one"}, {"a": "two", "extra": "nope"}])
+
+        with pytest.raises(HTTPException) as exc:
+            submission.submit(
+                session=db,
+                request=request,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 422
+        assert "input.data[1]" in exc.value.detail
+        assert "not declared in input_schema" in exc.value.detail
+
+    def test_row_attachment_value_not_url_is_422(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(
+            db,
+            auth.project_id,
+            input_schema={"img": {"type": "image", "format": "url"}},
+        )
+        request = _request(config, [{"img": "not-a-url"}])
+
+        with pytest.raises(HTTPException) as exc:
+            submission.submit(
+                session=db,
+                request=request,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 422
+        assert "input.data[0]" in exc.value.detail
+        assert "must be a URL" in exc.value.detail
 
     def test_unsupported_provider_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -170,9 +212,10 @@ class TestSubmit:
         config = _assessment_config(
             db,
             auth.project_id,
-            strict={"img": {"type": "image", "format": "base64"}},
+            input_schema={"img": {"type": "image", "format": "base64"}},
         )
-        request = _request(config, [{"img": "rawbytes"}])
+        # URL value clears row-validation so build_rows is what rejects base64-format.
+        request = _request(config, [{"img": "https://x/a.png"}])
         with pytest.raises(HTTPException) as exc:
             submission.submit(
                 session=db,

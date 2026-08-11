@@ -39,7 +39,6 @@ from app.models.assessment.assessment_api import (
     AssessmentCounts,
     AssessmentCreate,
     AssessmentInput,
-    AssessmentMeta,
     AssessmentOutput,
     AssessmentResult,
     AssessmentResultData,
@@ -48,11 +47,11 @@ from app.models.assessment.assessment_api import (
     BatchInput,
     BatchRunState,
     ParsedResult,
-    Verdict,
     PreFilter,
     PreFilterVerdict,
     ResponseInput,
     Submission,
+    Verdict,
     derive_method,
 )
 
@@ -98,7 +97,6 @@ __all__ = [
     "PreFilterVerdict",
     "PreFilter",
     "AssessmentOutput",
-    "AssessmentMeta",
     "AssessmentResult",
     "AssessmentCounts",
     "AssessmentBatchResult",

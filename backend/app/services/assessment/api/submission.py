@@ -29,6 +29,50 @@ from app.services.assessment.api import batch as batch_service
 
 logger = logging.getLogger(__name__)
 
+# Attachment cell values are provided as URLs (base64 is unsupported for batch).
+_URL_PREFIXES = ("http://", "https://")
+_ATTACHMENT_TYPES = ("image", "pdf")
+
+
+def _validate_rows_against_schema(
+    rows: list[dict[str, str]], input_schema: dict[str, dict[str, str | None]]
+) -> None:
+    """Validate every BATCH row against the config's input_schema.
+
+    Raises 422 on the first offending row: a missing declared column, an
+    unexpected column not in the schema, or an attachment column whose value is
+    not a URL. The row index is named so the client can locate the bad row.
+    """
+    declared = set(input_schema)
+    for idx, row in enumerate(rows):
+        row_columns = set(row)
+        missing = declared - row_columns
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"input.data[{idx}] is missing required column(s): {sorted(missing)}",
+            )
+        unexpected = row_columns - declared
+        if unexpected:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"input.data[{idx}] has column(s) not declared in input_schema: "
+                    f"{sorted(unexpected)}"
+                ),
+            )
+        for column, spec in input_schema.items():
+            if (spec or {}).get("type") in _ATTACHMENT_TYPES:
+                value = row.get(column, "")
+                if not value.startswith(_URL_PREFIXES):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"input.data[{idx}] column '{column}' must be a URL for a "
+                            f"'{spec.get('type')}' column."
+                        ),
+                    )
+
 
 def _resolve_config(
     *, session: Session, request: AssessmentCreate, project_id: int
@@ -99,19 +143,10 @@ def submit(
         session=session, request=request, project_id=project_id
     )
 
-    # Strict input check: every column the config marks strict must be present in every
-    # data row (key-existence only).
+    # input_schema is mandatory (enforced on the config), so every row must match it:
+    # all declared columns present, no undeclared columns, attachments url-valued.
     input_columns = blob.assessment.params.get("input_schema") or {}
-    strict_columns = [
-        c for c, spec in input_columns.items() if (spec or {}).get("strict")
-    ]
-    for idx, row in enumerate(batch_input.data):
-        missing = [c for c in strict_columns if c not in row]
-        if missing:
-            raise HTTPException(
-                status_code=422,
-                detail=f"input.data[{idx}] is missing required column(s): {missing}",
-            )
+    _validate_rows_against_schema(batch_input.data, input_columns)
 
     # Validate transposition up front so bad attachment shapes fail as 422, not async.
     try:

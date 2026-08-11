@@ -85,27 +85,30 @@ shape is documented here:
 
 * `assessment` (required) — the grading call. `provider` is `openai` | `google` |
   `anthropic`, `type` is `"text"`. `params` carries the `model`, the `instructions`
-  (system prompt), an optional `json_output_schema` (structured-output JSON schema), and,
-  for BATCH, an `input_schema` mapping each column name to `{ type, strict, format }`
-  (`type`: `text` | `image` | `pdf`; `strict: true` means the column must be present in
-  every row; `format`: `url` | `base64` for attachment columns).
+  (system prompt), an optional `json_output_schema` (structured-output JSON schema), and a
+  **mandatory, non-empty** `input_schema` mapping each column name to `{ type, format }`
+  (`type` is **required**: `text` | `image` | `pdf`; `format`: `url` for attachment
+  columns). Every declared column must be present in every submission row (see the submit
+  docs for per-row validation).
 * `pre_filters` (optional) — `topic_relevance` and/or `duplicate_detection`. Each runs its
   own llm call, so it carries `provider` (default `openai`) + its own `params`
-  (a `TextLLMParams` object: `model`, `temperature`, …). `params` is optional — when
-  omitted it defaults to `{ "model": "gpt-5.6-luna" }`, and even if you pass `params`
-  without a `model`, the default `gpt-5.6-luna` is filled in. Set `params.model` to use a
-  different model. Each pre-filter also carries its prompt (`topic_relevance.prompt` /
-  `duplicate_detection.content`, with an optional `knowledge_base_id` for duplicates) and
-  `stop_on_fail` (`true` = a failing verdict stops the chain and skips the assessment for
-  that row; `false` = the verdict is just recorded).
+  (a `TextLLMParams` object: `model`, `temperature`, …). Its criteria live in
+  `params.instructions` (a **mandatory** field, exactly like the assessment call);
+  `params.model` defaults to `gpt-5.6-luna` when omitted. `duplicate_detection` also takes
+  an optional `knowledge_base_id`. Each pre-filter carries `stop_on_fail` (`true` = a
+  failing verdict stops the chain and skips the assessment for that row; `false` = the
+  verdict is just recorded).
 
 ```json
 "config_blob": {
   "pre_filters": {
     "topic_relevance": {
-      "prompt": "Is this a Class 7 answer sheet?",
       "provider": "openai",
-      "params": { "model": "gpt-4o", "temperature": 0.1 },
+      "params": {
+        "model": "gpt-4o",
+        "temperature": 0.1,
+        "instructions": "Is this a Class 7 answer sheet?"
+      },
       "stop_on_fail": true
     }
   },
@@ -116,8 +119,8 @@ shape is documented here:
       "model": "gpt-4o",
       "instructions": "You are an AI Assessment Evaluator ...",
       "input_schema": {
-        "gcs_url": { "type": "image", "strict": true, "format": "url" },
-        "rubric":  { "type": "text",  "strict": true }
+        "gcs_url": { "type": "image", "format": "url" },
+        "rubric":  { "type": "text" }
       },
       "json_output_schema": {
         "type": "object",

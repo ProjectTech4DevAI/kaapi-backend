@@ -17,7 +17,6 @@ from app.models.assessment.assessment import (
     AssessmentStatus,
 )
 from app.models.llm.request import ImageInput, PDFInput
-from app.models.llm.response import Usage
 
 Attachment = Annotated[ImageInput | PDFInput, Field(discriminator="type")]
 
@@ -159,20 +158,10 @@ class AssessmentOutput(BaseModel):
     pre_filter: PreFilter | None = None
 
 
-class AssessmentMeta(BaseModel):
-    """Provider-call metadata for one assessed item; null when no assessment call ran."""
-
-    provider: str
-    model: str
-    response_id: str | None = None
-    usage: Usage | None = None
-
-
 class AssessmentResult(BaseModel):
     """Shared result — one BATCH item or the single RESPONSE result."""
 
     output: AssessmentOutput
-    metadata: AssessmentMeta | None = None
     error: str | None = None
 
 

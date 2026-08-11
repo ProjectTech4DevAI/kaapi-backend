@@ -16,6 +16,7 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
     DEFAULT_PREFILTER_MODEL,
     AssessmentConfigBlob,
+    InputColumn,
     TopicRelevanceFilter,
 )
 from app.models.config.config import ConfigTag
@@ -31,7 +32,10 @@ def _config(db, project_id):
             "assessment": {
                 "provider": "openai",
                 "type": "text",
-                "params": {"model": "gpt-4o"},
+                "params": {
+                    "model": "gpt-4o",
+                    "input_schema": {"a": {"type": "text"}},
+                },
             }
         }
     )
@@ -178,13 +182,29 @@ class TestDeriveMethod:
 
 
 class TestPreFilterValidators:
-    def test_instructions_in_params_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="must not set 'instructions'"):
+    def test_instructions_in_params_accepted(self) -> None:
+        flt = TopicRelevanceFilter.model_validate(
+            {
+                "provider": "openai",
+                "params": {"model": "gpt-4o", "instructions": "Is this on topic?"},
+                "stop_on_fail": True,
+            }
+        )
+        assert flt.params["instructions"] == "Is this on topic?"
+        assert flt.stop_on_fail is True
+
+    def test_missing_instructions_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TopicRelevanceFilter.model_validate(
+                {"provider": "openai", "params": {"model": "gpt-4o"}}
+            )
+
+    def test_empty_instructions_rejected(self) -> None:
+        with pytest.raises(ValidationError):
             TopicRelevanceFilter.model_validate(
                 {
                     "provider": "openai",
-                    "params": {"model": "gpt-4o", "instructions": "no"},
-                    "prompt": "p",
+                    "params": {"model": "gpt-4o", "instructions": ""},
                 }
             )
 
@@ -192,8 +212,11 @@ class TestPreFilterValidators:
         flt = TopicRelevanceFilter.model_validate(
             {
                 "provider": "openai",
-                "params": {"model": DEFAULT_PREFILTER_MODEL, "temperature": 0.7},
-                "prompt": "p",
+                "params": {
+                    "model": DEFAULT_PREFILTER_MODEL,
+                    "instructions": "on topic?",
+                    "temperature": 0.7,
+                },
             }
         )
         assert flt.params["effort"] == "high"
@@ -204,35 +227,91 @@ class TestPreFilterValidators:
         flt = TopicRelevanceFilter.model_validate(
             {
                 "provider": "openai",
-                "params": {"model": "gpt-4o", "temperature": 0.7},
-                "prompt": "p",
+                "params": {
+                    "model": "gpt-4o",
+                    "instructions": "on topic?",
+                    "temperature": 0.7,
+                },
             }
         )
         assert flt.params["temperature"] == 0.7
         assert "effort" not in flt.params
 
 
+def _assessment_params(**extra) -> dict:
+    params = {"model": "gpt-4o", "input_schema": {"a": {"type": "text"}}}
+    params.update(extra)
+    return {"assessment": {"provider": "openai", "type": "text", "params": params}}
+
+
 class TestAssessmentCompletionConfigValidator:
     def test_temperature_dropped_when_not_user_set(self) -> None:
-        blob = AssessmentConfigBlob.model_validate(
-            {
-                "assessment": {
-                    "provider": "openai",
-                    "type": "text",
-                    "params": {"model": "gpt-4o"},
-                }
-            }
-        )
+        blob = AssessmentConfigBlob.model_validate(_assessment_params())
         assert "temperature" not in blob.assessment.params
 
     def test_user_set_temperature_kept(self) -> None:
-        blob = AssessmentConfigBlob.model_validate(
-            {
-                "assessment": {
-                    "provider": "openai",
-                    "type": "text",
-                    "params": {"model": "gpt-4o", "temperature": 0.4},
-                }
-            }
-        )
+        blob = AssessmentConfigBlob.model_validate(_assessment_params(temperature=0.4))
         assert blob.assessment.params["temperature"] == 0.4
+
+
+class TestInputSchemaValidators:
+    def test_missing_input_schema_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AssessmentConfigBlob.model_validate(
+                {
+                    "assessment": {
+                        "provider": "openai",
+                        "type": "text",
+                        "params": {"model": "gpt-4o"},
+                    }
+                }
+            )
+
+    def test_empty_input_schema_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AssessmentConfigBlob.model_validate(
+                {
+                    "assessment": {
+                        "provider": "openai",
+                        "type": "text",
+                        "params": {"model": "gpt-4o", "input_schema": {}},
+                    }
+                }
+            )
+
+    def test_column_without_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AssessmentConfigBlob.model_validate(
+                {
+                    "assessment": {
+                        "provider": "openai",
+                        "type": "text",
+                        "params": {
+                            "model": "gpt-4o",
+                            "input_schema": {"a": {"format": "url"}},
+                        },
+                    }
+                }
+            )
+
+    def test_typed_columns_accepted(self) -> None:
+        blob = AssessmentConfigBlob.model_validate(
+            _assessment_params(
+                input_schema={
+                    "name": {"type": "text"},
+                    "sheet": {"type": "pdf", "format": "url"},
+                }
+            )
+        )
+        assert set(blob.assessment.params["input_schema"]) == {"name", "sheet"}
+
+
+class TestInputColumn:
+    def test_type_required(self) -> None:
+        with pytest.raises(ValidationError):
+            InputColumn.model_validate({"format": "url"})
+
+    def test_valid_type_accepted(self) -> None:
+        col = InputColumn.model_validate({"type": "image", "format": "url"})
+        assert col.type == "image"
+        assert col.format == "url"
