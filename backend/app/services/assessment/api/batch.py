@@ -551,14 +551,17 @@ def _submit_stage(
     subset = _row_subset(bag, stage, kind, len(rows))
 
     if not subset:
-        # No rows left for this stage (everything gated out upstream) — skip it.
+        # No rows left for this stage (everything gated out upstream). Persist the
+        # empty counters and return False so the caller advances/finalizes instead of
+        # re-submitting a PENDING stage forever.
         logger.info(
             "[_submit_stage] Empty subset, skipping | execution_id=%s | stage=%s",
             execution.id,
             stage,
         )
         bag.setdefault("counters", {})[stage] = {"total": 0, "passed": 0, "rejected": 0}
-        return True
+        api.save_execution_state(session=session, execution=execution, state=bag)
+        return False
 
     provider_name, model = _stage_provider_model(blob, stage)
     batch_job = _submit_provider_batch(
@@ -695,6 +698,61 @@ def _fail(
         )
 
 
+def _advance_or_finalize(
+    *,
+    session: Session,
+    execution: AssessmentRun,
+    assessment: Assessment,
+    blob: AssessmentConfigBlob,
+    batch_input: BatchInput,
+    bag: BatchRunState,
+    stage: str,
+    organization_id: int,
+    project_id: int,
+) -> dict[str, bool]:
+    """Move past a just-completed stage: submit the next one, or finalize if last.
+
+    A stage whose row subset is empty (all rows gated out upstream) submits no batch
+    (``_submit_stage`` returns False); it is treated as completed and skipped, recursing
+    so a chain of empty stages still terminates at ``_finalize``.
+    """
+    nxt = next_stage(bag["pipeline"], stage)
+    if nxt is None:
+        _finalize(session, execution, assessment, bag)
+        return {"requeue": False}
+    try:
+        bag["stage"] = nxt
+        bag["stage_status"] = StageStatus.PENDING.value
+        submitted = _submit_stage(
+            session=session,
+            execution=execution,
+            blob=blob,
+            batch_input=batch_input,
+            bag=bag,
+            stage=nxt,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+    except Exception as exc:
+        _fail(session, execution, assessment, bag, str(exc))
+        return {"requeue": False}
+    if not submitted:
+        bag["stage_status"] = StageStatus.COMPLETED.value
+        api.save_execution_state(session=session, execution=execution, state=bag)
+        return _advance_or_finalize(
+            session=session,
+            execution=execution,
+            assessment=assessment,
+            blob=blob,
+            batch_input=batch_input,
+            bag=bag,
+            stage=nxt,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+    return {"requeue": True}
+
+
 def run_batch_stage(
     *, execution_id: int, organization_id: int, project_id: int
 ) -> dict[str, bool]:
@@ -731,14 +789,21 @@ def run_batch_stage(
             )
             return {"requeue": False}
 
-        batch_input = BatchInput.model_validate(assessment.input)
-        blob = AssessmentConfigBlob.model_validate(
-            _resolve_blob(session, execution, project_id)
-        )
-
+        # Resolving the stored blob can raise (deleted config version -> 404, or an
+        # invalid/old-shape blob). Route these to _fail so the client gets a terminal
+        # callback instead of the run stranding in PROCESSING.
         try:
-            if stage_status == StageStatus.PENDING:
-                _submit_stage(
+            batch_input = BatchInput.model_validate(assessment.input)
+            blob = AssessmentConfigBlob.model_validate(
+                _resolve_blob(session, execution, project_id)
+            )
+        except Exception as exc:
+            _fail(session, execution, assessment, bag, str(exc))
+            return {"requeue": False}
+
+        if stage_status == StageStatus.PENDING:
+            try:
+                submitted = _submit_stage(
                     session=session,
                     execution=execution,
                     blob=blob,
@@ -748,10 +813,30 @@ def run_batch_stage(
                     organization_id=organization_id,
                     project_id=project_id,
                 )
-                return {"requeue": True}
-        except ValueError as exc:
-            _fail(session, execution, assessment, bag, str(exc))
-            return {"requeue": False}
+            except Exception as exc:
+                # Credential/provider/network errors from _submit_provider_batch, not
+                # just ValueError — all are terminal for this run.
+                _fail(session, execution, assessment, bag, str(exc))
+                return {"requeue": False}
+            if not submitted:
+                # Empty subset (all rows gated out): the stage is done — advance/finalize
+                # rather than re-submitting a PENDING stage forever.
+                bag["stage_status"] = StageStatus.COMPLETED.value
+                api.save_execution_state(
+                    session=session, execution=execution, state=bag
+                )
+                return _advance_or_finalize(
+                    session=session,
+                    execution=execution,
+                    assessment=assessment,
+                    blob=blob,
+                    batch_input=batch_input,
+                    bag=bag,
+                    stage=stage,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+            return {"requeue": True}
 
         # stage_status == PROCESSING: poll the in-flight batch.
         batch_id = (bag.get("stage_batches") or {}).get(stage)
@@ -800,28 +885,17 @@ def run_batch_stage(
         bag.setdefault("stage_output_urls", {})[stage] = batch_job.raw_output_url
         api.save_execution_state(session=session, execution=execution, state=bag)
 
-        nxt = next_stage(bag["pipeline"], stage)
-        if nxt is None:
-            _finalize(session, execution, assessment, bag)
-            return {"requeue": False}
-
-        try:
-            bag["stage"] = nxt
-            bag["stage_status"] = StageStatus.PENDING.value
-            _submit_stage(
-                session=session,
-                execution=execution,
-                blob=blob,
-                batch_input=batch_input,
-                bag=bag,
-                stage=nxt,
-                organization_id=organization_id,
-                project_id=project_id,
-            )
-        except ValueError as exc:
-            _fail(session, execution, assessment, bag, str(exc))
-            return {"requeue": False}
-        return {"requeue": True}
+        return _advance_or_finalize(
+            session=session,
+            execution=execution,
+            assessment=assessment,
+            blob=blob,
+            batch_input=batch_input,
+            bag=bag,
+            stage=stage,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
 
 
 def _resolve_blob(

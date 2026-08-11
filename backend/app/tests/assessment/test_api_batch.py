@@ -9,6 +9,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.crud.assessment import api
 from app.models.assessment import (
@@ -1008,12 +1009,140 @@ class TestSubmitStageEmptySubset:
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
-        assert ok is True
+        # Empty subset submits no provider batch and reports False so the driver
+        # advances/finalizes instead of re-submitting a PENDING stage forever.
+        assert ok is False
         assert bag["counters"][ApiStage.ASSESSMENT.value] == {
             "total": 0,
             "passed": 0,
             "rejected": 0,
         }
+
+
+class TestRunBatchStageAllGatedOut:
+    """BUG 1 regression: a gate that rejects every row must finalize the run, not
+    livelock re-submitting an empty assessment stage forever."""
+
+    def test_every_row_gated_out_reaches_terminal_and_delivers_once(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        org_id, project_id = auth.organization_id, auth.project_id
+        blob = _blob(topic_relevance=True)  # one stop_on_fail gate + assessment
+        config = create_test_config(
+            db,
+            project_id=project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=blob,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        pipeline = build_pipeline(blob.pre_filters)
+        bag = _bag_for(pipeline, total=2)
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=org_id,
+            project_id=project_id,
+            config_id=config.id,
+            bag=bag,
+            data=[{"a": "one"}, {"a": "two"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+
+        submitted_stages: list[str] = []
+
+        def fake_start(**kwargs):
+            submitted_stages.append(kwargs.get("config", {}).get("description", ""))
+            return _make_batch_job(
+                db,
+                org_id=org_id,
+                project_id=project_id,
+                provider_status="completed",
+                provider_output_file_id="file_out",
+                raw_output_url="s3://bucket/out.jsonl",
+            )
+
+        # Both rows fail the gate -> gate_passed all False -> assessment subset empty.
+        gate_results = [
+            {
+                "custom_id": f"row_{i}",
+                "response": {
+                    "status_code": 200,
+                    "body": {
+                        "output_text": json.dumps(
+                            {"verdict": False, "reasoning": "off"}
+                        )
+                    },
+                },
+            }
+            for i in range(2)
+        ]
+
+        from app.models.assessment import AssessmentBatchResult, AssessmentCounts
+
+        clean_result = AssessmentBatchResult(
+            total_items=2, counts=AssessmentCounts(assessed=0, filtered=2), items=[]
+        )
+        delivered: list = []
+
+        def call_tick():
+            return run_batch_stage(
+                execution_id=execution.id,
+                organization_id=org_id,
+                project_id=project_id,
+            )
+
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch(
+                "app.services.assessment.api.batch.start_batch_job",
+                side_effect=fake_start,
+            ),
+            patch(
+                "app.services.assessment.api.batch.poll_batch_status",
+                return_value={"request_counts": {"completed": 2, "failed": 0}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.process_completed_batch",
+                return_value=(gate_results, {}),
+            ),
+            patch(
+                "app.services.assessment.api.batch.get_openai_client",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=clean_result,
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw) or True,
+            ),
+        ):
+            ticks = [call_tick()]  # PENDING -> submit gate
+            assert ticks[0] == {"requeue": True}
+            for _ in range(6):
+                r = call_tick()
+                ticks.append(r)
+                if not r["requeue"]:
+                    break
+
+        # Terminal, not stuck PROCESSING, and the final tick did not ask for a requeue.
+        assert ticks[-1] == {"requeue": False}
+        db.refresh(execution)
+        db.refresh(assessment)
+        assert execution.status in (
+            AssessmentStatus.COMPLETED,
+            AssessmentStatus.COMPLETED_WITH_ERRORS,
+        )
+        assert assessment.status in (
+            AssessmentStatus.COMPLETED,
+            AssessmentStatus.COMPLETED_WITH_ERRORS,
+        )
+        assert execution.execution["gate_passed"] == [False, False]
+        # Only the gate batch was ever submitted; the empty assessment stage was skipped.
+        assert all("topic_relevance" in d for d in submitted_stages)
+        assert len(delivered) == 1
 
 
 class TestFinalizeAndFail:
@@ -1307,6 +1436,214 @@ class TestRunBatchStageProcessingBranches:
             patch.object(db, "get", side_effect=fake_get),
         ):
             assert self._tick(db, execution, auth) == {"requeue": False}
+
+
+class TestRunBatchStageFailurePaths:
+    """BUG 2 regression: uncaught exceptions in blob resolution or stage submit must
+    route to ``_fail`` (FAILED + webhook, no requeue), not strand the run in PROCESSING.
+    Transient poll errors stay a requeue."""
+
+    def _pending_assessment_execution(self, db, auth):
+        blob = _blob()  # assessment-only pipeline, gate_passed all True
+        config = create_test_config(
+            db,
+            project_id=auth.project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=blob,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        pipeline = build_pipeline(None)
+        return _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=config.id,
+            bag=_bag_for(pipeline, total=1),
+            data=[{"a": "one"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+
+    def _result(self):
+        from app.models.assessment import AssessmentBatchResult, AssessmentCounts
+
+        return AssessmentBatchResult(total_items=1, counts=AssessmentCounts(), items=[])
+
+    def _tick(self, db, execution, auth):
+        return run_batch_stage(
+            execution_id=execution.id,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    def test_blob_resolution_error_fails_run(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._pending_assessment_execution(db, auth)
+        delivered: list = []
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch(
+                "app.services.assessment.api.batch._resolve_blob",
+                side_effect=HTTPException(
+                    status_code=404, detail="config version deleted"
+                ),
+            ),
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=self._result(),
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw),
+            ),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": False}
+        db.refresh(execution)
+        db.refresh(assessment)
+        assert execution.status == AssessmentStatus.FAILED
+        assert assessment.status == AssessmentStatus.FAILED
+        assert len(delivered) == 1
+
+    def test_pending_submit_non_value_error_fails_run(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._pending_assessment_execution(db, auth)
+        delivered: list = []
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch(
+                "app.services.assessment.api.batch._submit_provider_batch",
+                side_effect=RuntimeError("provider credentials missing"),
+            ),
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=self._result(),
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw),
+            ),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": False}
+        db.refresh(execution)
+        assert execution.status == AssessmentStatus.FAILED
+        assert "provider credentials missing" in execution.error_message
+        assert len(delivered) == 1
+
+    def test_advance_submit_non_value_error_fails_run(self, db) -> None:
+        # A gate stage completes, then submitting the next stage raises a non-ValueError.
+        auth = get_user_test_auth_context(db)
+        blob = _blob(topic_relevance=True)
+        config = create_test_config(
+            db,
+            project_id=auth.project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=blob,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        pipeline = build_pipeline(blob.pre_filters)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        bag = _bag_for(pipeline, total=2)
+        bag["stage"] = pipeline[0]["stage"]
+        bag["stage_status"] = StageStatus.PROCESSING.value
+        bag["stage_batches"] = {pipeline[0]["stage"]: job.id}
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=config.id,
+            bag=bag,
+            data=[{"a": "one"}, {"a": "two"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        gate_results = [
+            {
+                "custom_id": f"row_{i}",
+                "response": {
+                    "status_code": 200,
+                    "body": {
+                        "output_text": json.dumps({"verdict": True, "reasoning": ""})
+                    },
+                },
+            }
+            for i in range(2)
+        ]
+        delivered: list = []
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                return_value=("completed", gate_results),
+            ),
+            patch(
+                "app.services.assessment.api.batch._submit_stage",
+                side_effect=RuntimeError("provider blew up on next stage"),
+            ),
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=self._result(),
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw),
+            ),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": False}
+        db.refresh(execution)
+        assert execution.status == AssessmentStatus.FAILED
+        assert execution.error_message == "provider blew up on next stage"
+        assert len(delivered) == 1
+
+    def test_poll_exception_still_requeues_not_fails(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        blob = _blob()
+        config = create_test_config(
+            db,
+            project_id=auth.project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=blob,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        pipeline = build_pipeline(None)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        bag = _bag_for(pipeline, total=1)
+        bag["stage_status"] = StageStatus.PROCESSING.value
+        bag["stage_batches"] = {pipeline[0]["stage"]: job.id}
+        _, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=config.id,
+            bag=bag,
+            data=[{"a": "one"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                side_effect=RuntimeError("transient provider hiccup"),
+            ),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": True}
+        db.refresh(execution)
+        assert execution.status == AssessmentStatus.PROCESSING
 
 
 def _openai_result(idx: int, *, output=None, status=200) -> dict:

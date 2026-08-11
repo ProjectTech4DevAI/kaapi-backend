@@ -26,6 +26,7 @@ from app.models.assessment import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
+from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,13 @@ def submit(
         raise HTTPException(
             status_code=501, detail="Only BATCH input is wired in the assessment API."
         )
+
+    # Delivery is webhook-only, so reject an unusable callback_url up front (HTTPS +
+    # SSRF/private-IP guard) instead of after a full batch run is already paid for.
+    try:
+        validate_callback_url(str(request.callback_url))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     batch_input: BatchInput = request.input
     blob, provider, model = _resolve_config(
