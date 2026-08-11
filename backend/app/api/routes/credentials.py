@@ -69,7 +69,7 @@ def create_new_credential(
 ):
     # Project comes from API key context; no cross-org check needed here
     # Database unique constraint ensures no duplicate credentials per provider-org-project combination
-    _reject_version_gated_providers(request, creds_in.credential.keys())
+    _reject_version_gated_providers(request, (creds_in.credential or {}).keys())
 
     created_creds = set_creds_for_org(
         session=session,
