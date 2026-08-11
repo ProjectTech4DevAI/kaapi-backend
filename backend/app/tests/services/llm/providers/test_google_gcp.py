@@ -482,3 +482,261 @@ class TestCreateClientFallback:
         assert "api_key" in msg
         assert "project_id" in msg
         assert "location" in msg
+
+
+# ---------------------------------------------------------------------------
+# Text-to-text (_execute_text)
+# ---------------------------------------------------------------------------
+def _text_response(*texts: str, response_id: str = "r-text") -> dict:
+    return {
+        "candidates": [{"content": {"parts": [{"text": t} for t in texts]}}],
+        "responseId": response_id,
+        "modelVersion": "gemini-2.5-pro",
+        "usageMetadata": {
+            "promptTokenCount": 7,
+            "candidatesTokenCount": 3,
+            "totalTokenCount": 10,
+        },
+    }
+
+
+class TestGoogleGCPTextToText:
+    @pytest.fixture
+    def provider(self) -> GoogleGCPProvider:
+        return GoogleGCPProvider(
+            client=GoogleGCPClient(api_key="k", project_id="p", location="global")
+        )
+
+    @pytest.fixture
+    def query(self) -> QueryParams:
+        return QueryParams(input="ignored")
+
+    def _config(self, **params) -> NativeCompletionConfig:
+        return NativeCompletionConfig(
+            provider="google-gcp-native",
+            type=CompletionType.TEXT,
+            params=params,
+        )
+
+    def _run(self, provider, query, config, resolved_input, body, **kw):
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(body),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, resolved_input, **kw)
+        return resp, err, mock_post
+
+    def test_defaults_model_and_omits_optional_config(self, provider, query):
+        resp, err, mock_post = self._run(
+            provider, query, self._config(), "hi", _text_response("ok")
+        )
+        assert err is None
+        assert "models/gemini-2.5-pro:generateContent" in mock_post.call_args.args[0]
+        payload = mock_post.call_args.kwargs["json"]
+        assert "generationConfig" not in payload
+        assert "systemInstruction" not in payload
+
+    def test_generation_config_forwarded(self, provider, query):
+        config = self._config(
+            model="gemini-2.5-pro",
+            temperature=0.3,
+            max_output_tokens=256,
+            reasoning="low",
+        )
+        _, err, mock_post = self._run(
+            provider, query, config, "hi", _text_response("ok")
+        )
+        assert err is None
+        assert mock_post.call_args.kwargs["json"]["generationConfig"] == {
+            "temperature": 0.3,
+            "maxOutputTokens": 256,
+            "thinkingConfig": {"includeThoughts": False, "thinkingLevel": "low"},
+        }
+
+    def test_multimodal_input_maps_to_rest_parts(self, provider, query):
+        from app.models.llm import ImageContent, PDFContent, TextContent
+        from app.services.llm.providers.base import MultiModalInput
+
+        multimodal = MultiModalInput(
+            parts=[
+                TextContent(value="describe this"),
+                ImageContent(format="base64", value="aW1n", mime_type="image/png"),
+                PDFContent(
+                    format="url",
+                    value="https://example.org/doc.pdf",
+                    mime_type="application/pdf",
+                ),
+            ]
+        )
+        _, err, mock_post = self._run(
+            provider, query, self._config(), multimodal, _text_response("ok")
+        )
+        assert err is None
+        parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert parts == [
+            {"text": "describe this"},
+            {"inlineData": {"data": "aW1n", "mimeType": "image/png"}},
+            {
+                "fileData": {
+                    "fileUri": "https://example.org/doc.pdf",
+                    "mimeType": "application/pdf",
+                }
+            },
+        ]
+
+    def test_list_of_parts_input(self, provider, query):
+        from app.models.llm import TextContent
+
+        _, err, mock_post = self._run(
+            provider,
+            query,
+            self._config(),
+            [TextContent(value="a"), TextContent(value="b")],
+            _text_response("ok"),
+        )
+        assert err is None
+        parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert parts == [{"text": "a"}, {"text": "b"}]
+
+    def test_multiple_candidate_parts_are_joined(self, provider, query):
+        resp, err, _ = self._run(
+            provider, query, self._config(), "hi", _text_response("foo", "bar")
+        )
+        assert err is None
+        assert resp.response.output.content.value == "foobar"
+
+    def test_knowledge_base_ids_rejected_without_http_call(self, provider, query):
+        config = self._config(knowledge_base_ids=["stores/kb1"])
+        resp, err, mock_post = self._run(
+            provider, query, config, "hi", _text_response("ok")
+        )
+        assert resp is None
+        assert "knowledge_base_ids" in err
+        assert "google-aistudio" in err
+        mock_post.assert_not_called()
+
+    def test_blocked_response_reports_reasons(self, provider, query):
+        body = {
+            "candidates": [{"content": {"parts": []}, "finishReason": "SAFETY"}],
+            "promptFeedback": {"blockReason": "SAFETY"},
+            "responseId": "r-blocked",
+        }
+        resp, err, _ = self._run(provider, query, self._config(), "hi", body)
+        assert resp is None
+        assert "[GOOGLE-GCP]" in err
+        assert "finish_reason=SAFETY" in err
+        assert "block_reason=SAFETY" in err
+
+    def test_raw_response_included_when_requested(self, provider, query):
+        body = _text_response("ok")
+        resp, err, _ = self._run(
+            provider,
+            query,
+            self._config(),
+            "hi",
+            body,
+            include_provider_raw_response=True,
+        )
+        assert err is None
+        assert resp.provider_raw_response == body
+
+    def test_usage_extracted(self, provider, query):
+        resp, err, _ = self._run(
+            provider, query, self._config(), "hi", _text_response("ok")
+        )
+        assert err is None
+        assert resp.usage.input_tokens == 7
+        assert resp.usage.output_tokens == 3
+        assert resp.usage.total_tokens == 10
+        assert resp.response.provider_response_id == "r-text"
+
+
+# ---------------------------------------------------------------------------
+# _post error-status messages
+# ---------------------------------------------------------------------------
+def _mock_http_err_json(status: int, message: str, google_status: str) -> MagicMock:
+    resp = MagicMock()
+    resp.ok = False
+    resp.status_code = status
+    resp.text = message
+    resp.json.return_value = {"error": {"message": message, "status": google_status}}
+    return resp
+
+
+class TestGoogleGCPPostErrors:
+    @pytest.fixture
+    def provider(self) -> GoogleGCPProvider:
+        return GoogleGCPProvider(
+            client=GoogleGCPClient(api_key="k", project_id="p", location="global")
+        )
+
+    def _call(self, provider, response=None, side_effect=None):
+        config = NativeCompletionConfig(
+            provider="google-gcp-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-pro"},
+        )
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=response,
+            side_effect=side_effect,
+        ):
+            return provider.execute(config, QueryParams(input="x"), "hi")
+
+    @pytest.mark.parametrize(
+        "status,google_status,expected",
+        [
+            (400, "INVALID_ARGUMENT", "Bad request"),
+            (401, "UNAUTHENTICATED", "Authentication / permission denied"),
+            (404, "NOT_FOUND", "Resource not found"),
+            (429, "RESOURCE_EXHAUSTED", "Rate limit / quota exceeded"),
+            (503, "UNAVAILABLE", "Server error"),
+            (418, "TEAPOT", "HTTP error"),
+        ],
+    )
+    def test_status_code_messages(self, provider, status, google_status, expected):
+        resp, err = self._call(
+            provider, response=_mock_http_err_json(status, "boom", google_status)
+        )
+        assert resp is None
+        assert err.startswith("[GOOGLE-GCP]")
+        assert expected in err
+        assert str(status) in err
+        assert google_status in err
+        assert "boom" in err
+
+    def test_404_names_the_model(self, provider):
+        _, err = self._call(
+            provider, response=_mock_http_err_json(404, "gone", "NOT_FOUND")
+        )
+        assert "gemini-2.5-pro" in err
+
+    def test_non_json_error_body_falls_back_to_text(self, provider):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 400
+        resp.text = "<html>plain error</html>"
+        resp.json.side_effect = ValueError("not json")
+        _, err = self._call(provider, response=resp)
+        assert "<html>plain error</html>" in err
+
+    def test_non_json_success_body_returns_error(self, provider):
+        resp = MagicMock()
+        resp.ok = True
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("not json")
+        out, err = self._call(provider, response=resp)
+        assert out is None
+        assert "[GOOGLE-GCP] Returned a non-JSON success response" in err
+
+    def test_timeout_message(self, provider):
+        out, err = self._call(provider, side_effect=requests.Timeout("slow"))
+        assert out is None
+        assert "timed out" in err
+        assert "Timeout" in err
+
+    def test_generic_request_exception_message(self, provider):
+        out, err = self._call(provider, side_effect=requests.RequestException("weird"))
+        assert out is None
+        assert "Google GCP request failed" in err
+        assert "weird" in err
