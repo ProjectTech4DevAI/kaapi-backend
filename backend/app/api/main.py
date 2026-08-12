@@ -37,6 +37,7 @@ from app.api.routes import (
 from app.api.routes import (
     assessment as assessment_routes,
 )
+from app.api.routes.assessment import api as assessment_api_routes
 from app.api.routes.evaluations.dataset_v2 import (
     router as evaluations_dataset_v2_router,
 )
@@ -49,6 +50,7 @@ api_router = APIRouter()
 api_router.include_router(analytics.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(assessment_routes.router)
+api_router.include_router(assessment_api_routes.router)
 api_router.include_router(assistants.router)
 api_router.include_router(auth.router)
 api_router.include_router(collection_job.router)
@@ -83,9 +85,11 @@ api_router.include_router(private.router)
 #     api_router.include_router(private.router)
 
 
-# v2 API surface (mounted at settings.API_V2_STR). Only the endpoints that differ
-# from v1 live here — currently the judged run trigger. Everything else stays v1.
+# v2 API surface (mounted at settings.API_V2_STR). Endpoints that differ from v1
+# live here; credentials is re-mounted unchanged so v2 clients have one base URL.
 api_v2_router = APIRouter()
 api_v2_router.include_router(evaluations_v2_router)
 api_v2_router.include_router(evaluations_dataset_v2_router)
 api_v2_router.include_router(evaluations_prompt_improvement_v2_router)
+api_v2_router.include_router(onboarding.router_v2)
+api_v2_router.include_router(credentials.router)

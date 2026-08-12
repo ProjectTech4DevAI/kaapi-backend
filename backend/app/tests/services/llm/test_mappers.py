@@ -885,9 +885,8 @@ class TestMapKaapiToAnthropicParams:
         assert result["temperature"] == 0.0
 
 
-class TestTransformGoogleVertexRouting:
-    """Routing contract for the ``google`` provider (which executes via
-    Vertex AI)."""
+class TestTransformGoogleGCPRouting:
+    """Routing contract for the ``google`` and ``google-gcp`` providers."""
 
     def test_text_completion_maps_via_google_mapper(self, db: Session):
         """``google`` text completions reuse the Google mapper and produce a
@@ -925,6 +924,47 @@ class TestTransformGoogleVertexRouting:
         assert "language" not in native_config.params  # dropped
         assert len(warnings) == 1
         assert "xx-YY" in warnings[0]
+
+    def test_google_gcp_tts_maps_to_gcp_native(self, db: Session):
+        kaapi_config = KaapiCompletionConfig(
+            provider="google-gcp",
+            type="tts",
+            params={"model": "gemini-2.5-flash-preview-tts"},
+        )
+
+        native_config, _ = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.params["model"] == "gemini-2.5-flash-preview-tts"
+
+    def test_google_gcp_stt_maps_to_gcp_native(self, db: Session):
+        kaapi_config = KaapiCompletionConfig(
+            provider="google-gcp",
+            type="stt",
+            params={"model": "gemini-2.5-flash"},
+        )
+
+        native_config, _ = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+
+    def test_google_gcp_text_maps_to_gcp_native(self, db: Session):
+        kaapi_config = KaapiCompletionConfig(
+            provider="google-gcp",
+            type="text",
+            params={"model": "gemini-2.5-pro"},
+        )
+
+        native_config, _ = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.params["model"] == "gemini-2.5-pro"
 
 
 class TestBCP47ToElevenlabsLang:

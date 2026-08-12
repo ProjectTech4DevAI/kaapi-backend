@@ -57,6 +57,7 @@ def create_llm_call_with_response(
         organization_id=organization_id,
         resolved_config=config_blob,
         original_provider="openai",
+        effective_provider="openai",
     )
 
     update_llm_call_response(
@@ -111,6 +112,7 @@ def create_llm_call_with_audio_uri_response(
         organization_id=organization_id,
         resolved_config=config_blob,
         original_provider="openai",
+        effective_provider="openai",
     )
 
     update_llm_call_response(

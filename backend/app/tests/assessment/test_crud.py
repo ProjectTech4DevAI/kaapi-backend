@@ -43,17 +43,17 @@ def _counts(total=0, pending=0, processing=0, completed=0, failed=0):
 
 class TestDeriveAssessmentStatus:
     def test_status_variants(self) -> None:
-        assert derive_assessment_status(_counts()) == "pending"
-        assert derive_assessment_status(_counts(total=2, completed=2)) == "completed"
-        assert derive_assessment_status(_counts(total=2, failed=2)) == "failed"
+        assert derive_assessment_status(_counts()) == "PENDING"
+        assert derive_assessment_status(_counts(total=2, completed=2)) == "COMPLETED"
+        assert derive_assessment_status(_counts(total=2, failed=2)) == "FAILED"
         assert (
             derive_assessment_status(_counts(total=2, completed=1, failed=1))
-            == "completed_with_errors"
+            == "COMPLETED_WITH_ERRORS"
         )
-        assert derive_assessment_status(_counts(total=2, pending=2)) == "pending"
+        assert derive_assessment_status(_counts(total=2, pending=2)) == "PENDING"
         assert (
             derive_assessment_status(_counts(total=2, pending=1, processing=1))
-            == "processing"
+            == "PROCESSING"
         )
 
 
@@ -151,10 +151,8 @@ class TestCrudWrites:
             assessment_id=10,
             config_id=UUID("00000000-0000-0000-0000-000000000001"),
             config_version=1,
-            assessment_input={"k": "v"},
         )
         assert run.assessment_id == 10
-        assert run.input == {"k": "v"}
 
         session2 = MagicMock()
         session2.commit.side_effect = RuntimeError("db error")
@@ -164,7 +162,6 @@ class TestCrudWrites:
                 assessment_id=10,
                 config_id=UUID("00000000-0000-0000-0000-000000000001"),
                 config_version=1,
-                assessment_input={},
             )
         session2.rollback.assert_called_once()
 
@@ -181,17 +178,15 @@ class TestCrudWrites:
         updated = update_assessment_run_status(
             session=session,
             run=run,
-            status="processing",
+            status="PROCESSING",
             error_message="e",
             batch_job_id=11,
             total_items=9,
-            object_store_url="s3://x",
         )
-        assert updated.status == "processing"
+        assert updated.status == "PROCESSING"
         assert updated.error_message == "e"
         assert updated.batch_job_id == 11
         assert updated.total_items == 9
-        assert updated.object_store_url == "s3://x"
 
     def test_update_assessment_run_status_failure_rolls_back(self) -> None:
         session = MagicMock()
@@ -212,10 +207,10 @@ class TestCrudWrites:
 class TestDerivedAggregates:
     def test_compute_run_counts(self) -> None:
         runs = [
-            SimpleNamespace(status="completed"),
-            SimpleNamespace(status="failed"),
-            SimpleNamespace(status="processing"),
-            SimpleNamespace(status="pending"),
+            SimpleNamespace(status="COMPLETED"),
+            SimpleNamespace(status="FAILED"),
+            SimpleNamespace(status="PROCESSING"),
+            SimpleNamespace(status="PENDING"),
         ]
         counts = compute_run_counts(runs)
         assert counts.total == 4
@@ -230,22 +225,16 @@ class TestDerivedAggregates:
                 id=1,
                 config_id=UUID("00000000-0000-0000-0000-000000000001"),
                 config_version=1,
-                status="completed",
+                status="COMPLETED",
                 total_items=2,
                 error_message=None,
                 updated_at=datetime(2024, 1, 1),
-                prefilter_total_rows=None,
-                prefilter_total_passed=None,
-                prefilter_total_rejected=None,
-                stage="COMPLETED",
-                stage_status="COMPLETED",
             ),
         ]
         stats = build_run_stats(runs)
         assert len(stats) == 1
         assert stats[0].run_id == 1
-        assert stats[0].status == "completed"
-        assert stats[0].stage == "COMPLETED"
+        assert stats[0].status == "COMPLETED"
 
     def test_derive_aggregate_error(self) -> None:
         assert derive_aggregate_error(_counts(total=2, completed=2)) is None
@@ -272,7 +261,7 @@ class TestRecomputeAssessmentStatus:
                 id=1,
                 config_id=UUID("00000000-0000-0000-0000-000000000001"),
                 config_version=1,
-                status="completed",
+                status="COMPLETED",
                 total_items=2,
                 error_message=None,
                 updated_at=datetime(2024, 1, 1),
@@ -281,7 +270,7 @@ class TestRecomputeAssessmentStatus:
                 id=2,
                 config_id=None,
                 config_version=2,
-                status="failed",
+                status="FAILED",
                 total_items=2,
                 error_message="bad",
                 updated_at=datetime(2024, 1, 2),
@@ -291,7 +280,7 @@ class TestRecomputeAssessmentStatus:
         session.exec.return_value.all.return_value = runs
 
         result = recompute_assessment_status(session=session, assessment_id=1)
-        assert result.status == "completed_with_errors"
+        assert result.status == "COMPLETED_WITH_ERRORS"
         session.commit.assert_called_once()
 
     def test_recompute_commit_failure_rolls_back(self) -> None:
@@ -308,76 +297,56 @@ class TestRecomputeAssessmentStatus:
 
 
 class TestUpdateRunPostProcessingConfig:
-    def test_sets_config_in_input_blob(self) -> None:
+    def test_sets_config_column(self) -> None:
         session = MagicMock()
-        run = SimpleNamespace(id=5, input={"text_columns": ["q"]})
+        run = SimpleNamespace(id=5, post_processing_config=None, updated_at=None)
         cfg = {"computed_columns": [{"name": "T", "formula": "@a"}]}
-        with patch("app.crud.assessment.core.flag_modified") as flag:
-            out = update_run_post_processing_config(
-                session=session, run=run, config=cfg
-            )
-        assert out.input["post_processing_config"] == cfg
-        assert out.input["text_columns"] == ["q"]
-        flag.assert_called_once_with(run, "input")
+        out = update_run_post_processing_config(session=session, run=run, config=cfg)
+        assert out.post_processing_config == cfg
         session.commit.assert_called_once()
 
-    def test_none_input_handled(self) -> None:
+    def test_none_config_handled(self) -> None:
         session = MagicMock()
-        run = SimpleNamespace(id=6, input=None)
-        with patch("app.crud.assessment.core.flag_modified"):
-            out = update_run_post_processing_config(
-                session=session, run=run, config=None
-            )
-        assert out.input == {"post_processing_config": None}
+        run = SimpleNamespace(id=6, post_processing_config={"x": 1}, updated_at=None)
+        out = update_run_post_processing_config(session=session, run=run, config=None)
+        assert out.post_processing_config is None
 
     def test_commit_failure_rolls_back(self) -> None:
         session = MagicMock()
         session.commit.side_effect = RuntimeError("db error")
-        run = SimpleNamespace(id=7, input={})
-        with patch("app.crud.assessment.core.flag_modified"):
-            with pytest.raises(RuntimeError):
-                update_run_post_processing_config(session=session, run=run, config={})
+        run = SimpleNamespace(id=7, post_processing_config=None, updated_at=None)
+        with pytest.raises(RuntimeError):
+            update_run_post_processing_config(session=session, run=run, config={})
         session.rollback.assert_called_once()
 
 
 class TestUpdateAssessmentRunL1Stats:
     def test_sets_stats_fields(self) -> None:
         session = MagicMock()
-        run = SimpleNamespace(
-            id=8,
-            updated_at=None,
-            prefilter_object_store_url=None,
-            prefilter_total_rows=None,
-            prefilter_total_passed=None,
-            prefilter_total_rejected=None,
-        )
-        out = update_assessment_run_prefilter_stats(
-            session=session,
-            run=run,
-            prefilter_object_store_url="s3://x",
-            prefilter_total_rows=10,
-            prefilter_total_passed=7,
-            prefilter_total_rejected=3,
-        )
-        assert out.prefilter_object_store_url == "s3://x"
-        assert out.prefilter_total_rows == 10
-        assert out.prefilter_total_passed == 7
-        assert out.prefilter_total_rejected == 3
+        run = SimpleNamespace(id=8, updated_at=None, execution={})
+        with patch("app.crud.assessment.core.flag_modified"):
+            out = update_assessment_run_prefilter_stats(
+                session=session,
+                run=run,
+                prefilter_object_store_url="s3://x",
+                prefilter_total_rows=10,
+                prefilter_total_passed=7,
+                prefilter_total_rejected=3,
+            )
+        # Prefilter stats now live in the run's execution bag.
+        assert out.execution["prefilter_object_store_url"] == "s3://x"
+        assert out.execution["prefilter_total_rows"] == 10
+        assert out.execution["prefilter_total_passed"] == 7
+        assert out.execution["prefilter_total_rejected"] == 3
         session.commit.assert_called_once()
 
     def test_commit_failure_rolls_back(self) -> None:
         session = MagicMock()
         session.commit.side_effect = RuntimeError("db error")
-        run = SimpleNamespace(
-            id=9,
-            updated_at=None,
-            prefilter_object_store_url=None,
-            prefilter_total_rows=None,
-            prefilter_total_passed=None,
-            prefilter_total_rejected=None,
-        )
-        with pytest.raises(RuntimeError):
-            update_assessment_run_prefilter_stats(
-                session=session, run=run, prefilter_total_rows=1
-            )
+        run = SimpleNamespace(id=9, updated_at=None, execution={})
+        with patch("app.crud.assessment.core.flag_modified"):
+            with pytest.raises(RuntimeError):
+                update_assessment_run_prefilter_stats(
+                    session=session, run=run, prefilter_total_rows=1
+                )
         session.rollback.assert_called_once()

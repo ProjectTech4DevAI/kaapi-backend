@@ -11,11 +11,17 @@ from app.crud.assessment import (
     recompute_assessment_status,
     update_assessment_run_status,
 )
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.assessment.processing import (
     format_assessment_failure_message,
     process_run_batches,
 )
-from app.models.assessment import Assessment, AssessmentRun, StageStatus
+from app.models.assessment import (
+    Assessment,
+    AssessmentRun,
+    AssessmentStatus,
+    StageStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,7 @@ async def poll_all_pending_assessment_evaluations(
 ) -> dict[str, Any]:
     """Poll all non-terminal parent assessments and their active child runs."""
     statement = select(Assessment).where(
-        Assessment.status.in_(("pending", "processing")),
+        Assessment.status.in_((AssessmentStatus.PENDING, AssessmentStatus.PROCESSING)),
     )
     pending_assessments = list(session.exec(statement).all())
 
@@ -79,7 +85,9 @@ async def poll_all_pending_assessment_evaluations(
             session=session, assessment_id=assessment.id
         )
         active_runs = [
-            run for run in runs if run.stage_status == StageStatus.PROCESSING
+            run
+            for run in runs
+            if _read_exec(run).get("stage_status") == StageStatus.PROCESSING
         ]
 
         if not active_runs:
@@ -96,7 +104,10 @@ async def poll_all_pending_assessment_evaluations(
                 counts.completed,
                 counts.failed,
             )
-            if refreshed.status in {"pending", "processing"}:
+            if refreshed.status in {
+                AssessmentStatus.PENDING,
+                AssessmentStatus.PROCESSING,
+            }:
                 still_processing += 1
             continue
 
@@ -127,11 +138,11 @@ async def poll_all_pending_assessment_evaluations(
                     message,
                 )
                 try:
-                    run.stage_status = StageStatus.FAILED
+                    _write_exec(run, stage_status=StageStatus.FAILED)
                     update_assessment_run_status(
                         session=session,
                         run=run,
-                        status="failed",
+                        status=AssessmentStatus.FAILED,
                         error_message=message,
                     )
                     failed += 1

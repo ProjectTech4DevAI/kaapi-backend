@@ -1,7 +1,12 @@
-"""Parent-assessment endpoints"""
+"""Parent-assessment endpoints (LEGACY RUN pipeline).
+
+Serves dataset-based RUN assessments only. The new API-client BATCH path
+(`api.py`) delivers results by webhook and never surfaces here.
+"""
 
 import logging
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -67,7 +72,7 @@ def _build_assessment_public(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def retry_assessment(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[AssessmentResponse]:
@@ -125,7 +130,7 @@ def list_assessments(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_assessment(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[AssessmentPublic]:
@@ -150,7 +155,7 @@ def get_assessment(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def export_assessment_results(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
     export_format: Literal["json", "csv", "xlsx"] = Query(default="json"),
