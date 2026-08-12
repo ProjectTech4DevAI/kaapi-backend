@@ -1,7 +1,7 @@
 """refactor assessment tables for method-based pipeline
 
-Revision ID: 077
-Revises: 076
+Revision ID: 078
+Revises: 077
 Create Date: 2026-08-01 00:00:00.000000
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "077"
-down_revision = "076"
+revision = "078"
+down_revision = "077"
 branch_labels = None
 depends_on = None
 
