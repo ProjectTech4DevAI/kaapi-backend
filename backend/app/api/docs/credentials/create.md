@@ -3,17 +3,10 @@ Persist new credentials for the current organization and project.
 Credentials are encrypted and stored securely for provider integrations (OpenAI, Langfuse, etc.). Only one credential per provider is allowed per organization-project combination. You can send credentials for a single provider or multiple providers in one request. Refer to the examples below for the required input parameters for each provider.
 
 ### Supported Providers:
-- **LLM:** openai, anthropic, sarvamai, google(gemini, v1 only — deprecated), google-aistudio, google-gcp (v2 only)
+- **LLM:** openai, anthropic, sarvamai, google(gemini)
 - **Observability:** langfuse
 - **Audio:** elevenlabs
 - **Miscellaneous** webhook_secret
-
-### API versions (v1 vs v2)
-The same endpoints are served at `/api/v1/credentials` and `/api/v2/credentials`. Writes are version-gated with **400** on violation:
-- `google` — accepted on **v1 only** (deprecated); on v2 use `google-aistudio` or `google-gcp` to pin the Gemini backend explicitly.
-- `google-gcp` — accepted on **v2 only**. Requires `api_key`, `project_id`, `location`, `sa_key` (service-account key JSON as an object), `gcs_bucket`.
-
-Reads and deletes are not version-gated, so existing `google` rows remain manageable from either version.
 
 ### Examples:
 

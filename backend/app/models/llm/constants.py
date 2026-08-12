@@ -9,7 +9,6 @@ class Provider(StrEnum):
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
-    GOOGLE_GCP = "google-gcp"
     PROXY = "proxy"
 
 
@@ -21,14 +20,12 @@ STTProvider = Literal[
     Provider.SARVAMAI,
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
-    Provider.GOOGLE_GCP,
 ]
 TTSProvider = Literal[
     Provider.GOOGLE,
     Provider.SARVAMAI,
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
-    Provider.GOOGLE_GCP,
 ]
 RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
@@ -39,7 +36,6 @@ KaapiProvider = Literal[
     Provider.ELEVENLABS,
     Provider.ANTHROPIC,
     Provider.GOOGLE_AISTUDIO,
-    Provider.GOOGLE_GCP,
 ]
 
 TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
@@ -53,7 +49,6 @@ NativeProvider = Literal[
     "elevenlabs-native",
     "anthropic-native",
     "google-aistudio-native",
-    "google-gcp-native",
 ]
 
 

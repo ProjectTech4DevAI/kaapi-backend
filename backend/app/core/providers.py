@@ -12,7 +12,6 @@ class Provider(str, Enum):
     OPENAI = "openai"
     LANGFUSE = "langfuse"
     GOOGLE_AISTUDIO = "google-aistudio"
-    GOOGLE_GCP = "google-gcp"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
@@ -55,16 +54,6 @@ PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
             "api_key",
         ],
         sensitive_fields=["api_key"],
-    ),
-    Provider.GOOGLE_GCP: ProviderConfig(
-        required_fields=[
-            "api_key",
-            "project_id",
-            "location",
-            "sa_key",
-            "gcs_bucket",
-        ],
-        sensitive_fields=["api_key", "sa_key"],
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
         required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]

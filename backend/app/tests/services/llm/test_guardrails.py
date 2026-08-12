@@ -352,7 +352,6 @@ class TestSaveRephraseGuardrailCall:
             project_id=project.id,
             organization_id=project.organization_id,
             chain_id=None,
-            effective_provider="openai",
         )
         kwargs.update(overrides)
         return save_rephrase_guardrail_call(**kwargs)
