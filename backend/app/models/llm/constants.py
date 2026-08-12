@@ -42,6 +42,8 @@ KaapiProvider = Literal[
     Provider.GOOGLE_GCP,
 ]
 
+TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
+
 # Native provider names are the Kaapi providers with a "-native" suffix.
 # Kept as explicit strings since there's no corresponding enum member.
 NativeProvider = Literal[

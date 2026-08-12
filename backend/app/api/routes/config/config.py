@@ -92,10 +92,10 @@ def get_config(
     session: SessionDep,
 ):
     """
-    Get a specific configuration by its ID.
+    Get a specific configuration by its ID (by-id lookup is not tag-scoped).
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
-    config = config_crud.exists_or_raise(config_id=config_id)
+    config = config_crud.exists_or_raise(config_id)
     return APIResponse.success_response(
         data=config,
     )
@@ -140,7 +140,7 @@ def delete_config(
     session: SessionDep,
 ):
     """
-    Delete a specific configuration.
+    Delete a specific configuration (by-id lookup is not tag-scoped).
     """
     config_crud = ConfigCrud(session=session, project_id=current_user.project_.id)
     config_crud.delete_or_raise(config_id=config_id)
