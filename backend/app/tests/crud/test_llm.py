@@ -144,7 +144,6 @@ def test_create_llm_call_text(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     assert llm_call.id is not None
@@ -181,7 +180,6 @@ def test_create_llm_call_stt(
         organization_id=test_organization.id,
         resolved_config=stt_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     assert llm_call.input_type == "audio"
@@ -210,7 +208,6 @@ def test_create_llm_call_tts(
         organization_id=test_organization.id,
         resolved_config=tts_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     assert llm_call.input_type == "text"
@@ -240,7 +237,6 @@ def test_create_llm_call_with_stored_config(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     assert llm_call.config is not None
@@ -270,7 +266,6 @@ def test_get_llm_call_by_id(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     fetched = get_llm_call_by_id(db, created.id)
@@ -300,7 +295,6 @@ def test_get_llm_call_by_id_with_project_scope(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     # Should find with correct project
@@ -341,7 +335,6 @@ def test_get_llm_calls_by_job_id(
             organization_id=test_organization.id,
             resolved_config=text_config_blob,
             original_provider="openai",
-            effective_provider="openai",
         )
 
     llm_calls = get_llm_calls_by_job_id(db, test_job.id, test_project.id)
@@ -377,7 +370,6 @@ def test_update_llm_call_response(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     # Update with response data
@@ -425,7 +417,6 @@ def test_update_llm_call_response_partial(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     # Only update provider_response_id
@@ -474,7 +465,6 @@ def test_update_llm_call_response_with_audio_content(
         organization_id=test_organization.id,
         resolved_config=tts_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     # Create valid audio content with base64 data
@@ -522,7 +512,6 @@ def test_update_llm_call_response_with_invalid_audio_base64(
         organization_id=test_organization.id,
         resolved_config=tts_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     # Invalid base64 data
@@ -569,7 +558,6 @@ def test_update_llm_call_response_with_text_content_no_size_calculation(
         organization_id=test_organization.id,
         resolved_config=text_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     text_content = {
@@ -611,7 +599,6 @@ def test_update_llm_call_input_overwrites_with_s3_uri(
         organization_id=test_organization.id,
         resolved_config=stt_config_blob,
         original_provider="openai",
-        effective_provider="openai",
     )
 
     original_updated_at = created.updated_at

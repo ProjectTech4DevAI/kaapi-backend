@@ -1,17 +1,11 @@
 import re
 import secrets
-from typing import Any, ClassVar
+from typing import Any
 
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
 
-from app.core.providers import (
-    Provider,
-    validate_provider,
-    validate_provider_credentials,
-)
-
-ONBOARDING_MAX_PAYLOAD_BYTES = 32 * 1024
+from app.core.providers import validate_provider, validate_provider_credentials
 
 
 class OnboardingRequest(SQLModel):
@@ -122,47 +116,6 @@ class OnboardingRequest(SQLModel):
             validate_provider_credentials(provider_key, values)
 
         return v
-
-    # Providers this API version refuses; subclasses override for their version.
-    _DISALLOWED_PROVIDERS: ClassVar[dict[str, str]] = {
-        Provider.GOOGLE_GCP.value: (
-            f"Provider '{Provider.GOOGLE_GCP.value}' is not accepted on v1 onboarding. "
-            "Use the v2 onboarding API."
-        )
-    }
-
-    @field_validator("credentials")
-    @classmethod
-    def _reject_version_specific_providers(
-        cls, v: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]] | None:
-        if v is None:
-            return v
-
-        for item in v:
-            if not isinstance(item, dict):
-                continue
-            for provider_key in item:
-                if provider_key in cls._DISALLOWED_PROVIDERS:
-                    raise ValueError(cls._DISALLOWED_PROVIDERS[provider_key])
-
-        return v
-
-
-class OnboardingRequestV2(OnboardingRequest):
-    """Onboarding payload for v2: the vanilla ``google`` provider is no longer accepted.
-
-    Existing ``google`` credential rows keep working through registry routing; only
-    new onboarding must pin the backend.
-    """
-
-    _DISALLOWED_PROVIDERS: ClassVar[dict[str, str]] = {
-        Provider.GOOGLE.value: (
-            f"Provider '{Provider.GOOGLE.value}' is not accepted on v2 onboarding. "
-            f"Use '{Provider.GOOGLE_AISTUDIO.value}' or '{Provider.GOOGLE_GCP.value}' "
-            "to pin the Gemini backend explicitly."
-        )
-    }
 
 
 class OnboardingResponse(SQLModel):

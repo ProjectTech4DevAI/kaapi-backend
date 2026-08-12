@@ -17,11 +17,9 @@ from app.core.audio_utils import (
 from app.core.cloud.storage import upload_audio_to_gcs
 from app.core.config import settings
 from app.models.llm import (
-    ImageContent,
     LLMCallResponse,
     LLMResponse,
     NativeCompletionConfig,
-    PDFContent,
     QueryParams,
     TextContent,
     TextOutput,
@@ -29,7 +27,6 @@ from app.models.llm import (
 )
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
-    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     CompletionType,
@@ -54,10 +51,11 @@ SUPPORTED_AUDIO_MIMES = {
 def _load_platform_sa_info() -> dict | None:
     """Load the platform-default GCP SA JSON.
 
-    settings.GOOGLE_GCP_SA_KEY must be a raw JSON string (e.g. injected via
-    env var / secret manager); any other value is ignored and returns None.
+    Supports two configuration shapes for settings.GCP_SA_KEY:
+      1. Raw JSON string (e.g. injected via env var / secret manager)
+      2. Filesystem path to a JSON key file
     """
-    sa_value = settings.GOOGLE_GCP_SA_KEY
+    sa_value = settings.GCP_SA_KEY
     if not sa_value:
         return None
 
@@ -67,14 +65,14 @@ def _load_platform_sa_info() -> dict | None:
             return json.loads(stripped)
         except json.JSONDecodeError as e:
             logger.warning(
-                f"[_load_platform_sa_info] GOOGLE_GCP_SA_KEY looks like JSON but "
+                f"[_load_platform_sa_info] GCP_SA_KEY looks like JSON but "
                 f"failed to parse | error={e}"
             )
             return None
 
 
-class GoogleGCPClient:
-    """Holds Google GCP connection details. Pure config — no SDK session.
+class VertexClient:
+    """Holds Vertex AI connection details. Pure config — no SDK session.
 
     BYOK: per-project SA JSON + GCS bucket are passed via credentials and
     stored directly on the client; falls back to platform-shared values
@@ -93,7 +91,7 @@ class GoogleGCPClient:
         self.project_id = project_id
         self.location = location
         self.sa_info = sa_info
-        self.gcs_bucket = gcs_bucket or settings.GOOGLE_GCS_AUDIO_BUCKET
+        self.gcs_bucket = gcs_bucket or settings.GCS_AUDIO_BUCKET
 
     def endpoint(self, model: str) -> str:
         if self.location == "global":
@@ -107,30 +105,31 @@ class GoogleGCPClient:
         )
 
 
-class GoogleGCPProvider(BaseProvider):
-    """Google GCP (Vertex AI) provider using REST + API key auth.
+class GoogleVertexAIProvider(BaseProvider):
+    """Google Vertex AI provider using REST + API key auth.
 
-    Supports STT (audio → text), TTS (text → audio) and text completions via
-    Gemini models on Vertex AI.
+    Supports STT (audio → text) and TTS (text → audio) via Gemini multimodal
+    models on Vertex. Text-only completions are routed through the standard
+    `google` provider.
     """
 
-    def __init__(self, client: GoogleGCPClient):
+    def __init__(self, client: VertexClient):
         super().__init__(client)
         self.client = client
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        # settings.GOOGLE_GCP_SA_KEY; BYOK rows pass `sa_key` inline.
+        # settings.GCP_SA_KEY; BYOK rows pass `sa_key` inline.
         credentials = credentials or {}
-        api_key = credentials.get("api_key") or settings.GOOGLE_GCP_API_KEY
-        project_id = credentials.get("project_id") or settings.GOOGLE_GCP_PROJECT_ID
-        location = credentials.get("location") or settings.GOOGLE_GCP_PROJECT_LOCATION
-        gcs_bucket = credentials.get("gcs_bucket") or settings.GOOGLE_GCS_AUDIO_BUCKET
+        api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
+        project_id = credentials.get("project_id") or settings.GCP_PROJECT_ID
+        location = credentials.get("location") or settings.GCP_VERTEX_LOCATION
+        gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
         sa_info = credentials.get("sa_key") or _load_platform_sa_info()
 
         source = "byok" if credentials.get("api_key") else "platform"
         logger.info(
-            f"[create_client] google-gcp creds | source={source}, "
+            f"[create_client] vertex creds | source={source}, "
             f"project_id={project_id}, location={location}"
         )
 
@@ -145,9 +144,9 @@ class GoogleGCPProvider(BaseProvider):
         ]
         if missing:
             raise ValueError(
-                f"Google GCP credentials missing required fields: {', '.join(missing)}"
+                f"Google Vertex AI credentials missing required fields: {', '.join(missing)}"
             )
-        return GoogleGCPClient(
+        return VertexClient(
             api_key=api_key,
             project_id=project_id,
             location=location,
@@ -158,11 +157,19 @@ class GoogleGCPProvider(BaseProvider):
     def _post(
         self, model: str, payload: dict, log_context: str = ""
     ) -> tuple[dict | None, str | None]:
-        """POST to Google GCP generateContent and return parsed JSON or a
+        """POST to Vertex generateContent and return parsed JSON or a
         descriptive, pre-logged error message.
+
+        Maps:
+        - ``requests.Timeout`` / ``ConnectionError`` / ``RequestException``
+          → ``[KAAPI]`` network-side errors
+        - HTTP 4xx/5xx → ``[VERTEX]`` errors, branched by status code, with
+          Google's ``error.message`` / ``error.status`` surfaced when the
+          response body is the standard error envelope.
+        - Non-JSON 200 body → ``[VERTEX]`` malformed-response error
         """
         url = self.client.endpoint(model)
-        logger.debug(f"[_post] google-gcp url={url}")
+        logger.debug(f"[_post] vertex url={url}")
 
         try:
             resp = requests.post(
@@ -174,36 +181,36 @@ class GoogleGCPProvider(BaseProvider):
             )
         except requests.Timeout as e:
             error_message = (
-                f"[KAAPI] Google GCP request timed out after {REQUEST_TIMEOUT}s "
+                f"[KAAPI] Vertex AI request timed out after {REQUEST_TIMEOUT}s "
                 f"(code: {type(e).__name__}): {str(e)}. The request took too "
                 f"long to complete — retry with a smaller payload or contact "
                 f"Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
         except requests.ConnectionError as e:
             error_message = (
-                f"[KAAPI] Google GCP connection failed (code: "
+                f"[KAAPI] Vertex AI connection failed (code: "
                 f"{type(e).__name__}): {str(e)}. Network or DNS issue "
-                f"reaching Google GCP — check network connectivity from the "
+                f"reaching Vertex — check network connectivity from the "
                 f"Kaapi backend. If the issue persists, contact Kaapi."
             )
             logger.error(
-                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
         except requests.RequestException as e:
             error_message = (
-                f"[KAAPI] Google GCP request failed (code: "
+                f"[KAAPI] Vertex AI request failed (code: "
                 f"{type(e).__name__}): {str(e)}. Unexpected requests-library "
                 f"error — contact Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleGCPProvider._post] {error_message} | model={model}, {log_context}",
+                f"[GoogleVertexAIProvider._post] {error_message} | model={model}, {log_context}",
                 exc_info=True,
             )
             return None, error_message
@@ -225,44 +232,44 @@ class GoogleGCPProvider(BaseProvider):
 
             if status_code == 400:
                 error_message = (
-                    f"[GOOGLE-GCP] Bad request (code: 400{status_label}): "
+                    f"[VERTEX] Bad request (code: 400{status_label}): "
                     f"{google_msg}. Review your config parameters and input "
                     f"payload — the request shape, model, or content may be "
-                    f"invalid for this Google GCP endpoint."
+                    f"invalid for this Vertex endpoint."
                 )
             elif status_code in (401, 403):
                 error_message = (
-                    f"[GOOGLE-GCP] Authentication / permission denied (code: "
+                    f"[VERTEX] Authentication / permission denied (code: "
                     f"{status_code}{status_label}): {google_msg}. Verify the "
-                    f"Google GCP API key is valid and not expired, the project_id "
+                    f"Vertex API key is valid and not expired, the project_id "
                     f"and location are correct, and the service account has "
                     f"access to the requested model."
                 )
             elif status_code == 404:
                 error_message = (
-                    f"[GOOGLE-GCP] Resource not found (code: 404{status_label}): "
+                    f"[VERTEX] Resource not found (code: 404{status_label}): "
                     f"{google_msg}. Check that the model '{model}' exists and "
                     f"is available in your project and location."
                 )
             elif status_code == 429:
                 error_message = (
-                    f"[GOOGLE-GCP] Rate limit / quota exceeded (code: 429"
-                    f"{status_label}): {google_msg}. You have hit Google GCP's "
+                    f"[VERTEX] Rate limit / quota exceeded (code: 429"
+                    f"{status_label}): {google_msg}. You have hit Vertex AI's "
                     f"per-minute or per-day quota for this model. Wait at "
                     f"least 1 minute and retry; if the issue persists, "
                     f"request a quota increase from Google or contact Kaapi."
                 )
             elif 500 <= status_code < 600:
                 error_message = (
-                    f"[GOOGLE-GCP] Server error (code: {status_code}"
+                    f"[VERTEX] Server error (code: {status_code}"
                     f"{status_label}): {google_msg}. This is typically "
-                    f"transient (Google GCP overloaded or internal error) — "
+                    f"transient (Vertex overloaded or internal error) — "
                     f"retry in a few seconds. If the issue persists, contact "
                     f"Kaapi."
                 )
             else:
                 error_message = (
-                    f"[GOOGLE-GCP] HTTP error (code: {status_code}{status_label}): "
+                    f"[VERTEX] HTTP error (code: {status_code}{status_label}): "
                     f"{google_msg}. If the issue persists, contact Kaapi."
                 )
 
@@ -270,7 +277,7 @@ class GoogleGCPProvider(BaseProvider):
             # are caller's fault and only need a warning.
             log = logger.error if 500 <= status_code < 600 else logger.warning
             log(
-                f"[GoogleGCPProvider._post] {error_message} | "
+                f"[GoogleVertexAIProvider._post] {error_message} | "
                 f"model={model}, {log_context}"
             )
             return None, error_message
@@ -279,43 +286,15 @@ class GoogleGCPProvider(BaseProvider):
             return resp.json(), None
         except ValueError as e:
             error_message = (
-                f"[GOOGLE-GCP] Returned a non-JSON success response: {str(e)}. "
-                f"This indicates an unexpected payload shape from Google GCP — "
+                f"[VERTEX] Returned a non-JSON success response: {str(e)}. "
+                f"This indicates an unexpected payload shape from Vertex — "
                 f"retry the request. If the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleGCPProvider._post] {error_message} | "
+                f"[GoogleVertexAIProvider._post] {error_message} | "
                 f"model={model}, {log_context}"
             )
             return None, error_message
-
-    @staticmethod
-    def format_parts(parts: list[ContentPart]) -> list[dict]:
-        """REST (camelCase) variant of GoogleAIProvider.format_parts."""
-        items: list[dict] = []
-        for part in parts:
-            if isinstance(part, TextContent):
-                items.append({"text": part.value})
-            elif isinstance(part, (ImageContent, PDFContent)):
-                if part.format == "base64":
-                    items.append(
-                        {
-                            "inlineData": {
-                                "data": part.value,
-                                "mimeType": part.mime_type,
-                            }
-                        }
-                    )
-                else:
-                    items.append(
-                        {
-                            "fileData": {
-                                "fileUri": part.value,
-                                "mimeType": part.mime_type,
-                            }
-                        }
-                    )
-        return items
 
     @staticmethod
     def _extract_usage(data: dict) -> Usage:
@@ -337,12 +316,12 @@ class GoogleGCPProvider(BaseProvider):
         resolved_input: "AudioRef",
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute STT via Google GCP generateContent.
+        """Execute STT via Vertex generateContent.
 
         Note:
             HTTP / network errors come back from ``_post()`` already-logged
             and tagged. This method only handles Kaapi-side input validation,
-            staging failures, and Google GCP response-shape checks.
+            staging failures, and Vertex response-shape checks.
         """
         provider = completion_config.provider
         params = completion_config.params
@@ -354,7 +333,7 @@ class GoogleGCPProvider(BaseProvider):
                 f"Ensure the audio is uploaded and resolved before invoking STT."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -362,11 +341,11 @@ class GoogleGCPProvider(BaseProvider):
         if mime_type not in SUPPORTED_AUDIO_MIMES:
             error_message = (
                 f"[KAAPI] STT validation failed: unsupported audio mime "
-                f"'{mime_type}' for Google GCP STT. Supported MIME types are: "
+                f"'{mime_type}' for Vertex STT. Supported MIME types are: "
                 f"{', '.join(sorted(SUPPORTED_AUDIO_MIMES))}."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -374,13 +353,13 @@ class GoogleGCPProvider(BaseProvider):
         # the 20 MB inline cap.
         if not self.client.sa_info:
             error_message = (
-                "[KAAPI] Google GCP STT staging failed: ``google`` sa_key is "
+                "[KAAPI] Vertex STT staging failed: ``google`` sa_key is "
                 "not configured on this project's credentials, so audio "
                 "cannot be uploaded to GCS for transcription. Add the "
-                "service-account key to the project's ``google-gcp`` credentials."
+                "service-account key to the project's ``google`` credentials."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -394,14 +373,14 @@ class GoogleGCPProvider(BaseProvider):
             )
         except Exception as e:
             error_message = (
-                f"[KAAPI] Failed to stage audio for Google GCP STT: GCS upload "
+                f"[KAAPI] Failed to stage audio for Vertex STT: GCS upload "
                 f"to bucket '{self.client.gcs_bucket}' failed ({str(e)}). "
                 f"Verify the service account has write access to the bucket "
                 f"and that the bucket exists in project "
                 f"'{self.client.project_id}'."
             )
             logger.error(
-                f"[GoogleGCPProvider._execute_stt] {error_message} | provider={provider}",
+                f"[GoogleVertexAIProvider._execute_stt] {error_message} | provider={provider}",
                 exc_info=True,
             )
             return None, error_message
@@ -460,7 +439,7 @@ class GoogleGCPProvider(BaseProvider):
             transcript = data["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError, TypeError):
             error_message = (
-                "[GOOGLE-GCP] STT response is missing transcribed text. Google GCP "
+                "[VERTEX] STT response is missing transcribed text. Vertex "
                 "returned a 200 response but the expected "
                 "candidates[0].content.parts[0].text path is absent — this "
                 "typically means the response was blocked by safety filters "
@@ -468,7 +447,7 @@ class GoogleGCPProvider(BaseProvider):
                 "retry."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_stt] {error_message} | "
+                f"[GoogleVertexAIProvider._execute_stt] {error_message} | "
                 f"provider={provider}, model={model}, response_id={data.get('responseId')}"
             )
             return None, error_message
@@ -476,7 +455,7 @@ class GoogleGCPProvider(BaseProvider):
         llm_response = LLMCallResponse(
             response=LLMResponse(
                 provider_response_id=data.get("responseId")
-                or f"google-gcp-{uuid.uuid4().hex}",
+                or f"vertex-{uuid.uuid4().hex}",
                 model=data.get("modelVersion") or model,
                 provider=provider,
                 output=TextOutput(content=TextContent(value=transcript.strip())),
@@ -488,7 +467,7 @@ class GoogleGCPProvider(BaseProvider):
             llm_response.provider_raw_response = data
 
         logger.info(
-            f"[GoogleGCPProvider._execute_stt] Transcribed audio | provider={provider}, model={model}"
+            f"[GoogleVertexAIProvider._execute_stt] Transcribed audio | provider={provider}, model={model}"
         )
         return llm_response, None
 
@@ -498,12 +477,12 @@ class GoogleGCPProvider(BaseProvider):
         resolved_input: str,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute TTS via Google GCP generateContent.
+        """Execute TTS via Vertex generateContent.
 
         Note:
             HTTP / network errors come back from ``_post()`` already-logged
             and tagged. This method only handles Kaapi-side input validation,
-            Google GCP response-shape checks, and audio post-processing failures.
+            Vertex response-shape checks, and audio post-processing failures.
         """
         provider = completion_config.provider
         params = completion_config.params
@@ -516,7 +495,7 @@ class GoogleGCPProvider(BaseProvider):
                 f"synthesize as a plain string."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider._execute_tts] {error_message} | provider={provider}"
             )
             return None, error_message
         if not resolved_input.strip():
@@ -525,7 +504,7 @@ class GoogleGCPProvider(BaseProvider):
                 "whitespace-only. Provide non-empty text to synthesize."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider._execute_tts] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -567,15 +546,15 @@ class GoogleGCPProvider(BaseProvider):
             audio_b64 = inline["data"]
         except (KeyError, IndexError, TypeError):
             error_message = (
-                "[GOOGLE-GCP] TTS response is missing audio data. Google GCP returned "
+                "[VERTEX] TTS response is missing audio data. Vertex returned "
                 "a 200 response but the expected "
                 "candidates[0].content.parts[0].inlineData path is absent — "
-                "this typically means Google GCP was unable to generate audio "
+                "this typically means Vertex was unable to generate audio "
                 "from the input. Ensure the input text is properly formatted "
                 "and does not contain unsupported control sequences."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] {error_message} | "
+                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}, response_id={data.get('responseId')}"
             )
             return None, error_message
@@ -584,13 +563,13 @@ class GoogleGCPProvider(BaseProvider):
             raw_pcm = base64.b64decode(audio_b64)
         except (ValueError, TypeError) as e:
             error_message = (
-                f"[GOOGLE-GCP] TTS returned invalid base64 audio: {str(e)}. The "
+                f"[VERTEX] TTS returned invalid base64 audio: {str(e)}. The "
                 f"audio payload could not be decoded — this indicates a "
-                f"corrupted response from Google GCP. Retry the request; if the "
+                f"corrupted response from Vertex. Retry the request; if the "
                 f"issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] {error_message} | "
+                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}",
                 exc_info=True,
             )
@@ -598,13 +577,13 @@ class GoogleGCPProvider(BaseProvider):
 
         if not raw_pcm:
             error_message = (
-                "[GOOGLE-GCP] TTS returned empty audio data. Google GCP accepted the "
+                "[VERTEX] TTS returned empty audio data. Vertex accepted the "
                 "request and returned a base64 payload that decoded to zero "
-                "bytes — this is typically a Google GCP server-side issue. Wait "
+                "bytes — this is typically a Vertex server-side issue. Wait "
                 "a minute and retry; if the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] {error_message} | "
+                f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
                 f"provider={provider}, model={model}"
             )
             return None, error_message
@@ -618,11 +597,11 @@ class GoogleGCPProvider(BaseProvider):
             if convert_err:
                 error_message = (
                     f"[KAAPI] Post-processing failure: unable to convert "
-                    f"Google GCP PCM audio to MP3 ({convert_err}). Falling back "
+                    f"Vertex PCM audio to MP3 ({convert_err}). Falling back "
                     f"to WAV is possible by setting response_format='wav'."
                 )
                 logger.error(
-                    f"[GoogleGCPProvider._execute_tts] {error_message} | "
+                    f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
                     f"provider={provider}, model={model}, pcm_bytes={len(raw_pcm)}"
                 )
                 return None, error_message
@@ -633,11 +612,11 @@ class GoogleGCPProvider(BaseProvider):
             if convert_err:
                 error_message = (
                     f"[KAAPI] Post-processing failure: unable to convert "
-                    f"Google GCP PCM audio to OGG ({convert_err}). Falling back "
+                    f"Vertex PCM audio to OGG ({convert_err}). Falling back "
                     f"to WAV is possible by setting response_format='wav'."
                 )
                 logger.error(
-                    f"[GoogleGCPProvider._execute_tts] {error_message} | "
+                    f"[GoogleVertexAIProvider._execute_tts] {error_message} | "
                     f"provider={provider}, model={model}, pcm_bytes={len(raw_pcm)}"
                 )
                 return None, error_message
@@ -645,14 +624,14 @@ class GoogleGCPProvider(BaseProvider):
             actual_format = "ogg"
         elif response_format and response_format != "wav":
             logger.warning(
-                f"[GoogleGCPProvider._execute_tts] Unsupported response_format "
+                f"[GoogleVertexAIProvider._execute_tts] Unsupported response_format "
                 f"'{response_format}', returning native WAV | provider={provider}"
             )
 
         llm_response = LLMCallResponse(
             response=LLMResponse(
                 provider_response_id=data.get("responseId")
-                or f"google-gcp-{uuid.uuid4().hex}",
+                or f"vertex-{uuid.uuid4().hex}",
                 model=data.get("modelVersion") or model,
                 provider=provider,
                 output=AudioOutput(
@@ -670,111 +649,9 @@ class GoogleGCPProvider(BaseProvider):
             llm_response.provider_raw_response = data
 
         logger.info(
-            f"[GoogleGCPProvider._execute_tts] Synthesised audio | "
+            f"[GoogleVertexAIProvider._execute_tts] Synthesised audio | "
             f"provider={provider}, model={model}, format={actual_format}, "
             f"raw_pcm_bytes={len(raw_pcm)}"
-        )
-        return llm_response, None
-
-    def _execute_text(
-        self,
-        completion_config: NativeCompletionConfig,
-        resolved_input: str | list[ContentPart] | MultiModalInput,
-        include_provider_raw_response: bool = False,
-    ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute a text completion via generateContent."""
-        provider = completion_config.provider
-        params = completion_config.params
-        model = params.get("model") or DEFAULT_TEXT_MODELS["google"]
-
-        if params.get("knowledge_base_ids"):
-            error_message = (
-                "[KAAPI] knowledge_base_ids (file search) is not supported on "
-                "the google-gcp provider. Use the 'google-aistudio' provider "
-                "for file-search-backed text completions."
-            )
-            logger.warning(
-                f"[GoogleGCPProvider._execute_text] {error_message} | provider={provider}"
-            )
-            return None, error_message
-
-        if isinstance(resolved_input, MultiModalInput):
-            contents = [
-                {"role": "user", "parts": self.format_parts(resolved_input.parts)}
-            ]
-        elif isinstance(resolved_input, list):
-            contents = [{"role": "user", "parts": self.format_parts(resolved_input)}]
-        else:
-            contents = [{"role": "user", "parts": [{"text": resolved_input}]}]
-
-        generation_config: dict[str, Any] = {}
-        temperature = params.get("temperature")
-        if temperature is not None:
-            generation_config["temperature"] = temperature
-        max_output_tokens = params.get("max_output_tokens")
-        if max_output_tokens:
-            generation_config["maxOutputTokens"] = max_output_tokens
-        thinking_level = params.get("reasoning")
-        if thinking_level is not None:
-            generation_config["thinkingConfig"] = {
-                "includeThoughts": False,
-                "thinkingLevel": thinking_level,
-            }
-
-        payload: dict[str, Any] = {"contents": contents}
-        if generation_config:
-            payload["generationConfig"] = generation_config
-        instructions = params.get("instructions")
-        if instructions:
-            payload["systemInstruction"] = {"parts": [{"text": instructions}]}
-
-        data, err = self._post(
-            model, payload, log_context=f"provider={provider}, type=text"
-        )
-        if err:
-            return None, err
-
-        try:
-            parts = data["candidates"][0]["content"]["parts"]
-            text = "".join(p.get("text", "") for p in parts)
-        except (KeyError, IndexError, TypeError):
-            text = ""
-
-        if not text:
-            candidates = data.get("candidates") or [{}]
-            finish_reason = candidates[0].get("finishReason")
-            block_reason = (data.get("promptFeedback") or {}).get("blockReason")
-            error_message = (
-                f"[GOOGLE-GCP] Text response is missing generated content "
-                f"(finish_reason={finish_reason}, block_reason={block_reason}). "
-                f"This typically means the response was blocked by safety "
-                f"filters, truncated by token limits, or the model returned "
-                f"no candidates. Review the prompt and safety settings, then "
-                f"retry."
-            )
-            logger.warning(
-                f"[GoogleGCPProvider._execute_text] {error_message} | "
-                f"provider={provider}, model={model}, response_id={data.get('responseId')}"
-            )
-            return None, error_message
-
-        llm_response = LLMCallResponse(
-            response=LLMResponse(
-                provider_response_id=data.get("responseId")
-                or f"google-gcp-{uuid.uuid4().hex}",
-                model=data.get("modelVersion") or model,
-                provider=provider,
-                output=TextOutput(content=TextContent(value=text)),
-            ),
-            usage=self._extract_usage(data),
-        )
-
-        if include_provider_raw_response:
-            llm_response.provider_raw_response = data
-
-        logger.info(
-            f"[GoogleGCPProvider._execute_text] Generated text response | "
-            f"provider={provider}, model={model}, response_id={data.get('responseId')}"
         )
         return llm_response, None
 
@@ -800,19 +677,13 @@ class GoogleGCPProvider(BaseProvider):
                     resolved_input=resolved_input,
                     include_provider_raw_response=include_provider_raw_response,
                 )
-            if completion_type == CompletionType.TEXT:
-                return self._execute_text(
-                    completion_config=completion_config,
-                    resolved_input=resolved_input,
-                    include_provider_raw_response=include_provider_raw_response,
-                )
             error_message = (
                 f"[KAAPI] Unsupported completion type '{completion_type}' for "
-                f"google-gcp provider. Supported types are 'stt', 'tts' and "
-                f"'text'."
+                f"google provider. Vertex supports 'stt' and 'tts' only; "
+                f"use the 'google-aistudio' provider for text completions."
             )
             logger.warning(
-                f"[GoogleGCPProvider.execute] {error_message} | provider={provider}"
+                f"[GoogleVertexAIProvider.execute] {error_message} | provider={provider}"
             )
             return None, error_message
 
@@ -820,10 +691,10 @@ class GoogleGCPProvider(BaseProvider):
             error_message = (
                 f"[KAAPI] Invalid or unexpected parameter in Config: {str(e)}. "
                 f"Review the completion config; one of the parameters does "
-                f"not match the Google GCP provider's expected signature."
+                f"not match the Vertex provider's expected signature."
             )
             logger.warning(
-                f"[GoogleGCPProvider.execute] {error_message} | "
+                f"[GoogleVertexAIProvider.execute] {error_message} | "
                 f"provider={provider}, type={completion_type}",
                 exc_info=True,
             )
@@ -831,13 +702,13 @@ class GoogleGCPProvider(BaseProvider):
 
         except Exception as e:
             error_message = (
-                f"[KAAPI] Unexpected error while executing Google GCP "
+                f"[KAAPI] Unexpected error while executing Vertex "
                 f"{completion_type or 'request'}: {str(e)}. This was not "
-                f"raised inside the Google GCP HTTP call — likely a Kaapi-side "
+                f"raised inside the Vertex HTTP call — likely a Kaapi-side "
                 f"failure. Contact Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleGCPProvider.execute] {error_message} | "
+                f"[GoogleVertexAIProvider.execute] {error_message} | "
                 f"provider={provider}, type={completion_type}",
                 exc_info=True,
             )

@@ -15,7 +15,7 @@ All paths relative to `backend/app/`.
 ## Tables (SQLModel)
 | Table | Model |
 |---|---|
-| `llm_call` (LlmCall), `llm_chain` (LlmChain) | `models/llm/request.py` — `metadata` JSONB (attr `call_metadata`): `{effective_provider}` stamped after routing, NULL pre-076 |
+| `llm_call` (LlmCall), `llm_chain` (LlmChain) | `models/llm/request.py` |
 | `config` (Config) | `models/config/config.py` |
 | `config_version` (ConfigVersion) | `models/config/version.py` |
 
@@ -28,7 +28,6 @@ All paths relative to `backend/app/`.
 
 ## Services / CRUD
 - `services/llm/` — `mappers.py` (Kaapi params → provider API), `providers/`, `chain/`, `guardrails.py`, `jobs.py`
-- `services/llm/providers/` — `registry.py` routes `google`/`google-native` by `GEMINI_DEFAULT_INFERENCE_ROUTE` (`google-aistudio` | `google-gcp`; gcp is the default flow); explicit `google-aistudio` → `google_aistudio.py` (`GoogleAIProvider`), `google-gcp` → `google_gcp.py` (`GoogleGCPProvider`, Vertex AI REST; text/stt/tts). Flows: `backend/docs/gemini-routing-flows.md`
 - `services/guardrails/` — validator execution
 - `crud/llm.py`, `crud/llm_chain.py`, `crud/config/` — persistence
 

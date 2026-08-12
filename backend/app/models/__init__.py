@@ -161,7 +161,7 @@ from .notification import (
     NotificationStatus,
     NotificationType,
 )
-from .onboarding import OnboardingRequest, OnboardingRequestV2, OnboardingResponse
+from .onboarding import OnboardingRequest, OnboardingResponse
 from .openai_conversation import (
     OpenAIConversation,
     OpenAIConversationBase,
