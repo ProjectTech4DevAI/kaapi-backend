@@ -605,6 +605,20 @@ def transform_kaapi_config_to_native(
             warnings,
         )
 
+    if kaapi_config.provider == Provider.GOOGLE_GCP:
+        # Kaapi param shape is identical to Google's; reuse the Google mapper.
+        mapped_params, warnings = map_kaapi_to_google_params(
+            kaapi_config.params, kaapi_config.type
+        )
+        return (
+            NativeCompletionConfig(
+                provider="google-gcp-native",
+                params=mapped_params,
+                type=kaapi_config.type,
+            ),
+            warnings,
+        )
+
     if kaapi_config.provider == Provider.ANTHROPIC:
         if kaapi_config.type != CompletionType.TEXT:
             raise ValueError(

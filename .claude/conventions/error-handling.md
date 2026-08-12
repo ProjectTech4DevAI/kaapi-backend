@@ -13,7 +13,7 @@ are the source of truth for the full shape:
 |---|---|
 | Typed-per-status exception classes (OpenAI, Anthropic, Sarvam, ElevenLabs) | `app/services/llm/providers/oai.py`, `claude.py`, `sai.py`, `eai.py` |
 | Status-code dispatch on one umbrella class (Gemini) | `app/services/llm/providers/gai.py` |
-| Raw HTTP / no SDK (Vertex) | `app/services/llm/providers/gai_vertex.py` |
+| Raw HTTP / no SDK (Vertex) | `app/services/llm/providers/google_gcp.py` |
 | CRUD that `raise`s instead of returning | `app/crud/rag/open_ai.py` (`OpenAIVectorStoreCrud.update`) |
 
 ## Core principles
