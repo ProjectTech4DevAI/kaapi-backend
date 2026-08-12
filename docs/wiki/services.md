@@ -10,7 +10,7 @@ FastAPI (backend/app/main.py, api/routes/*)
    │
    ├── Postgres (SQLModel, core/db.py, alembic migrations)
    ├── Celery workers ── RabbitMQ (broker) + Redis (results)
-   │      └── app/celery/tasks/job_execution.py, priority queues
+   │      └── app/celery/tasks/job_execution.py, 2 queues (default, evaluations) + priority bands
    ├── Object storage        core/cloud/storage.py
    ├── Langfuse              core/langfuse/langfuse.py (traces, scores)
    ├── Sentry                core/sentry_filters.py
@@ -25,7 +25,7 @@ FastAPI (backend/app/main.py, api/routes/*)
 | Process | Entry | Notes |
 |---|---|---|
 | API server | `fastapi run app/main.py` | routes in `app/api/routes/` |
-| Celery worker | `app/celery/` config | async jobs, priority queues |
+| Celery worker | `app/celery/` config | `default` queue (most tasks) + dedicated `evaluations` queue/pool (fast-eval chunk/aggregate, isolated so eval bursts can't delay LLM jobs), priority bands within each |
 | Celery beat / cron | `app/api/routes/cron.py` + `crud/evaluations/cron.py` | batch polling for eval/assessment runs |
 
 ## Environment

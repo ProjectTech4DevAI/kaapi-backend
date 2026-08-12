@@ -1,10 +1,14 @@
 # Celery task conventions (`app/celery/tasks/`)
 
 Authoritative conventions for Celery tasks in kaapi-backend. Tasks live in `app/celery/tasks/`.
-Celery uses RabbitMQ as broker. There is a **single `default` queue** declared with
-`x-max-priority=10`; tasks are ordered by a per-task `priority` (higher drains first, FIFO within
-a band). Read `app/celery/tasks/job_execution.py` before writing — it shows the full pattern
-(decorator + timeout + OTel propagation + delegation to a service).
+Celery uses RabbitMQ as broker. There are **two queues**, each declared with `x-max-priority=10`:
+`default` (everything except fast-eval burst tasks) and `evaluations` (only
+`run_evaluation_fast_chunk` / `run_evaluation_fast_aggregate` — physically isolated on their own
+worker pool so a fast-eval burst can't occupy `default`'s worker slots and delay higher-priority
+LLM jobs; priority only reorders queued-not-yet-claimed messages, it can't preempt a task a
+worker already started). Within each queue, tasks are ordered by a per-task `priority` (higher
+drains first, FIFO within a band). Read `app/celery/tasks/job_execution.py` before writing — it
+shows the full pattern (decorator + timeout + OTel propagation + delegation to a service).
 
 ## Canonical decorator stack
 
@@ -30,17 +34,23 @@ def run_my_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
 `_set_trace`, `_run_with_otel_parent`, and `gevent_timeout` already exist in this module /
 `app/celery/utils.py` — reuse them, don't reinvent.
 
-## Priority choice — be explicit
+## Queue and priority choice — be explicit
 
-All tasks share the one `default` queue; set `priority` to place the task in the right band. Match
+Only `run_evaluation_fast_chunk` and `run_evaluation_fast_aggregate` use `queue="evaluations"`
+(fast-eval burst fan-out — many chunk tasks fired at once). Everything else uses
+`queue="default"`. Don't move other eval-adjacent tasks (e.g. `run_evaluation_batch_submission`,
+`send_eval_completion_notification`) onto `evaluations` — they're one-shot/fire-and-forget, no
+burstiness to isolate.
+
+Within whichever queue the task belongs to, set `priority` to place it in the right band. Match
 the bands already in use (see the `job_execution.py` module docstring):
 
-| Priority | When |
-|---|---|
-| `9` | User-blocking, interactive — LLM call / chain / response jobs |
-| `6` | Fast evaluation |
-| `2` | Default — doctransform, collections, STT/TTS evaluation, assessment |
-| `1` | Notifications and other fire-and-forget background work |
+| Priority | Queue | When |
+|---|---|---|
+| `9` | `default` | User-blocking, interactive — LLM call / chain / response jobs |
+| `6` | `evaluations` | Fast evaluation chunk/aggregate |
+| `2` | `default` | Default — doctransform, collections, STT/TTS evaluation, assessment |
+| `1` | `default` | Notifications and other fire-and-forget background work |
 
 Pick the band that matches the task's user-facing urgency; document the choice in a comment if it's
 not obvious. `task_inherit_parent_priority=True` is set, so a task enqueued from another task
@@ -49,7 +59,7 @@ inherits its priority unless you override it.
 ## Hard rules
 
 - **`bind=True`** so you have `self` (the task instance) for retries, IDs, etc.
-- **Always pass `queue="default"` and an explicit `priority`** — there is only one queue; the priority is what matters.
+- **Always pass an explicit `queue` (`"default"` or `"evaluations"`) and `priority`.** Only fast-eval chunk/aggregate tasks use `"evaluations"`; everything else uses `"default"`.
 - **Pass `trace_id` explicitly** as a parameter and call `_set_trace(trace_id)` first thing. This wires `asgi_correlation_id` so logs from inside the task match the originating request.
 - **Wrap the work in `_run_with_otel_parent(self, lambda: ...)`** so OpenTelemetry parent context propagates from the enqueueing process.
 - **Delegate to a service.** The task body should be a thin shim over `app/services/<domain>/`. No DB queries, no external HTTP, no business logic inside the task itself.

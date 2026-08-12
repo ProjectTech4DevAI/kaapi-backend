@@ -66,11 +66,34 @@ services:
         required: true
       - path: .env.secrets
         required: false
-    command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info", "-Q", "default"]
     logging:
       driver: awslogs
       options:
         awslogs-region: ap-south-1
         awslogs-group: /ec2/kaapi-staging
         awslogs-stream: celery-worker
+        awslogs-create-group: "true"
+
+  celery_worker_eval:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}"
+    container_name: celery-worker-eval
+    restart: always
+    build:
+      context: ./backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.secrets
+        required: false
+    command: ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info", "-Q", "evaluations", "--concurrency=${CELERY_EVAL_WORKER_CONCURRENCY:-2}"]
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ap-south-1
+        awslogs-group: /ec2/kaapi-staging
+        awslogs-stream: celery-worker-eval
         awslogs-create-group: "true"
