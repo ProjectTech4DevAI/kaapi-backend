@@ -85,9 +85,11 @@ api_router.include_router(private.router)
 #     api_router.include_router(private.router)
 
 
-# v2 API surface (mounted at settings.API_V2_STR). Only the endpoints that differ
-# from v1 live here — currently the judged run trigger. Everything else stays v1.
+# v2 API surface (mounted at settings.API_V2_STR). Endpoints that differ from v1
+# live here; credentials is re-mounted unchanged so v2 clients have one base URL.
 api_v2_router = APIRouter()
 api_v2_router.include_router(evaluations_v2_router)
 api_v2_router.include_router(evaluations_dataset_v2_router)
 api_v2_router.include_router(evaluations_prompt_improvement_v2_router)
+api_v2_router.include_router(onboarding.router_v2)
+api_v2_router.include_router(credentials.router)

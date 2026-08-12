@@ -67,7 +67,7 @@ from app.models.llm.response import (
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import apply_guardrails
 from app.services.llm.mappers import transform_kaapi_config_to_native
-from app.services.llm.providers.registry import get_llm_provider
+from app.services.llm.providers.registry import LLMProvider, get_llm_provider
 from app.utils import (
     APIResponse,
     download_audio_bytes,
@@ -115,6 +115,7 @@ def _execute_provider_call(
     query: QueryParams,
     credentials: dict | None,
     session_id: str | None,
+    trace_metadata: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
     kwargs.pop("organization_id", None)
@@ -124,6 +125,7 @@ def _execute_provider_call(
     decorated = observe_llm_execution(
         session_id=session_id,
         credentials=credentials,
+        metadata=trace_metadata,
     )(func)
 
     with suppress_http_instrumentation():
@@ -600,6 +602,9 @@ def execute_llm_call(
                         project_id=project_id,
                         organization_id=organization_id,
                         chain_id=chain_id,
+                        effective_provider=LLMProvider.effective_provider(
+                            str(config_blob.completion.provider)
+                        ),
                     )
                     return BlockResult(
                         response=llm_response,
@@ -665,6 +670,7 @@ def execute_llm_call(
                         organization_id=organization_id,
                         resolved_config=config_blob,
                         original_provider=Provider.PROXY.value,
+                        effective_provider=Provider.PROXY.value,
                         chain_id=chain_id,
                     )
                     llm_call_id = llm_call.id
@@ -832,6 +838,11 @@ def execute_llm_call(
 
             completion_config = config_blob.completion
             original_provider = completion_config.provider
+            effective_provider = LLMProvider.effective_provider(str(original_provider))
+            logger.info(
+                f"[execute_llm_call] Resolved provider routing | job_id: {job_id} | "
+                f"requested_provider: {original_provider} | effective_provider: {effective_provider}"
+            )
 
             if isinstance(completion_config, KaapiCompletionConfig):
                 completion_config, warnings = transform_kaapi_config_to_native(
@@ -888,6 +899,7 @@ def execute_llm_call(
                         organization_id=organization_id,
                         resolved_config=resolved_config_blob,
                         original_provider=original_provider,
+                        effective_provider=effective_provider,
                         chain_id=chain_id,
                     )
                     llm_call_id = llm_call.id
@@ -1047,6 +1059,7 @@ def execute_llm_call(
                             query=query,
                             credentials=langfuse_credentials,
                             session_id=conversation_id,
+                            trace_metadata={"effective_provider": effective_provider},
                             organization_id=organization_id,
                             project_id=project_id,
                             telemetry_span=provider_span,

@@ -295,8 +295,9 @@ class KaapiCompletionConfig(SQLModel):
         None,
         description=(
             "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
-            "google-aistudio). 'google' routes via Google Vertex AI; "
-            "'google-aistudio' uses Google AI Studio."
+            "google-aistudio, google-gcp). 'google' follows the platform's "
+            "default Gemini route; 'google-aistudio' and 'google-gcp' pin the "
+            "backend explicitly."
         ),
     )
 
@@ -679,6 +680,18 @@ class LlmCall(SQLModel, table=True):
             JSONB,
             nullable=True,
             comment="Configuration: {config_id, config_version} for stored config OR {config_blob} for ad-hoc config",
+        ),
+    )
+
+    # `metadata` is reserved on SQLModel/SQLAlchemy declarative classes, so the
+    # attribute is renamed while the DB column keeps the plain `metadata` name.
+    call_metadata: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            "metadata",
+            JSONB,
+            nullable=True,
+            comment="Platform metadata: {effective_provider} - backend actually used after routing (NULL for rows predating routing metadata)",
         ),
     )
 
