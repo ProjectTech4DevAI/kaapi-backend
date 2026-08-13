@@ -23,12 +23,12 @@ MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
 def get_service_name(provider: ProviderType) -> str:
     """Get the collection service name for a provider."""
-    names = {
-        ProviderType.openai: "openai vector store",
-        ProviderType.google_aistudio: "gemini file search store",
-        # ProviderType.bedrock: "bedrock knowledge base",
+    names: dict[str, str] = {
+        ProviderType.openai.value: "openai vector store",
+        ProviderType.google_aistudio.value: "gemini file search store",
+        # ProviderType.bedrock.value: "bedrock knowledge base",
     }
-    return names.get(provider, "")
+    return names.get(provider.lower(), "")
 
 
 def extract_error_message(err: Exception | str) -> str:
@@ -72,7 +72,9 @@ def batch_documents(documents: list[Document]) -> list[list[Document]]:
     current_batch_size_kb = 0.0
 
     for doc in documents:
-        doc_size_kb = doc.file_size_kb or 0.0
+        doc_size_kb = doc.file_size_kb
+        if doc_size_kb is None:
+            raise TypeError(f"[batch_documents] Document {doc.id} missing file_size_kb")
 
         would_exceed_size = (current_batch_size_kb + doc_size_kb) > MAX_BATCH_SIZE_KB
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT

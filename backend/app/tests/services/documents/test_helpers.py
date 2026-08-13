@@ -25,9 +25,11 @@ from app.services.documents.validator import (
 )
 
 
-def make_upload_file(content: bytes, size: int | None = None) -> UploadFile:
+def make_upload_file(
+    content: bytes, size: int | None = None, filename: str = "test.csv"
+) -> UploadFile:
     """Create an UploadFile with the given content and optional pre-set size."""
-    return UploadFile(file=BytesIO(content), size=size)
+    return UploadFile(file=BytesIO(content), size=size, filename=filename)
 
 
 class TestCalculateFileSizeWithSizeAttribute:
