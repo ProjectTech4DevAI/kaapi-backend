@@ -28,7 +28,14 @@ from app.api.routes.assessment.runs import (
     list_assessment_runs,
     retry_assessment_run,
 )
-from app.models.assessment import AssessmentCreate, AssessmentExportRow
+from app.models.assessment import (
+    AssessmentConfigRef,
+    AssessmentExportRow,
+    AssessmentRunCreate,
+    InputBinding,
+)
+
+ASSESSMENT_UUID = UUID("00000000-0000-0000-0000-000000000010")
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -79,15 +86,12 @@ def _run() -> SimpleNamespace:
     )
 
 
-def _row(run_id: int = 22) -> AssessmentExportRow:
+def _row(execution_id: int = 22) -> AssessmentExportRow:
     return AssessmentExportRow(
-        assessment_id=10,
+        assessment_id=ASSESSMENT_UUID,
         experiment_name="exp",
-        dataset_id=7,
-        dataset_name="ds",
-        run_id=run_id,
-        run_name="exp",
-        run_status="completed",
+        execution_id=execution_id,
+        execution_status="COMPLETED",
         config_id=None,
         config_version=1,
         row_id="row_0",
@@ -216,14 +220,14 @@ class TestDatasetRoutes:
 
 class TestRunRoutes:
     def test_create_assessment_runs(self) -> None:
-        request = AssessmentCreate(
+        request = AssessmentRunCreate(
             experiment_name="exp",
             dataset_id=7,
+            input_binding=InputBinding(prompt="p", text_columns=[], attachments=[]),
             configs=[
-                {
-                    "config_id": "00000000-0000-0000-0000-000000000001",
-                    "config_version": 1,
-                }
+                AssessmentConfigRef(
+                    id=UUID("00000000-0000-0000-0000-000000000001"), version=1
+                )
             ],
         )
         result = SimpleNamespace(
@@ -500,7 +504,7 @@ class TestBuildAssessmentResultsResponse:
 
         with patch(
             "app.services.assessment.utils.export.load_export_rows_for_run",
-            side_effect=[[_row(run_id=22)], [_row(run_id=23)]],
+            side_effect=[[_row(execution_id=22)], [_row(execution_id=23)]],
         ), patch(
             "app.services.assessment.utils.export.sort_export_rows",
             side_effect=lambda rows: rows,
