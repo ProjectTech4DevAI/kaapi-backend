@@ -11,12 +11,25 @@ from sqlmodel import Session, select
 from app.core.util import now
 from app.models.assessment import (
     Assessment,
+    AssessmentMethod,
     AssessmentRun,
     AssessmentRunCounts,
     AssessmentRunStat,
+    AssessmentStatus,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _read_exec(run: AssessmentRun) -> dict[str, Any]:
+    """Read the RUN runtime bag (RunExecution shape) that replaced the dropped columns."""
+    return run.execution or {}
+
+
+def _write_exec(run: AssessmentRun, **values: Any) -> None:
+    """Merge keys into the run's execution bag; the caller commits."""
+    run.execution = {**(run.execution or {}), **values}
+    flag_modified(run, "execution")
 
 
 def create_assessment(
@@ -25,12 +38,19 @@ def create_assessment(
     dataset_id: int,
     organization_id: int,
     project_id: int,
+    input_binding: dict[str, Any] | None = None,
 ) -> Assessment:
-    """Create a parent assessment row."""
+    """Create a parent assessment row for the legacy RUN pipeline.
+
+    The RUN binding (InputBinding: prompt/text_columns/attachments) now lives on
+    the parent `assessment.input`; child runs no longer carry their own input.
+    """
     assessment = Assessment(
         experiment_name=experiment_name,
+        method=AssessmentMethod.RUN,
         dataset_id=dataset_id,
-        status="pending",
+        input=input_binding,
+        status=AssessmentStatus.PENDING,
         organization_id=organization_id,
         project_id=project_id,
         inserted_at=now(),
@@ -55,7 +75,7 @@ def create_assessment(
 
 def get_assessment_by_id(
     session: Session,
-    assessment_id: int,
+    assessment_id: UUID,
     organization_id: int,
     project_id: int,
 ) -> Assessment:
@@ -96,19 +116,21 @@ def list_assessments(
 
 def create_assessment_run(
     session: Session,
-    assessment_id: int,
+    assessment_id: UUID,
     config_id: UUID,
     config_version: int,
-    assessment_input: dict[str, Any],
 ) -> AssessmentRun:
-    """Create an assessment run record under a parent assessment."""
+    """Create an assessment run record under a parent assessment.
+
+    The run's input binding lives on the parent `assessment.input`; the run row
+    carries only config + runtime state.
+    """
     run = AssessmentRun(
         assessment_id=assessment_id,
         config_id=config_id,
         config_version=config_version,
-        status="pending",
+        status=AssessmentStatus.PENDING,
         total_items=0,
-        input=assessment_input,
         inserted_at=now(),
         updated_at=now(),
     )
@@ -135,9 +157,9 @@ def update_run_post_processing_config(
     run: AssessmentRun,
     config: dict[str, Any] | None,
 ) -> AssessmentRun:
-    """Set post_processing_config inside the run's input JSON blob and persist."""
-    run.input = {**(run.input or {}), "post_processing_config": config}
-    flag_modified(run, "input")
+    """Persist the run's post_processing_config column."""
+    run.post_processing_config = config
+    run.updated_at = now()
     session.add(run)
     try:
         session.commit()
@@ -179,7 +201,7 @@ def get_assessment_run_by_id(
 
 def get_assessment_runs_for_assessment(
     session: Session,
-    assessment_id: int,
+    assessment_id: UUID,
 ) -> list[AssessmentRun]:
     """List child runs for a parent assessment, ordered by id."""
     statement = (
@@ -194,7 +216,7 @@ def list_assessment_runs(
     session: Session,
     organization_id: int,
     project_id: int,
-    assessment_id: int | None = None,
+    assessment_id: UUID | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[AssessmentRun]:
@@ -217,7 +239,7 @@ def list_assessment_runs(
 def update_assessment_run_status(
     session: Session,
     run: AssessmentRun,
-    status: str,
+    status: AssessmentStatus,
     error_message: str | None = None,
     batch_job_id: int | None = None,
     total_items: int | None = None,
@@ -234,7 +256,7 @@ def update_assessment_run_status(
     if total_items is not None:
         run.total_items = total_items
     if object_store_url is not None:
-        run.object_store_url = object_store_url
+        _write_exec(run, object_store_url=object_store_url)
 
     session.add(run)
     try:
@@ -256,17 +278,20 @@ def update_assessment_run_prefilter_stats(
     prefilter_total_passed: int | None = None,
     prefilter_total_rejected: int | None = None,
 ) -> AssessmentRun:
-    """Persist prefilter result stats (rows/passed/rejected + S3 URL) on a run."""
+    """Persist prefilter result stats (rows/passed/rejected + S3 URL) in the exec bag."""
     run.updated_at = now()
 
+    stats: dict[str, Any] = {}
     if prefilter_object_store_url is not None:
-        run.prefilter_object_store_url = prefilter_object_store_url
+        stats["prefilter_object_store_url"] = prefilter_object_store_url
     if prefilter_total_rows is not None:
-        run.prefilter_total_rows = prefilter_total_rows
+        stats["prefilter_total_rows"] = prefilter_total_rows
     if prefilter_total_passed is not None:
-        run.prefilter_total_passed = prefilter_total_passed
+        stats["prefilter_total_passed"] = prefilter_total_passed
     if prefilter_total_rejected is not None:
-        run.prefilter_total_rejected = prefilter_total_rejected
+        stats["prefilter_total_rejected"] = prefilter_total_rejected
+    if stats:
+        _write_exec(run, **stats)
 
     session.add(run)
     try:
@@ -282,45 +307,43 @@ def update_assessment_run_prefilter_stats(
     return run
 
 
-_ACTIVE_RUN_STATUSES = {
-    "prefilter_processing",
-    "l2_processing",
-    "processing",
-    "in_progress",
+# Stage-level progress (prefilter/l2) now lives in the exec bag's stage_status;
+# run.status is one of the AssessmentStatus terminal/lifecycle values.
+_COMPLETED_RUN_STATUSES = {
+    AssessmentStatus.COMPLETED,
+    AssessmentStatus.COMPLETED_WITH_ERRORS,
 }
-_FAILED_RUN_STATUSES = {"failed", "prefilter_failed"}
-_COMPLETED_RUN_STATUSES = {"completed", "completed_with_errors"}
 
 
 def compute_run_counts(runs: list[AssessmentRun]) -> AssessmentRunCounts:
     """Aggregate child run statuses into counters."""
     return AssessmentRunCounts(
         total=len(runs),
-        pending=sum(1 for run in runs if run.status == "pending"),
-        processing=sum(1 for run in runs if run.status in _ACTIVE_RUN_STATUSES),
+        pending=sum(1 for run in runs if run.status == AssessmentStatus.PENDING),
+        processing=sum(1 for run in runs if run.status == AssessmentStatus.PROCESSING),
         completed=sum(1 for run in runs if run.status in _COMPLETED_RUN_STATUSES),
-        failed=sum(1 for run in runs if run.status in _FAILED_RUN_STATUSES),
+        failed=sum(1 for run in runs if run.status == AssessmentStatus.FAILED),
     )
 
 
-def derive_assessment_status(counts: AssessmentRunCounts) -> str:
+def derive_assessment_status(counts: AssessmentRunCounts) -> AssessmentStatus:
     """Compute parent assessment status from child run counters."""
     if counts.total == 0:
-        return "pending"
+        return AssessmentStatus.PENDING
     if counts.completed == counts.total:
-        return "completed"
+        return AssessmentStatus.COMPLETED
     if counts.failed == counts.total:
-        return "failed"
+        return AssessmentStatus.FAILED
     if (
         counts.completed > 0
         and counts.failed > 0
         and counts.pending == 0
         and counts.processing == 0
     ):
-        return "completed_with_errors"
+        return AssessmentStatus.COMPLETED_WITH_ERRORS
     if counts.pending > 0 and counts.pending == counts.total:
-        return "pending"
-    return "processing"
+        return AssessmentStatus.PENDING
+    return AssessmentStatus.PROCESSING
 
 
 def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
@@ -328,17 +351,12 @@ def build_run_stats(runs: list[AssessmentRun]) -> list[AssessmentRunStat]:
     return [
         AssessmentRunStat(
             run_id=run.id,
-            config_id=str(run.config_id) if run.config_id else None,
+            config_id=run.config_id,
             config_version=run.config_version,
             status=run.status,
             total_items=run.total_items,
             error_message=run.error_message,
             updated_at=run.updated_at,
-            prefilter_total_rows=run.prefilter_total_rows,
-            prefilter_total_passed=run.prefilter_total_passed,
-            prefilter_total_rejected=run.prefilter_total_rejected,
-            stage=run.stage,
-            stage_status=run.stage_status,
         )
         for run in runs
     ]
@@ -353,7 +371,7 @@ def derive_aggregate_error(counts: AssessmentRunCounts) -> str | None:
 
 def recompute_assessment_status(
     session: Session,
-    assessment_id: int,
+    assessment_id: UUID,
     organization_id: int | None = None,
     project_id: int | None = None,
 ) -> Assessment:

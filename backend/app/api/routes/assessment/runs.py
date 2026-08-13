@@ -1,7 +1,12 @@
-"""Assessment run endpoints — one row per config-run inside a parent assessment."""
+"""Assessment run endpoints — one row per config-run inside a parent assessment (LEGACY RUN pipeline).
+
+Serves dataset-based RUN assessments only. The new API-client BATCH path
+(`api.py`) delivers results by webhook and never surfaces here.
+"""
 
 import logging
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -20,10 +25,10 @@ from app.crud.assessment import (
 )
 from app.models.assessment import (
     Assessment,
-    AssessmentCreate,
-    AssessmentResponse,
     AssessmentRun,
+    AssessmentRunCreate,
     AssessmentRunPublic,
+    AssessmentRunResponse,
 )
 from app.models.evaluation import EvaluationDataset
 from app.services.assessment.service import (
@@ -89,14 +94,14 @@ def _build_run_public(
 @router.post(
     "/runs",
     description=load_description("assessment/create_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def create_assessment_runs(
-    request: AssessmentCreate,
+    request: AssessmentRunCreate,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Submit an assessment and create one child run per config."""
     logger.info(
         "[create_assessment_runs] Assessment run submission | experiment=%s | dataset_id=%s | configs=%s",
@@ -118,14 +123,14 @@ def create_assessment_runs(
 @router.post(
     "/runs/{run_id}/retry",
     description=load_description("assessment/retry_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def retry_assessment_run(
     run_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Retry a single child assessment run using the same inputs."""
     run = get_run_by_id(
         session=session,
@@ -146,14 +151,14 @@ def retry_assessment_run(
 @router.post(
     "/runs/{run_id}/resume",
     description=load_description("assessment/resume_run.md"),
-    response_model=APIResponse[AssessmentResponse],
+    response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def resume_assessment_run(
     run_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[AssessmentResponse]:
+) -> APIResponse[AssessmentRunResponse]:
     """Resume a failed child run from its failed stage, reusing completed stages."""
     run = get_run_by_id(
         session=session,
@@ -180,7 +185,7 @@ def resume_assessment_run(
 def list_assessment_runs(
     session: SessionDep,
     auth_context: AuthContextDep,
-    assessment_id: int | None = Query(default=None, ge=1),
+    assessment_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> APIResponse[list[AssessmentRunPublic]]:
