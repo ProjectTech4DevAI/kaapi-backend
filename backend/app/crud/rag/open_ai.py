@@ -50,8 +50,10 @@ def vs_ls(client: OpenAI, vector_store_id: str) -> Iterator[VectorStoreFile]:
 
 
 def _provider_file_id(doc: Document) -> str:
+    # ValueError (not RuntimeError) so `_create_and_index_batch` does not retry
+    # this deterministic local validation failure.
     if not doc.file_id or OPENAI_PROVIDER not in doc.file_id:
-        raise RuntimeError(
+        raise ValueError(
             f"Document {doc.id} has no OpenAI file id; upload it before indexing."
         )
     return doc.file_id[OPENAI_PROVIDER]

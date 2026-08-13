@@ -163,7 +163,7 @@ def schedule_transformation(
 
     return TransformationJobInfo(
         message=f"Document accepted for transformation from {source_format} to {target_format}.",
-        job_id=str(transformation_job_id),  # pyright: ignore[reportArgumentType]
+        job_id=transformation_job_id,
         status=TransformationStatus.PENDING,
         transformer=actual_transformer,
         status_check_url=f"/documents/transformation/{transformation_job_id}",

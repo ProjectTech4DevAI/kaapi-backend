@@ -15,8 +15,8 @@ from app.crud.document_collection import DocumentCollectionCrud
 logger = logging.getLogger(__name__)
 
 
-class _RemoteVectorStore(Protocol):
-    """Remote store passed to `delete` (e.g. OpenAIVectorStoreCrud)."""
+class RemoteVectorStore(Protocol):
+    """Remote store passed to `delete` (e.g. OpenAIVectorStoreCrud, GeminiFileSearchStoreCrud)."""
 
     def delete(self, resource_id: str, /) -> None:
         ...
@@ -176,14 +176,14 @@ class CollectionCrud:
         return self._update(coll)
 
     @ft.singledispatchmethod
-    def delete(self, model: object, remote: _RemoteVectorStore) -> object:
+    def delete(self, model: object, remote: RemoteVectorStore) -> object:
         logger.error(
             f"[CollectionCrud.delete] Invalid model type | {{'model_type': '{type(model).__name__}'}}",
         )
         raise TypeError(type(model))
 
     @delete.register
-    def _(self, model: Collection, remote: _RemoteVectorStore) -> Collection:
+    def _(self, model: Collection, remote: RemoteVectorStore) -> Collection:
         if model.deleted_at is not None:
             logger.info(
                 f"[CollectionCrud.delete] Collection already deleted | {{'collection_id': '{model.id}'}}"
@@ -198,7 +198,7 @@ class CollectionCrud:
         return collection
 
     @delete.register
-    def _(self, model: Document, remote: _RemoteVectorStore) -> Document:
+    def _(self, model: Document, remote: RemoteVectorStore) -> Document:
         statement = (
             select(Collection)
             .join(
