@@ -1,10 +1,13 @@
 """Tests for prefilter settings + pipeline stage ordering."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from app.models.assessment import Stage, StageStatus
+from app.crud.assessment import core as assessment_core
+from app.crud.assessment.core import _read_exec
+from app.models.assessment import AssessmentStatus, Stage, StageStatus
 from app.services.assessment.prefilter import resolve_prefilter_settings
 from app.services.assessment.stages import (
     advance_or_finalize,
@@ -77,27 +80,33 @@ class TestPipeline:
 class TestAdvanceOrFinalize:
     def test_advances_to_next_pending_stage(self) -> None:
         run = SimpleNamespace(
-            pipeline=build_pipeline(_FULL_INPUT),
-            stage=Stage.PRE_FILTER_TOPIC_RELEVANCE,
-            stage_status=StageStatus.COMPLETED,
+            execution={
+                "pipeline": build_pipeline(_FULL_INPUT),
+                "stage": Stage.PRE_FILTER_TOPIC_RELEVANCE,
+                "stage_status": StageStatus.COMPLETED,
+            },
             status="processing",
         )
-        nxt = advance_or_finalize(run)
+        with patch.object(assessment_core, "flag_modified"):
+            nxt = advance_or_finalize(run)
         assert nxt == Stage.PRE_FILTER_DUPLICATE_DETECTION
-        assert run.stage == Stage.PRE_FILTER_DUPLICATE_DETECTION
-        assert run.stage_status == StageStatus.PENDING
+        assert _read_exec(run).get("stage") == Stage.PRE_FILTER_DUPLICATE_DETECTION
+        assert _read_exec(run).get("stage_status") == StageStatus.PENDING
 
     def test_finalizes_after_last_stage(self) -> None:
         run = SimpleNamespace(
-            pipeline=build_pipeline({}),
-            stage=Stage.L2_ASSESSMENT,
-            stage_status=StageStatus.COMPLETED,
+            execution={
+                "pipeline": build_pipeline({}),
+                "stage": Stage.L2_ASSESSMENT,
+                "stage_status": StageStatus.COMPLETED,
+            },
             status="processing",
         )
-        assert advance_or_finalize(run) is None
-        assert run.stage == Stage.COMPLETED
-        assert run.stage_status == StageStatus.COMPLETED
-        assert run.status == "completed"
+        with patch.object(assessment_core, "flag_modified"):
+            assert advance_or_finalize(run) is None
+        assert _read_exec(run).get("stage") == Stage.COMPLETED
+        assert _read_exec(run).get("stage_status") == StageStatus.COMPLETED
+        assert run.status == AssessmentStatus.COMPLETED
 
 
 class TestBuildPrefilterRequests:

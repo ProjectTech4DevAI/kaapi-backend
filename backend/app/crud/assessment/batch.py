@@ -381,18 +381,18 @@ def submit_assessment_batch(
         run: The AssessmentRun to process
         dataset: The dataset to read rows from
         config_blob: Resolved configuration blob
-        assessment_input: Assessment input config (prompt_template, text_columns, etc.)
+        assessment_input: Parent InputBinding (prompt, text_columns, attachments)
         organization_id: Organization ID
         project_id: Project ID
 
     Returns:
         Created BatchJob record
     """
+    # `assessment_input` is the parent InputBinding (prompt/text_columns/attachments);
+    # system_instruction / output_schema now live in the resolved config blob.
     text_columns = assessment_input.get("text_columns", [])
-    prompt_template = assessment_input.get("prompt_template")
-    system_instruction = assessment_input.get("system_instruction")
+    prompt_template = assessment_input.get("prompt")
     attachments_raw = assessment_input.get("attachments", [])
-    output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
     # Use preloaded rows (post-prefilter filtered) if provided, else load from dataset.
@@ -414,19 +414,7 @@ def submit_assessment_batch(
     completion = config_blob.completion
     provider_name = completion.provider or "openai"
 
-    # Native params are a plain dict; Kaapi params are now a typed submodel.
-    raw_params = completion.params
-    params = (
-        dict(raw_params)
-        if isinstance(raw_params, dict)
-        else raw_params.model_dump(exclude_none=True)
-    )
-    params.pop("instructions", None)
-    params.pop("system_instruction", None)
-    if isinstance(system_instruction, str) and system_instruction.strip():
-        params["instructions"] = system_instruction
-    if output_schema:
-        params["output_schema"] = output_schema
+    params = dict(completion.params)
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")
@@ -472,7 +460,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
+    elif base_provider == LLMProvider.GOOGLE:
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
@@ -504,7 +492,7 @@ def submit_assessment_batch(
         batch_job = start_batch_job(
             session=session,
             provider=provider,
-            provider_name="google-aistudio",
+            provider_name=LLMProvider.GOOGLE,
             job_type=BatchJobType.ASSESSMENT,
             organization_id=organization_id,
             project_id=project_id,

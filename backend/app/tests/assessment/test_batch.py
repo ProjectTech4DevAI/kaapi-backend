@@ -108,12 +108,14 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         assert result.id == 1
         assert map_params.call_args.kwargs["session"] is session
+        # Instruction now comes from the resolved config blob; the request has no
+        # system_instruction override anymore.
         assert map_params.call_args.kwargs["kaapi_params"]["instructions"] == (
-            "request system"
+            "config system"
         )
         assert start_batch.call_args.kwargs["provider_name"] == "openai"
 
-    def test_config_instruction_is_not_used_without_request_instruction(self) -> None:
+    def test_config_instruction_is_used(self) -> None:
         session = MagicMock()
         run = _make_run()
         dataset = _make_dataset()
@@ -165,7 +167,10 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert map_params.call_args.kwargs["session"] is session
-        assert "instructions" not in map_params.call_args.kwargs["kaapi_params"]
+        assert (
+            map_params.call_args.kwargs["kaapi_params"]["instructions"]
+            == "config system"
+        )
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()
@@ -173,7 +178,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
-                provider="google-aistudio-native",
+                provider="google-native",
                 params={"instructions": "config system"},
             )
         )
@@ -223,8 +228,8 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 2
-        assert map_params.call_args.args[0]["instructions"] == "request system"
-        assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
+        assert start_batch.call_args.kwargs["provider_name"] == "google"
 
     def test_anthropic_native_routes_to_anthropic_batch(self) -> None:
         session = MagicMock()
@@ -282,7 +287,7 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 4
-        assert map_params.call_args.args[0]["instructions"] == "request system"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
         assert start_batch.call_args.kwargs["provider_name"] == "anthropic"
         assert start_batch.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
         assert start_batch.call_args.kwargs["config"]["max_tokens"] == (
