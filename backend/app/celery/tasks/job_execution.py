@@ -349,6 +349,49 @@ def run_assessment_pipeline(
 
 
 @celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
+def run_assessment_api_batch(
+    self,
+    execution_id: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str,
+    **kwargs,
+):
+    """Drive one tick of the BATCH API-client staged pipeline.
+
+    Self-re-enqueues (``apply_async(countdown=...)``) while a stage batch is still
+    in flight or a next stage was just submitted, and stops once the run finalises
+    or fails. Idempotent — the service keys off the stage_status in the exec bag.
+    """
+    from app.services.assessment.api.batch import (
+        POLL_COUNTDOWN_SECONDS,
+        run_batch_stage,
+    )
+
+    _set_trace(trace_id)
+    result = _run_with_otel_parent(
+        self,
+        lambda: run_batch_stage(
+            execution_id=execution_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        ),
+    )
+    if result and result.get("requeue"):
+        self.apply_async(
+            kwargs={
+                "execution_id": execution_id,
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "trace_id": trace_id,
+            },
+            countdown=POLL_COUNTDOWN_SECONDS,
+        )
+    return result
+
+
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs

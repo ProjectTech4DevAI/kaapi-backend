@@ -7,9 +7,13 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
+from app.crud.assessment import core as assessment_core
+from app.crud.assessment.core import _read_exec
 from app.models.assessment import (
     AssessmentConfigRef,
-    AssessmentCreate,
+    AssessmentRunCreate,
+    AssessmentStatus,
+    InputBinding,
     Stage,
     StageStatus,
 )
@@ -22,17 +26,21 @@ from app.services.assessment.service import (
     start_assessment,
 )
 
+ASSESSMENT_ID = UUID("00000000-0000-0000-0000-000000000021")
+CONFIG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-def _make_request(provider_config_id: UUID) -> AssessmentCreate:
-    return AssessmentCreate(
+
+def _make_request(provider_config_id: UUID) -> AssessmentRunCreate:
+    return AssessmentRunCreate(
         experiment_name="exp-1",
         dataset_id=7,
-        prompt_template="Answer: {question}",
-        system_instruction="Assess strictly",
-        text_columns=["question"],
-        attachments=[],
+        input_binding=InputBinding(
+            prompt="Answer: {question}",
+            text_columns=["question"],
+            attachments=[],
+        ),
         configs=[
-            AssessmentConfigRef(config_id=provider_config_id, config_version=1),
+            AssessmentConfigRef(id=provider_config_id, version=1),
         ],
     )
 
@@ -47,10 +55,10 @@ def _make_dataset() -> MagicMock:
 def _make_run() -> MagicMock:
     run = MagicMock()
     run.id = 11
-    run.assessment_id = 21
-    run.config_id = UUID("00000000-0000-0000-0000-000000000001")
+    run.assessment_id = ASSESSMENT_ID
+    run.config_id = CONFIG_ID
     run.config_version = 1
-    run.status = "processing"
+    run.status = AssessmentStatus.PROCESSING
     return run
 
 
@@ -143,12 +151,10 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
-                provider="google-aistudio", params={"model": "gemini"}
-            )
+            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
         )
 
         with (
@@ -189,8 +195,8 @@ class TestStartAssessment:
         [
             "openai",
             "openai-native",
-            "google-aistudio",
-            "google-aistudio-native",
+            "google",
+            "google-native",
             "anthropic",
             "anthropic-native",
         ],
@@ -201,7 +207,7 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(provider=provider, params={"model": "m"})
@@ -243,7 +249,7 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
@@ -289,7 +295,7 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(provider=None, params={"model": "gpt-4.1-mini"})
@@ -323,11 +329,12 @@ class TestStartAssessment:
                 project_id=1,
             )
 
-        assert response.assessment_id == 21
+        assert response.assessment_id == ASSESSMENT_ID
         assert response.num_configs == 1
         assert response.runs[0].run_id == 11
-        assessment_input = create_run.call_args.kwargs["assessment_input"]
-        assert assessment_input["system_instruction"] == "Assess strictly"
+        # Binding now lives on the parent via create_assessment(input_binding=...),
+        # not threaded through create_assessment_run.
+        assert create_run.call_args.kwargs["assessment_id"] == ASSESSMENT_ID
         dispatch.delay.assert_called_once()
 
     def test_rejects_default_tagged_config(self) -> None:
@@ -371,7 +378,7 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         dataset = _make_dataset()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
@@ -415,49 +422,52 @@ class TestStartAssessment:
 
 class TestRetryHelpers:
     def test_build_retry_request_errors_and_success(self) -> None:
+        # The binding now comes in as the input_binding arg (parent assessment.input),
+        # not off the child run.
+        binding = {"prompt": "p", "text_columns": ["q"], "attachments": []}
+
         with pytest.raises(HTTPException, match="No assessment runs"):
-            _build_retry_request(experiment_name="exp", dataset_id=1, runs=[])
+            _build_retry_request(
+                experiment_name="exp", dataset_id=1, input_binding=binding, runs=[]
+            )
 
         run = MagicMock()
-        run.input = None
         with pytest.raises(HTTPException, match="missing for retry"):
-            _build_retry_request(experiment_name="exp", dataset_id=1, runs=[run])
+            _build_retry_request(
+                experiment_name="exp", dataset_id=1, input_binding=None, runs=[run]
+            )
 
         run2 = MagicMock()
         run2.id = 1
-        run2.input = {"prompt_template": "p", "text_columns": ["q"], "attachments": []}
         run2.config_id = None
         run2.config_version = None
         with pytest.raises(HTTPException, match="Config reference is missing"):
-            _build_retry_request(experiment_name="exp", dataset_id=1, runs=[run2])
+            _build_retry_request(
+                experiment_name="exp", dataset_id=1, input_binding=binding, runs=[run2]
+            )
 
         run3 = MagicMock()
         run3.id = 2
-        run3.input = {
-            "prompt_template": "p",
-            "system_instruction": "sys",
-            "text_columns": ["q"],
-            "attachments": [],
-            "output_schema": {"type": "object"},
-        }
-        run3.config_id = UUID("00000000-0000-0000-0000-000000000001")
+        run3.config_id = CONFIG_ID
         run3.config_version = 1
-        req = _build_retry_request(experiment_name="exp", dataset_id=1, runs=[run3])
+        req = _build_retry_request(
+            experiment_name="exp", dataset_id=1, input_binding=binding, runs=[run3]
+        )
         assert req.experiment_name == "exp"
-        assert req.system_instruction == "sys"
+        assert req.input_binding.prompt == "p"
         assert len(req.configs) == 1
 
     def test_retry_assessment_wrappers(self) -> None:
         session = MagicMock()
         assessment = MagicMock()
-        assessment.id = 21
+        assessment.id = ASSESSMENT_ID
         assessment.experiment_name = "exp"
         assessment.dataset_id = 7
+        assessment.input = {"prompt": "p", "text_columns": [], "attachments": []}
         run = MagicMock()
-        run.assessment_id = 21
+        run.assessment_id = ASSESSMENT_ID
         run.assessment = assessment
-        run.input = {"prompt_template": "p", "text_columns": [], "attachments": []}
-        run.config_id = UUID("00000000-0000-0000-0000-000000000001")
+        run.config_id = CONFIG_ID
         run.config_version = 1
 
         result = SimpleNamespace(
@@ -492,25 +502,29 @@ class TestResumeAssessmentRun:
     def _failed_run(self, stage: str) -> MagicMock:
         run = MagicMock()
         run.id = 11
-        run.assessment_id = 21
-        run.config_id = UUID("00000000-0000-0000-0000-000000000001")
+        run.assessment_id = ASSESSMENT_ID
+        run.config_id = CONFIG_ID
         run.config_version = 1
-        run.status = "failed"
-        run.stage = stage
-        run.stage_status = StageStatus.FAILED
-        run.pipeline = {
-            "stages": [
-                {"stage": Stage.PRE_FILTER_TOPIC_RELEVANCE, "order": 1},
-                {"stage": Stage.PRE_FILTER_DUPLICATE_DETECTION, "order": 2},
-                {"stage": Stage.L2_ASSESSMENT, "order": 3},
-            ]
+        run.status = AssessmentStatus.FAILED
+        run.execution = {
+            "stage": stage,
+            "stage_status": StageStatus.FAILED,
+            "pipeline": {
+                "stages": [
+                    {"stage": Stage.PRE_FILTER_TOPIC_RELEVANCE, "order": 1},
+                    {"stage": Stage.PRE_FILTER_DUPLICATE_DETECTION, "order": 2},
+                    {"stage": Stage.L2_ASSESSMENT, "order": 3},
+                ]
+            },
         }
-        run.assessment = SimpleNamespace(id=21, experiment_name="exp", dataset_id=7)
+        run.assessment = SimpleNamespace(
+            id=ASSESSMENT_ID, experiment_name="exp", dataset_id=7
+        )
         return run
 
     def test_rejects_non_failed_run(self) -> None:
         run = self._failed_run(Stage.L2_ASSESSMENT)
-        run.stage_status = StageStatus.PROCESSING
+        run.execution["stage_status"] = StageStatus.PROCESSING
         with pytest.raises(HTTPException) as exc:
             resume_assessment_run(MagicMock(), run, 1, 1)
         assert exc.value.status_code == 400
@@ -531,16 +545,17 @@ class TestResumeAssessmentRun:
                 return_value=_make_dataset(),
             ),
             patch("app.services.assessment.service.recompute_assessment_status"),
+            patch.object(assessment_core, "flag_modified"),
             patch("app.celery.tasks.job_execution.run_assessment_pipeline") as dispatch,
         ):
             resp = resume_assessment_run(session, run, 1, 1)
 
         # Same run, reset to PENDING at the same (failed) stage, re-dispatched.
-        assert run.stage == Stage.L2_ASSESSMENT
-        assert run.stage_status == StageStatus.PENDING
-        assert run.status == "processing"
+        assert _read_exec(run).get("stage") == Stage.L2_ASSESSMENT
+        assert _read_exec(run).get("stage_status") == StageStatus.PENDING
+        assert run.status == AssessmentStatus.PROCESSING
         assert run.error_message is None
         dispatch.delay.assert_called_once()
         assert dispatch.delay.call_args.kwargs["run_id"] == 11
-        assert resp.assessment_id == 21
+        assert resp.assessment_id == ASSESSMENT_ID
         assert resp.num_configs == 1
