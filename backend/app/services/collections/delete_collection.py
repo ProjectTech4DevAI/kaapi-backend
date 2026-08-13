@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 from uuid import UUID
 
 from gevent import Timeout
@@ -26,7 +25,7 @@ from app.celery.utils import (
     start_delete_collection_job,
 )  # pyright: ignore[reportUnknownVariableType]
 from app.core.telemetry import log_context
-from app.utils import send_callback, get_webhook_secret, APIResponse
+from app.utils import send_callback, get_webhook_secret, APIResponse, JsonObject
 
 
 logger = logging.getLogger(__name__)
@@ -72,7 +71,7 @@ def start_job(
 
 def build_success_payload(
     collection_job: CollectionJob, collection_id: UUID
-) -> dict[str, Any]:
+) -> JsonObject:
     """
     success: true
     data: { job_id, status, collection: { id } }
@@ -96,7 +95,7 @@ def build_success_payload(
 
 def build_failure_payload(
     collection_job: CollectionJob, collection_id: UUID, error_message: str
-) -> dict[str, Any]:
+) -> JsonObject:
     """
     success: false
     data: { job_id, status, collection: { id } }
@@ -167,7 +166,7 @@ def _mark_job_failed_and_callback(
 
 
 def execute_job(
-    request: dict[str, Any],
+    request: JsonObject,
     project_id: int,
     organization_id: int,
     task_id: str,

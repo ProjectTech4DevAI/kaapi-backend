@@ -1,6 +1,5 @@
 import logging
 import time
-from typing import Any
 from uuid import UUID, uuid4
 
 from sqlmodel import Session
@@ -41,7 +40,7 @@ from app.celery.utils import (
     start_collection_setup_job,
     start_collection_batch_job,
 )  # pyright: ignore[reportUnknownVariableType]
-from app.utils import send_callback, APIResponse, get_webhook_secret
+from app.utils import send_callback, APIResponse, get_webhook_secret, JsonObject
 
 
 logger = logging.getLogger(__name__)
@@ -78,7 +77,7 @@ def start_job(
 
 def build_success_payload(
     collection_job: CollectionJob, collection: Collection
-) -> dict[str, Any]:
+) -> JsonObject:
     collection_public = to_collection_public(collection)
     collection_dict = collection_public.model_dump(mode="json", exclude_none=True)
 
@@ -95,7 +94,7 @@ def build_success_payload(
 
 def build_failure_payload(
     collection_job: CollectionJob, error_message: str
-) -> dict[str, Any]:
+) -> JsonObject:
     job_public = CollectionJobPublic.model_validate(
         collection_job,
         update={"collection": None},
@@ -176,7 +175,7 @@ def _handle_job_failure(
 
 
 def execute_setup_job(
-    request: dict[str, Any],
+    request: JsonObject,
     project_id: int,
     organization_id: int,
     task_id: str,
@@ -328,7 +327,7 @@ def execute_setup_job(
 
 
 def execute_batch_job(
-    request: dict[str, Any],
+    request: JsonObject,
     project_id: int,
     organization_id: int,
     task_id: str,
