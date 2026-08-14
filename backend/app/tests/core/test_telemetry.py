@@ -1,12 +1,18 @@
 """Tests for the DB-observability helpers in telemetry.py.
 
-All Sentry and OTel calls are mocked; no real Sentry, OTel provider, or DB
-connection is used. Most emitters gate on settings.OTEL_ENABLED, so the
+Sentry and OTel emission are mocked; no real Sentry connection or OTel provider
+is used. The instrument_db_engine tests DO use a real in-memory SQLite engine to
+drive the SQLAlchemy event hooks, but stub out the span instrumentor and the
+Sentry-backed emit helpers. Most emitters gate on settings.OTEL_ENABLED, so the
 enabled cases patch it True.
 """
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import QueuePool
 
 from app.core import telemetry
 
@@ -183,3 +189,87 @@ class TestSuppressDbInstrumentation:
         except ValueError:
             pass
         assert telemetry._suppress_db_spans_var.get() is False
+
+
+class TestInstrumentDbEngine:
+    """Drive the SQLAlchemy event hooks with a real in-memory SQLite engine.
+
+    The span instrumentor is stubbed (no OTel provider needed) and the
+    Sentry-backed emit helpers are patched so we assert on the hooks alone.
+    """
+
+    def _engine(self):
+        return create_engine("sqlite://", poolclass=QueuePool)
+
+    def test_successful_query_emits_pool_stats(self):
+        engine = self._engine()
+        pool_stats = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch(
+                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
+            ),
+            patch.object(telemetry, "record_db_pool_stats", pool_stats),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+        pool_stats.assert_called()
+        kwargs = pool_stats.call_args.kwargs
+        assert set(kwargs) == {"active", "idle", "total", "overflow"}
+
+    def test_failing_query_fires_error_hook(self):
+        engine = self._engine()
+        query_failed = MagicMock()
+        tag_error = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch(
+                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
+            ),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_query_failed", query_failed),
+            patch.object(telemetry, "_tag_db_error", tag_error),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                with pytest.raises(Exception):
+                    conn.execute(text("SELECT * FROM does_not_exist"))
+
+        query_failed.assert_called_once()
+        # SQLite driver errors carry no sqlstate, so the operation is SELECT and
+        # sqlstate is None — the hook still runs end to end.
+        assert query_failed.call_args.kwargs["operation"] == "SELECT"
+        assert query_failed.call_args.kwargs["sqlstate"] is None
+        tag_error.assert_called_once_with(None)
+
+    def test_second_call_is_idempotent(self):
+        engine = self._engine()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch(
+                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
+            ) as instrumentor,
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+        ):
+            telemetry.instrument_db_engine(engine)
+            assert engine._kaapi_db_telemetry_instrumented is True
+            instrumentor.return_value.instrument.assert_called_once()
+
+            telemetry.instrument_db_engine(engine)
+            # Guard short-circuits: the instrumentor is not invoked a second time.
+            instrumentor.return_value.instrument.assert_called_once()
+
+    def test_noop_when_otel_disabled(self):
+        engine = self._engine()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch(
+                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
+            ) as instrumentor,
+        ):
+            telemetry.instrument_db_engine(engine)
+
+        instrumentor.assert_not_called()
+        assert not getattr(engine, "_kaapi_db_telemetry_instrumented", False)
