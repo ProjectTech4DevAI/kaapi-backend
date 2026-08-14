@@ -1,7 +1,7 @@
 """Add callback_url to evaluation_run
 
-Revision ID: 076
-Revises: 075
+Revision ID: 080
+Revises: 079
 Create Date: 2026-08-06 00:00:00.000000
 
 v2 runs may register an HTTPS webhook that is POSTed the run's result once it
@@ -12,8 +12,8 @@ knows an eval_run_id, so the target URL has to be durable on the run row.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "076"
-down_revision = "075"
+revision = "080"
+down_revision = "079"
 branch_labels = None
 depends_on = None
 
