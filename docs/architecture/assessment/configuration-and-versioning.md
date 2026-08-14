@@ -6,7 +6,12 @@ assessment references it. Configurations are **versioned** so you can iterate
 safely — each change adds a new version and never disturbs results that already
 ran.
 
-This guide explains each component with examples.
+This guide explains each component with examples. For an exhaustive field-by-field
+table (types, allowed values, defaults), see the
+[config field reference](config-field-reference.md).
+
+**Sample configuration JSON files (OpenAI, Claude, Gemini):**
+https://drive.google.com/drive/folders/1BCaauUuXr9DaZTWI-_-x101SDT4ktwp5?usp=share_link
 
 ---
 

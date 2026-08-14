@@ -6,6 +6,9 @@ walkthrough with context, see the [overview](README.md).
 Everything is delivered by **webhook** — there is no status or result poll
 endpoint. RESPONSE-shaped input returns `501` (WIP).
 
+**Sample input / output JSON files:**
+https://drive.google.com/drive/folders/1BCaauUuXr9DaZTWI-_-x101SDT4ktwp5?usp=share_link
+
 ---
 
 ## Request
