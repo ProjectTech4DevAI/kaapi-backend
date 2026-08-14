@@ -523,7 +523,7 @@ class TestGoogleAIProviderTTS:
         assert error is None
         call_args = mock_client.models.generate_content.call_args
         assert call_args[1]["model"] == "gemini-2.5-pro-preview-tts"
-        assert call_args[1]["contents"] == "Say this text"
+        assert call_args[1]["contents"] == "<transcript>Say this text</transcript>"
 
     def test_tts_passes_correct_voice_config(
         self, provider, mock_client, tts_config, query_params
@@ -627,3 +627,31 @@ class TestGoogleAIProviderText:
         assert error is None
         contents = mock_client.models.generate_content.call_args[1]["contents"]
         assert contents[0]["parts"][0]["text"] == "part one"
+
+    def test_text_with_knowledge_base_ids_sets_file_search_tool(
+        self, provider, mock_client, text_config, query_params
+    ):
+        store_names = ["fileSearchStores/store-1", "fileSearchStores/store-2"]
+        text_config.params["knowledge_base_ids"] = store_names
+        mock_client.models.generate_content.return_value = mock_google_response(
+            text="grounded"
+        )
+
+        result, error = provider.execute(text_config, query_params, "Ask the KB")
+
+        assert error is None
+        config_arg = mock_client.models.generate_content.call_args[1]["config"]
+        assert config_arg.tools[0].file_search.file_search_store_names == store_names
+
+    def test_text_without_knowledge_base_ids_sets_no_tools(
+        self, provider, mock_client, text_config, query_params
+    ):
+        mock_client.models.generate_content.return_value = mock_google_response(
+            text="plain"
+        )
+
+        result, error = provider.execute(text_config, query_params, "No KB")
+
+        assert error is None
+        config_arg = mock_client.models.generate_content.call_args[1]["config"]
+        assert not config_arg.tools

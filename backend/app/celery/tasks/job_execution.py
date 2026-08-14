@@ -246,6 +246,25 @@ def run_evaluation_batch_submission(
     )
 
 
+# Priority 6 (fast-eval tier): user-blocking interactive prompt iteration in the
+# evaluation domain, above default batch work but below core LLM call/chain jobs.
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_prompt_improvement")
+def run_prompt_improvement(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+    from app.services.evaluations.prompt_improvement import execute_prompt_improvement
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_prompt_improvement(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            **kwargs,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_batch_submission")
 def run_stt_batch_submission(
@@ -327,6 +346,49 @@ def run_assessment_pipeline(
             project_id=project_id,
         ),
     )
+
+
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
+def run_assessment_api_batch(
+    self,
+    execution_id: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str,
+    **kwargs,
+):
+    """Drive one tick of the BATCH API-client staged pipeline.
+
+    Self-re-enqueues (``apply_async(countdown=...)``) while a stage batch is still
+    in flight or a next stage was just submitted, and stops once the run finalises
+    or fails. Idempotent — the service keys off the stage_status in the exec bag.
+    """
+    from app.services.assessment.api.batch import (
+        POLL_COUNTDOWN_SECONDS,
+        run_batch_stage,
+    )
+
+    _set_trace(trace_id)
+    result = _run_with_otel_parent(
+        self,
+        lambda: run_batch_stage(
+            execution_id=execution_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        ),
+    )
+    if result and result.get("requeue"):
+        self.apply_async(
+            kwargs={
+                "execution_id": execution_id,
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "trace_id": trace_id,
+            },
+            countdown=POLL_COUNTDOWN_SECONDS,
+        )
+    return result
 
 
 @celery_app.task(bind=True, queue="default", priority=2)

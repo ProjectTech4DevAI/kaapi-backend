@@ -38,15 +38,18 @@ class CloudStorageError(Exception):
 class AmazonCloudStorageClient:
     @ft.cached_property
     def client(self):
-        kwargs = {}
-        cred_params = (
-            ("aws_access_key_id", "AWS_ACCESS_KEY_ID"),
-            ("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
-            ("region_name", "AWS_DEFAULT_REGION"),
-        )
-
-        for i, j in cred_params:
-            kwargs[i] = os.environ.get(j, getattr(settings, j))
+        kwargs = {
+            "region_name": os.environ.get(
+                "AWS_DEFAULT_REGION", settings.AWS_DEFAULT_REGION
+            )
+        }
+        if settings.ENVIRONMENT == "development":
+            kwargs["aws_access_key_id"] = os.environ.get(
+                "AWS_ACCESS_KEY_ID", settings.AWS_ACCESS_KEY_ID
+            )
+            kwargs["aws_secret_access_key"] = os.environ.get(
+                "AWS_SECRET_ACCESS_KEY", settings.AWS_SECRET_ACCESS_KEY
+            )
 
         client = boto3.client("s3", **kwargs)
         return client

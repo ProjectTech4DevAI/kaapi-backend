@@ -322,6 +322,379 @@ class TestGoogleVertexAIProvider:
 
 
 # ---------------------------------------------------------------------------
+# TTS payload shape — not routing-dependent, kept unskipped for coverage.
+# ---------------------------------------------------------------------------
+def test_tts_wraps_input_in_transcript_tags():
+    client = VertexClient(
+        api_key="k",
+        project_id="p",
+        location="us-central1",
+        sa_info={"type": "service_account", "project_id": "p"},
+        gcs_bucket="test-bucket",
+    )
+    provider = GoogleVertexAIProvider(client=client)
+    config = NativeCompletionConfig(
+        provider="google-native",
+        type=CompletionType.TTS,
+        params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
+    )
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ) as mock_post:
+        provider.execute(config, QueryParams(input="ignored"), "Say this text")
+
+    parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+    assert parts[0]["text"] == "<transcript>Say this text</transcript>"
+
+
+# ---------------------------------------------------------------------------
+# Standalone _post / _execute_tts / execute() coverage — not routing-dependent,
+# kept unskipped (same pattern as test_tts_wraps_input_in_transcript_tags).
+# ---------------------------------------------------------------------------
+def _provider() -> GoogleVertexAIProvider:
+    client = VertexClient(
+        api_key="k",
+        project_id="p",
+        location="us-central1",
+        sa_info={"type": "service_account", "project_id": "p"},
+        gcs_bucket="test-bucket",
+    )
+    return GoogleVertexAIProvider(client=client)
+
+
+def _tts_config(**params) -> NativeCompletionConfig:
+    return NativeCompletionConfig(
+        provider="google-native",
+        type=CompletionType.TTS,
+        params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore", **params},
+    )
+
+
+@pytest.mark.parametrize(
+    "status,expected_snippet",
+    [
+        (400, "Bad request"),
+        (401, "Authentication / permission denied"),
+        (404, "Resource not found"),
+        (429, "Rate limit / quota exceeded"),
+        (500, "Server error"),
+        (418, "HTTP error"),
+    ],
+)
+def test_post_http_error_status_branches(status, expected_snippet):
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_err(status, "boom"),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert expected_snippet in err
+
+
+def test_post_http_error_uses_google_error_envelope():
+    provider = _provider()
+    resp_mock = MagicMock()
+    resp_mock.ok = False
+    resp_mock.status_code = 400
+    resp_mock.text = "raw text"
+    resp_mock.json.return_value = {
+        "error": {"message": "invalid field", "status": "INVALID_ARGUMENT"}
+    }
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=resp_mock,
+    ):
+        _, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert "invalid field" in err
+    assert "INVALID_ARGUMENT" in err
+
+
+def test_post_timeout_returns_clean_message():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        side_effect=requests.Timeout("too slow"),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "timed out" in err
+
+
+def test_post_request_exception_returns_clean_message():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        side_effect=requests.RequestException("weird"),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "request failed" in err
+
+
+def test_post_non_json_success_response_returns_clean_message():
+    provider = _provider()
+    resp_mock = MagicMock()
+    resp_mock.ok = True
+    resp_mock.status_code = 200
+    resp_mock.json.side_effect = ValueError("no json")
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=resp_mock,
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "non-JSON success response" in err
+
+
+def test_execute_tts_rejects_non_string_input():
+    provider = _provider()
+    resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), [1, 2])
+    assert resp is None
+    assert "text string as input" in err
+
+
+def test_execute_tts_rejects_empty_input():
+    provider = _provider()
+    resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "   ")
+    assert resp is None
+    assert "text input is empty" in err
+
+
+def test_execute_tts_missing_audio_data_returns_error():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok({"candidates": [{"content": {"parts": []}}]}),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "missing audio data" in err
+
+
+def test_execute_tts_invalid_base64_returns_error():
+    provider = _provider()
+    bad = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"data": "not-valid-base64!!"}}]}}
+        ]
+    }
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(bad),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "invalid base64 audio" in err
+
+
+def test_execute_tts_empty_audio_bytes_returns_error():
+    provider = _provider()
+    empty = {"candidates": [{"content": {"parts": [{"inlineData": {"data": ""}}]}}]}
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(empty),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "empty audio data" in err
+
+
+def test_execute_tts_mp3_conversion_success():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ), patch(
+        "app.services.llm.providers.google_ai.convert_pcm_to_mp3",
+        return_value=(b"mp3bytes", None),
+    ):
+        resp, err = provider.execute(
+            _tts_config(response_format="mp3"), QueryParams(input="ignored"), "hi"
+        )
+    assert err is None
+    assert resp.response.output.content.mime_type == "audio/mp3"
+
+
+def test_execute_tts_mp3_conversion_failure_returns_error():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ), patch(
+        "app.services.llm.providers.google_ai.convert_pcm_to_mp3",
+        return_value=(None, "ffmpeg missing"),
+    ):
+        resp, err = provider.execute(
+            _tts_config(response_format="mp3"), QueryParams(input="ignored"), "hi"
+        )
+    assert resp is None
+    assert "unable to convert" in err
+    assert "ffmpeg missing" in err
+
+
+def test_execute_tts_ogg_conversion_success():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ), patch(
+        "app.services.llm.providers.google_ai.convert_pcm_to_ogg",
+        return_value=(b"oggbytes", None),
+    ):
+        resp, err = provider.execute(
+            _tts_config(response_format="ogg"), QueryParams(input="ignored"), "hi"
+        )
+    assert err is None
+    assert resp.response.output.content.mime_type == "audio/ogg"
+
+
+def test_execute_tts_unsupported_response_format_falls_back_to_wav():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ):
+        resp, err = provider.execute(
+            _tts_config(response_format="flac"), QueryParams(input="ignored"), "hi"
+        )
+    assert err is None
+    assert resp.response.output.content.mime_type == "audio/wav"
+
+
+def test_execute_rejects_unsupported_completion_type():
+    provider = _provider()
+    config = NativeCompletionConfig(
+        provider="google-native",
+        type=CompletionType.TEXT,
+        params={"model": "gemini-2.5-flash"},
+    )
+    resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "Unsupported completion type" in err
+
+
+def test_execute_tts_language_is_forwarded():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ) as mock_post:
+        provider.execute(
+            _tts_config(language="en-US"), QueryParams(input="ignored"), "hi"
+        )
+    speech = mock_post.call_args.kwargs["json"]["generationConfig"]["speechConfig"]
+    assert speech["languageCode"] == "en-US"
+
+
+def test_execute_tts_director_notes_set_system_instruction():
+    provider = _provider()
+    config = _tts_config(provider_specific={"gemini": {"director_notes": "whisper"}})
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ) as mock_post:
+        provider.execute(config, QueryParams(input="ignored"), "hi")
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["systemInstruction"]["parts"][0]["text"] == "whisper"
+
+
+def test_execute_tts_ogg_conversion_failure_returns_error():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(_tts_response()),
+    ), patch(
+        "app.services.llm.providers.google_ai.convert_pcm_to_ogg",
+        return_value=(None, "codec missing"),
+    ):
+        resp, err = provider.execute(
+            _tts_config(response_format="ogg"), QueryParams(input="ignored"), "hi"
+        )
+    assert resp is None
+    assert "unable to convert" in err
+    assert "codec missing" in err
+
+
+def test_execute_tts_raw_response_included_when_requested():
+    provider = _provider()
+    raw = _tts_response()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=_mock_http_ok(raw),
+    ):
+        resp, _ = provider.execute(
+            _tts_config(),
+            QueryParams(input="ignored"),
+            "hi",
+            include_provider_raw_response=True,
+        )
+    assert resp.provider_raw_response == raw
+
+
+def test_post_connection_error_returns_clean_message():
+    provider = _provider()
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        side_effect=requests.ConnectionError("dns boom"),
+    ):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "connection failed" in err
+
+
+def test_post_http_error_falls_back_to_raw_text_when_body_not_json():
+    provider = _provider()
+    resp_mock = MagicMock()
+    resp_mock.ok = False
+    resp_mock.status_code = 400
+    resp_mock.text = "plain text error"
+    resp_mock.json.side_effect = ValueError("not json")
+    with patch(
+        "app.services.llm.providers.google_ai.requests.post",
+        return_value=resp_mock,
+    ):
+        _, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert "plain text error" in err
+
+
+def test_execute_dispatches_stt_validation():
+    """Only the dispatch branch + input validation are exercised here — the
+    full STT network path is covered by the (currently skipped) routing
+    tests."""
+    provider = _provider()
+    config = NativeCompletionConfig(
+        provider="google-native",
+        type=CompletionType.STT,
+        params={"model": "gemini-2.5-flash"},
+    )
+    resp, err = provider.execute(
+        config, QueryParams(input="ignored"), "/not/an/audioref"
+    )
+    assert resp is None
+    assert "AudioRef input" in err
+
+
+def test_execute_wraps_type_error():
+    provider = _provider()
+    with patch.object(provider, "_execute_tts", side_effect=TypeError("bad kwarg")):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "Invalid or unexpected parameter" in err
+    assert "bad kwarg" in err
+
+
+def test_execute_wraps_unexpected_exception():
+    provider = _provider()
+    with patch.object(provider, "_execute_tts", side_effect=RuntimeError("kaboom")):
+        resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "Unexpected error" in err
+    assert "kaboom" in err
+
+
+# ---------------------------------------------------------------------------
 # VertexClient.endpoint — host changes by location
 # ---------------------------------------------------------------------------
 class TestVertexEndpoint:

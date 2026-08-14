@@ -3,7 +3,6 @@ from fastapi import APIRouter
 from app.api.routes import (
     analytics,
     api_keys,
-    assessment as assessment_routes,
     assistants,
     auth,
     collection_job,
@@ -35,12 +34,23 @@ from app.api.routes import (
     users,
     utils,
 )
-from app.core.config import settings
+from app.api.routes import (
+    assessment as assessment_routes,
+)
+from app.api.routes.assessment import api as assessment_api_routes
+from app.api.routes.evaluations.dataset_v2 import (
+    router as evaluations_dataset_v2_router,
+)
+from app.api.routes.evaluations.evaluation_v2 import router as evaluations_v2_router
+from app.api.routes.evaluations.prompt_improvement_v2 import (
+    router as evaluations_prompt_improvement_v2_router,
+)
 
 api_router = APIRouter()
 api_router.include_router(analytics.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(assessment_routes.router)
+api_router.include_router(assessment_api_routes.router)
 api_router.include_router(assistants.router)
 api_router.include_router(auth.router)
 api_router.include_router(collection_job.router)
@@ -73,3 +83,11 @@ api_router.include_router(utils.router)
 api_router.include_router(private.router)
 # if settings.ENVIRONMENT in ["development", "testing"]:
 #     api_router.include_router(private.router)
+
+
+# v2 API surface (mounted at settings.API_V2_STR). Only the endpoints that differ
+# from v1 live here — currently the judged run trigger. Everything else stays v1.
+api_v2_router = APIRouter()
+api_v2_router.include_router(evaluations_v2_router)
+api_v2_router.include_router(evaluations_dataset_v2_router)
+api_v2_router.include_router(evaluations_prompt_improvement_v2_router)

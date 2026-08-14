@@ -4,8 +4,9 @@ import json
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
-from app.models.assessment import AssessmentExportRow
+from app.models.assessment import AssessmentExportRow, AssessmentStatus, Stage
 from app.services.assessment.utils import export as export_mod
 from app.services.assessment.utils.export import (
     _build_export_row,
@@ -24,22 +25,24 @@ from app.services.assessment.utils.export import (
     serialize_export_rows,
     sort_export_rows,
 )
-from app.models.assessment import Stage
+
+ASSESSMENT_ID = UUID("00000000-0000-0000-0000-0000000000aa")
+CONFIG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def _run_ns(status: str = "processing") -> SimpleNamespace:
+def _run_ns(status: str = AssessmentStatus.PROCESSING) -> SimpleNamespace:
     return SimpleNamespace(
         id=5,
-        assessment_id=9,
+        assessment_id=ASSESSMENT_ID,
         status=status,
-        config_id="00000000-0000-0000-0000-000000000001",
+        config_id=CONFIG_ID,
         config_version=1,
         updated_at=datetime(2026, 1, 1),
     )
 
 
 def _assessment_ns() -> SimpleNamespace:
-    return SimpleNamespace(experiment_name="exp", dataset_id=3)
+    return SimpleNamespace(experiment_name="exp")
 
 
 class TestBuildExportRow:
@@ -56,7 +59,6 @@ class TestBuildExportRow:
         row = _build_export_row(
             run=_run_ns(),
             assessment=_assessment_ns(),
-            dataset_name="ds",
             row_id="row_0",
             input_data={"Problem": "p"},
             prefilter_item=prefilter_item,
@@ -71,7 +73,6 @@ class TestBuildExportRow:
         row = _build_export_row(
             run=_run_ns(),
             assessment=_assessment_ns(),
-            dataset_name=None,
             row_id="row_1",
             input_data=None,
             prefilter_item={"prefilter_passed": True},
@@ -84,7 +85,6 @@ class TestBuildExportRow:
         row = _build_export_row(
             run=_run_ns(),
             assessment=_assessment_ns(),
-            dataset_name=None,
             row_id="row_2",
             input_data=None,
             prefilter_item=None,
@@ -96,9 +96,8 @@ class TestBuildExportRow:
 
     def test_no_l2_processing_vs_failed(self) -> None:
         processing = _build_export_row(
-            run=_run_ns(status="processing"),
+            run=_run_ns(status=AssessmentStatus.PROCESSING),
             assessment=_assessment_ns(),
-            dataset_name=None,
             row_id="row_3",
             input_data=None,
             prefilter_item=None,
@@ -106,9 +105,8 @@ class TestBuildExportRow:
             has_prefilter=False,
         )
         failed = _build_export_row(
-            run=_run_ns(status="failed"),
+            run=_run_ns(status=AssessmentStatus.FAILED),
             assessment=_assessment_ns(),
-            dataset_name=None,
             row_id="row_4",
             input_data=None,
             prefilter_item=None,
@@ -118,16 +116,25 @@ class TestBuildExportRow:
         assert processing.result_status == "processing"
         assert failed.result_status == "failed"
 
-
-def _named_dataset() -> MagicMock:
-    ds = MagicMock()
-    ds.name = "ds"
-    return ds
+    def test_execution_fields_carried_from_run(self) -> None:
+        row = _build_export_row(
+            run=_run_ns(status=AssessmentStatus.COMPLETED),
+            assessment=_assessment_ns(),
+            row_id="row_0",
+            input_data=None,
+            prefilter_item={"prefilter_passed": True},
+            l2_item={"output": "{}", "error": None},
+            has_prefilter=True,
+        )
+        assert row.execution_id == 5
+        assert row.execution_status == AssessmentStatus.COMPLETED
+        assert row.assessment_id == ASSESSMENT_ID
+        assert row.config_id == CONFIG_ID
 
 
 def _make_row(
     *,
-    run_id: int = 1,
+    execution_id: int = 1,
     row_id: str = "row_0",
     output: str | None = None,
     input_data: dict | None = None,
@@ -135,13 +142,10 @@ def _make_row(
     config_version: int | None = None,
 ) -> AssessmentExportRow:
     return AssessmentExportRow(
-        assessment_id=1,
+        assessment_id=ASSESSMENT_ID,
         experiment_name="exp",
-        dataset_id=1,
-        dataset_name="ds",
-        run_id=run_id,
-        run_name="run",
-        run_status="completed",
+        execution_id=execution_id,
+        execution_status=AssessmentStatus.COMPLETED,
         config_id=None,
         config_version=config_version,
         row_id=row_id,
@@ -269,13 +273,23 @@ class TestExpandOutputColumns:
         ]
         expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert "output_raw" in fieldnames
-        # Second row that didn't parse should get output_raw
         assert expanded[1].get("output_raw") == "not json"
 
     def test_none_output_handled(self) -> None:
         rows = [{"output": None, "input_data": None}]
         expanded, fieldnames, *_ = _expand_output_columns(rows)
         assert expanded[0].get("output") is None
+
+    def test_dict_output_expanded_directly(self) -> None:
+        rows = [{"output": {"score": 9, "label": "good"}, "input_data": None}]
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
+        assert "score" in fieldnames
+        assert expanded[0]["score"] == 9
+
+    def test_non_dict_non_string_output_treated_as_unparsed(self) -> None:
+        rows = [{"output": 42, "input_data": None}]
+        expanded, fieldnames, *_ = _expand_output_columns(rows)
+        assert "output" in fieldnames
 
 
 class TestSerializeExportRows:
@@ -324,10 +338,10 @@ class TestSerializeExportRows:
 class TestSortExportRows:
     def test_sorts_by_config_version_then_numeric_row_index(self) -> None:
         rows = [
-            _make_row(run_id=1, row_id="row_1", config_version=2),
-            _make_row(run_id=2, row_id="row_0", config_version=1),
-            _make_row(run_id=3, row_id="row_10", config_version=2),
-            _make_row(run_id=4, row_id="row_2", config_version=2),
+            _make_row(execution_id=1, row_id="row_1", config_version=2),
+            _make_row(execution_id=2, row_id="row_0", config_version=1),
+            _make_row(execution_id=3, row_id="row_10", config_version=2),
+            _make_row(execution_id=4, row_id="row_2", config_version=2),
         ]
         sorted_rows = sort_export_rows(rows)
         assert sorted_rows[0].config_version == 1
@@ -336,38 +350,23 @@ class TestSortExportRows:
 
     def test_none_config_version_treated_as_zero(self) -> None:
         rows = [
-            _make_row(run_id=1, row_id="row_0", config_version=1),
-            _make_row(run_id=2, row_id="row_0", config_version=None),
+            _make_row(execution_id=1, row_id="row_0", config_version=1),
+            _make_row(execution_id=2, row_id="row_0", config_version=None),
         ]
         sorted_rows = sort_export_rows(rows)
         assert sorted_rows[0].config_version is None
 
     def test_invalid_row_id_suffix_falls_back_to_zero(self) -> None:
         rows = [
-            _make_row(run_id=3, row_id="row_2", config_version=1),
-            _make_row(run_id=2, row_id="row_xyz", config_version=1),
-            _make_row(run_id=1, row_id="bad", config_version=1),
+            _make_row(execution_id=3, row_id="row_2", config_version=1),
+            _make_row(execution_id=2, row_id="row_xyz", config_version=1),
+            _make_row(execution_id=1, row_id="bad", config_version=1),
         ]
         sorted_rows = sort_export_rows(rows)
-        assert [r.run_id for r in sorted_rows] == [1, 2, 3]
+        assert [r.execution_id for r in sorted_rows] == [1, 2, 3]
 
     def test_empty_list(self) -> None:
         assert sort_export_rows([]) == []
-
-
-class TestExpandOutputColumnsDictOutput:
-    def test_dict_output_expanded_directly(self) -> None:
-        # raw output is already a dict (not a JSON string)
-        rows = [{"output": {"score": 9, "label": "good"}, "input_data": None}]
-        expanded, fieldnames, *_ = _expand_output_columns(rows)
-        assert "score" in fieldnames
-        assert expanded[0]["score"] == 9
-
-    def test_non_dict_non_string_output_treated_as_unparsed(self) -> None:
-        rows = [{"output": 42, "input_data": None}]
-        expanded, fieldnames, *_ = _expand_output_columns(rows)
-        # 42 is not a dict/string, treated as unparsed → output stays as-is
-        assert "output" in fieldnames
 
 
 class TestSerializeExportRowsXlsx:
@@ -381,7 +380,6 @@ class TestSerializeExportRowsXlsx:
         assert len(payload) > 0
 
     def test_xlsx_no_excel_fields_falls_back_to_output(self) -> None:
-        # Row with no output — excel_fields may be empty after filtering metadata
         rows = [_make_row(output=None)]
         _, media_type = serialize_export_rows(rows, "xlsx")
         assert (
@@ -432,9 +430,8 @@ class TestLoadParsedResultsForRun:
     def _make_run(self, *, object_store_url: str | None = None) -> MagicMock:
         run = MagicMock()
         run.id = 1
-        run.project_id = 1
-        run.organization_id = 1
-        run.object_store_url = object_store_url
+        run.assessment_id = ASSESSMENT_ID
+        run.execution = {"object_store_url": object_store_url}
         return run
 
     def _make_batch_job(
@@ -611,15 +608,14 @@ class TestLoadDatasetRowsForRun:
 
 
 class TestLoadExportRowsForRun:
-    def _make_run(self) -> MagicMock:
+    def _make_run(self, *, status: str = AssessmentStatus.COMPLETED) -> MagicMock:
         run = MagicMock()
         run.id = 1
-        run.assessment_id = 10
-        run.batch_job_id = 5
-        run.status = "completed"
+        run.assessment_id = ASSESSMENT_ID
+        run.status = status
         run.config_id = None
         run.config_version = 1
-        run.object_store_url = None
+        run.execution = {}
         run.updated_at = datetime(2024, 1, 1)
         return run
 
@@ -648,7 +644,6 @@ class TestLoadExportRowsForRun:
 
     def test_no_results_no_dataset_returns_empty(self) -> None:
         session = MagicMock()
-        session.get.return_value = _named_dataset()
         run = self._make_run()
         p1, p2, p3 = self._patches(l2={})
         with p1, p2, p3:
@@ -659,7 +654,6 @@ class TestLoadExportRowsForRun:
 
     def test_merged_results_build_export_rows(self) -> None:
         session = MagicMock()
-        session.get.return_value = _named_dataset()
         run = self._make_run()
         l2 = {
             "row_0": {
@@ -681,7 +675,6 @@ class TestLoadExportRowsForRun:
 
     def test_error_result_sets_failed_status(self) -> None:
         session = MagicMock()
-        session.get.return_value = _named_dataset()
         run = self._make_run()
         l2 = {
             "row_0": {
@@ -701,9 +694,7 @@ class TestLoadExportRowsForRun:
 
     def test_dataset_rows_include_pending_and_correlate_input(self) -> None:
         session = MagicMock()
-        session.get.return_value = _named_dataset()
-        run = self._make_run()
-        run.status = "l2_processing"
+        run = self._make_run(status=AssessmentStatus.PROCESSING)
         l2 = {
             "row_1": {
                 "row_id": "row_1",
@@ -727,13 +718,13 @@ class TestLoadExportRowsForRun:
 
 class TestStageBatchJob:
     def test_returns_job_for_stage(self) -> None:
-        run = SimpleNamespace(stage_batches={Stage.L2_ASSESSMENT: 7})
+        run = SimpleNamespace(execution={"stage_batches": {Stage.L2_ASSESSMENT: 7}})
         with patch.object(export_mod, "get_batch_job", return_value="JOB") as g:
             assert _stage_batch_job(MagicMock(), run, Stage.L2_ASSESSMENT) == "JOB"
         assert g.call_args.kwargs["batch_job_id"] == 7
 
     def test_none_when_no_batch(self) -> None:
-        run = SimpleNamespace(stage_batches=None)
+        run = SimpleNamespace(execution=None)
         assert _stage_batch_job(MagicMock(), run, Stage.L2_ASSESSMENT) is None
 
 

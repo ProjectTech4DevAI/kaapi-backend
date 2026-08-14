@@ -29,7 +29,7 @@ from app.crud.evaluations.score import CategoryMetrics, TraceData
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider
-from app.utils import get_tracing_client
+from app.utils import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -263,11 +263,11 @@ def validate_and_start_batch_evaluation(
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
 
-    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
+    if not dataset.langfuse_dataset_id:
         raise HTTPException(
             status_code=400,
-            detail=f"Dataset {dataset_id} has no Langfuse nor object-store "
-            "backing; cannot run evaluation.",
+            detail=f"Dataset {dataset_id} does not have a Langfuse dataset ID. "
+            "Please ensure Langfuse credentials were configured when the dataset was created.",
         )
 
     # Step 2: Resolve config from stored config management
@@ -453,6 +453,8 @@ def get_evaluation_with_scores(
     if not get_trace_info:
         return eval_run, None
 
+    run_overall = (eval_run.score or {}).get("overall")
+
     # Caching strategy: trace scores are fetched from Langfuse once, then cached
     # (traces in S3, summary in the DB). Normal reads serve from that cache, which is
     # much faster than hitting Langfuse. resync_score=true bypasses the cache.
@@ -485,6 +487,8 @@ def get_evaluation_with_scores(
             unscoreable=eval_run.unscoreable,
         )
         eval_run.score = _attach_category_metrics(cached_score)
+        if run_overall is not None:
+            eval_run.score["overall"] = run_overall
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -505,35 +509,11 @@ def get_evaluation_with_scores(
         )
 
     # Fetch fresh scores from Langfuse (first sync, or resync).
-    langfuse = get_tracing_client(
+    langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
         project_id=project_id,
     )
-
-    # Opt-out: resync needs Langfuse (400); a normal read serves durable cosine.
-    if langfuse is None:
-        if resync_score:
-            raise HTTPException(
-                status_code=400,
-                detail="Tracing is disabled for this project; cannot resync "
-                "scores from Langfuse.",
-            )
-        cosine_score, _ = merge_scores_step_forward(
-            existing_score={
-                "summary_scores": (eval_run.score or {}).get("summary_scores", []),
-                "traces": cached_traces or [],
-            },
-            fresh_score={"summary_scores": [], "traces": []},
-            per_item_scores=eval_run.per_item_scores,
-        )
-        apply_cosine_breakdown(
-            cosine_score["summary_scores"],
-            total_items=eval_run.total_items,
-            unscoreable=eval_run.unscoreable,
-        )
-        eval_run.score = _attach_category_metrics(cosine_score)
-        return eval_run, None
 
     dataset_name = eval_run.dataset_name
     run_name = eval_run.run_name
@@ -586,6 +566,9 @@ def get_evaluation_with_scores(
     # rollup stays in sync with the new traces, not just the cached ones.
     # `_attach_category_metrics` mutates in place and is idempotent.
     _attach_category_metrics(merged_score)
+
+    if run_overall is not None:
+        merged_score["overall"] = run_overall
 
     logger.info(
         f"[get_evaluation_with_scores] Merged traces step-forward | "
