@@ -266,16 +266,13 @@ def validate_and_start_fast_evaluation(
     # Persist the judge marker + callback_url before dispatch: the aggregate (which
     # only knows eval_run_id) reads is_judge_run at judge time, and the terminal
     # hook reads callback_url to fire the webhook.
-    creation_update: dict[str, bool | str] = {}
-    if is_judge_run:
-        creation_update["is_judge_run"] = True
-    if callback_url:
-        creation_update["callback_url"] = callback_url
-    if creation_update:
+    if is_judge_run or callback_url:
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            update=EvaluationRunUpdate(**creation_update),
+            update=EvaluationRunUpdate(
+                is_judge_run=is_judge_run or None, callback_url=callback_url
+            ),
         )
 
     # Fetch the dataset items now to size the fan-out: ceil(total / chunk_size)

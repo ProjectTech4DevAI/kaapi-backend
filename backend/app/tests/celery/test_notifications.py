@@ -366,7 +366,7 @@ class TestExecuteEvalCompletionCallback:
 
     `send_callback` and `get_webhook_secret` are the external boundaries (HTTP +
     credential lookup), patched at the service's import site. The run row itself is
-    real, so the APIResponse envelope is built from a genuine EvalCompletionCallbackData.
+    real, so the APIResponse envelope is built from a genuine EvaluationRunPublic subset.
     """
 
     _HOOK = "https://hooks.example.com/eval"

@@ -29,7 +29,7 @@ from app.models import (
     NotificationProvider,
     Project,
 )
-from app.models.evaluation import EvalCompletionCallbackData
+from app.models.evaluation import EvaluationRunPublic
 from app.utils import (
     APIResponse,
     generate_eval_completion_email,
@@ -214,8 +214,17 @@ def execute_eval_completion_notification(evaluation_id: int) -> dict:
 
 def _build_eval_completion_callback_payload(eval_run: EvaluationRun) -> dict:
     """Wrap the slim run snapshot in an APIResponse envelope for the webhook."""
-    run_data = EvalCompletionCallbackData.model_validate(eval_run).model_dump(
-        mode="json"
+    run_data = EvaluationRunPublic.model_validate(eval_run).model_dump(
+        mode="json",
+        include={
+            "id",
+            "run_name",
+            "dataset_name",
+            "status",
+            "run_mode",
+            "inserted_at",
+            "updated_at",
+        },
     )
     if eval_run.status == _FAILED_STATUS:
         envelope = APIResponse.failure_response(

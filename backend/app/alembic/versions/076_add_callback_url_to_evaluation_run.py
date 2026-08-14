@@ -26,9 +26,10 @@ def upgrade():
             sa.Text(),
             nullable=True,
             comment=(
-                "Optional HTTPS webhook (v2 runs only) POSTed the run's "
-                "APIResponse[EvaluationRunPublic] once the run reaches a terminal "
-                "state (completed/failed). NULL when no callback was requested"
+                "Optional HTTPS webhook (v2 runs only) POSTed a slim run snapshot "
+                "(id/run_name/dataset_name/status/run_mode/timestamps) once the run "
+                "reaches a terminal state (completed/failed). NULL when no callback "
+                "was requested"
             ),
         ),
     )

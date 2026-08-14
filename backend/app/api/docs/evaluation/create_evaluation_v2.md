@@ -21,9 +21,10 @@ There is no per-run or ad-hoc judge configuration.
 
 Supply an optional `callback_url` (HTTPS only) to receive the run's result once it
 reaches a terminal state. A single POST fires on **both** completion and failure,
-carrying an `APIResponse[EvaluationRunPublic]` body — `success: true` for a
-completed run, `success: false` with the `error` message for a failed one; either
-way the full run (id, status, score, cost, error_message) is in `data`. When a
+carrying an `APIResponse` body — `success: true` for a completed run, `success:
+false` with the `error` message for a failed one; either way `data` is a slim run
+snapshot (`id`, `run_name`, `dataset_name`, `status`, `run_mode`, `inserted_at`,
+`updated_at` — no `score`/`cost`; fetch those from the run's own endpoint). When a
 `webhook_secret` credential is configured for the project the request is signed
 (`X-Webhook-Signature` / `X-Webhook-Timestamp`). Delivery is best-effort and
 at-least-once, so the receiver should be idempotent. The URL is rejected with
