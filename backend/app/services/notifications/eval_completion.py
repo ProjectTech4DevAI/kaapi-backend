@@ -6,6 +6,7 @@ Delegated to by the `send_eval_completion_notification` Celery task in
 """
 
 import logging
+from typing import Any, TypedDict
 
 from sqlmodel import Session
 
@@ -43,6 +44,12 @@ logger = logging.getLogger(__name__)
 EVAL_COMPLETION_TEMPLATE = "eval_completion_v1"
 
 _FAILED_STATUS = "failed"
+
+
+class EvalCompletionCallbackResult(TypedDict, total=False):
+    evaluation_id: int
+    delivered: bool
+    skipped: bool
 
 
 def execute_eval_completion_notification(evaluation_id: int) -> dict:
@@ -212,7 +219,7 @@ def execute_eval_completion_notification(evaluation_id: int) -> dict:
         }
 
 
-def _build_eval_completion_callback_payload(eval_run: EvaluationRun) -> dict:
+def _build_eval_completion_callback_payload(eval_run: EvaluationRun) -> dict[str, Any]:
     """Wrap the slim run snapshot in an APIResponse envelope for the webhook."""
     run_data = EvaluationRunPublic.model_validate(eval_run).model_dump(
         mode="json",
@@ -235,7 +242,9 @@ def _build_eval_completion_callback_payload(eval_run: EvaluationRun) -> dict:
     return envelope.model_dump()
 
 
-def execute_eval_completion_callback(evaluation_id: int) -> dict:
+def execute_eval_completion_callback(
+    evaluation_id: int,
+) -> EvalCompletionCallbackResult:
     """POST the terminal run's status to its registered webhook (best-effort)."""
     with Session(engine) as session:
         eval_run = session.get(EvaluationRun, evaluation_id)

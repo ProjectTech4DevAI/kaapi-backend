@@ -13,6 +13,7 @@ NOT fire without one. `TestCallbackUrlTrigger` below only adds the genuinely new
 behavior: the webhook enqueues too, alongside the email, when a URL is set.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,7 +143,9 @@ class TestCallbackUrlTrigger:
             ("failed", {"error_message": "boom"}),
         ],
     )
-    def test_transition_with_callback_url_enqueues_both(self, status, extra):
+    def test_transition_with_callback_url_enqueues_both(
+        self, status: str, extra: dict[str, Any]
+    ) -> None:
         eval_run = _stub_eval_run(
             status="processing", callback_url="https://hooks.example.com/eval"
         )

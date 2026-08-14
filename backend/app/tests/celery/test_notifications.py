@@ -382,7 +382,7 @@ class TestExecuteEvalCompletionCallback:
 
     def test_completed_run_delivers_slim_success_payload(
         self, patched_session: Session
-    ):
+    ) -> None:
         project = create_test_project(patched_session)
         run = _make_eval_run(
             patched_session,
@@ -420,7 +420,9 @@ class TestExecuteEvalCompletionCallback:
         for leaked in ("score", "traces", "cost", "callback_url", "error_message"):
             assert leaked not in data
 
-    def test_failed_run_delivers_slim_failure_payload(self, patched_session: Session):
+    def test_failed_run_delivers_slim_failure_payload(
+        self, patched_session: Session
+    ) -> None:
         project = create_test_project(patched_session)
         run = _make_eval_run(
             patched_session,
@@ -451,7 +453,9 @@ class TestExecuteEvalCompletionCallback:
         assert data["status"] == "failed"
         assert "traces" not in data
 
-    def test_run_without_callback_url_skips_delivery(self, patched_session: Session):
+    def test_run_without_callback_url_skips_delivery(
+        self, patched_session: Session
+    ) -> None:
         project = create_test_project(patched_session)
         run = _make_eval_run(
             patched_session, project=project, status="completed", callback_url=None
@@ -467,7 +471,7 @@ class TestExecuteEvalCompletionCallback:
             "skipped": True,
         }
 
-    def test_run_not_found_skips_delivery(self, patched_session: Session):
+    def test_run_not_found_skips_delivery(self, patched_session: Session) -> None:
         with patch.object(eval_completion_service, "send_callback") as mock_send:
             result = eval_completion_service.execute_eval_completion_callback(99999999)
 
@@ -478,7 +482,7 @@ class TestExecuteEvalCompletionCallback:
             "skipped": True,
         }
 
-    def test_delivery_exception_is_swallowed(self, patched_session: Session):
+    def test_delivery_exception_is_swallowed(self, patched_session: Session) -> None:
         project = create_test_project(patched_session)
         run = _make_eval_run(
             patched_session,
@@ -503,7 +507,7 @@ class TestExecuteEvalCompletionCallback:
 
 
 class TestSendEvalCompletionCallbackTaskShim:
-    def test_task_returns_service_result(self):
+    def test_task_returns_service_result(self) -> None:
         sentinel = {"evaluation_id": 3, "delivered": True}
         with patch(
             "app.services.notifications.eval_completion."

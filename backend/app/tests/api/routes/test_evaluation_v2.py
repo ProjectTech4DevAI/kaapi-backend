@@ -154,8 +154,8 @@ class TestV2CallbackUrl:
         user_api_key_header: dict[str, str],
         db: Session,
         user_api_key: TestAuthContext,
-        _patch_dispatch,
-    ):
+        _patch_dispatch: MagicMock,
+    ) -> None:
         dataset = _make_dataset(db=db, user_api_key=user_api_key)
         config = _make_text_config(db, user_api_key.project_id)
         callback_url = "https://example.com/eval-done"
@@ -183,8 +183,8 @@ class TestV2CallbackUrl:
         user_api_key_header: dict[str, str],
         db: Session,
         user_api_key: TestAuthContext,
-        _patch_dispatch,
-    ):
+        _patch_dispatch: MagicMock,
+    ) -> None:
         """A non-HTTPS callback_url is rejected before any dispatch happens."""
         dataset = _make_dataset(db=db, user_api_key=user_api_key)
         config = _make_text_config(db, user_api_key.project_id)

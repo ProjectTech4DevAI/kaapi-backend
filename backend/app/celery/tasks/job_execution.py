@@ -12,6 +12,7 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -22,6 +23,11 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.services.notifications.eval_completion import (
+        EvalCompletionCallbackResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +496,9 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
 
 @celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
-def send_eval_completion_callback(self, evaluation_id: int) -> dict:
+def send_eval_completion_callback(
+    self: Task, evaluation_id: int
+) -> "EvalCompletionCallbackResult":
     """POST the run's status to its registered webhook once it is terminal."""
     from app.services.notifications.eval_completion import (
         execute_eval_completion_callback,

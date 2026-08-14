@@ -18,7 +18,7 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
     op.add_column(
         "evaluation_run",
         sa.Column(
@@ -35,5 +35,5 @@ def upgrade():
     )
 
 
-def downgrade():
+def downgrade() -> None:
     op.drop_column("evaluation_run", "callback_url")
