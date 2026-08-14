@@ -1,7 +1,7 @@
 # API Contract — `POST /assessments`
 
 Precise request and response shapes for the BATCH assessment API. For a
-walkthrough with context, see [running an assessment](running-an-assessment.md).
+walkthrough with context, see the [overview](README.md).
 
 Everything is delivered by **webhook** — there is no status or result poll
 endpoint. RESPONSE-shaped input returns `501` (WIP).
@@ -44,6 +44,22 @@ Rules:
   "request_metadata": { "batch": "class7-term1" }
 }
 ```
+
+### Building the batch input
+
+The `input` object is built from your configuration's `input_schema`:
+
+1. **One object per item** goes in `input.data`. Each object's keys are the column
+   names declared in the config's `input_schema`, and the values are strings.
+2. **Attachment columns** (`image` / `pdf`) take a URL string; text columns take
+   plain text.
+3. **`input.query`** is a template. Any `{column}` placeholder is replaced with
+   that row's value at grading time, so one template applies to every row.
+4. **Match the schema exactly** — every declared column present, no extra columns.
+
+Example: for `input_schema = { submission_id: text, answer_sheet: image(url) }`,
+each row is `{ "submission_id": "...", "answer_sheet": "https://..." }` and the
+`query` can reference `{submission_id}` and `{answer_sheet}`.
 
 ---
 

@@ -153,7 +153,7 @@ A run resolves one `ASSESSMENT`-tagged config into an `AssessmentConfigBlob`
   Each is its own LLM call with its own `provider` + `params` (criteria live in
   `params.instructions`, **mandatory**) and a `stop_on_fail` flag.
 
-See **[configs.md](assessment/configs.md)** for the authoring guide.
+See **[configuration-and-versioning.md](assessment/configuration-and-versioning.md)** for the authoring guide.
 
 ---
 
