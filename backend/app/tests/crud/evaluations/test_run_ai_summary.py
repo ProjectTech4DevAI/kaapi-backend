@@ -2,11 +2,13 @@
 
 The function builds its own Anthropic client from the platform-owned
 ANTHROPIC_API_KEY and makes one `messages.create` call (the external boundary,
-mocked here). The user message is a qualitative brief (band words + plain area
-names + consistency phrases + a repetition line) — never raw scores or the
-internal "Adherence to X" labels. Every failure mode (provider error, generic
-error, unparseable payload, empty output) must resolve to None WITHOUT raising,
-leaving the deterministic overall to persist.
+mocked here). The user message is a diagnostic brief: run name, duplication
+factor, the evaluated AI config, and the per-question judge traces as JSON —
+question, golden answer, generated answer, and each judge score with its
+rationale. Trace bookkeeping (`data_type`, `verdict`, `unscoreable`) stays out of
+the payload. Every failure mode (provider error, generic error, unparseable
+payload, empty output) must resolve to None WITHOUT raising, leaving the
+deterministic overall to persist.
 """
 
 import json
@@ -17,53 +19,58 @@ import anthropic
 import pytest
 
 from app.core.config import settings
-from app.crud.evaluations.score import OverallSummary
-from app.crud.evaluations.summary import _consistency_read, generate_run_ai_summary
+from app.crud.evaluations.score import TraceData
+from app.crud.evaluations.summary import generate_run_ai_summary
 
 _MODEL = "claude-sonnet-4-6"
+_RUN_NAME = "run-x"
+_CONFIG_PROMPT = "You are a farming helpline bot. Always answer in Hindi."
+_TRACES_MARKER = "## Per-question judge traces (JSON)\n"
 
 
-def _overall() -> OverallSummary:
-    return {
-        "overall_score": 3.3,
-        "verdict": "Needs Refinement",
-        "ai_summary": None,
-        "breakdown": [
-            {
-                "name": "Adherence to Ground Truth",
-                "key": "ground_truth",
-                "score": 4,
-                "weight": 0.5,
-                "delta": 0.7,
-                "verdict": "Good",
-            },
-            {
-                "name": "Adherence to Knowledge Base",
-                "key": "knowledge_base",
-                "score": 3,
-                "weight": 0.3,
-                "delta": -0.3,
-                "verdict": "Needs Refinement",
-            },
-            {
-                "name": "Adherence to Prompt",
-                "key": "prompt",
-                "score": 2,
-                "weight": 0.2,
-                "delta": -1.3,
-                "verdict": "Needs Refinement",
-            },
-        ],
-    }
-
-
-def _summary_scores() -> list[dict]:
-    # std per dimension drives the consistency read (0–5 spread; cutoffs 0.5 / 1.0);
-    # names match the overall's dims.
+def _traces() -> list[TraceData]:
     return [
-        {"name": "Adherence to Ground Truth", "avg": 4.0, "std": 0.3},
-        {"name": "Adherence to Knowledge Base", "avg": 3.0, "std": 0.8},
-        {"name": "Adherence to Prompt", "avg": 2.0, "std": 1.5},
+        {
+            "trace_id": "item_1_1",
+            "question": "How much urea per acre?",
+            "llm_answer": "About 50 kg per acre.",
+            "question_id": 1,
+            "ground_truth_answer": "Roughly 45-55 kg per acre.",
+            "category": "fertiliser",
+            "scores": [
+                {
+                    "name": "Adherence to Ground Truth",
+                    "value": 4,
+                    "data_type": "NUMERIC",
+                    "comment": "conveys the same dosage range",
+                    "verdict": "Good",
+                },
+                {
+                    "name": "Adherence to Prompt",
+                    "value": 1,
+                    "data_type": "NUMERIC",
+                    "comment": "answered in English, not Hindi",
+                    "verdict": "Needs Improvement",
+                },
+            ],
+        },
+        {
+            "trace_id": "item_2_1",
+            "question": "Is the helpline open on Sunday?",
+            "llm_answer": "Information not available.",
+            "question_id": 2,
+            "ground_truth_answer": "Yes, 9am to 1pm.",
+            "category": "general",
+            # No comment key: the judge left no rationale for this placeholder.
+            "scores": [
+                {
+                    "name": "Adherence to Knowledge Base",
+                    "value": "N/A",
+                    "data_type": "CATEGORICAL",
+                    "unscoreable": True,
+                }
+            ],
+        },
     ]
 
 
@@ -87,7 +94,8 @@ def _call(
     client: MagicMock,
     *,
     duplication_factor: int = 5,
-    summary_scores: list[dict] | None = None,
+    config_prompt: str = _CONFIG_PROMPT,
+    traces: list[TraceData] | None = None,
 ) -> str | None:
     # ANTHROPIC_API_KEY is unset in .env.test, which would short-circuit before
     # the client is ever built.
@@ -100,13 +108,22 @@ def _call(
     ):
         return generate_run_ai_summary(
             model=_MODEL,
-            overall=_overall(),
-            run_name="run-x",
-            summary_scores=summary_scores
-            if summary_scores is not None
-            else _summary_scores(),
+            run_name=_RUN_NAME,
             duplication_factor=duplication_factor,
+            config_prompt=config_prompt,
+            traces=_traces() if traces is None else traces,
         )
+
+
+def _brief_for(**kwargs) -> str:
+    client = MagicMock()
+    client.messages.create.return_value = _message("A note.")
+    _call(client, **kwargs)
+    return client.messages.create.call_args.kwargs["messages"][0]["content"]
+
+
+def _payload_from(brief: str) -> list[dict]:
+    return json.loads(brief.split(_TRACES_MARKER, 1)[1])
 
 
 class TestHappyPath:
@@ -117,68 +134,90 @@ class TestHappyPath:
         )
         assert _call(client) == "Consistently grounded and on-tone across the set."
 
-
-class TestQualitativeBrief:
-    def _brief_for(self, *, duplication_factor: int) -> str:
+    def test_call_params_carry_the_model_token_cap_and_json_schema(self) -> None:
         client = MagicMock()
         client.messages.create.return_value = _message("A note.")
-        _call(client, duplication_factor=duplication_factor)
-        return client.messages.create.call_args.kwargs["messages"][0]["content"]
-
-    def test_user_message_carries_plain_area_and_consistency_phrases_and_token_cap(
-        self,
-    ) -> None:
-        client = MagicMock()
-        client.messages.create.return_value = _message("A note.")
-        _call(client, duplication_factor=5)
+        _call(client)
 
         params = client.messages.create.call_args.kwargs
         assert params["model"] == _MODEL
-        assert params["max_tokens"] == 2000
+        assert params["max_tokens"] == 3000
         assert params["messages"][0]["role"] == "user"
         assert params["output_config"]["format"]["type"] == "json_schema"
 
-        brief = params["messages"][0]["content"]
-        assert "Accuracy against the expected answers" in brief
-        assert "Grounding in the source material" in brief
-        assert "Tone and instruction-following" in brief
 
-        assert "answers stayed consistent" in brief  # std 0.3
-        assert "answers were mostly consistent, with some variation" in brief  # 0.8
-        assert "answers varied" in brief  # 1.5
+class TestTraceBrief:
+    def test_header_carries_run_name_duplication_factor_and_config_prompt(self) -> None:
+        brief = _brief_for(duplication_factor=5)
+        assert f"Run: {_RUN_NAME}" in brief
+        assert "Duplication factor: 5" in brief
+        assert _CONFIG_PROMPT in brief
 
-    def test_brief_leaks_no_raw_scores_or_internal_labels(self) -> None:
-        brief = self._brief_for(duplication_factor=5)
-        assert "Adherence to" not in brief
-        assert "verdict" not in brief
-        # Raw score / weight / delta values must not cross into the brief.
-        for leaked in ("3.3", "0.7", "-1.3", "0.5", "0.3"):
+    def test_duplication_factor_of_one_renders_plainly(self) -> None:
+        assert "Duplication factor: 1" in _brief_for(duplication_factor=1)
+
+    def test_blank_config_prompt_falls_back_to_the_placeholder(self) -> None:
+        brief = _brief_for(config_prompt="")
+        assert "(no instructions configured)" in brief
+        assert _CONFIG_PROMPT not in brief
+
+    def test_each_trace_carries_its_qa_and_scored_rationales(self) -> None:
+        payload = _payload_from(_brief_for())
+
+        assert [t["trace_id"] for t in payload] == ["item_1_1", "item_2_1"]
+        first = payload[0]
+        assert first["question"] == "How much urea per acre?"
+        assert first["ground_truth_answer"] == "Roughly 45-55 kg per acre."
+        assert first["llm_answer"] == "About 50 kg per acre."
+        assert first["scores"] == [
+            {
+                "name": "Adherence to Ground Truth",
+                "value": 4,
+                "rationale": "conveys the same dosage range",
+            },
+            {
+                "name": "Adherence to Prompt",
+                "value": 1,
+                "rationale": "answered in English, not Hindi",
+            },
+        ]
+
+    def test_score_without_a_comment_gets_an_empty_rationale(self) -> None:
+        payload = _payload_from(_brief_for())
+        assert payload[1]["scores"] == [
+            {"name": "Adherence to Knowledge Base", "value": "N/A", "rationale": ""}
+        ]
+
+    def test_trace_bookkeeping_keys_never_reach_the_model(self) -> None:
+        brief = _brief_for()
+        payload = _payload_from(brief)
+
+        assert set(payload[0]) == {
+            "trace_id",
+            "question",
+            "ground_truth_answer",
+            "llm_answer",
+            "scores",
+        }
+        for trace in payload:
+            for score in trace["scores"]:
+                assert set(score) == {"name", "value", "rationale"}
+        for leaked in ("data_type", "verdict", "unscoreable", "NUMERIC", "category"):
             assert leaked not in brief
 
-    def test_repetition_line_states_the_repeat_count_when_gt_one(self) -> None:
-        brief = self._brief_for(duplication_factor=5)
-        assert "Each question was asked 5 times." in brief
+    def test_empty_traces_render_an_empty_payload(self) -> None:
+        assert _payload_from(_brief_for(traces=[])) == []
 
-    def test_repetition_line_softens_when_asked_once(self) -> None:
-        brief = self._brief_for(duplication_factor=1)
-        assert "asked once (no repetition to speak of)" in brief
-        assert "Each question was asked 1 times" not in brief
+    def test_devanagari_qa_survives_unescaped(self) -> None:
+        traces = _traces()
+        traces[0]["question"] = "एक एकड़ में कितनी यूरिया डालें?"
+        traces[0]["llm_answer"] = "लगभग 50 किलो प्रति एकड़।"
+        brief = _brief_for(traces=traces)
 
-
-class TestConsistencyRead:
-    @pytest.mark.parametrize(
-        ("std", "expected"),
-        [
-            (0.3, "answers stayed consistent"),
-            (0.5, "answers stayed consistent"),
-            (0.8, "answers were mostly consistent, with some variation"),
-            (1.0, "answers were mostly consistent, with some variation"),
-            (1.5, "answers varied"),
-            (None, "consistency unknown"),
-        ],
-    )
-    def test_bands_and_boundaries(self, std, expected) -> None:
-        assert _consistency_read(std) == expected
+        assert "एक एकड़ में कितनी यूरिया डालें?" in brief
+        # Everything else in the brief is ASCII, so any \u escape means ensure_ascii.
+        assert "\\u" not in brief
+        assert _payload_from(brief)[0]["llm_answer"] == "लगभग 50 किलो प्रति एकड़।"
 
 
 class TestMissingApiKey:
@@ -191,10 +230,10 @@ class TestMissingApiKey:
         ):
             result = generate_run_ai_summary(
                 model=_MODEL,
-                overall=_overall(),
-                run_name="run-x",
-                summary_scores=_summary_scores(),
+                run_name=_RUN_NAME,
                 duplication_factor=5,
+                config_prompt=_CONFIG_PROMPT,
+                traces=_traces(),
             )
 
         assert result is None

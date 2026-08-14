@@ -276,6 +276,7 @@ def _run_pipeline(
     judge_side_effect,
     mock_cost: bool = False,
     summary_side_effect=None,
+    summary_client: MagicMock | None = None,
 ) -> tuple[EvaluationRun, MagicMock]:
     """Run `run_fast_evaluation` for a judged run with all externals stubbed.
 
@@ -286,12 +287,13 @@ def _run_pipeline(
 
     The run-level AI summary is a separate Anthropic `messages.create` call; by
     default it returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an
-    exception) to drive the best-effort failure path.
+    exception) to drive the best-effort failure path, or `summary_client` to keep a
+    handle on the call and inspect the brief it received.
     """
     fake_openai = MagicMock()
     fake_openai.embeddings.create.return_value = _fake_embedding_response()
 
-    summary_client = MagicMock()
+    summary_client = summary_client or MagicMock()
     if summary_side_effect is not None:
         summary_client.messages.create.side_effect = summary_side_effect
     else:
@@ -925,6 +927,48 @@ class TestRunOverallSummary:
         assert set(breakdown_by_name) == set(summary_avgs)
         for name, avg in summary_avgs.items():
             assert breakdown_by_name[name]["score"] == round(avg, 2)
+
+    def test_summary_brief_carries_the_scored_traces(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        # The summary must be generated AFTER the traces are built: rolled up first,
+        # it would brief the model on an empty trace list.
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        summary_client = MagicMock()
+
+        _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_client=summary_client,
+        )
+
+        brief = summary_client.messages.create.call_args.kwargs["messages"][0][
+            "content"
+        ]
+        assert eval_run.run_name in brief
+        assert BOT_INSTRUCTIONS in brief
+        payload = json.loads(brief.split("## Per-question judge traces (JSON)\n", 1)[1])
+
+        assert [trace["trace_id"] for trace in payload] == ["item-1"]
+        assert payload[0]["question"] == "Q1"
+        assert payload[0]["ground_truth_answer"] == "golden-1"
+        assert payload[0]["llm_answer"] == "generated for Q1"
+        scores = payload[0]["scores"]
+        assert {s["name"] for s in scores} == {
+            GROUND_TRUTH_SCORE_NAME,
+            PROMPT_SCORE_NAME,
+            KNOWLEDGE_BASE_SCORE_NAME,
+        }
+        assert {s["name"]: s["value"] for s in scores} == {
+            GROUND_TRUTH_SCORE_NAME: 4,
+            PROMPT_SCORE_NAME: 2,
+            KNOWLEDGE_BASE_SCORE_NAME: 3,
+        }
+        gt = next(s for s in scores if s["name"] == GROUND_TRUTH_SCORE_NAME)
+        assert gt["rationale"] == "gt"
 
     def test_summary_failure_leaves_overall_intact_with_null_ai_summary(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
