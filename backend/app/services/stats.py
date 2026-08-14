@@ -8,10 +8,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-EMBED_TOTAL_LIMIT = 5900  # Discord caps all embed text in a message at 6000 chars.
-EMBED_FIELD_LIMIT = 1000  # Discord caps a single field value at 1024 chars.
-MAX_FIELDS_PER_EMBED = 25  # Discord embed field cap.
-BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
+DISCORD_EMBED_TOTAL_TEXT_LIMIT = 5900
+DISCORD_EMBED_FIELD_VALUE_LIMIT = 1000
+DISCORD_EMBED_FIELD_COUNT_LIMIT = 25
+DISCORD_EMBED_BORDER_COLOR = 0x3B82F6
 COLUMN_LABELS = {"24h": "Last 24hrs", "7d": "Last 7 days"}
 
 
