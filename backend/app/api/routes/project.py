@@ -15,6 +15,7 @@ from app.crud.project import (
     hard_delete_project,
     soft_delete_project,
     update_project_settings,
+    validate_project,
 )
 from app.crud.user_project import (
     deactivate_users_without_projects,
@@ -100,6 +101,40 @@ def update_project_settings_route(
     project = update_project_settings(
         session=session,
         project_id=auth_context.project.id,
+        settings_patch=settings_patch,
+    )
+    return APIResponse.success_response(project)
+
+
+@router.patch(
+    "/{project_id}/settings",
+    response_model=APIResponse[ProjectPublic],
+    description=load_description("projects/superuser_update_settings.md"),
+)
+def update_project_settings_by_id_route(
+    *,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    project_id: int,
+    settings_in: ProjectSettingsUpdate,
+) -> APIResponse[ProjectPublic]:
+    # Superusers patch any project; otherwise the key may only touch its own.
+    if not auth_context.user.is_superuser and (
+        auth_context.project is None or auth_context.project.id != project_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Insufficient permissions - require superuser or matching project access.",
+        )
+
+    settings_patch = settings_in.model_dump(exclude_unset=True)
+    if not settings_patch:
+        raise HTTPException(status_code=400, detail="No settings provided")
+
+    validate_project(session=session, project_id=project_id)
+    project = update_project_settings(
+        session=session,
+        project_id=project_id,
         settings_patch=settings_patch,
     )
     return APIResponse.success_response(project)

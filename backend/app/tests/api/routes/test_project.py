@@ -3,7 +3,11 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
-from app.crud.project import create_project, get_project_by_id
+from app.crud.project import (
+    create_project,
+    get_project_by_id,
+    update_project_settings,
+)
 from app.main import app
 from app.models import Organization, Project, ProjectCreate
 from app.tests.utils.auth import TestAuthContext
@@ -355,3 +359,121 @@ def test_update_project_settings_route_empty_body_400(
 
     assert response.status_code == 400
     assert response.json()["error"] == "No settings provided"
+
+
+def test_update_project_settings_by_id_superuser_other_org(
+    client: TestClient,
+    db: Session,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    org = create_test_organization(db)
+    project = _make_project(db, org, random_lower_string(), is_active=True)
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/{project.id}/settings",
+        json={"tracing": True},
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["settings"]["tracing"] is True
+
+    db.expire_all()
+    refreshed = get_project_by_id(session=db, project_id=project.id)
+    assert refreshed.settings["tracing"] is True
+
+
+def test_update_project_settings_by_id_merges_existing_keys(
+    client: TestClient,
+    db: Session,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    org = create_test_organization(db)
+    project = _make_project(db, org, random_lower_string(), is_active=True)
+    update_project_settings(
+        session=db,
+        project_id=project.id,
+        settings_patch={"existing_flag": "keep-me"},
+    )
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/{project.id}/settings",
+        json={"tracing": True},
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 200
+    result_settings = response.json()["data"]["settings"]
+    assert result_settings["existing_flag"] == "keep-me"
+    assert result_settings["tracing"] is True
+
+
+def test_update_project_settings_by_id_empty_body_400(
+    client: TestClient,
+    db: Session,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    org = create_test_organization(db)
+    project = _make_project(db, org, random_lower_string(), is_active=True)
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/{project.id}/settings",
+        json={},
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "No settings provided"
+
+
+def test_update_project_settings_by_id_not_found_404(
+    client: TestClient,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/999999/settings",
+        json={"tracing": True},
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "Project not found"
+
+
+def test_update_project_settings_by_id_inactive_404(
+    client: TestClient,
+    db: Session,
+    superuser_token_headers: dict[str, str],
+) -> None:
+    org = create_test_organization(db)
+    project = _make_project(db, org, random_lower_string(), is_active=False)
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/{project.id}/settings",
+        json={"tracing": True},
+        headers=superuser_token_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "Project is not active"
+
+
+def test_update_project_settings_by_id_non_superuser_other_project_403(
+    client: TestClient,
+    db: Session,
+    normal_user_token_headers: dict[str, str],
+) -> None:
+    org = create_test_organization(db)
+    other_project = _make_project(db, org, random_lower_string(), is_active=True)
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/projects/{other_project.id}/settings",
+        json={"tracing": True},
+        headers=normal_user_token_headers,
+    )
+
+    assert response.status_code == 403
+    assert (
+        response.json()["error"]
+        == "Insufficient permissions - require superuser or matching project access."
+    )
