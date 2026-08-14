@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.crud.credentials import get_provider_credential
 from app.crud.model_config import is_reasoning_model
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
@@ -17,6 +18,7 @@ from app.models.llm.constants import (
     DEFAULT_TTS_VOICE,
     ELEVENLABS_VOICE_TO_ID,
     CompletionType,
+    GoogleProvider,
     Provider,
 )
 from google.genai import _transformers as genai_transformers
@@ -626,11 +628,30 @@ def kaapi_params_as_dict(
     provider mappers below, which are dict-in/dict-out.
 
     The dump already drops None fields and an unset temperature —
-    `_CompactParamsSerializerMixin` on the params models owns that wire format.
+    `ParamSerialization` on the params models owns that wire format.
     """
     if isinstance(params, dict):
         return dict(params)
     return params.model_dump()
+
+
+def resolve_default_audio_provider(
+    session: Session,
+    *,
+    project_id: int,
+    organization_id: int,
+) -> GoogleProvider:
+    """Pick the Google variant with a configured credential for the implicit
+    STT/TTS default, so the default never points at a provider with no usable
+    credential. Prefers AI Studio, falls back to Vertex (google)."""
+    if get_provider_credential(
+        session=session,
+        org_id=organization_id,
+        project_id=project_id,
+        provider=Provider.GOOGLE_AISTUDIO.value,
+    ):
+        return Provider.GOOGLE_AISTUDIO
+    return Provider.GOOGLE
 
 
 def transform_kaapi_config_to_native(

@@ -25,11 +25,12 @@ from app.models.llm.constants import (
     RAGProvider,
     STSLanguageCode,
     STTProvider,
+    TextProvider,
     TTSProvider,
 )
 
 
-class _CompactParamsSerializerMixin:
+class ParamSerialization:
     """Serialize params in the pre-typed wire format: None fields dropped, and
     the defaulted `temperature` dropped when the caller never set it.
 
@@ -47,7 +48,7 @@ class _CompactParamsSerializerMixin:
         return data
 
 
-class TextLLMParams(_CompactParamsSerializerMixin, SQLModel):
+class TextLLMParams(ParamSerialization, SQLModel):
     model: str | None = Field(
         default=None,
         description=(
@@ -101,7 +102,7 @@ class TextLLMParams(_CompactParamsSerializerMixin, SQLModel):
     )
 
 
-class STTLLMParams(_CompactParamsSerializerMixin, SQLModel):
+class STTLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_STT_MODEL
@@ -120,7 +121,7 @@ class STTLLMParams(_CompactParamsSerializerMixin, SQLModel):
     )
 
 
-class TTSLLMParams(_CompactParamsSerializerMixin, SQLModel):
+class TTSLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_TTS_MODEL
@@ -308,20 +309,16 @@ class NativeCompletionConfig(SQLModel):
     )
 
 
-class _KaapiCompletionConfigBase(SQLModel):
-    """Common fields for the per-type Kaapi completion config variants."""
+class KaapiTextCompletionConfig(SQLModel):
+    """Kaapi-standardized text completion config (OpenAI/Google/Anthropic)."""
 
-    provider: KaapiProvider | None = Field(
-        None,
+    provider: TextProvider | None = Field(
+        default=None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
-            "google-aistudio). 'google' routes via Google Vertex AI; "
-            "'google-aistudio' uses Google AI Studio."
+            "LLM provider for text completions (openai, google, anthropic). "
+            "Omit to use the platform default for the type."
         ),
     )
-
-
-class KaapiTextCompletionConfig(_KaapiCompletionConfigBase):
     type: Literal[CompletionType.TEXT] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
@@ -330,7 +327,16 @@ class KaapiTextCompletionConfig(_KaapiCompletionConfigBase):
     )
 
 
-class KaapiSTTCompletionConfig(_KaapiCompletionConfigBase):
+class KaapiSTTCompletionConfig(SQLModel):
+    """Kaapi-standardized STT completion config (Google/Sarvam/ElevenLabs)."""
+
+    provider: STTProvider | None = Field(
+        default=None,
+        description=(
+            "LLM provider for STT (google, google-aistudio, sarvamai, elevenlabs). "
+            "Omit to auto-select the configured Google credential at run time."
+        ),
+    )
     type: Literal[CompletionType.STT] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
@@ -338,26 +344,23 @@ class KaapiSTTCompletionConfig(_KaapiCompletionConfigBase):
         ..., description="Kaapi-standardized parameters mapped to provider-specific API"
     )
 
-    @model_validator(mode="after")
-    def _default_provider(self) -> Self:
-        if self.provider is None:
-            self.provider = Provider.GOOGLE
-        return self
 
+class KaapiTTSCompletionConfig(SQLModel):
+    """Kaapi-standardized TTS completion config (Google/Sarvam/ElevenLabs)."""
 
-class KaapiTTSCompletionConfig(_KaapiCompletionConfigBase):
+    provider: TTSProvider | None = Field(
+        default=None,
+        description=(
+            "LLM provider for TTS (google, google-aistudio, sarvamai, elevenlabs). "
+            "Omit to auto-select the configured Google credential at run time."
+        ),
+    )
     type: Literal[CompletionType.TTS] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
     params: TTSLLMParams = Field(
         ..., description="Kaapi-standardized parameters mapped to provider-specific API"
     )
-
-    @model_validator(mode="after")
-    def _default_provider(self) -> Self:
-        if self.provider is None:
-            self.provider = Provider.GOOGLE
-        return self
 
 
 # Kaapi abstraction for LLM completion providers, keyed on `type` (text/stt/tts).

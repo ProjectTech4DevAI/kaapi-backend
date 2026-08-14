@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Union
 
 
 class Provider(StrEnum):
@@ -29,16 +29,14 @@ TTSProvider = Literal[
 ]
 RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
-KaapiProvider = Literal[
-    Provider.OPENAI,
-    Provider.GOOGLE,
-    Provider.SARVAMAI,
-    Provider.ELEVENLABS,
-    Provider.ANTHROPIC,
-    Provider.GOOGLE_AISTUDIO,
-]
-
 TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
+
+# Union of the per-type provider sets — derived so the set can't drift when a
+# provider is added to one completion type.
+KaapiProvider = Union[TextProvider, STTProvider, TTSProvider]
+
+# Google variants a credential-aware audio default may pick between.
+GoogleProvider = Literal[Provider.GOOGLE, Provider.GOOGLE_AISTUDIO]
 
 # Native provider names are the Kaapi providers with a "-native" suffix.
 # Kept as explicit strings since there's no corresponding enum member.
@@ -66,8 +64,8 @@ class Modality(StrEnum):
 
 
 # BCP-47 language codes accepted by the speech-to-speech endpoint (STT input /
-# TTS output). Single source of truth: `SUPPORTED_LANGUAGE_CODES` in
-# `app/services/llm/chain/utils.py` derives from this via `get_args`.
+# TTS output). This Literal is the single source of truth; `SUPPORTED_LANGUAGE_CODES`
+# in `app/services/llm/chain/utils.py` is derived from it via `get_args`.
 STSLanguageCode = Literal[
     "auto",
     "unknown",

@@ -4,7 +4,11 @@ from pydantic import JsonValue, model_validator
 from sqlmodel import Field, SQLModel
 
 from app.models.llm.constants import Provider, TextProvider
-from app.models.llm.request import CompletionType, KaapiCompletionConfig, TextLLMParams
+from app.models.llm.request import (
+    CompletionType,
+    KaapiTextCompletionConfig,
+    TextLLMParams,
+)
 
 # json_output_schema is validated shallowly at config time: it must be a non-empty
 # object-typed dict. Provider strict-mode normalisation is a run-mode concern.
@@ -127,14 +131,14 @@ class AssessmentTextParams(TextLLMParams):
     )
 
 
-class AssessmentCompletionConfig(KaapiCompletionConfig):
+class AssessmentCompletionConfig(KaapiTextCompletionConfig):
     provider: TextProvider = Field(
         ..., description="Provider to use for the assessment completion call."
     )
     type: Literal[CompletionType.TEXT] = CompletionType.TEXT
 
     @model_validator(mode="after")
-    def validate_params(self):  # overrides KaapiCompletionConfig.validate_params
+    def validate_params(self):
         user_set_temp = "temperature" in self.params
         validated = AssessmentTextParams.model_validate(self.params)
         self.params = validated.model_dump(exclude_none=True)

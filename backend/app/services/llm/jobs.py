@@ -68,7 +68,10 @@ from app.models.llm.response import (
 )
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import apply_guardrails
-from app.services.llm.mappers import transform_kaapi_config_to_native
+from app.services.llm.mappers import (
+    resolve_default_audio_provider,
+    transform_kaapi_config_to_native,
+)
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
@@ -544,6 +547,20 @@ def execute_llm_call(
                             trace.Status(trace.StatusCode.ERROR, e.detail)
                         )
                         return BlockResult(error=e.detail)
+
+            completion_config = config_blob.completion
+            if (
+                isinstance(
+                    completion_config,
+                    (KaapiSTTCompletionConfig, KaapiTTSCompletionConfig),
+                )
+                and completion_config.provider is None
+            ):
+                completion_config.provider = resolve_default_audio_provider(
+                    session=session,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
 
             original_input_value = (
                 query.input.content.value

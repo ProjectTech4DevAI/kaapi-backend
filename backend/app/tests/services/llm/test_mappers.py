@@ -38,7 +38,7 @@ class TestMapKaapiToOpenAIParams:
             session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        # Unset temperature is dropped from the dump (_CompactParamsSerializerMixin),
+        # Unset temperature is dropped from the dump (ParamSerialization),
         # so the provider decides the default — never a temperature the user didn't set.
         assert result == {"model": "gpt-4o"}
         assert warnings == []

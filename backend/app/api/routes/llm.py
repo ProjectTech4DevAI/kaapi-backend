@@ -31,13 +31,15 @@ router = APIRouter(tags=["LLM"])
 
 _LLM_OUTPUT_ADAPTER: TypeAdapter[LLMOutput] = TypeAdapter(LLMOutput)
 
+PRESIGNED_AUDIO_URL_TTL_SECONDS = 3_600
+
 
 def _resolve_llm_output(
-    raw_content: dict,
+    raw_content: dict[str, object],
     project_id: int,
     session: Session,
     job_id: UUID,
-) -> LLMOutput | None:
+) -> LLMOutput:
     """Parse the persisted `llm_call.content` dict into the typed LLMOutput,
     presigning the audio URL in place first.
 
@@ -54,10 +56,12 @@ def _resolve_llm_output(
         s3_path = inner.get("value", "")
         try:
             storage = get_cloud_storage(session, project_id)
-            inner["value"] = storage.get_signed_url(s3_path, expires_in=3600)
+            inner["value"] = storage.get_signed_url(
+                s3_path, expires_in=PRESIGNED_AUDIO_URL_TTL_SECONDS
+            )
         except Exception as e:
             logger.warning(
-                f"[get_llm_call_status] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
+                f"[_resolve_llm_output] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
             )
             inner["value"] = ""
         inner["format"] = "url"
