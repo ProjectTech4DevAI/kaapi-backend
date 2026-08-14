@@ -139,5 +139,4 @@ def _post(url: str, embed: dict[str, Any]) -> None:
         response = requests.post(url, json={"embeds": [embed]}, timeout=5)
         response.raise_for_status()
     except requests.RequestException as e:
-        # Log only the exception type — the message can contain the webhook URL.
         logger.warning(f"[_post] Webhook post failed: {type(e).__name__}")
