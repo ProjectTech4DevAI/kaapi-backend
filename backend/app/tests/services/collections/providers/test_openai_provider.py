@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from openai import OpenAIError
+from tenacity import stop_after_attempt, wait_none
 
 from app.crud.rag.open_ai import OpenAIVectorStoreCrud
 from app.services.collections.providers.openai import OpenAIProvider
@@ -14,6 +15,16 @@ from app.tests.utils.llm_provider import (
     generate_openai_id,
     get_mock_openai_client_with_vector_store,
 )
+
+
+@pytest.fixture(autouse=True)
+def _single_attempt_batch_retry():
+    """update() retries batch create+index via tenacity; run one attempt, no backoff."""
+    retrying = OpenAIVectorStoreCrud._create_and_index_batch.retry
+    stop, wait = retrying.stop, retrying.wait
+    retrying.stop, retrying.wait = stop_after_attempt(1), wait_none()
+    yield
+    retrying.stop, retrying.wait = stop, wait
 
 
 def test_create_vector_store_returns_id() -> None:
@@ -380,11 +391,15 @@ def test_upload_files_first_failure_stops_remaining_docs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_batch(completed: int, failed: int) -> MagicMock:
-    batch = MagicMock()
+def _wire_batch(client: MagicMock, completed: int, failed: int) -> None:
+    """create() gives the real vsfb_ id; retrieve() gives the corrupt vs_ id."""
+    client.vector_stores.file_batches.create.return_value = MagicMock(id="vsfb_real")
+    batch = MagicMock(id="vs_corrupt")
+    batch.status = "completed"
     batch.file_counts.completed = completed
     batch.file_counts.failed = failed
-    return batch
+    batch.file_counts.in_progress = 0
+    client.vector_stores.file_batches.retrieve.return_value = batch
 
 
 def _make_openai_doc(file_id: str = "file-abc", fname: str = "doc.pdf") -> MagicMock:
@@ -398,24 +413,20 @@ def test_vector_store_update_skips_when_no_docs() -> None:
     client = MagicMock()
     crud = OpenAIVectorStoreCrud(client)
     crud.update("vs_123", [])
-    client.vector_stores.file_batches.upload_and_poll.assert_not_called()
+    client.vector_stores.file_batches.create.assert_not_called()
 
 
 def test_vector_store_update_succeeds_with_no_failures() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
-        completed=3, failed=0
-    )
+    _wire_batch(client, completed=3, failed=0)
     crud = OpenAIVectorStoreCrud(client)
     crud.update("vs_123", [_make_openai_doc() for _ in range(3)])
-    client.vector_stores.file_batches.upload_and_poll.assert_called_once()
+    client.vector_stores.file_batches.create.assert_called_once()
 
 
 def test_vector_store_update_raises_on_openai_error() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.upload_and_poll.side_effect = OpenAIError(
-        "rate limit"
-    )
+    client.vector_stores.file_batches.create.side_effect = OpenAIError("rate limit")
     crud = OpenAIVectorStoreCrud(client)
 
     with pytest.raises(InterruptedError, match="rate limit"):
@@ -430,9 +441,7 @@ def _make_failed_file(message: str) -> MagicMock:
 
 def test_vector_store_update_raises_on_partial_failures() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
-        completed=2, failed=1
-    )
+    _wire_batch(client, completed=2, failed=1)
     client.vector_stores.file_batches.list_files.return_value = [
         _make_failed_file("unsupported file type")
     ]
@@ -444,9 +453,7 @@ def test_vector_store_update_raises_on_partial_failures() -> None:
 
 def test_vector_store_update_raises_on_all_failures() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
-        completed=0, failed=2
-    )
+    _wire_batch(client, completed=0, failed=2)
     client.vector_stores.file_batches.list_files.return_value = [
         _make_failed_file("invalid pdf"),
         _make_failed_file("parse error"),
@@ -459,15 +466,13 @@ def test_vector_store_update_raises_on_all_failures() -> None:
 
 def test_vector_store_update_passes_file_ids_to_openai() -> None:
     client = MagicMock()
-    client.vector_stores.file_batches.upload_and_poll.return_value = _make_batch(
-        completed=2, failed=0
-    )
+    _wire_batch(client, completed=2, failed=0)
     crud = OpenAIVectorStoreCrud(client)
     docs = [_make_openai_doc("file-1"), _make_openai_doc("file-2")]
 
     crud.update("vs_abc", docs)
 
-    _, kwargs = client.vector_stores.file_batches.upload_and_poll.call_args
+    _, kwargs = client.vector_stores.file_batches.create.call_args
     assert kwargs["vector_store_id"] == "vs_abc"
     assert kwargs["file_ids"] == ["file-1", "file-2"]
 

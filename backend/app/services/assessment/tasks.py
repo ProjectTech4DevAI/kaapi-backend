@@ -1,10 +1,9 @@
-"""Orchestrator: submit the run's current PENDING stage as a batch, then exit."""
+"""Orchestrator: submit the run's current PENDING stage as a batch, then exit (LEGACY RUN pipeline)."""
 
 import logging
 
 from asgi_correlation_id import correlation_id
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
@@ -15,6 +14,7 @@ from app.crud.assessment import (
     update_assessment_run_status,
 )
 from app.crud.assessment.batch import _load_dataset_rows, submit_assessment_batch
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.evaluations.core import resolve_evaluation_config
 from app.crud.job import get_batch_job
@@ -22,6 +22,7 @@ from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentRun,
+    AssessmentStatus,
     Stage,
     StageStatus,
 )
@@ -52,13 +53,14 @@ def _mark_run_failed(run_id: int, error_message: str) -> None:
     try:
         with Session(engine) as session:
             run = session.get(AssessmentRun, run_id)
+            exec_bag = _read_exec(run) if run is not None else {}
             if (
                 run is None
-                or run.stage == Stage.COMPLETED
-                or run.stage_status == StageStatus.FAILED
+                or exec_bag.get("stage") == Stage.COMPLETED
+                or exec_bag.get("stage_status") == StageStatus.FAILED
             ):
                 return
-            run.stage_status = StageStatus.FAILED
+            _write_exec(run, stage_status=StageStatus.FAILED)
             update_assessment_run_status(
                 session=session, run=run, status="failed", error_message=error_message
             )
@@ -131,22 +133,23 @@ def _accepted_indices(
 ) -> list[int]:
     """Row indices that passed every gate stage before the current one.
 
-    Prefers the accepted set persisted by the gate stage on ``run.pipeline``
-    (set in ``_record_gate_stats``), avoiding a re-download + re-parse of the
-    gate batch at the memory-heavy prefilter -> assessment transition. Falls back
-    to recomputing from the gate batches only if nothing was persisted.
+    Prefers the accepted set persisted by the gate stage on the exec bag's
+    ``pipeline`` (set in ``_record_gate_stats``), avoiding a re-download + re-parse
+    of the gate batch at the memory-heavy prefilter -> assessment transition. Falls
+    back to recomputing from the gate batches only if nothing was persisted.
     """
-    stored = (run.pipeline or {}).get("accepted_indices")
+    exec_bag = _read_exec(run)
+    stored = (exec_bag.get("pipeline") or {}).get("accepted_indices")
     if stored is not None:
         return [i for i in sorted(stored) if 0 <= i < total_rows]
 
     accepted = set(range(total_rows))
-    for stage in ordered_stages(run.pipeline):
-        if stage == run.stage:
+    for stage in ordered_stages(exec_bag.get("pipeline")):
+        if stage == exec_bag.get("stage"):
             break
         if stage not in GATE_STAGES:
             continue
-        batch_id = (run.stage_batches or {}).get(stage)
+        batch_id = (exec_bag.get("stage_batches") or {}).get(stage)
         if batch_id is None:
             continue
         batch_job = get_batch_job(session=session, batch_job_id=batch_id)
@@ -165,17 +168,24 @@ def _orchestrate(run_id: int, organization_id: int, project_id: int) -> None:
         if run is None:
             logger.error("[execute_assessment_pipeline] run_id=%s not found", run_id)
             return
-        if run.stage == Stage.COMPLETED or run.stage_status == StageStatus.FAILED:
+        if (
+            _read_exec(run).get("stage") == Stage.COMPLETED
+            or _read_exec(run).get("stage_status") == StageStatus.FAILED
+        ):
             return
 
-        if not run.pipeline:
-            run.pipeline = build_pipeline(run.input or {})
-            flag_modified(run, "pipeline")
-        if run.stage is None:
-            run.stage = next_stage(run.pipeline)
-            run.stage_status = StageStatus.PENDING
-            run.status = "processing"
-        if run.stage_status != StageStatus.PENDING:
+        if not _read_exec(run).get("pipeline"):
+            assessment = session.get(Assessment, run.assessment_id)
+            run_input = (assessment.input if assessment else None) or {}
+            _write_exec(run, pipeline=build_pipeline(run_input))
+        if _read_exec(run).get("stage") is None:
+            _write_exec(
+                run,
+                stage=next_stage(_read_exec(run).get("pipeline")),
+                stage_status=StageStatus.PENDING,
+            )
+            run.status = AssessmentStatus.PROCESSING
+        if _read_exec(run).get("stage_status") != StageStatus.PENDING:
             session.add(run)
             session.commit()
             return
@@ -193,7 +203,7 @@ def _submit_stage(
         session, run, organization_id, project_id
     )
     if error:
-        run.stage_status = StageStatus.FAILED
+        _write_exec(run, stage_status=StageStatus.FAILED)
         update_assessment_run_status(
             session=session, run=run, status="failed", error_message=error
         )
@@ -202,7 +212,7 @@ def _submit_stage(
 
     all_rows = _load_dataset_rows(session, dataset)
     if not all_rows:
-        run.stage_status = StageStatus.FAILED
+        _write_exec(run, stage_status=StageStatus.FAILED)
         update_assessment_run_status(
             session=session,
             run=run,
@@ -214,17 +224,20 @@ def _submit_stage(
 
     accepted = _accepted_indices(session, run, len(all_rows), project_id)
     rows_with_idx = [(i, all_rows[i]) for i in accepted]
-    stage = run.stage
+    stage = _read_exec(run).get("stage")
 
     if not rows_with_idx:
         # Nothing left for this stage (all rows rejected upstream) — advance.
         _persist_advance(session, run, organization_id, project_id)
         return
 
+    # The run input binding now lives on the parent assessment, not the run row.
+    assessment_input = assessment.input or {}
     if stage in _PREFILTER_STAGES:
-        cfg = resolve_prefilter_settings(run.input.get("prefilter_config") or {})
+        cfg = resolve_prefilter_settings(assessment_input.get("prefilter_config") or {})
         attachments = [
-            AssessmentAttachment(**a) for a in (run.input.get("attachments") or [])
+            AssessmentAttachment(**a)
+            for a in (assessment_input.get("attachments") or [])
         ]
         selected = cfg.get("tr_attachment_columns")
         if selected is not None:
@@ -244,7 +257,7 @@ def _submit_stage(
             assessment=assessment,
             dataset=dataset,
             config_blob=config_blob,
-            assessment_input=run.input or {},
+            assessment_input=assessment_input,
             organization_id=organization_id,
             project_id=project_id,
             preloaded_rows=[r for _, r in rows_with_idx],
@@ -254,12 +267,10 @@ def _submit_stage(
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
-    stage_batches = dict(run.stage_batches or {})
+    stage_batches = dict(_read_exec(run).get("stage_batches") or {})
     stage_batches[stage] = batch_job.id
-    run.stage_batches = stage_batches
-    flag_modified(run, "stage_batches")
-    run.stage_status = StageStatus.PROCESSING
-    run.status = "processing"
+    _write_exec(run, stage_batches=stage_batches, stage_status=StageStatus.PROCESSING)
+    run.status = AssessmentStatus.PROCESSING
     session.add(run)
     session.commit()
     recompute_assessment_status(session=session, assessment_id=run.assessment_id)
@@ -291,10 +302,10 @@ def _persist_advance(
         logger.error(
             "[_persist_advance] run_id=%s stage=%s enqueue failed — marking failed for resume",
             run.id,
-            run.stage,
+            _read_exec(run).get("stage"),
             exc_info=True,
         )
-        run.stage_status = StageStatus.FAILED
+        _write_exec(run, stage_status=StageStatus.FAILED)
         update_assessment_run_status(
             session=session,
             run=run,
