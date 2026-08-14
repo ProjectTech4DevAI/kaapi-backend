@@ -11,14 +11,13 @@ logger = logging.getLogger(__name__)
 EMBED_TOTAL_LIMIT = 5900  # Discord caps all embed text in a message at 6000 chars.
 EMBED_FIELD_LIMIT = 1000  # Discord caps a single field value at 1024 chars.
 MAX_FIELDS_PER_EMBED = 25  # Discord embed field cap.
-MAX_COL_WIDTH = 18  # Cap each column so wide tables don't wrap in Discord.
 BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
+COLUMN_LABELS = {"24h": "Last 24hrs", "7d": "Last 7 days"}
 
 
-def _clip(text: str) -> str:
-    if len(text) <= MAX_COL_WIDTH:
-        return text
-    return text[: MAX_COL_WIDTH - 1] + "…"
+def _column_label(column: str) -> str:
+    suffix = column.rsplit("_", 1)[-1]
+    return COLUMN_LABELS.get(suffix, column)
 
 
 def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
@@ -30,38 +29,67 @@ def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, st
             continue
 
         columns = list(rows[0].keys())
+        numeric_cols = [
+            c for c in columns if all(isinstance(row[c], (int, float)) for row in rows)
+        ]
+        text_cols = [c for c in columns if c not in numeric_cols]
 
-        # Numeric columns get thousands separators and are right-aligned so they
-        # read as a clean column; text columns stay left-aligned.
-        numeric = {
-            c: all(isinstance(row[c], (int, float)) for row in rows) for c in columns
-        }
+        # Repeating org/project on every row is what pushed rows past Discord's
+        # embed width and wrapped the trailing columns. Instead, group rows by
+        # every text column but the last one and print that group once as a
+        # bold heading (bold only works outside the code block), leaving just
+        # the varying column + metrics — short enough to fit — in the table.
+        group_cols = text_cols[:-1]
+        row_col = text_cols[-1] if text_cols else None
+        table_cols = ([row_col] if row_col else []) + numeric_cols
+        headers = {c: _column_label(c) for c in table_cols}
 
         def cell(column: str, row: dict[str, Any]) -> str:
             value = row[column]
-            text = f"{value:,}" if numeric[column] else str(value)
-            return _clip(text)
+            return f"{value:,}" if column in numeric_cols else str(value)
 
-        widths = {}
-        for column in columns:
-            cell_lengths = [len(cell(column, row)) for row in rows]
-            widths[column] = max(len(_clip(column)), max(cell_lengths))
-
-        def align(text: str, column: str) -> str:
-            width = widths[column]
-            return text.rjust(width) if numeric[column] else text.ljust(width)
-
-        header = "  ".join(align(_clip(column), column) for column in columns)
-        lines = [header.rstrip()]
+        groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         for row in rows:
-            line = "  ".join(align(cell(column, row), column) for column in columns)
-            lines.append(line.rstrip())
+            groups.setdefault(tuple(row[c] for c in group_cols), []).append(row)
 
-        table = "\n".join(lines)
-        value = f"```\n{table}\n```"
+        blocks = []
+        for key, group_rows in groups.items():
+            # Column width is driven by the widest value, uncapped, so long
+            # names (e.g. model ids) are never truncated.
+            widths = {
+                c: max(len(headers[c]), max(len(cell(c, r)) for r in group_rows))
+                for c in table_cols
+            }
+
+            def align(text: str, column: str) -> str:
+                width = widths[column]
+                return (
+                    text.rjust(width) if column in numeric_cols else text.ljust(width)
+                )
+
+            lines = [
+                "  ".join(align(headers[c], c) for c in table_cols).rstrip(),
+            ]
+            for row in group_rows:
+                lines.append(
+                    "  ".join(align(cell(c, row), c) for c in table_cols).rstrip()
+                )
+
+            table = "\n".join(lines)
+            block = f"```\n{table}\n```"
+            if group_cols:
+                block = f"**{' / '.join(str(k) for k in key)}**\n{block}"
+            blocks.append(block)
+
+        value = "\n".join(blocks)
         if len(value) > EMBED_FIELD_LIMIT:
             cutoff = EMBED_FIELD_LIMIT - len("\n…\n```")
-            value = f"{value[:cutoff]}\n…\n```"
+            truncated = value[:cutoff]
+            value = (
+                f"{truncated}\n…\n```"
+                if truncated.count("```") % 2 == 1
+                else f"{truncated}\n…"
+            )
         fields.append({"name": title, "value": value})
     return fields
 
@@ -72,7 +100,7 @@ def post_to_discord(fields: list[dict[str, str]], *, today: date | None = None) 
         return
 
     stat_date = today or date.today()
-    title = f"Date: {stat_date.month}/{stat_date.day}/{stat_date.year}"
+    title = f"Date: {stat_date.day}/{stat_date.month}/{stat_date.year}"
     description = "Daily platform feature stats"
 
     embed = _new_embed(title, description)

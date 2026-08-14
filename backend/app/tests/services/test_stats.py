@@ -21,12 +21,14 @@ def _sample_stats() -> dict:
     }
 
 
-def test_format_sections_renders_field_per_section_with_aligned_table():
+def test_format_sections_groups_by_leading_columns_with_bold_heading():
     fields = format_sections(_sample_stats())
     llm_field = next(f for f in fields if f["name"] == "LLM Calls")
-    assert "organization  project  calls_24h  calls_7d" in llm_field["value"]
-    assert "Acme          Alpha            3        15" in llm_field["value"]
-    assert llm_field["value"].count("```") == 2  # wrapped in one code block
+    value = llm_field["value"]
+    assert value.startswith("**Acme**\n```\n")  # bold heading outside the code block
+    assert "project  Last 24hrs  Last 7 days" in value
+    assert "Alpha             3           15" in value
+    assert value.count("```") == 2  # rows wrapped in one code block
 
 
 def test_format_sections_marks_empty_sections():
@@ -35,19 +37,18 @@ def test_format_sections_marks_empty_sections():
     assert stt_field["value"] == "_no data_"
 
 
-def test_format_sections_clips_long_values_and_formats_numbers():
+def test_format_sections_does_not_truncate_long_model_names():
     stats = {
         "LLM Tokens": [
             {
                 "organization": "Org",
-                "model": "gemini-3.1-flash-tts-preview",  # 28 chars, over the cap
+                "model": "gemini-3.1-flash-tts-preview",  # long, must stay whole
                 "tokens_7d": 89271,
             },
         ],
     }
     value = format_sections(stats)[0]["value"]
-    assert "gemini-3.1-flash-…" in value  # clipped to 17 chars + ellipsis
-    assert "gemini-3.1-flash-tts-preview" not in value
+    assert "gemini-3.1-flash-tts-preview" in value  # not clipped
     assert "89,271" in value  # thousands separator applied
 
 
@@ -76,7 +77,7 @@ def test_post_to_discord_sets_title_description_and_border_color():
 
     assert len(posted) == 1
     embed = posted[0]
-    assert embed["title"] == "Date: 8/10/2026"
+    assert embed["title"] == "Date: 10/8/2026"
     assert embed["description"] == "Daily platform feature stats"
     assert embed["color"] == stats_mod.BORDER_COLOR
     assert embed["fields"] == [{"name": "LLM Calls", "value": "```\nx\n```"}]
