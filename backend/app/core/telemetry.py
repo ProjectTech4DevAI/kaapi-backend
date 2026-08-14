@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -13,7 +12,10 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from opentelemetry.instrumentation.utils import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
+from opentelemetry.instrumentation.utils import (
+    _SUPPRESS_HTTP_INSTRUMENTATION_KEY,
+    _SUPPRESS_INSTRUMENTATION_KEY,
+)
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 
@@ -23,6 +25,17 @@ if TYPE_CHECKING:
     from app.models.llm.response import LLMCallResponse
 
 logger = logging.getLogger(__name__)
+
+# Postgres SQLSTATE codes surfaced as named Sentry tags; others pass through as the raw code.
+NOTABLE_SQLSTATES: dict[str, str] = {
+    "40P01": "deadlock_detected",
+    "57014": "query_canceled",  # statement timeout
+    "40001": "serialization_failure",
+    "55P03": "lock_not_available",  # lock timeout
+    "08006": "connection_failure",
+    "08003": "connection_does_not_exist",
+    "53300": "too_many_connections",
+}
 
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
@@ -358,30 +371,57 @@ def suppress_http_instrumentation() -> Iterator[None]:
         otel_context.detach(token)
 
 
-def record_db_query_finished(
+@contextmanager
+def suppress_db_instrumentation() -> Iterator[None]:
+    """Suppress OTel auto-instrumentation (incl. SQLAlchemy DB spans) for the wrapped block.
+
+    Wrap LLM job execution so its DB reads/writes do not clutter the LLM waterfall.
+    Trade-off: those queries also drop from the Sentry Queries page. Manually-created
+    spans (e.g. the gen_ai span) are unaffected — only auto-instrumentors honor this key.
+    """
+    token = otel_context.attach(
+        otel_context.set_value(_SUPPRESS_INSTRUMENTATION_KEY, True)
+    )
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
+def record_db_query_failed(
     *,
-    duration_ms: float,
     operation: str | None = None,
-    error: bool = False,
+    sqlstate: str | None = None,
 ) -> None:
-    """Emit DB query metrics to Sentry."""
+    """Emit a DB query-failure counter to Sentry. Per-query duration/throughput come from spans."""
     if not settings.OTEL_ENABLED:
         return
 
-    attrs: dict[str, str] = {}
+    attrs: dict[str, str | int | float] = {}
     if operation:
         attrs["db.operation"] = operation
+    if sqlstate:
+        attrs["db.sqlstate"] = sqlstate
 
-    _emit_sentry_metric("count", "db.query.total", 1, attributes=attrs)
-    _emit_sentry_metric(
-        "distribution",
-        "db.query.duration",
-        duration_ms,
-        unit="millisecond",
-        attributes=attrs,
-    )
-    if error:
-        _emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
+    _emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
+
+
+def _tag_db_error(sqlstate: str | None) -> None:
+    """Tag the active Sentry scope + span with a DB error's Postgres SQLSTATE."""
+    if not sqlstate:
+        return
+    try:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("db.sqlstate", sqlstate)
+        if sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("db.system", "postgresql")
+            sentry_sdk.set_tag("db.sqlstate", sqlstate)
+            name = NOTABLE_SQLSTATES.get(sqlstate)
+            if name:
+                sentry_sdk.set_tag("db.error.name", name)
+    except Exception:
+        logger.debug("[_tag_db_error] Failed to tag DB error | sqlstate: %s", sqlstate)
 
 
 def record_db_pool_stats(
@@ -523,6 +563,17 @@ def instrument_db_engine(engine: object) -> None:
     if getattr(engine, "_kaapi_db_telemetry_instrumented", False):
         return
 
+    # DB query spans -> SentrySpanProcessor -> Sentry Insights/Queries. ProxyTracer defers
+    # to the real provider set later in setup_telemetry(), so load order here is safe.
+    try:
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+        SQLAlchemyInstrumentor().instrument(engine=engine)
+    except Exception:
+        logger.exception(
+            "[instrument_db_engine] Failed to load SQLAlchemy span instrumentation"
+        )
+
     try:
         from sqlalchemy import event
     except Exception:
@@ -551,7 +602,7 @@ def instrument_db_engine(engine: object) -> None:
         conn, cursor, statement, parameters, context, executemany
     ) -> None:
         del cursor, parameters, executemany
-        context._kaapi_db_started_at = time.perf_counter()
+        # Operation kept for error attribution; per-query timing now lives on the span.
         context._kaapi_db_operation = (
             str(statement).split(None, 1)[0].upper() if statement else "UNKNOWN"
         )
@@ -561,30 +612,20 @@ def instrument_db_engine(engine: object) -> None:
     def _after_cursor_execute(
         conn, cursor, statement, parameters, context, executemany
     ) -> None:
-        del cursor, statement, parameters, executemany
-        started_at = getattr(context, "_kaapi_db_started_at", None)
-        duration_ms = (
-            (time.perf_counter() - started_at) * 1000 if started_at is not None else 0.0
-        )
-        operation = getattr(context, "_kaapi_db_operation", None)
-        record_db_query_finished(
-            duration_ms=duration_ms, operation=operation, error=False
-        )
+        del cursor, statement, parameters, context, executemany
         _emit_pool_metrics(conn.engine.pool)
 
     @event.listens_for(engine, "handle_error")
     def _handle_error(exception_context) -> None:
         context = exception_context.execution_context
-        if context is None:
-            return
-        started_at = getattr(context, "_kaapi_db_started_at", None)
-        duration_ms = (
-            (time.perf_counter() - started_at) * 1000 if started_at is not None else 0.0
+        operation = (
+            getattr(context, "_kaapi_db_operation", None)
+            if context is not None
+            else None
         )
-        operation = getattr(context, "_kaapi_db_operation", None)
-        record_db_query_finished(
-            duration_ms=duration_ms, operation=operation, error=True
-        )
+        sqlstate = getattr(exception_context.original_exception, "sqlstate", None)
+        _tag_db_error(sqlstate)
+        record_db_query_failed(operation=operation, sqlstate=sqlstate)
 
     @event.listens_for(engine.pool, "checkout")
     def _on_checkout(dbapi_connection, connection_record, connection_proxy) -> None:

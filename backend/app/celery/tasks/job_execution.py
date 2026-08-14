@@ -22,6 +22,7 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
+from app.core.telemetry import suppress_db_instrumentation
 
 logger = logging.getLogger(__name__)
 
@@ -82,16 +83,19 @@ def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
-    )
+    # DB spans suppressed job-wide so LLM waterfalls stay clean (drops these queries
+    # from the Sentry Queries page too — accepted trade-off).
+    with suppress_db_instrumentation():
+        return _run_with_otel_parent(
+            self,
+            lambda: execute_job(
+                project_id=project_id,
+                job_id=job_id,
+                task_id=current_task.request.id,
+                task_instance=self,
+                **kwargs,
+            ),
+        )
 
 
 @celery_app.task(bind=True, queue="default", priority=9)
@@ -100,16 +104,17 @@ def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwarg
     from app.services.llm.jobs import execute_chain_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_chain_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
-    )
+    with suppress_db_instrumentation():
+        return _run_with_otel_parent(
+            self,
+            lambda: execute_chain_job(
+                project_id=project_id,
+                job_id=job_id,
+                task_id=current_task.request.id,
+                task_instance=self,
+                **kwargs,
+            ),
+        )
 
 
 @celery_app.task(bind=True, queue="default", priority=9)
@@ -118,16 +123,17 @@ def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs
     from app.services.response.jobs import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
-    )
+    with suppress_db_instrumentation():
+        return _run_with_otel_parent(
+            self,
+            lambda: execute_job(
+                project_id=project_id,
+                job_id=job_id,
+                task_id=current_task.request.id,
+                task_instance=self,
+                **kwargs,
+            ),
+        )
 
 
 @celery_app.task(bind=True, queue="default", priority=9)
