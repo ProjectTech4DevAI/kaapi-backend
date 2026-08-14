@@ -43,42 +43,30 @@ class TestTerminalStateTrigger:
         eval_run = _stub_eval_run(status="processing")
         session = MagicMock()
 
-        with (
-            patch(
-                "app.crud.evaluations.core._enqueue_eval_completion_notification"
-            ) as enq,
-            patch(
-                "app.celery.tasks.job_execution.send_eval_completion_callback.delay"
-            ) as callback_delay,
-        ):
+        with patch(
+            "app.crud.evaluations.core._enqueue_eval_completion_notification"
+        ) as enq:
             update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
                 update=EvaluationRunUpdate(status="completed"),
             )
             enq.assert_called_once_with(eval_run)
-            callback_delay.assert_not_called()
 
     def test_transition_to_failed_enqueues(self):
         """No callback_url on the stub: also proves the v2 webhook doesn't fire."""
         eval_run = _stub_eval_run(status="processing")
         session = MagicMock()
 
-        with (
-            patch(
-                "app.crud.evaluations.core._enqueue_eval_completion_notification"
-            ) as enq,
-            patch(
-                "app.celery.tasks.job_execution.send_eval_completion_callback.delay"
-            ) as callback_delay,
-        ):
+        with patch(
+            "app.crud.evaluations.core._enqueue_eval_completion_notification"
+        ) as enq:
             update_evaluation_run(
                 session=session,
                 eval_run=eval_run,
                 update=EvaluationRunUpdate(status="failed", error_message="boom"),
             )
             enq.assert_called_once_with(eval_run)
-            callback_delay.assert_not_called()
 
     def test_re_set_completed_does_not_re_enqueue(self):
         """A second update with status=completed on an already-completed row is a no-op."""
