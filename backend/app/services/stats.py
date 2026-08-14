@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from typing import Any
 
 import requests
@@ -7,8 +8,11 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-DISCORD_LIMIT = 1900  # Discord caps message content at 2000; leave headroom.
+EMBED_TOTAL_LIMIT = 5900  # Discord caps all embed text in a message at 6000 chars.
+EMBED_FIELD_LIMIT = 1000  # Discord caps a single field value at 1024 chars.
+MAX_FIELDS_PER_EMBED = 25  # Discord embed field cap.
 MAX_COL_WIDTH = 18  # Cap each column so wide tables don't wrap in Discord.
+BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
 
 
 def _clip(text: str) -> str:
@@ -17,11 +21,12 @@ def _clip(text: str) -> str:
     return text[: MAX_COL_WIDTH - 1] + "…"
 
 
-def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[str]:
-    sections: list[str] = []
+def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
+    """Build one Discord embed field per stat section (name = title, value = table)."""
+    fields: list[dict[str, str]] = []
     for title, rows in stats.items():
         if not rows:
-            sections.append(f"**{title}**\n_no data_")
+            fields.append({"name": title, "value": "_no data_"})
             continue
 
         columns = list(rows[0].keys())
@@ -53,30 +58,57 @@ def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[str]:
             lines.append(line.rstrip())
 
         table = "\n".join(lines)
-        sections.append(f"**{title}**\n```\n{table}\n```")
-    return sections
+        value = f"```\n{table}\n```"
+        if len(value) > EMBED_FIELD_LIMIT:
+            cutoff = EMBED_FIELD_LIMIT - len("\n…\n```")
+            value = f"{value[:cutoff]}\n…\n```"
+        fields.append({"name": title, "value": value})
+    return fields
 
 
-def post_to_discord(sections: list[str]) -> None:
+def post_to_discord(fields: list[dict[str, str]], *, today: date | None = None) -> None:
     url = settings.DISCORD_STATS_WEBHOOK_URL
     if not url:
         return
 
-    # Pack whole sections into messages under Discord's size cap so no code
-    # block is split across two posts.
-    chunk = "Daily Stats · last 24h and 7d (UTC)"
-    for section in sections:
-        if len(chunk) + len(section) + 2 > DISCORD_LIMIT:
-            _post(str(url), chunk)
-            chunk = ""
-        chunk = f"{chunk}\n\n{section}" if chunk else section
-    if chunk:
-        _post(str(url), chunk)
+    stat_date = today or date.today()
+    title = f"Date: {stat_date.month}/{stat_date.day}/{stat_date.year}"
+    description = "Daily platform feature stats"
+
+    embed = _new_embed(title, description)
+    for field in fields:
+        field_cost = len(field["name"]) + len(field["value"])
+        if embed["fields"] and (
+            len(embed["fields"]) >= MAX_FIELDS_PER_EMBED
+            or _embed_size(embed) + field_cost > EMBED_TOTAL_LIMIT
+        ):
+            _post(str(url), embed)
+            embed = _new_embed(title, description)
+        embed["fields"].append(field)
+    if embed["fields"]:
+        _post(str(url), embed)
 
 
-def _post(url: str, content: str) -> None:
+def _new_embed(title: str, description: str) -> dict[str, Any]:
+    return {
+        "title": title,
+        "description": description,
+        "color": BORDER_COLOR,
+        "fields": [],
+    }
+
+
+def _embed_size(embed: dict[str, Any]) -> int:
+    return (
+        len(embed["title"])
+        + len(embed["description"])
+        + sum(len(f["name"]) + len(f["value"]) for f in embed["fields"])
+    )
+
+
+def _post(url: str, embed: dict[str, Any]) -> None:
     try:
-        response = requests.post(url, json={"content": content}, timeout=5)
+        response = requests.post(url, json={"embeds": [embed]}, timeout=5)
         response.raise_for_status()
     except requests.RequestException as e:
         # Log only the exception type — the message can contain the webhook URL.
