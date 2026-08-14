@@ -46,7 +46,7 @@ from app.models.evaluation import (
     PromptRecommendationJobPublic,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider
+from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -577,73 +577,44 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
 
-    except anthropic.AuthenticationError:
-        logger.warning(
-            "[_call_prompt_drafting_llm] [ANTHROPIC] Authentication failed "
-            "(code: 401): Verify the ANTHROPIC_API_KEY is "
-            "valid, not expired, and configured correctly.",
-            exc_info=True,
-        )
+    except anthropic.AuthenticationError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
             "verify the platform API key is valid and not expired"
         )
 
-    except anthropic.RateLimitError:
-        logger.warning(
-            "[_call_prompt_drafting_llm] [ANTHROPIC] Rate limit exceeded "
-            "(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
-            exc_info=True,
-        )
+    except anthropic.RateLimitError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
             "wait at least 1 minute and retry"
         )
 
-    except anthropic.APITimeoutError:
+    except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
-        logger.error(
-            "[_call_prompt_drafting_llm] [KAAPI] Anthropic request timed out "
-            "(code: APITimeoutError): retry with a smaller payload.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
             "retry. If persistent, contact Kaapi"
         )
 
-    except anthropic.APIConnectionError:
-        logger.error(
-            "[_call_prompt_drafting_llm] [KAAPI] Anthropic connection failed "
-            "(code: APIConnectionError): network or DNS issue reaching Anthropic.",
-            exc_info=True,
-        )
+    except anthropic.APIConnectionError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
             "check connectivity. If persistent, contact Kaapi"
         )
 
     except anthropic.APIStatusError as exc:
-        status = exc.status_code
-        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
-        log = logger.error if status and status >= 500 else logger.warning
-        log(
-            f"[_call_prompt_drafting_llm] [ANTHROPIC] API status error "
-            f"(code: {status}): {exc.message}.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
-            f"prompt_generation_failed: Anthropic returned HTTP {status} — "
+            f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
             "retry or contact Kaapi if persistent"
         )
 
     except Exception as exc:
-        logger.error(
-            f"[_call_prompt_drafting_llm] [KAAPI] Unexpected error during LLM call "
-            f"(code: {type(exc).__name__}): not raised by the Anthropic SDK — "
-            f"likely a Kaapi-side failure. Contact Kaapi if persistent.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
             "contact Kaapi if persistent"

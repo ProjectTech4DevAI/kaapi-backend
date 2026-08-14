@@ -1142,8 +1142,6 @@ def _stage3_score_and_trace(
                 1, int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1))
             )
             overall["ai_summary"] = generate_run_ai_summary(
-                session=session,
-                openai_client=openai_client,
                 model=settings.EVAL_SUMMARY_MODEL,
                 overall=overall,
                 run_name=eval_run.run_name,

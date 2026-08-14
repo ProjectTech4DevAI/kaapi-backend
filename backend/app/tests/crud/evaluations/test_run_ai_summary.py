@@ -1,24 +1,26 @@
 """`generate_run_ai_summary` — the best-effort natural-language note on a run.
 
-The summary reuses the judge's reasoning-model invocation: params built via
-`map_kaapi_to_openai_params` (mocked here to skip its DB lookup) and one
-`responses.create` call (the external boundary, also mocked). The Responses `input`
-is a qualitative brief (band words + plain area names + consistency phrases + a
-repetition line) — never raw scores or the internal "Adherence to X" labels. Every
-failure mode (OpenAI error, generic error, empty output) must resolve to None
-WITHOUT raising, leaving the deterministic overall to persist.
+The function builds its own Anthropic client from the platform-owned
+ANTHROPIC_API_KEY and makes one `messages.create` call (the external boundary,
+mocked here). The user message is a qualitative brief (band words + plain area
+names + consistency phrases + a repetition line) — never raw scores or the
+internal "Adherence to X" labels. Every failure mode (provider error, generic
+error, unparseable payload, empty output) must resolve to None WITHOUT raising,
+leaving the deterministic overall to persist.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import openai
+import anthropic
 import pytest
 
+from app.core.config import settings
 from app.crud.evaluations.score import OverallSummary
 from app.crud.evaluations.summary import _consistency_read, generate_run_ai_summary
 
-_MODEL = "gpt-5-mini"
+_MODEL = "claude-sonnet-4-6"
 
 
 def _overall() -> OverallSummary:
@@ -65,8 +67,20 @@ def _summary_scores() -> list[dict]:
     ]
 
 
-def _responses_result(output_text: str):
-    return SimpleNamespace(output_text=output_text, output=[])
+def _message(summary: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text=json.dumps({"summary": summary})),
+        ]
+    )
+
+
+def _http_error(exc_type: type, *, status_code: int) -> Exception:
+    return exc_type(
+        message="provider said no",
+        response=MagicMock(status_code=status_code, request=MagicMock(), headers={}),
+        body=None,
+    )
 
 
 def _call(
@@ -75,15 +89,16 @@ def _call(
     duplication_factor: int = 5,
     summary_scores: list[dict] | None = None,
 ) -> str | None:
-    # The mapper does a real DB lookup (is_reasoning_model); patch it so the unit
-    # test stays about the summary logic, not model resolution.
-    with patch(
-        "app.crud.evaluations.summary.map_kaapi_to_openai_params",
-        return_value=({"model": _MODEL, "effort": "medium"}, []),
+    # ANTHROPIC_API_KEY is unset in .env.test, which would short-circuit before
+    # the client is ever built.
+    with (
+        patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+        patch(
+            "app.crud.evaluations.summary.ClaudeProvider.create_client",
+            return_value=client,
+        ),
     ):
         return generate_run_ai_summary(
-            session=MagicMock(),
-            openai_client=client,
             model=_MODEL,
             overall=_overall(),
             run_name="run-x",
@@ -95,33 +110,35 @@ def _call(
 
 
 class TestHappyPath:
-    def test_returns_the_responses_output_text_stripped(self) -> None:
+    def test_returns_the_summary_field_stripped(self) -> None:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result(
+        client.messages.create.return_value = _message(
             "  Consistently grounded and on-tone across the set.  "
         )
         assert _call(client) == "Consistently grounded and on-tone across the set."
 
 
 class TestQualitativeBrief:
-    def _input_for(self, *, duplication_factor: int) -> str:
+    def _brief_for(self, *, duplication_factor: int) -> str:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result("A note.")
+        client.messages.create.return_value = _message("A note.")
         _call(client, duplication_factor=duplication_factor)
-        return client.responses.create.call_args.kwargs["input"]
+        return client.messages.create.call_args.kwargs["messages"][0]["content"]
 
-    def test_input_carries_plain_area_and_consistency_phrases_and_token_cap(
+    def test_user_message_carries_plain_area_and_consistency_phrases_and_token_cap(
         self,
     ) -> None:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result("A note.")
+        client.messages.create.return_value = _message("A note.")
         _call(client, duplication_factor=5)
 
-        params = client.responses.create.call_args.kwargs
-        brief = params["input"]
-        assert params["max_output_tokens"] == 2000
-        assert "temperature" not in params
+        params = client.messages.create.call_args.kwargs
+        assert params["model"] == _MODEL
+        assert params["max_tokens"] == 2000
+        assert params["messages"][0]["role"] == "user"
+        assert params["output_config"]["format"]["type"] == "json_schema"
 
+        brief = params["messages"][0]["content"]
         assert "Accuracy against the expected answers" in brief
         assert "Grounding in the source material" in brief
         assert "Tone and instruction-following" in brief
@@ -131,7 +148,7 @@ class TestQualitativeBrief:
         assert "answers varied" in brief  # 1.5
 
     def test_brief_leaks_no_raw_scores_or_internal_labels(self) -> None:
-        brief = self._input_for(duplication_factor=5)
+        brief = self._brief_for(duplication_factor=5)
         assert "Adherence to" not in brief
         assert "verdict" not in brief
         # Raw score / weight / delta values must not cross into the brief.
@@ -139,11 +156,11 @@ class TestQualitativeBrief:
             assert leaked not in brief
 
     def test_repetition_line_states_the_repeat_count_when_gt_one(self) -> None:
-        brief = self._input_for(duplication_factor=5)
+        brief = self._brief_for(duplication_factor=5)
         assert "Each question was asked 5 times." in brief
 
     def test_repetition_line_softens_when_asked_once(self) -> None:
-        brief = self._input_for(duplication_factor=1)
+        brief = self._brief_for(duplication_factor=1)
         assert "asked once (no repetition to speak of)" in brief
         assert "Each question was asked 1 times" not in brief
 
@@ -164,32 +181,81 @@ class TestConsistencyRead:
         assert _consistency_read(std) == expected
 
 
-class TestFailureIsNonFatal:
-    def test_openai_error_returns_none_without_raising(self) -> None:
-        client = MagicMock()
-        client.responses.create.side_effect = openai.OpenAIError("provider down")
-        assert _call(client) is None
-
-    def test_generic_error_returns_none_without_raising(self) -> None:
-        client = MagicMock()
-        client.responses.create.side_effect = RuntimeError("unexpected shape")
-        assert _call(client) is None
-
-    @pytest.mark.parametrize("output_text", ["", "   \n\t"])
-    def test_empty_or_whitespace_output_returns_none(self, output_text: str) -> None:
-        client = MagicMock()
-        client.responses.create.return_value = _responses_result(output_text)
-        assert _call(client) is None
-
-    def test_malformed_payload_parse_error_returns_none_without_raising(self) -> None:
-        # extract_response_text runs inside the try, so a raise on an unexpected
-        # Responses payload must degrade to None, never escape to fail the run.
-        client = MagicMock()
-        client.responses.create.return_value = (
-            SimpleNamespace()
-        )  # no output_text/output
-        with patch(
-            "app.crud.evaluations.summary.extract_response_text",
-            side_effect=ValueError("unexpected Responses payload"),
+class TestMissingApiKey:
+    def test_empty_api_key_returns_none_without_building_a_client(self) -> None:
+        with (
+            patch.object(settings, "ANTHROPIC_API_KEY", ""),
+            patch(
+                "app.crud.evaluations.summary.ClaudeProvider.create_client"
+            ) as create_client,
         ):
-            assert _call(client) is None
+            result = generate_run_ai_summary(
+                model=_MODEL,
+                overall=_overall(),
+                run_name="run-x",
+                summary_scores=_summary_scores(),
+                duplication_factor=5,
+            )
+
+        assert result is None
+        create_client.assert_not_called()
+
+
+class TestFailureIsNonFatal:
+    @pytest.mark.parametrize(
+        "exception_factory",
+        [
+            pytest.param(
+                lambda: _http_error(anthropic.AuthenticationError, status_code=401),
+                id="authentication_error",
+            ),
+            pytest.param(
+                lambda: _http_error(anthropic.RateLimitError, status_code=429),
+                id="rate_limit_error",
+            ),
+            pytest.param(
+                lambda: anthropic.APITimeoutError(request=MagicMock()),
+                id="timeout_error",
+            ),
+            pytest.param(
+                lambda: anthropic.APIConnectionError(request=MagicMock()),
+                id="connection_error",
+            ),
+            # 4xx and 5xx take different log branches; both must still return None.
+            pytest.param(
+                lambda: _http_error(anthropic.APIStatusError, status_code=400),
+                id="status_error_4xx",
+            ),
+            pytest.param(
+                lambda: _http_error(anthropic.APIStatusError, status_code=503),
+                id="status_error_5xx",
+            ),
+            pytest.param(lambda: RuntimeError("unexpected shape"), id="generic_error"),
+        ],
+    )
+    def test_provider_errors_return_none_without_raising(
+        self, exception_factory
+    ) -> None:
+        client = MagicMock()
+        client.messages.create.side_effect = exception_factory()
+        assert _call(client) is None
+
+    @pytest.mark.parametrize("summary", ["", "   \n\t"])
+    def test_empty_or_whitespace_summary_returns_none(self, summary: str) -> None:
+        client = MagicMock()
+        client.messages.create.return_value = _message(summary)
+        assert _call(client) is None
+
+    def test_non_json_text_block_returns_none_without_raising(self) -> None:
+        client = MagicMock()
+        client.messages.create.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="not json at all")]
+        )
+        assert _call(client) is None
+
+    def test_response_without_a_text_block_returns_none_without_raising(self) -> None:
+        client = MagicMock()
+        client.messages.create.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="tool_use", text=None)]
+        )
+        assert _call(client) is None

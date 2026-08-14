@@ -19,6 +19,7 @@ External boundaries mocked: OpenAI (embeddings + the judge completion at
 
 import json
 from collections.abc import Iterator
+from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -192,15 +193,17 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
     )
 
 
-# Default plain-text stub for the best-effort run-level AI summary. It rides a
-# separate `responses.create` call (the judge is patched at _create_judge_response,
-# so it never reaches this mock). A bare MagicMock output would poison the score
-# JSONB, so every judged run's summary boundary is stubbed with a real string.
+# Default stub for the best-effort run-level AI summary. It rides its own
+# Anthropic client, separate from the judge (patched at _create_judge_response).
+# A bare MagicMock output would poison the score JSONB, so every judged run's
+# summary boundary is stubbed with a real string.
 DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
 
 
 def _summary_response(text: str):
-    return SimpleNamespace(output_text=text, output=[])
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
+    )
 
 
 @pytest.fixture
@@ -281,16 +284,18 @@ def _run_pipeline(
     Returns the run plus the OpenAI mock so callers can assert the embedding path
     was (v1) or was not (v2 judge) exercised.
 
-    The run-level AI summary is a separate `responses.create` call; by default it
-    returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an exception) to
-    drive the best-effort failure path.
+    The run-level AI summary is a separate Anthropic `messages.create` call; by
+    default it returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an
+    exception) to drive the best-effort failure path.
     """
     fake_openai = MagicMock()
     fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+    summary_client = MagicMock()
     if summary_side_effect is not None:
-        fake_openai.responses.create.side_effect = summary_side_effect
+        summary_client.messages.create.side_effect = summary_side_effect
     else:
-        fake_openai.responses.create.return_value = _summary_response(
+        summary_client.messages.create.return_value = _summary_response(
             DEFAULT_RUN_SUMMARY
         )
 
@@ -305,6 +310,13 @@ def _run_pipeline(
             "app.crud.evaluations.fast.save_score", side_effect=_persist_score_into(db)
         ),
         patch("app.crud.evaluations.judge._create_judge_response", side_effect=_judge),
+        # Unset in .env.test, which would short-circuit the summary before its
+        # client is built.
+        patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+        patch(
+            "app.crud.evaluations.summary.ClaudeProvider.create_client",
+            return_value=summary_client,
+        ),
     ]
     if mock_cost:
         ctx.append(
@@ -314,19 +326,12 @@ def _run_pipeline(
             )
         )
 
-    with ctx[0], ctx[1], ctx[2]:
-        if mock_cost:
-            with ctx[3]:
-                result = run_fast_evaluation(
-                    session=db,
-                    openai_client=fake_openai,
-                    langfuse=None,
-                    eval_run=eval_run,
-                )
-        else:
-            result = run_fast_evaluation(
-                session=db, openai_client=fake_openai, langfuse=None, eval_run=eval_run
-            )
+    with ExitStack() as stack:
+        for context_manager in ctx:
+            stack.enter_context(context_manager)
+        result = run_fast_evaluation(
+            session=db, openai_client=fake_openai, langfuse=None, eval_run=eval_run
+        )
     return result, fake_openai
 
 

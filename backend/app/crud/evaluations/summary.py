@@ -1,26 +1,29 @@
 """Human-readable AI summary of a v2 judge run's overall quality.
 """
 
+import json
 import logging
 from typing import Any
 
-import openai
-from openai import OpenAI
-from sqlmodel import Session
-
+from app.core.config import settings
 from app.crud.evaluations.judge import JudgeMetricEnum
-from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.score import OverallSummary
-from app.services.llm.mappers import map_kaapi_to_openai_params
+from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
 
 logger = logging.getLogger(__name__)
 
-_SUMMARY_MAX_OUTPUT_TOKENS: int = 2000
-
-_SUMMARY_REASONING_EFFORT: str = "minimal"
+_SUMMARY_MAX_TOKENS: int = 2000
 
 _CONSISTENCY_STABLE_AT_OR_BELOW: float = 0.5
 _CONSISTENCY_MIXED_AT_OR_BELOW: float = 1.0
+
+_LLM_KEY_SUMMARY: str = "summary"
+_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {_LLM_KEY_SUMMARY: {"type": "string"}},
+    "required": [_LLM_KEY_SUMMARY],
+    "additionalProperties": False,
+}
 
 # Internal metric key -> plain behaviour phrase, so the brief never leaks the labels into the model's context.
 _DIMENSION_PLAIN_NAME: dict[str, str] = {
@@ -47,7 +50,8 @@ _SUMMARY_SYSTEM_PROMPT: str = (
     "say the answers varied. Do not invent facts beyond what you are given. "
     "Style anchor — match this tone and length, do not copy the wording: "
     '"Consistently grounded and on-tone across the set. Each question was asked 5 '
-    'times and answers stayed consistent."'
+    'times and answers stayed consistent." '
+    'Return your answer as JSON: {"summary": "<the note>"}.'
 )
 
 
@@ -101,64 +105,52 @@ def _format_overall_for_prompt(
 
 def generate_run_ai_summary(
     *,
-    session: Session,
-    openai_client: OpenAI,
     model: str,
     overall: OverallSummary,
     run_name: str,
     summary_scores: list[dict[str, Any]],
     duplication_factor: int,
 ) -> str | None:
-    """Best-effort one-shot natural-language note on the run's overall quality."""
+    """Best-effort one-shot natural-language note on the run's overall quality.
+
+    Uses the platform-owned ANTHROPIC_API_KEY (same key as prompt improvement),
+    so this works without per-project Anthropic credentials.
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        logger.warning(
+            "[generate_run_ai_summary] ANTHROPIC_API_KEY not configured; "
+            "leaving ai_summary empty"
+        )
+        return None
+
     user_message = _format_overall_for_prompt(
         overall=overall,
         run_name=run_name,
         summary_scores=summary_scores,
         duplication_factor=duplication_factor,
     )
+    client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
+
     try:
-        base_params, mapper_warnings = map_kaapi_to_openai_params(
-            session=session,
-            kaapi_params={
-                "model": model,
-                "effort": _SUMMARY_REASONING_EFFORT,
-            },
+        response = client.messages.create(
+            model=model,
+            max_tokens=_SUMMARY_MAX_TOKENS,
+            system=_SUMMARY_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
-        if mapper_warnings:
-            logger.warning(
-                f"[generate_run_ai_summary] Mapper warnings: {mapper_warnings}"
-            )
-        params = {
-            **base_params,
-            "instructions": _SUMMARY_SYSTEM_PROMPT,
-            "input": user_message,
-            "max_output_tokens": _SUMMARY_MAX_OUTPUT_TOKENS,
-        }
-        response = openai_client.responses.create(**params)
-        # Parse inside the try so a malformed/unexpected Responses payload degrades
-        # to None like any other failure — the call site has no guard, so an escape
-        # here would fail the whole run against the best-effort contract.
-        summary = extract_response_text(response).strip()
-    except openai.OpenAIError as exc:
-        status = getattr(exc, "status_code", None)
-        # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.
-        log = logger.error if (status and status >= 500) else logger.warning
-        tag = "[OPENAI]" if status else "[KAAPI]"
-        request_id = getattr(exc, "request_id", None)
-        log(
-            f"[generate_run_ai_summary] {tag} Summary completion failed "
-            f"(code: {status or type(exc).__name__}) | model={model} | "
-            f"run_name={run_name} | request_id={request_id} | {exc}",
-            exc_info=True,
-        )
-        return None
-    # Deliberately broad: a summary failure (mapper/config error, unexpected shape)
-    # must never fail the run, so it degrades to a None result.
+        text = next(b.text for b in response.content if b.type == "text")
+        data: dict[str, str] = json.loads(text)
+        summary: str = data[_LLM_KEY_SUMMARY].strip()
+
+    # Deliberately broad: a summary failure (typed Anthropic error, bad JSON,
+    # unexpected shape) must never fail the run, so it degrades to a None
+    # result regardless of cause.
     except Exception as exc:
-        logger.warning(
-            f"[generate_run_ai_summary] Summary call failed; leaving ai_summary "
-            f"empty | model={model} | run_name={run_name} | error={exc}",
-            exc_info=True,
+        log_anthropic_error(
+            exc,
+            fn_name="generate_run_ai_summary",
+            context=f"model={model} | run_name={run_name}",
         )
         return None
 
