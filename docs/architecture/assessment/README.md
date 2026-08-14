@@ -23,7 +23,9 @@ You never poll or wait on the request — submitting returns immediately, and th
 
 ![BATCH assessment flow](assets/batch-flow.png)
 
-> The diagram shows the full intended design. **Today, results are delivered by webhook only** — status/polling endpoints are not built yet.
+**BATCH is fully batched.** Both stages run as provider **batch jobs** — the
+pre-filters run as a batch, and the assessment runs as a batch. Results are
+delivered to your **webhook** when everything completes (no polling).
 
 ---
 
@@ -55,6 +57,5 @@ Pick the provider per config (and per pre-filter):
 
 ## Where to go next
 
-1. **[Writing a config](configs.md)** — build your rubric, choose the model, and define the result shape.
-2. **[Running an assessment](running-an-assessment.md)** — submit your items and read the webhook results.
-3. **[API contract](api-contract.md)** — exact request/response fields, types, status values, and error codes.
+1. **[Configuration and versioning](configuration-and-versioning.md)** — build your rubric, choose the model, define the result shape, and manage versions.
+2. **[API contract](api-contract.md)** — request/response fields, types, status values, and error codes.
