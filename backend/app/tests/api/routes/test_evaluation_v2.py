@@ -116,6 +116,7 @@ class TestV2JudgedRunTrigger:
         run = db.get(EvaluationRun, body["id"])
         assert run is not None
         assert run.is_judge_run is True
+        assert run.callback_url is None  # no callback_url sent -> stays NULL
 
     def test_v2_run_is_always_fast_and_judged(
         self,
@@ -144,6 +145,65 @@ class TestV2JudgedRunTrigger:
         body = resp.json()["data"]
         assert body["run_mode"] == "fast"
         assert body["is_judge_run"] is True
+
+
+class TestV2CallbackUrl:
+    def test_valid_callback_url_is_persisted_but_never_exposed_in_response(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        _patch_dispatch: MagicMock,
+    ) -> None:
+        dataset = _make_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_config(db, user_api_key.project_id)
+        callback_url = "https://example.com/eval-done"
+
+        resp = client.post(
+            V2_EVALS,
+            json={
+                "experiment_name": "v2-with-callback",
+                "dataset_id": dataset.id,
+                "config_id": str(config.id),
+                "config_version": 1,
+                "callback_url": callback_url,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "callback_url" not in resp.json()["data"]
+        run = db.get(EvaluationRun, resp.json()["data"]["id"])
+        assert run.callback_url == callback_url
+
+    def test_invalid_callback_url_is_rejected_and_no_run_dispatched(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        _patch_dispatch: MagicMock,
+    ) -> None:
+        """A non-HTTPS callback_url is rejected before any dispatch happens."""
+        dataset = _make_dataset(db=db, user_api_key=user_api_key)
+        config = _make_text_config(db, user_api_key.project_id)
+
+        resp = client.post(
+            V2_EVALS,
+            json={
+                "experiment_name": "v2-bad-callback",
+                "dataset_id": dataset.id,
+                "config_id": str(config.id),
+                "config_version": 1,
+                "callback_url": "http://insecure.example.com/hook",
+            },
+            headers=user_api_key_header,
+        )
+
+        assert resp.status_code == 422, resp.text
+        assert "invalid_callback_url" in resp.text
+        _patch_dispatch.assert_not_called()
 
 
 class TestV1TriggerUnchanged:

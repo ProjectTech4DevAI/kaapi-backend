@@ -4,14 +4,15 @@ import logging
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import HttpUrl
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.models.evaluation import EvaluationRunPublic
 from app.services.evaluations.fast import validate_and_start_fast_evaluation
-from app.utils import APIResponse, load_description
+from app.utils import APIResponse, load_description, validate_callback_url
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,25 @@ def evaluate_v2(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
+    callback_url: HttpUrl
+    | None = Body(
+        None,
+        description=(
+            "Optional HTTPS webhook POSTed the run's result once it reaches a "
+            "terminal state (completed or failed)."
+        ),
+    ),
 ) -> APIResponse[EvaluationRunPublic]:
     """Start a v2 evaluation run.
 
     Always fast and judged; there is no `run_mode` — batch judging is deferred.
     Judging always runs (`is_judge_run=True`); there is no per-run judge config.
     """
+    if callback_url is not None:
+        try:
+            validate_callback_url(str(callback_url))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid_callback_url: {exc}")
 
     eval_run = validate_and_start_fast_evaluation(
         session=session,
@@ -53,5 +67,6 @@ def evaluate_v2(
         project_id=auth_context.project_.id,
         trace_id=correlation_id.get() or "N/A",
         is_judge_run=True,
+        callback_url=str(callback_url) if callback_url else None,
     )
     return APIResponse.success_response(data=eval_run)
