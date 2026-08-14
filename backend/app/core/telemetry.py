@@ -12,10 +12,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from opentelemetry.instrumentation.utils import (
-    _SUPPRESS_HTTP_INSTRUMENTATION_KEY,
-    _SUPPRESS_INSTRUMENTATION_KEY,
-)
+from opentelemetry.instrumentation.utils import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 
@@ -40,6 +37,22 @@ NOTABLE_SQLSTATES: dict[str, str] = {
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
+
+# OTel instrumentation scope emitted by SQLAlchemyInstrumentor; used to filter its spans.
+_SQLALCHEMY_SCOPE = "opentelemetry.instrumentation.sqlalchemy"
+
+# When True in the current context, SQLAlchemy DB spans are dropped before reaching Sentry.
+_suppress_db_spans_var: ContextVar[bool] = ContextVar(
+    "kaapi_suppress_db_spans", default=False
+)
+
+
+def _should_drop_db_span(otel_span: object) -> bool:
+    """True when DB-span suppression is active and `otel_span` is a SQLAlchemy span."""
+    if not _suppress_db_spans_var.get():
+        return False
+    scope = getattr(otel_span, "instrumentation_scope", None)
+    return scope is not None and getattr(scope, "name", None) == _SQLALCHEMY_SCOPE
 
 
 def _emit_sentry_metric(
@@ -207,7 +220,20 @@ def setup_telemetry(service_name: str | None = None) -> None:
     if settings.SENTRY_DSN:
         from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 
-        tracer_provider.add_span_processor(SentrySpanProcessor())
+        class _DbSpanFilteringProcessor(SentrySpanProcessor):
+            """Drop SQLAlchemy DB spans from Sentry while suppress_db_instrumentation() is active.
+
+            Filters by instrumentation scope so only DB spans are skipped — HTTP/Requests
+            spans keep flowing. Skipping on_start leaves the span unmapped, and the parent
+            on_end safely no-ops on unmapped spans.
+            """
+
+            def on_start(self, otel_span, parent_context=None):  # type: ignore[override]
+                if _should_drop_db_span(otel_span):
+                    return
+                super().on_start(otel_span, parent_context)
+
+        tracer_provider.add_span_processor(_DbSpanFilteringProcessor())
 
     trace.set_tracer_provider(tracer_provider)
 
@@ -373,19 +399,18 @@ def suppress_http_instrumentation() -> Iterator[None]:
 
 @contextmanager
 def suppress_db_instrumentation() -> Iterator[None]:
-    """Suppress OTel auto-instrumentation (incl. SQLAlchemy DB spans) for the wrapped block.
+    """Drop SQLAlchemy DB spans from the Sentry trace for the wrapped block.
 
     Wrap LLM job execution so its DB reads/writes do not clutter the LLM waterfall.
-    Trade-off: those queries also drop from the Sentry Queries page. Manually-created
-    spans (e.g. the gen_ai span) are unaffected — only auto-instrumentors honor this key.
+    Only DB spans are filtered (by _DbSpanFilteringProcessor via instrumentation
+    scope) — HTTP/Requests instrumentation stays active. Trade-off: the wrapped
+    DB queries also drop from the Sentry Queries page.
     """
-    token = otel_context.attach(
-        otel_context.set_value(_SUPPRESS_INSTRUMENTATION_KEY, True)
-    )
+    token = _suppress_db_spans_var.set(True)
     try:
         yield
     finally:
-        otel_context.detach(token)
+        _suppress_db_spans_var.reset(token)
 
 
 def record_db_query_failed(
