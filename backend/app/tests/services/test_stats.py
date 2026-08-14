@@ -31,10 +31,22 @@ def test_format_sections_groups_by_leading_columns_with_bold_heading():
     assert value.count("```") == 2  # rows wrapped in one code block
 
 
-def test_format_sections_marks_empty_sections():
-    fields = format_sections(_sample_stats())
-    stt_field = next(f for f in fields if f["name"] == "STT Results")
-    assert stt_field["value"] == "_no data_"
+def test_format_sections_groups_empty_sections_into_one_field():
+    stats = {
+        "LLM Calls": [
+            {"organization": "Acme", "project": "Alpha", "calls_24h": 3, "calls_7d": 15}
+        ],
+        "Evaluation Runs": [],
+        "STT Results": [],
+        "TTS Results": [],
+        "Assessments": [],
+    }
+    fields = format_sections(stats)
+    assert [f["name"] for f in fields] == ["LLM Calls", "No activity this week"]
+    inactive_field = fields[-1]
+    assert inactive_field["value"] == (
+        "• Evaluation Runs\n• STT Results\n• TTS Results\n• Assessments"
+    )
 
 
 def test_format_sections_does_not_truncate_long_model_names():
@@ -79,7 +91,7 @@ def test_post_to_discord_sets_title_description_and_border_color():
     embed = posted[0]
     assert embed["title"] == "Date: 10/8/2026"
     assert embed["description"] == "Daily platform feature stats"
-    assert embed["color"] == stats_mod.BORDER_COLOR
+    assert embed["color"] == stats_mod.DISCORD_EMBED_BORDER_COLOR
     assert embed["fields"] == [{"name": "LLM Calls", "value": "```\nx\n```"}]
 
 
@@ -103,7 +115,7 @@ def test_post_to_discord_splits_fields_across_embeds_under_size_limit():
             + len(embed["description"])
             + sum(len(f["name"]) + len(f["value"]) for f in embed["fields"])
         )
-        assert size <= stats_mod.EMBED_TOTAL_LIMIT
+        assert size <= stats_mod.DISCORD_EMBED_TOTAL_TEXT_LIMIT
 
 
 def test_post_to_discord_swallows_request_exception():

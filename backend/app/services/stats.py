@@ -1,6 +1,6 @@
 import logging
 from datetime import date
-from typing import Any
+from typing import TypedDict
 
 import requests
 
@@ -8,11 +8,30 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-DISCORD_EMBED_TOTAL_TEXT_LIMIT = 5900
-DISCORD_EMBED_FIELD_VALUE_LIMIT = 1000
-DISCORD_EMBED_FIELD_COUNT_LIMIT = 25
-DISCORD_EMBED_BORDER_COLOR = 0x3B82F6
+DISCORD_EMBED_TOTAL_TEXT_LIMIT = (
+    5900  # Discord caps all embed text in a message at 6000 chars.
+)
+DISCORD_EMBED_FIELD_VALUE_LIMIT = (
+    1000  # Discord caps a single field value at 1024 chars.
+)
+DISCORD_EMBED_FIELD_COUNT_LIMIT = 25  # Discord embed field cap.
+DISCORD_EMBED_BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
 COLUMN_LABELS = {"24h": "Last 24hrs", "7d": "Last 7 days"}
+
+StatValue = str | int | float
+StatRow = dict[str, StatValue]
+
+
+class EmbedField(TypedDict):
+    name: str
+    value: str
+
+
+class DiscordEmbed(TypedDict):
+    title: str
+    description: str
+    color: int
+    fields: list[EmbedField]
 
 
 def _column_label(column: str) -> str:
@@ -20,12 +39,13 @@ def _column_label(column: str) -> str:
     return COLUMN_LABELS.get(suffix, column)
 
 
-def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
+def format_sections(stats: dict[str, list[StatRow]]) -> list[EmbedField]:
     """Build one Discord embed field per stat section (name = title, value = table)."""
-    fields: list[dict[str, str]] = []
+    fields: list[EmbedField] = []
+    inactive_titles: list[str] = []
     for title, rows in stats.items():
         if not rows:
-            fields.append({"name": title, "value": "_no data_"})
+            inactive_titles.append(title)
             continue
 
         columns = list(rows[0].keys())
@@ -44,11 +64,11 @@ def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, st
         table_cols = ([row_col] if row_col else []) + numeric_cols
         headers = {c: _column_label(c) for c in table_cols}
 
-        def cell(column: str, row: dict[str, Any]) -> str:
+        def cell(column: str, row: StatRow) -> str:
             value = row[column]
             return f"{value:,}" if column in numeric_cols else str(value)
 
-        groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        groups: dict[tuple[StatValue, ...], list[StatRow]] = {}
         for row in rows:
             groups.setdefault(tuple(row[c] for c in group_cols), []).append(row)
 
@@ -82,8 +102,8 @@ def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, st
             blocks.append(block)
 
         value = "\n".join(blocks)
-        if len(value) > EMBED_FIELD_LIMIT:
-            cutoff = EMBED_FIELD_LIMIT - len("\n…\n```")
+        if len(value) > DISCORD_EMBED_FIELD_VALUE_LIMIT:
+            cutoff = DISCORD_EMBED_FIELD_VALUE_LIMIT - len("\n…\n```")
             truncated = value[:cutoff]
             value = (
                 f"{truncated}\n…\n```"
@@ -91,10 +111,14 @@ def format_sections(stats: dict[str, list[dict[str, Any]]]) -> list[dict[str, st
                 else f"{truncated}\n…"
             )
         fields.append({"name": title, "value": value})
+
+    if inactive_titles:
+        bullets = "\n".join(f"• {t}" for t in inactive_titles)
+        fields.append({"name": "No activity this week", "value": bullets})
     return fields
 
 
-def post_to_discord(fields: list[dict[str, str]], *, today: date | None = None) -> None:
+def post_to_discord(fields: list[EmbedField], *, today: date | None = None) -> None:
     url = settings.DISCORD_STATS_WEBHOOK_URL
     if not url:
         return
@@ -107,8 +131,8 @@ def post_to_discord(fields: list[dict[str, str]], *, today: date | None = None) 
     for field in fields:
         field_cost = len(field["name"]) + len(field["value"])
         if embed["fields"] and (
-            len(embed["fields"]) >= MAX_FIELDS_PER_EMBED
-            or _embed_size(embed) + field_cost > EMBED_TOTAL_LIMIT
+            len(embed["fields"]) >= DISCORD_EMBED_FIELD_COUNT_LIMIT
+            or _embed_size(embed) + field_cost > DISCORD_EMBED_TOTAL_TEXT_LIMIT
         ):
             _post(str(url), embed)
             embed = _new_embed(title, description)
@@ -117,16 +141,16 @@ def post_to_discord(fields: list[dict[str, str]], *, today: date | None = None) 
         _post(str(url), embed)
 
 
-def _new_embed(title: str, description: str) -> dict[str, Any]:
+def _new_embed(title: str, description: str) -> DiscordEmbed:
     return {
         "title": title,
         "description": description,
-        "color": BORDER_COLOR,
+        "color": DISCORD_EMBED_BORDER_COLOR,
         "fields": [],
     }
 
 
-def _embed_size(embed: dict[str, Any]) -> int:
+def _embed_size(embed: DiscordEmbed) -> int:
     return (
         len(embed["title"])
         + len(embed["description"])
@@ -134,9 +158,10 @@ def _embed_size(embed: dict[str, Any]) -> int:
     )
 
 
-def _post(url: str, embed: dict[str, Any]) -> None:
+def _post(url: str, embed: DiscordEmbed) -> None:
     try:
         response = requests.post(url, json={"embeds": [embed]}, timeout=5)
         response.raise_for_status()
     except requests.RequestException as e:
+        # Log only the exception type — the message can contain the webhook URL.
         logger.warning(f"[_post] Webhook post failed: {type(e).__name__}")
