@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
+from app.crud.assessment.batch import list_assessment_dataset_rows
 from app.crud.assessment.dataset import (
     delete_assessment_dataset,
     get_assessment_dataset_by_id,
@@ -16,6 +17,7 @@ from app.crud.assessment.dataset import (
 from app.models.assessment import (
     AssessmentDatasetPreview,
     AssessmentDatasetResponse,
+    AssessmentDatasetRows,
 )
 from app.models.evaluation import EvaluationDataset
 from app.services.assessment.dataset import (
@@ -28,6 +30,11 @@ from app.utils import APIResponse, load_description
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Hard cap for the rows-export endpoint. Above this the request is rejected
+# up front (from the stored row count, no file download/parse) so a huge sheet
+# never triggers heavy computation.
+MAX_DATASET_EXPORT_ROWS = 100
 
 
 def _dataset_to_response(
@@ -165,6 +172,75 @@ def get_dataset(
 
     return APIResponse.success_response(
         data=_dataset_to_response(dataset, signed_url=signed_url, preview=preview)
+    )
+
+
+@router.get(
+    "/datasets/{dataset_id}/rows",
+    description=load_description("assessment/get_dataset_rows.md"),
+    response_model=APIResponse[AssessmentDatasetRows],
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+)
+def get_dataset_rows(
+    dataset_id: int,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+) -> APIResponse[AssessmentDatasetRows]:
+    """Return all rows of an assessment dataset as column-keyed dicts."""
+    dataset = get_assessment_dataset_by_id(
+        session=session,
+        dataset_id=dataset_id,
+        organization_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+
+    # Reject oversized datasets up front from the stored row count (recorded at
+    # upload), so no file is downloaded or parsed for a sheet we won't return.
+    total_items = (dataset.dataset_metadata or {}).get("total_items_count")
+    if isinstance(total_items, int) and total_items > MAX_DATASET_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Max size exceeded: dataset has {total_items} rows; the input "
+                f"rows export is limited to {MAX_DATASET_EXPORT_ROWS}."
+            ),
+        )
+
+    try:
+        rows = list_assessment_dataset_rows(session, dataset)
+    except ValueError as e:
+        logger.warning(
+            "[get_dataset_rows] Failed to load dataset rows | dataset_id=%s | %s",
+            dataset_id,
+            e,
+        )
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # Drop blank-named columns and columns empty across every row (trailing
+    # empty spreadsheet columns) so the response carries only real fields.
+    # Single pass over the cells decides which columns to keep (O(rows*cols)),
+    # so it stays cheap even for large sheets.
+    ordered_columns: list[str] = []
+    seen_columns: set[str] = set()
+    non_empty_columns: set[str] = set()
+    for row in rows:
+        for column, value in row.items():
+            if column not in seen_columns:
+                seen_columns.add(column)
+                ordered_columns.append(column)
+            if column.strip() and (value or "").strip():
+                non_empty_columns.add(column)
+    kept_columns = [c for c in ordered_columns if c in non_empty_columns]
+    cleaned_rows = [
+        {column: row.get(column, "") for column in kept_columns} for row in rows
+    ]
+
+    return APIResponse.success_response(
+        data=AssessmentDatasetRows(
+            headers=kept_columns,
+            rows=cleaned_rows,
+            total_rows=len(cleaned_rows),
+        )
     )
 
 

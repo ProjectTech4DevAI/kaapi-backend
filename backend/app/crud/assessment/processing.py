@@ -20,14 +20,21 @@ from app.crud.assessment import (
     update_assessment_run_prefilter_stats,
     update_assessment_run_status,
 )
-from app.crud.assessment.core import _read_exec, _write_exec
+from app.crud.assessment.core import (
+    _read_exec,
+    _write_exec,
+    resolve_assessment_config_blob,
+)
 from app.crud.job import get_batch_job
+from app.crud.model_config import estimate_model_cost
 from app.models.assessment import (
     Assessment,
     AssessmentRun,
     AssessmentStatus,
+    Stage,
     StageStatus,
 )
+from app.services.assessment.prefilter.constants import ASSESSMENT_PREFILTER_MODEL
 from app.services.assessment.stages import (
     GATE_STAGES,
     STAGE_PARSERS,
@@ -38,6 +45,16 @@ from app.services.assessment.stages import (
 from app.services.llm.providers.registry import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+_COST_CURRENCY = "USD"
+# Gemini pricing rows may be keyed under this provider rather than plain "google".
+_GOOGLE_AISTUDIO_PROVIDER = "google-aistudio"
+# Pre-filter stage -> cost sub-key under execution.cost.pre_filter. Keyed by str
+# (not Stage) because the exec bag stores stage as a plain string.
+_PREFILTER_COST_KEYS: dict[str, str] = {
+    Stage.PRE_FILTER_TOPIC_RELEVANCE: "topic_relevance",
+    Stage.PRE_FILTER_DUPLICATE_DETECTION: "duplicate_detection",
+}
 
 
 def format_assessment_failure_message(exc: Exception) -> str:
@@ -365,6 +382,132 @@ def _record_gate_stats(
         )
 
 
+def _sum_stage_tokens(outputs: list[dict[str, Any]]) -> tuple[int, int]:
+    """Sum input/output tokens across a stage's parsed rows; missing usage counts as 0."""
+    from app.services.assessment.utils.parsing import usage_totals
+
+    input_total = 0
+    output_total = 0
+    for row in outputs:
+        input_tokens, output_tokens, _ = usage_totals(row.get("usage"))
+        input_total += input_tokens or 0
+        output_total += output_tokens or 0
+    return input_total, output_total
+
+
+def _estimate_stage_usd(
+    session: Session,
+    provider: str,
+    model_name: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> float:
+    """Batch USD for a stage; a missing model/pricing row is treated as 0.0 (warned)."""
+    result = estimate_model_cost(
+        session=session,
+        provider=provider,  # type: ignore[arg-type]
+        model_name=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usage_type="batch",
+    )
+    if result is None and provider == LLMProvider.GOOGLE:
+        result = estimate_model_cost(
+            session=session,
+            provider=_GOOGLE_AISTUDIO_PROVIDER,  # type: ignore[arg-type]
+            model_name=model_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            usage_type="batch",
+        )
+    if result is None:
+        logger.warning(
+            "[_estimate_stage_usd] No pricing for provider=%s model=%s — cost=0.0",
+            provider,
+            model_name,
+        )
+        return 0.0
+    return float(result.get("total_cost") or 0.0)
+
+
+def _resolve_l2_model(
+    session: Session, run: AssessmentRun, project_id: int
+) -> str | None:
+    """Model name for the L2 assessment call, resolved the way L2 submission does."""
+    config_blob, error = resolve_assessment_config_blob(
+        session=session,
+        config_id=run.config_id,
+        config_version=run.config_version,
+        project_id=project_id,
+    )
+    if error or config_blob is None:
+        logger.warning(
+            "[_resolve_l2_model] run_id=%s config resolution failed — %s", run.id, error
+        )
+        return None
+    return (config_blob.assessment.params or {}).get("model")
+
+
+def _record_stage_cost(
+    session: Session, run: AssessmentRun, stage: str, batch_job, project_id: int
+) -> None:
+    """Accumulate the just-completed stage's batch USD into execution.cost.
+
+    Best-effort: cost accounting must never fail the pipeline, so every error is
+    swallowed with a warning. pre_filter.total and the grand total are recomputed
+    on each call so a resumed/partial run stays internally consistent.
+    """
+    try:
+        provider = batch_job.provider
+        if stage in _PREFILTER_COST_KEYS:
+            model_name = ASSESSMENT_PREFILTER_MODEL
+        elif stage == Stage.L2_ASSESSMENT:
+            model_name = _resolve_l2_model(session, run, project_id)
+        else:
+            return
+
+        if not model_name:
+            logger.warning(
+                "[_record_stage_cost] run_id=%s stage=%s — no model to price, cost=0.0",
+                run.id,
+                stage,
+            )
+
+        raw = load_raw_batch_results(session, batch_job, project_id)
+        outputs = parse_assessment_output(raw, provider)
+        input_tokens, output_tokens = _sum_stage_tokens(outputs)
+        stage_cost = (
+            _estimate_stage_usd(
+                session, provider, model_name, input_tokens, output_tokens
+            )
+            if model_name
+            else 0.0
+        )
+
+        cost = dict(_read_exec(run).get("cost") or {})
+        pre_filter = dict(cost.get("pre_filter") or {})
+        if stage in _PREFILTER_COST_KEYS:
+            pre_filter[_PREFILTER_COST_KEYS[stage]] = stage_cost
+        elif stage == Stage.L2_ASSESSMENT:
+            cost["assessment"] = stage_cost
+
+        if pre_filter:
+            pre_filter["total"] = sum(
+                pre_filter[key]
+                for key in _PREFILTER_COST_KEYS.values()
+                if pre_filter.get(key) is not None
+            )
+            cost["pre_filter"] = pre_filter
+
+        cost["total"] = pre_filter.get("total", 0.0) + (cost.get("assessment") or 0.0)
+        cost["currency"] = _COST_CURRENCY
+        _write_exec(run, cost=cost)
+    except Exception as exc:
+        logger.warning(
+            "[_record_stage_cost] run_id=%s stage=%s — %s", run.id, stage, exc
+        )
+
+
 def _fail_run_stage(
     session: Session, run: AssessmentRun, message: str
 ) -> dict[str, Any]:
@@ -425,6 +568,7 @@ async def process_run_batches(run: AssessmentRun, session: Session) -> dict[str,
     _write_exec(run, stage_status=StageStatus.COMPLETED)
     if stage in GATE_STAGES:
         _record_gate_stats(session, run, stage, batch_job, parent.project_id)
+    _record_stage_cost(session, run, stage, batch_job, parent.project_id)
 
     nxt = advance_or_finalize(run)
     session.add(run)

@@ -36,18 +36,20 @@ _ATTACHMENT_TYPES = ("image", "pdf")
 
 
 def _validate_rows_against_schema(
-    rows: list[dict[str, str]], input_schema: dict[str, dict[str, str | None]]
+    rows: list[dict[str, str]], input_schema: dict[str, dict[str, str | bool | None]]
 ) -> None:
     """Validate every BATCH row against the config's input_schema.
 
-    Raises 422 on the first offending row: a missing declared column, an
-    unexpected column not in the schema, or an attachment column whose value is
-    not a URL. The row index is named so the client can locate the bad row.
+    Raises 422 on the first offending row: a missing ``strict`` column, an
+    unexpected column not in the schema, or a present attachment column whose
+    value is not a URL. Non-strict columns are optional. The row index is named
+    so the client can locate the bad row.
     """
     declared = set(input_schema)
+    required = {c for c, spec in input_schema.items() if (spec or {}).get("strict")}
     for idx, row in enumerate(rows):
         row_columns = set(row)
-        missing = declared - row_columns
+        missing = required - row_columns
         if missing:
             raise HTTPException(
                 status_code=422,
@@ -63,7 +65,8 @@ def _validate_rows_against_schema(
                 ),
             )
         for column, spec in input_schema.items():
-            if (spec or {}).get("type") in _ATTACHMENT_TYPES:
+            # Only present values are checked — a non-strict column may be absent.
+            if column in row_columns and (spec or {}).get("type") in _ATTACHMENT_TYPES:
                 value = row.get(column, "")
                 if not value.startswith(_URL_PREFIXES):
                     raise HTTPException(

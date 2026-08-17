@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -29,6 +30,7 @@ from app.models.assessment import (
     AssessmentRunCreate,
     AssessmentRunPublic,
     AssessmentRunResponse,
+    RunExecution,
 )
 from app.models.evaluation import EvaluationDataset
 from app.services.assessment.service import (
@@ -67,6 +69,17 @@ def _build_run_public(
             run.id,
         )
     dataset = session.get(EvaluationDataset, parent.dataset_id) if parent else None
+    # Runtime state was folded into the `execution` JSONB bag (migration 078); the frozen
+    # request input lives on the parent, not the run. Legacy list/get are scoped to
+    # method=RUN, but guard defensively so a non-RUN-shaped bag can never 500 the list.
+    try:
+        bag = RunExecution.model_validate(run.execution or {})
+    except ValidationError:
+        logger.warning(
+            "[_build_run_public] Non-RUN execution bag for run %s; returning empty bag",
+            run.id,
+        )
+        bag = RunExecution()
     return AssessmentRunPublic(
         id=run.id,
         assessment_id=run.assessment_id,
@@ -78,14 +91,15 @@ def _build_run_public(
         status=run.status,
         total_items=run.total_items,
         error_message=run.error_message,
-        input=run.input,
-        prefilter_total_rows=run.prefilter_total_rows,
-        prefilter_total_passed=run.prefilter_total_passed,
-        prefilter_total_rejected=run.prefilter_total_rejected,
-        stage=run.stage,
-        stage_status=run.stage_status,
-        pipeline=run.pipeline,
-        post_processing_config=(run.input or {}).get("post_processing_config"),
+        input=parent.input if parent else None,
+        prefilter_total_rows=bag.prefilter_total_rows,
+        prefilter_total_passed=bag.prefilter_total_passed,
+        prefilter_total_rejected=bag.prefilter_total_rejected,
+        stage=bag.stage,
+        stage_status=bag.stage_status,
+        pipeline=bag.pipeline,
+        cost=bag.cost,
+        post_processing_config=run.post_processing_config,
         inserted_at=run.inserted_at,
         updated_at=run.updated_at,
     )
@@ -261,7 +275,7 @@ def export_assessment_run_results(
         )
     )
 
-    post_processing_config = (run.input or {}).get("post_processing_config") or None
+    post_processing_config = run.post_processing_config or None
     base_label = assessment.experiment_name if assessment else f"run_{run.id}"
 
     if export_format != "json":

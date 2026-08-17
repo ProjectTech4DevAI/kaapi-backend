@@ -103,7 +103,7 @@ class TestStartAssessment:
                 return_value=_make_dataset(),
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(None, "missing"),
             ),
             _assessment_config_crud_patch(),
@@ -119,7 +119,7 @@ class TestStartAssessment:
     def test_rejects_unsupported_provider(self) -> None:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
-        config_blob = SimpleNamespace(completion=SimpleNamespace(provider="sarvamai"))
+        config_blob = SimpleNamespace(assessment=SimpleNamespace(provider="sarvamai"))
 
         with (
             patch(
@@ -127,7 +127,7 @@ class TestStartAssessment:
                 return_value=_make_dataset(),
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(
@@ -154,7 +154,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider="google", params={"model": "gemini"})
+            assessment=SimpleNamespace(provider="google", params={"model": "gemini"})
         )
 
         with (
@@ -163,7 +163,7 @@ class TestStartAssessment:
                 return_value=dataset,
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(
@@ -210,7 +210,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider=provider, params={"model": "m"})
+            assessment=SimpleNamespace(provider=provider, params={"model": "m"})
         )
 
         with (
@@ -219,7 +219,7 @@ class TestStartAssessment:
                 return_value=dataset,
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(
@@ -252,7 +252,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
+            assessment=SimpleNamespace(
                 provider="anthropic", params={"model": "claude-opus-4-8"}
             )
         )
@@ -263,7 +263,7 @@ class TestStartAssessment:
                 return_value=dataset,
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(
@@ -298,7 +298,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(provider=None, params={"model": "gpt-4.1-mini"})
+            assessment=SimpleNamespace(provider=None, params={"model": "gpt-4.1-mini"})
         )
 
         with (
@@ -307,7 +307,7 @@ class TestStartAssessment:
                 return_value=dataset,
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(
@@ -355,7 +355,7 @@ class TestStartAssessment:
             ),
             patch("app.services.assessment.service.ConfigCrud", return_value=crud),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config"
+                "app.services.assessment.service.resolve_assessment_config_blob"
             ) as resolve,
         ):
             with pytest.raises(
@@ -381,7 +381,7 @@ class TestStartAssessment:
         assessment.id = ASSESSMENT_ID
         run = _make_run()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
+            assessment=SimpleNamespace(
                 provider="openai", params={"model": "gpt-4.1-mini"}
             )
         )
@@ -392,7 +392,7 @@ class TestStartAssessment:
                 return_value=dataset,
             ),
             patch(
-                "app.services.assessment.service.resolve_evaluation_config",
+                "app.services.assessment.service.resolve_assessment_config_blob",
                 return_value=(config_blob, None),
             ),
             patch(

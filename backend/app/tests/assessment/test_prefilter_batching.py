@@ -239,7 +239,7 @@ class TestResolveRunContext:
         with patch.object(
             tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
         ), patch.object(
-            tasks, "resolve_evaluation_config", return_value=({"x": 1}, None)
+            tasks, "resolve_assessment_config_blob", return_value=({"x": 1}, None)
         ):
             _a, _d, blob, err = tasks._resolve_run_context(session, run, 1, 1)
         assert blob == {"x": 1}
@@ -258,7 +258,7 @@ class TestResolveRunContext:
         with patch.object(
             tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
         ), patch.object(
-            tasks, "resolve_evaluation_config", return_value=(None, "bad config")
+            tasks, "resolve_assessment_config_blob", return_value=(None, "bad config")
         ):
             _a, _d, blob, err = tasks._resolve_run_context(session, _run(), 1, 1)
         assert blob is None

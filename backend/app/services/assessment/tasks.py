@@ -11,12 +11,12 @@ from app.core.db import engine
 from app.crud.assessment import (
     get_assessment_dataset_by_id,
     recompute_assessment_status,
+    resolve_assessment_config_blob,
     update_assessment_run_status,
 )
 from app.crud.assessment.batch import _load_dataset_rows, submit_assessment_batch
 from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.assessment.processing import parse_assessment_output
-from app.crud.evaluations.core import resolve_evaluation_config
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
@@ -26,7 +26,6 @@ from app.models.assessment import (
     Stage,
     StageStatus,
 )
-from app.models.config.config import ConfigTag
 from app.services.assessment.prefilter import resolve_prefilter_settings
 from app.services.assessment.stages import (
     GATE_STAGES,
@@ -116,12 +115,11 @@ def _resolve_run_context(
         organization_id=organization_id,
         project_id=project_id,
     )
-    config_blob, error = resolve_evaluation_config(
+    config_blob, error = resolve_assessment_config_blob(
         session=session,
         config_id=run.config_id,
         config_version=run.config_version,
         project_id=project_id,
-        tag=ConfigTag.ASSESSMENT,
     )
     if error or config_blob is None:
         return assessment, dataset, None, f"Config resolution failed: {error}"

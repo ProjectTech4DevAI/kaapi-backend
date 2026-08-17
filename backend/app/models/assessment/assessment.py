@@ -118,6 +118,25 @@ class InputBinding(BaseModel):
 
 
 # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+class RunPreFilterCost(BaseModel):
+    """Per-submodule pre-filter batch cost (USD); sub-keys present only if the stage ran."""
+
+    topic_relevance: float | None = None
+    duplicate_detection: float | None = None
+    total: float = 0.0
+
+
+# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+class RunCost(BaseModel):
+    """Batch USD cost of a run, split into pre-filter and assessment stages."""
+
+    pre_filter: RunPreFilterCost | None = None
+    assessment: float | None = None
+    total: float | None = None
+    currency: str = "USD"
+
+
+# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
 class RunExecution(BaseModel):
     """Legacy RUN pipeline runtime state (assessment_run.execution)."""
 
@@ -130,6 +149,7 @@ class RunExecution(BaseModel):
     prefilter_total_rejected: int | None = None
     object_store_url: str | None = None
     prefilter_object_store_url: str | None = None
+    cost: RunCost | None = None
 
 
 class Assessment(SQLModel, table=True):
@@ -295,18 +315,6 @@ class AssessmentResponse(BaseModel):
 
 
 # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-class AssessmentPublic(BaseModel):
-    id: UUID
-    experiment_name: str | None = None
-    status: AssessmentStatus
-    executions: list[AssessmentExecutionPublic] = []
-    organization_id: int
-    project_id: int
-    inserted_at: datetime
-    updated_at: datetime
-
-
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
 class AssessmentExportRow(BaseModel):
     """Flattened result row for CSV/XLSX/JSON export."""
 
@@ -360,6 +368,23 @@ class AssessmentRunStat(BaseModel):
 
 
 # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# Declared after AssessmentRunCounts/AssessmentRunStat so the nested annotations resolve.
+class AssessmentPublic(BaseModel):
+    id: UUID
+    experiment_name: str | None = None
+    dataset_id: int | None = None
+    dataset_name: str | None = None
+    status: AssessmentStatus
+    counts: AssessmentRunCounts
+    run_stats: list[AssessmentRunStat] = []
+    error_message: str | None = None
+    organization_id: int
+    project_id: int
+    inserted_at: datetime
+    updated_at: datetime
+
+
+# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
 class AssessmentRunSummary(BaseModel):
     run_id: int
     assessment_id: UUID
@@ -372,14 +397,23 @@ class AssessmentRunSummary(BaseModel):
 class AssessmentRunPublic(BaseModel):
     id: int
     assessment_id: UUID
+    experiment_name: str | None = None
+    dataset_id: int | None = None
+    dataset_name: str | None = None
     config_id: UUID
     config_version: int
     status: AssessmentStatus
     total_items: int
-    batch_job_id: int | None = None
-    execution: RunExecution | None = None
-    post_processing_config: dict[str, Any] | None = None
     error_message: str | None = None
+    input: dict[str, Any] | None = None
+    prefilter_total_rows: int | None = None
+    prefilter_total_passed: int | None = None
+    prefilter_total_rejected: int | None = None
+    stage: Stage | None = None
+    stage_status: StageStatus | None = None
+    pipeline: dict[str, Any] | None = None
+    post_processing_config: dict[str, Any] | None = None
+    cost: RunCost | None = None
     inserted_at: datetime
     updated_at: datetime
 
@@ -416,6 +450,15 @@ class AssessmentDatasetPreview(BaseModel):
     rows: list[list[str]]
     returned_rows: int = 0
     truncated: bool = False
+
+
+# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+class AssessmentDatasetRows(BaseModel):
+    """All rows of a dataset as column-keyed dicts, for client-side batch input assembly."""
+
+    headers: list[str]
+    rows: list[dict[str, str]]
+    total_rows: int = 0
 
 
 # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
