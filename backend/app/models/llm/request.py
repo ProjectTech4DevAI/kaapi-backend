@@ -295,8 +295,8 @@ class KaapiCompletionConfig(SQLModel):
         None,
         description=(
             "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
-            "google-aistudio). 'google' routes via Google Vertex AI; "
-            "'google-aistudio' uses Google AI Studio."
+            "google-aistudio, google-gcp). 'google-aistudio' uses Google AI "
+            "Studio; 'google-gcp' uses Google GCP directly for STT/TTS."
         ),
     )
 

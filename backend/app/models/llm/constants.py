@@ -9,6 +9,7 @@ class Provider(StrEnum):
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
+    GOOGLE_GCP = "google-gcp"
     PROXY = "proxy"
 
 
@@ -17,12 +18,14 @@ class Provider(StrEnum):
 # instead of leaving behind stale magic strings.
 STTProvider = Literal[
     Provider.GOOGLE,
+    Provider.GOOGLE_GCP,
     Provider.SARVAMAI,
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
 ]
 TTSProvider = Literal[
     Provider.GOOGLE,
+    Provider.GOOGLE_GCP,
     Provider.SARVAMAI,
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
@@ -32,6 +35,7 @@ RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 KaapiProvider = Literal[
     Provider.OPENAI,
     Provider.GOOGLE,
+    Provider.GOOGLE_GCP,
     Provider.SARVAMAI,
     Provider.ELEVENLABS,
     Provider.ANTHROPIC,
@@ -49,6 +53,7 @@ NativeProvider = Literal[
     "elevenlabs-native",
     "anthropic-native",
     "google-aistudio-native",
+    "google-gcp-native",
 ]
 
 
