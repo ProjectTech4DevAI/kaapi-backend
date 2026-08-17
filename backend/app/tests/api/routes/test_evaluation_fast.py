@@ -416,7 +416,7 @@ class TestFastEvaluationRoute:
 
         fake_blob = ConfigBlob(
             completion=build_kaapi_completion_config(
-                provider="openai",
+                provider="google",
                 type="stt",
                 params={"model": "whisper-1"},
             )

@@ -136,14 +136,27 @@ class AssessmentCompletionConfig(KaapiTextCompletionConfig):
         ..., description="Provider to use for the assessment completion call."
     )
     type: Literal[CompletionType.TEXT] = CompletionType.TEXT
+    # Overrides the inherited `TextLLMParams` field with the assessment-scoped
+    # superset so input_schema/json_output_schema survive field validation
+    # instead of being dropped as unknown TextLLMParams keys.
+    params: AssessmentTextParams = Field(
+        ...,
+        description="Assessment-scoped Kaapi text params (adds input/output schemas).",
+    )
 
     @model_validator(mode="after")
     def validate_params(self):
-        user_set_temp = "temperature" in self.params
-        validated = AssessmentTextParams.model_validate(self.params)
-        self.params = validated.model_dump(exclude_none=True)
+        # SQLModel constructs nested non-table submodels twice for a field this
+        # validator mutates (once via the nested model's own __init__, once via
+        # the outer model's compiled validator) — the second pass sees the dict
+        # this validator already produced, so treat that as a no-op.
+        if isinstance(self.params, dict):
+            return self
+        user_set_temp = "temperature" in self.params.model_fields_set
+        dumped = self.params.model_dump(exclude_none=True)
         if not user_set_temp:
-            self.params.pop("temperature", None)
+            dumped.pop("temperature", None)
+        self.params = dumped
         return self
 
 
