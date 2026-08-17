@@ -136,24 +136,23 @@ class AssessmentCompletionConfig(KaapiTextCompletionConfig):
         ..., description="Provider to use for the assessment completion call."
     )
     type: Literal[CompletionType.TEXT] = CompletionType.TEXT
-    # Overrides the inherited `TextLLMParams` field with the assessment-scoped
-    # superset so input_schema/json_output_schema survive field validation
-    # instead of being dropped as unknown TextLLMParams keys.
-    params: AssessmentTextParams = Field(
+    # Overrides the inherited `TextLLMParams` field (same reasoning as
+    # `PreFilterBase.params` above): kept as a plain dict, not a typed model,
+    # so (a) input_schema/json_output_schema survive field validation instead
+    # of being dropped as unknown TextLLMParams keys, and (b) dumping this
+    # blob doesn't invoke `ParamSerialization`'s custom serializer against a
+    # value that no longer matches a typed field once this validator below
+    # normalizes it.
+    params: dict[str, JsonValue] = Field(
         ...,
         description="Assessment-scoped Kaapi text params (adds input/output schemas).",
     )
 
     @model_validator(mode="after")
     def validate_params(self):
-        # SQLModel constructs nested non-table submodels twice for a field this
-        # validator mutates (once via the nested model's own __init__, once via
-        # the outer model's compiled validator) — the second pass sees the dict
-        # this validator already produced, so treat that as a no-op.
-        if isinstance(self.params, dict):
-            return self
-        user_set_temp = "temperature" in self.params.model_fields_set
-        dumped = self.params.model_dump(exclude_none=True)
+        user_set_temp = "temperature" in self.params
+        validated = AssessmentTextParams.model_validate(self.params)
+        dumped = validated.model_dump(exclude_none=True)
         if not user_set_temp:
             dumped.pop("temperature", None)
         self.params = dumped

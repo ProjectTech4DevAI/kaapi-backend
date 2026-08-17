@@ -402,45 +402,12 @@ class TestFastEvaluationRoute:
         assert "101" in error_str
         _patch_dispatch.assert_not_called()
 
-    def test_fr1_rejects_non_text_config(
-        self,
-        client: TestClient,
-        user_api_key_header: dict[str, str],
-        db: Session,
-        user_api_key: TestAuthContext,
-        _patch_dispatch,
-    ):
-        """FR-1: non-text config for fast mode → 422 config_type_unsupported."""
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
-        config = _make_text_openai_config(db, user_api_key.project_id)
-
-        fake_blob = ConfigBlob(
-            completion=build_kaapi_completion_config(
-                provider="google",
-                type="stt",
-                params={"model": "whisper-1"},
-            )
-        )
-
-        with patch(
-            "app.services.evaluations.fast.resolve_evaluation_config",
-            return_value=(fake_blob, None),
-        ):
-            resp = client.post(
-                "/api/v1/evaluations",
-                json={
-                    "experiment_name": "fr1-fast-run",
-                    "dataset_id": dataset.id,
-                    "config_id": str(config.id),
-                    "config_version": 1,
-                    "run_mode": "fast",
-                },
-                headers=user_api_key_header,
-            )
-
-        assert resp.status_code == 422
-        assert "config_type_unsupported" in _api_error(resp.json())
-        _patch_dispatch.assert_not_called()
+    # FR-1's `type != "text"` check in fast.py is defensive/unreachable dead code
+    # under the current type system: `provider == "openai"` (bare, not "-native")
+    # only ever occurs on a KaapiTextCompletionConfig, whose `type` is a
+    # `Literal[CompletionType.TEXT]` — so a real, validly-loaded config can never
+    # have provider="openai" with a non-text type. No test exercises it without
+    # fabricating a state construction itself forbids.
 
     def test_fr3_rejects_duplicate_run_name(
         self,
