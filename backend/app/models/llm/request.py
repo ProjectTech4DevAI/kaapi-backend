@@ -27,6 +27,7 @@ from app.models.llm.constants import (
     STTProvider,
     TextProvider,
     TTSProvider,
+    normalize_bcp47_language,
 )
 
 
@@ -120,6 +121,20 @@ class STTLLMParams(ParamSerialization, SQLModel):
         description="Temperature parameter (not supported by all STT providers)",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_casing(cls, data: Any) -> Any:
+        """Accept a language name, bare ISO code, or BCP-47 tag in any casing
+        (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
+        on the canonical tag still find a match."""
+        if not isinstance(data, dict):
+            return data
+        for field in ("input_language", "output_language"):
+            value = data.get(field)
+            if isinstance(value, str):
+                data[field] = normalize_bcp47_language(value)
+        return data
+
 
 class TTSLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
@@ -129,6 +144,16 @@ class TTSLLMParams(ParamSerialization, SQLModel):
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
     instructions: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_casing(cls, data: Any) -> Any:
+        """Accept a language name, bare ISO code, or BCP-47 tag in any casing
+        (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
+        on the canonical tag still find a match."""
+        if isinstance(data, dict) and isinstance(data.get("language"), str):
+            data["language"] = normalize_bcp47_language(data["language"])
+        return data
 
     @model_validator(mode="after")
     def _reject_nonempty_instructions(self) -> Self:
@@ -363,12 +388,6 @@ class KaapiTTSCompletionConfig(SQLModel):
     )
 
 
-# Kaapi abstraction for LLM completion providers, keyed on `type` (text/stt/tts).
-# Uses standardized Kaapi parameters that are mapped to provider-specific APIs
-# internally. Supports multiple providers: OpenAI, Claude, Gemini, etc.
-# Kept under the old name since it's constructed/pattern-matched on directly
-# across services and tests; this is now a nested discriminated union rather
-# than a single model.
 KaapiCompletionConfig = Annotated[
     Union[
         KaapiTextCompletionConfig, KaapiSTTCompletionConfig, KaapiTTSCompletionConfig
@@ -376,10 +395,7 @@ KaapiCompletionConfig = Annotated[
     Field(discriminator="type"),
 ]
 
-# `KaapiCompletionConfig` is a Union alias now, not a class — it can't be
-# called directly or used with isinstance(). Callers that used to do
-# `KaapiCompletionConfig(provider=..., type=..., params=...)` should go
-# through this factory instead.
+
 _KAAPI_CONFIG_BY_TYPE: dict[CompletionType, type[SQLModel]] = {
     CompletionType.TEXT: KaapiTextCompletionConfig,
     CompletionType.STT: KaapiSTTCompletionConfig,
@@ -1102,17 +1118,16 @@ class SpeechToSpeechRequest(SQLModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_language_casing(cls, data: Any) -> Any:
-        """Normalize BCP-47 casing (e.g. 'hi-in' -> 'hi-IN') before the
-        STSLanguageCode Literal check runs, so case-insensitive input still
-        validates against the supported-code allowlist."""
+        """Normalize language input (name, bare ISO code, or BCP-47 tag, any
+        casing — e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') before the
+        STSLanguageCode Literal check runs, so it validates against the
+        supported-code allowlist."""
         if not isinstance(data, dict):
             return data
         for field in ("input_language", "output_language"):
             value = data.get(field)
-            if isinstance(value, str) and value not in ("auto", "unknown"):
-                parts = value.split("-")
-                if len(parts) == 2:
-                    data[field] = f"{parts[0].lower()}-{parts[1].upper()}"
+            if isinstance(value, str):
+                data[field] = normalize_bcp47_language(value)
         return data
 
     @model_validator(mode="after")

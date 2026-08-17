@@ -541,13 +541,13 @@ class TestErrorPaths:
     def test_invalid_input_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
-        # "hindi" isn't a valid STSLanguageCode literal, so it can't be constructed
-        # into a SpeechToSpeechRequest in Python — post the raw dict so the
-        # invalid value reaches FastAPI's own request validation instead.
+        # "klingon" isn't a recognized language name/code, so it can't be
+        # constructed into a SpeechToSpeechRequest in Python — post the raw
+        # dict so the invalid value reaches FastAPI's own request validation.
         payload = SpeechToSpeechRequest(
             query=audio_input, knowledge_base_ids=kb_ids
         ).model_dump(mode="json")
-        payload["input_language"] = "hindi"
+        payload["input_language"] = "klingon"
         response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
         assert isinstance(response.json()["errors"], list)
@@ -558,10 +558,28 @@ class TestErrorPaths:
         payload = SpeechToSpeechRequest(
             query=audio_input, knowledge_base_ids=kb_ids
         ).model_dump(mode="json")
-        payload["output_language"] = "english"
+        payload["output_language"] = "klingon"
         response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
         assert isinstance(response.json()["errors"], list)
+
+    @pytest.mark.parametrize(
+        "alias,canonical",
+        [("hindi", "hi-IN"), ("english", "en-IN"), ("hi", "hi-IN"), ("ta-in", "ta-IN")],
+    )
+    def test_language_aliases_normalize_to_bcp47(
+        self, client, user_api_key_header, audio_input, kb_ids, alias, canonical
+    ):
+        """Friendly names/bare codes (e.g. 'hindi') must resolve the same as
+        the canonical BCP-47 tag, not 422."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            payload = SpeechToSpeechRequest(
+                query=audio_input, knowledge_base_ids=kb_ids
+            ).model_dump(mode="json")
+            payload["input_language"] = alias
+            response = client.post(URL, json=payload, headers=user_api_key_header)
+        assert response.status_code == 200
+        assert _chain_request(mock).request_metadata["input_language"] == canonical
 
     @pytest.mark.parametrize("forbidden", ["unknown", "auto"])
     def test_detection_sentinels_rejected_as_output_language(

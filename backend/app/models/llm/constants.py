@@ -29,7 +29,9 @@ TTSProvider = Literal[
 ]
 RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
-TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
+TextProvider = Literal[
+    Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC, Provider.GOOGLE_AISTUDIO
+]
 
 # Union of the per-type provider sets — derived so the set can't drift when a
 # provider is added to one completion type.
@@ -93,6 +95,79 @@ STSLanguageCode = Literal[
     "mai-IN",
     "doi-IN",
 ]
+
+# Aliases accepted for STT/TTS/STS language fields — bare ISO 639 codes and
+# English language names, all lowercase — mapped to the canonical BCP-47 tag.
+LANGUAGE_ALIASES: dict[str, str] = {
+    "en": "en-IN",
+    "english": "en-IN",
+    "hi": "hi-IN",
+    "hindi": "hi-IN",
+    "bn": "bn-IN",
+    "bengali": "bn-IN",
+    "kn": "kn-IN",
+    "kannada": "kn-IN",
+    "ml": "ml-IN",
+    "malayalam": "ml-IN",
+    "mr": "mr-IN",
+    "marathi": "mr-IN",
+    "od": "od-IN",
+    "or": "od-IN",
+    "odia": "od-IN",
+    "oriya": "od-IN",
+    "pa": "pa-IN",
+    "punjabi": "pa-IN",
+    "ta": "ta-IN",
+    "tamil": "ta-IN",
+    "te": "te-IN",
+    "telugu": "te-IN",
+    "gu": "gu-IN",
+    "gujarati": "gu-IN",
+    "as": "as-IN",
+    "assamese": "as-IN",
+    "ur": "ur-IN",
+    "urdu": "ur-IN",
+    "ne": "ne-IN",
+    "nepali": "ne-IN",
+    "kok": "kok-IN",
+    "konkani": "kok-IN",
+    "ks": "ks-IN",
+    "kashmiri": "ks-IN",
+    "sd": "sd-IN",
+    "sindhi": "sd-IN",
+    "sa": "sa-IN",
+    "sanskrit": "sa-IN",
+    "sat": "sat-IN",
+    "santali": "sat-IN",
+    "mni": "mni-IN",
+    "manipuri": "mni-IN",
+    "meitei": "mni-IN",
+    "brx": "brx-IN",
+    "bodo": "brx-IN",
+    "mai": "mai-IN",
+    "maithili": "mai-IN",
+    "doi": "doi-IN",
+    "dogri": "doi-IN",
+}
+
+
+def normalize_bcp47_language(value: str) -> str:
+    """Best-effort normalize a user-supplied language value (English name,
+    bare ISO 639 code, or BCP-47 tag, any casing) to the canonical Kaapi
+    BCP-47 tag, e.g. 'hindi' / 'HI' / 'hi-in' -> 'hi-IN'.
+
+    Unrecognized input is returned unchanged so callers keep validating/
+    rejecting it themselves.
+    """
+    if value in ("auto", "unknown"):
+        return value
+    key = value.strip().lower()
+    if key in LANGUAGE_ALIASES:
+        return LANGUAGE_ALIASES[key]
+    parts = key.split("-")
+    if len(parts) == 2:
+        return f"{parts[0]}-{parts[1].upper()}"
+    return value
 
 
 DEFAULT_STT_MODEL = "gemini-2.5-pro"

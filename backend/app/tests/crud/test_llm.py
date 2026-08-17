@@ -64,7 +64,7 @@ def stt_config_blob() -> ConfigBlob:
     """Create a speech-to-text config blob."""
     return ConfigBlob(
         completion=build_kaapi_completion_config(
-            provider="openai",
+            provider="google",
             params={
                 "model": "whisper-1",
                 "instructions": "Transcribe",
@@ -80,7 +80,7 @@ def tts_config_blob() -> ConfigBlob:
     """Create a text-to-speech config blob."""
     return ConfigBlob(
         completion=build_kaapi_completion_config(
-            provider="openai",
+            provider="google",
             params={
                 "model": "tts-1",
                 "voice": "alloy",
