@@ -420,6 +420,20 @@ class EvaluationRun(SQLModel, table=True):
         description="Optional HTTPS webhook fired on terminal (completed/failed) state",
     )
 
+    duplication_factor: int | None = SQLField(
+        default=None,
+        ge=1,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": (
+                "Per-run override of the dataset's stored duplication_factor for "
+                "runtime-duplicated (v2) datasets. Read by fan-out sizing, the "
+                "chunk re-load, and the ai_summary math so all three agree. NULL = "
+                "use the dataset's stored factor (v1/Langfuse forced to 1)"
+            )
+        },
+    )
+
     # Cost tracking field
     cost: dict[str, Any] | None = SQLField(
         default=None,
@@ -519,6 +533,7 @@ class EvaluationRunUpdate(SQLModel):
     embedding_batch_job_id: int | None = None
     is_judge_run: bool | None = None
     callback_url: str | None = None
+    duplication_factor: int | None = None
 
 
 class EvaluationRunPublic(SQLModel):

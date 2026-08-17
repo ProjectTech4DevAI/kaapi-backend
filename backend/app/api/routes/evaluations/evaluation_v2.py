@@ -37,6 +37,16 @@ def evaluate_v2(
     ),
     config_id: UUID = Body(..., description="Stored config ID"),
     config_version: int = Body(..., ge=1, description="Stored config version"),
+    duplication_factor: int
+    | None = Body(
+        None,
+        ge=1,
+        description=(
+            "Optional per-run override of the dataset's stored duplication_factor. "
+            "Only supported for runtime-duplicated (v2) datasets; rejected with 422 "
+            "otherwise. Omit to use the dataset's stored factor."
+        ),
+    ),
     callback_url: HttpUrl
     | None = Body(
         None,
@@ -68,5 +78,6 @@ def evaluate_v2(
         trace_id=correlation_id.get() or "N/A",
         is_judge_run=True,
         callback_url=str(callback_url) if callback_url else None,
+        duplication_factor=duplication_factor,
     )
     return APIResponse.success_response(data=eval_run)
