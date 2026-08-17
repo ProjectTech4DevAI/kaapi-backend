@@ -329,3 +329,12 @@ class TestValidateUpload:
         assert exc.value.status_code == 400
         assert "NUL byte" not in exc.value.detail
         assert "corrupted" in exc.value.detail
+
+
+class TestValidateUpload:
+    def test_missing_filename_raises_400(self) -> None:
+        src = UploadFile(file=BytesIO(b"data"), filename=None)
+        with pytest.raises(HTTPException) as exc_info:
+            validate_upload(src=src, target_format=None, transformer=None)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Uploaded file has no filename"

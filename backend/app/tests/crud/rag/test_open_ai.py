@@ -14,6 +14,7 @@ from app.crud.rag.open_ai import (
     BATCH_INDEX_MAX_ATTEMPTS,
     BATCH_POLL_INTERVAL_SECONDS,
     OpenAIVectorStoreCrud,
+    _provider_file_id,
 )
 from app.tests.utils.openai import get_mock_openai_client_with_vector_store
 
@@ -441,3 +442,28 @@ class TestBatchRetry:
             mock_client.vector_stores.file_batches.create.call_count
             == BATCH_INDEX_MAX_ATTEMPTS
         )
+
+
+class TestProviderFileId:
+    def test_returns_openai_file_id(self) -> None:
+        assert _provider_file_id(_make_doc("file-1", "f1.pdf")) == "file-1"
+
+    def test_missing_file_id_raises(self) -> None:
+        doc = MagicMock()
+        doc.file_id = None
+        with pytest.raises(ValueError, match="no OpenAI file id"):
+            _provider_file_id(doc)
+
+    def test_absent_openai_provider_raises(self) -> None:
+        doc = MagicMock()
+        doc.file_id = {"google-aistudio": "files/x"}
+        with pytest.raises(ValueError, match="no OpenAI file id"):
+            _provider_file_id(doc)
+
+
+class TestDeleteRetriesValidation:
+    def test_retries_below_one_raises(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock
+    ) -> None:
+        with pytest.raises(ValueError, match="Retries must be greater-than 1"):
+            crud.delete("vs_1", retries=0)
