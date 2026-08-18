@@ -1,11 +1,11 @@
-from typing import Any
+import re
 
 from sqlalchemy import text
 from sqlmodel import Session
 
-# Every query reports two rolling windows in one pass: the last 24 hours and the
-# last 7 days (168 hours), broken down per organization and per project. The
-# 24h FILTER count is a subset of the rows the 7d WHERE already selected.
+StatValue = str | int | float
+StatRow = dict[str, StatValue]
+
 
 LLM_CALLS = """
     SELECT
@@ -75,13 +75,13 @@ JOBS = """
     ORDER BY o.name, p.name, j.job_type
 """
 
-EVALUATION_RUNS = """
+_SIMPLE_COUNT = """
     SELECT
         o.name AS organization,
         p.name AS project,
         COUNT(*) FILTER (WHERE t.inserted_at >= now() - INTERVAL '24 hours')  AS count_24h,
         COUNT(*) AS count_7d
-    FROM evaluation_run t
+    FROM {table} t
     INNER JOIN organization o ON t.organization_id = o.id
     INNER JOIN project p ON t.project_id = p.id
     WHERE t.inserted_at >= now() - INTERVAL '168 hours'
@@ -89,62 +89,34 @@ EVALUATION_RUNS = """
     ORDER BY count_7d DESC
 """
 
-STT_RESULTS = """
-    SELECT
-        o.name AS organization,
-        p.name AS project,
-        COUNT(*) FILTER (WHERE t.inserted_at >= now() - INTERVAL '24 hours')  AS count_24h,
-        COUNT(*) AS count_7d
-    FROM stt_result t
-    INNER JOIN organization o ON t.organization_id = o.id
-    INNER JOIN project p ON t.project_id = p.id
-    WHERE t.inserted_at >= now() - INTERVAL '168 hours'
-    GROUP BY o.name, p.name
-    ORDER BY count_7d DESC
-"""
+SIMPLE_COUNT_TABLES = {
+    "Evaluation Runs": "evaluation_run",
+    "STT Results": "stt_result",
+    "TTS Results": "tts_result",
+    "Assessments": "assessment",
+}
 
-TTS_RESULTS = """
-    SELECT
-        o.name AS organization,
-        p.name AS project,
-        COUNT(*) FILTER (WHERE t.inserted_at >= now() - INTERVAL '24 hours')  AS count_24h,
-        COUNT(*) AS count_7d
-    FROM tts_result t
-    INNER JOIN organization o ON t.organization_id = o.id
-    INNER JOIN project p ON t.project_id = p.id
-    WHERE t.inserted_at >= now() - INTERVAL '168 hours'
-    GROUP BY o.name, p.name
-    ORDER BY count_7d DESC
-"""
-
-ASSESSMENTS = """
-    SELECT
-        o.name AS organization,
-        p.name AS project,
-        COUNT(*) FILTER (WHERE t.inserted_at >= now() - INTERVAL '24 hours')  AS count_24h,
-        COUNT(*) AS count_7d
-    FROM assessment t
-    INNER JOIN organization o ON t.organization_id = o.id
-    INNER JOIN project p ON t.project_id = p.id
-    WHERE t.inserted_at >= now() - INTERVAL '168 hours'
-    GROUP BY o.name, p.name
-    ORDER BY count_7d DESC
-"""
+_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
-def _rows(session: Session, sql: str) -> list[dict[str, Any]]:
+def _simple_count_sql(table: str) -> str:
+    if not _IDENTIFIER.match(table):
+        raise ValueError(f"unsafe table identifier: {table!r}")
+    return _SIMPLE_COUNT.format(table=table)
+
+
+def _rows(session: Session, sql: str) -> list[StatRow]:
     result = session.connection().execute(text(sql))
     return [dict(row) for row in result.mappings().all()]
 
 
-def get_daily_stats(*, session: Session) -> dict[str, list[dict[str, Any]]]:
-    stats: dict[str, list[dict[str, Any]]] = {}
-    stats["LLM Calls"] = _rows(session, LLM_CALLS)
-    stats["LLM Tokens"] = _rows(session, LLM_TOKENS)
-    stats["LLM Modality"] = _rows(session, LLM_MODALITY)
-    stats["Jobs by Type"] = _rows(session, JOBS)
-    stats["Evaluation Runs"] = _rows(session, EVALUATION_RUNS)
-    stats["STT Results"] = _rows(session, STT_RESULTS)
-    stats["TTS Results"] = _rows(session, TTS_RESULTS)
-    stats["Assessments"] = _rows(session, ASSESSMENTS)
+def get_daily_stats(*, session: Session) -> dict[str, list[StatRow]]:
+    stats: dict[str, list[StatRow]] = {
+        "LLM Calls": _rows(session, LLM_CALLS),
+        "LLM Tokens": _rows(session, LLM_TOKENS),
+        "LLM Modality": _rows(session, LLM_MODALITY),
+        "Jobs by Type": _rows(session, JOBS),
+    }
+    for label, table in SIMPLE_COUNT_TABLES.items():
+        stats[label] = _rows(session, _simple_count_sql(table))
     return stats
