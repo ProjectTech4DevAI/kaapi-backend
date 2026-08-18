@@ -70,8 +70,9 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     mock_response = MagicMock()
+    mock_response.status_code = 500
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "bad", request=None, response=None
+        "bad", request=MagicMock(), response=mock_response
     )
 
     mock_client = MagicMock()
@@ -89,6 +90,55 @@ def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     assert result["success"] is False
     assert result["bypassed"] is True
     assert result["data"]["safe_text"] == TEST_TEXT
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 422])
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_auth_error_fails_closed(
+    mock_client_cls, status_code
+) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "unauthorized", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    result = run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
+
+    assert result["success"] is False
+    assert result.get("bypassed") is False
+    assert "rejected the request" in result["error"]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_list_validators_config_auth_error_raises(mock_client_cls) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "forbidden", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    with pytest.raises(ValueError, match=r"rejected \(HTTP 403\)"):
+        list_validators_config(
+            input_validator_configs=[Validator(validator_config_id=uuid.uuid4())],
+            output_validator_configs=[],
+            organization_id=1,
+            project_id=1,
+        )
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
