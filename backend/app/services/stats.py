@@ -5,6 +5,7 @@ from typing import TypedDict
 import requests
 
 from app.core.config import settings
+from app.crud.stats import StatRow, StatValue
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,6 @@ DISCORD_EMBED_FIELD_VALUE_LIMIT = (
 DISCORD_EMBED_FIELD_COUNT_LIMIT = 25  # Discord embed field cap.
 DISCORD_EMBED_BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
 COLUMN_LABELS = {"24h": "Last 24hrs", "7d": "Last 7 days"}
-
-StatValue = str | int | float
-StatRow = dict[str, StatValue]
 
 
 class EmbedField(TypedDict):
