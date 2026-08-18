@@ -119,6 +119,7 @@ def list_evaluation_runs(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
+    dataset_id: int | None = None,
 ) -> list[EvaluationRun]:
     """
     List all evaluation runs for an organization and project.
@@ -129,6 +130,7 @@ def list_evaluation_runs(
         project_id: Project ID to filter by
         limit: Maximum number of runs to return (default 50)
         offset: Number of runs to skip (for pagination)
+        dataset_id: Optional evaluation dataset ID to filter by
 
     Returns:
         List of EvaluationRun objects, ordered by most recent first
@@ -138,16 +140,21 @@ def list_evaluation_runs(
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
         .where(EvaluationRun.type == EvaluationType.TEXT.value)
-        .order_by(EvaluationRun.inserted_at.desc())
-        .limit(limit)
-        .offset(offset)
+    )
+
+    if dataset_id is not None:
+        statement = statement.where(EvaluationRun.dataset_id == dataset_id)
+
+    statement = (
+        statement.order_by(EvaluationRun.inserted_at.desc()).limit(limit).offset(offset)
     )
 
     runs = session.exec(statement).all()
 
     logger.info(
-        f"Found {len(runs)} evaluation runs for org_id={organization_id}, "
-        f"project_id={project_id}"
+        f"[list_evaluation_runs] Found {len(runs)} evaluation runs | "
+        f"org_id={organization_id} | project_id={project_id} | "
+        f"dataset_id={dataset_id}"
     )
 
     return runs
