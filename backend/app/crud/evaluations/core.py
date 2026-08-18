@@ -151,12 +151,6 @@ def list_evaluation_runs(
 
     runs = session.exec(statement).all()
 
-    logger.info(
-        f"[list_evaluation_runs] Found {len(runs)} evaluation runs | "
-        f"org_id={organization_id} | project_id={project_id} | "
-        f"dataset_id={dataset_id}"
-    )
-
     return runs
 
 

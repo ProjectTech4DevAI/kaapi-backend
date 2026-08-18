@@ -120,13 +120,6 @@ def list_evaluation_runs(
     ] = None,
 ) -> APIResponse[list[EvaluationRunPublic]]:
     """List evaluation runs."""
-    logger.info(
-        f"[list_evaluation_runs] Listing evaluation runs | "
-        f"org_id={auth_context.organization_.id} | "
-        f"project_id={auth_context.project_.id} | limit={limit} | offset={offset} | "
-        f"dataset_id={dataset_id}"
-    )
-
     return APIResponse.success_response(
         data=list_evaluation_runs_crud(
             session=session,
