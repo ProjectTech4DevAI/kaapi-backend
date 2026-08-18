@@ -13,6 +13,23 @@ from app.models.llm.request import Validator
 logger = logging.getLogger(__name__)
 
 
+def _guardrails_headers(
+    organization_id: int | None, project_id: int | None
+) -> dict[str, str]:
+    """Guardrails is internal-only: tenant travels in headers set from the
+    auth context, never from caller-supplied body/query fields."""
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
+        "Content-Type": "application/json",
+    }
+    if organization_id is not None:
+        headers["X-ORGANIZATION-ID"] = str(organization_id)
+    if project_id is not None:
+        headers["X-PROJECT-ID"] = str(project_id)
+    return headers
+
+
 @dataclass
 class GuardrailsOutcome:
     """Result of a single guardrails service call, in domain-agnostic form.
@@ -166,8 +183,6 @@ def run_guardrails_validation(
 
     payload = {
         "request_id": str(job_id),
-        "project_id": project_id,
-        "organization_id": organization_id,
         "input": input_text,
         "validators": validators,
     }
@@ -175,11 +190,7 @@ def run_guardrails_validation(
     if output_text is not None:
         payload["output"] = output_text
 
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
-        "Content-Type": "application/json",
-    }
+    headers = _guardrails_headers(organization_id, project_id)
 
     url = f"{settings.KAAPI_GUARDRAILS_URL}/"
     payload_bytes = json.dumps(payload).encode()
@@ -247,21 +258,14 @@ def list_validators_config(
     if not input_validator_config_ids and not output_validator_config_ids:
         return [], []
 
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
-        "Content-Type": "application/json",
-    }
+    headers = _guardrails_headers(organization_id, project_id)
 
     endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/"
 
     def _build_params(validator_ids: list[UUID]) -> dict[str, Any]:
-        params = {
-            "organization_id": organization_id,
-            "project_id": project_id,
+        return {
             "ids": [str(validator_config_id) for validator_config_id in validator_ids],
         }
-        return {key: value for key, value in params.items() if value is not None}
 
     try:
         with httpx.Client(timeout=10.0) as client:

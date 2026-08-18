@@ -58,8 +58,10 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     assert kwargs["json"]["input"] == TEST_TEXT
     assert kwargs["json"]["validators"] == TEST_CONFIG
     assert kwargs["json"]["request_id"] == str(TEST_JOB_ID)
-    assert kwargs["json"]["project_id"] == TEST_PROJECT_ID
-    assert kwargs["json"]["organization_id"] == TEST_ORGANIZATION_ID
+    assert "project_id" not in kwargs["json"]
+    assert "organization_id" not in kwargs["json"]
+    assert kwargs["headers"]["X-PROJECT-ID"] == str(TEST_PROJECT_ID)
+    assert kwargs["headers"]["X-ORGANIZATION-ID"] == str(TEST_ORGANIZATION_ID)
     assert kwargs["params"]["suppress_pass_logs"] == "true"
     assert kwargs["headers"]["Authorization"].startswith("Bearer ")
     assert kwargs["headers"]["Content-Type"] == "application/json"
@@ -254,6 +256,8 @@ def test_list_validators_config_fetches_input_and_output_by_refs(
     assert second_call_kwargs["params"]["ids"] == [
         str(v.validator_config_id) for v in output_validator_configs
     ]
+    assert first_call_kwargs["headers"]["X-ORGANIZATION-ID"] == "1"
+    assert first_call_kwargs["headers"]["X-PROJECT-ID"] == "1"
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -273,7 +277,7 @@ def test_list_validators_config_empty_short_circuits_without_http(
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None:
+def test_list_validators_config_omits_none_tenant(mock_client_cls) -> None:
     input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
     mock_response = MagicMock()
@@ -297,6 +301,8 @@ def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None
     ]
     assert "organization_id" not in kwargs["params"]
     assert "project_id" not in kwargs["params"]
+    assert "X-ORGANIZATION-ID" not in kwargs["headers"]
+    assert "X-PROJECT-ID" not in kwargs["headers"]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
