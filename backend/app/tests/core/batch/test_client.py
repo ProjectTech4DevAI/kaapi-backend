@@ -63,9 +63,7 @@ class TestGetGeminiBatchProvider:
         assert from_cred.call_args.kwargs["model"] == "gemini-2.5-pro"
 
     def test_missing_gcp_credential_raises_404(self):
-        with patch(
-            "app.core.batch.client.get_provider_credential", return_value=None
-        ):
+        with patch("app.core.batch.client.get_provider_credential", return_value=None):
             with pytest.raises(HTTPException) as exc:
                 get_gemini_batch_provider(
                     session=MagicMock(),

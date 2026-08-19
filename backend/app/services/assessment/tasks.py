@@ -254,8 +254,7 @@ def _submit_stage(
                 organization_id=organization_id,
             )
             rows_with_idx = [
-                (idx, resolved_rows[pos])
-                for pos, (idx, _) in enumerate(rows_with_idx)
+                (idx, resolved_rows[pos]) for pos, (idx, _) in enumerate(rows_with_idx)
             ]
         jsonl = build_prefilter_requests(stage, rows_with_idx, cfg, attachments)
         batch_job = submit_prefilter_batch(

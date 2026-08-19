@@ -117,7 +117,9 @@ class TestDownloadBatchResults:
         results = provider.download_batch_results("gs://b/out/")
         assert [r["custom_id"] for r in results] == ["0", "1"]
 
-    def test_batch_name_resolves_dest_then_reads(self, provider, mock_genai, mock_storage):
+    def test_batch_name_resolves_dest_then_reads(
+        self, provider, mock_genai, mock_storage
+    ):
         job = MagicMock()
         job.state.name = "JOB_STATE_SUCCEEDED"
         job.dest.gcs_uri = "gs://b/out/"
@@ -176,9 +178,7 @@ class TestFromCredentials:
         assert genai_client.call_args.kwargs["vertexai"] is True
         gcs_client.assert_called_once()
 
-    @pytest.mark.parametrize(
-        "drop", ["project_id", "location", "gcs_bucket", "sa_key"]
-    )
+    @pytest.mark.parametrize("drop", ["project_id", "location", "gcs_bucket", "sa_key"])
     def test_missing_field_raises(self, drop):
         cred = {k: v for k, v in self._CRED.items() if k != drop}
         with pytest.raises(ValueError, match=drop):

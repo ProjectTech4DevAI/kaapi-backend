@@ -74,7 +74,9 @@ class TestResolveAttachmentsSingle:
 
     def test_gcs_signed_for_non_native_provider(self):
         provider = MagicMock()
-        provider.get_bulk_signed_urls.return_value = {"gs://bucket/key.png": "https://signed"}
+        provider.get_bulk_signed_urls.return_value = {
+            "gs://bucket/key.png": "https://signed"
+        }
         with patch(_RESOLVER_PATH, return_value=provider):
             url = resolve_attachments(
                 session=MagicMock(),

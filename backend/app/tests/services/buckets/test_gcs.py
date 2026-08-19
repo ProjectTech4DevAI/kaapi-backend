@@ -40,9 +40,7 @@ class TestCreateClient:
                 "app.services.buckets.providers.gcs.service_account."
                 "Credentials.from_service_account_info"
             ) as mock_from_info,
-            patch(
-                "app.services.buckets.providers.gcs.gcs.Client"
-            ) as mock_client,
+            patch("app.services.buckets.providers.gcs.gcs.Client") as mock_client,
         ):
             client = GCSBucketProvider.create_client(
                 {"gcs_bucket": "byok-bucket", "sa_key": byok_sa}
@@ -132,9 +130,7 @@ class TestGetSignedUrl:
         )
 
         _, kwargs = blob.generate_signed_url.call_args
-        assert kwargs["expiration"] == timedelta(
-            seconds=provider.MAX_SIGNED_URL_EXPIRY
-        )
+        assert kwargs["expiration"] == timedelta(seconds=provider.MAX_SIGNED_URL_EXPIRY)
 
 
 class TestGetBulkSignedUrls:

@@ -879,7 +879,10 @@ class TestBuildBatchProvider:
                 project_id=auth.project_id,
             )
         assert provider is not None
-        assert get_provider.call_args.kwargs["provider_name"] in ("google", "google-native")
+        assert get_provider.call_args.kwargs["provider_name"] in (
+            "google",
+            "google-native",
+        )
 
     def test_google_gcp_routes_to_vertex(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -956,7 +959,10 @@ class TestSubmitProviderBatch:
             )
         assert result.id == job.id
         assert start.call_args.kwargs["provider_name"] == "google"
-        assert get_provider.call_args.kwargs["provider_name"] in ("google", "google-native")
+        assert get_provider.call_args.kwargs["provider_name"] in (
+            "google",
+            "google-native",
+        )
 
     def test_google_gcp_branch_routes_to_vertex(self, db) -> None:
         auth = get_user_test_auth_context(db)

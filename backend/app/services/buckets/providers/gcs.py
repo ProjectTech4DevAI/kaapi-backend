@@ -68,9 +68,7 @@ class GCSBucketProvider(BaseBucketProvider):
         """Split ``gs://bucket/key`` into ``(bucket, key)``."""
         parsed = urlparse(uri)
         if parsed.scheme != GCS_URI_SCHEME or not parsed.netloc:
-            raise ValueError(
-                f"Invalid GCS URI '{uri}'; expected 'gs://bucket/key'."
-            )
+            raise ValueError(f"Invalid GCS URI '{uri}'; expected 'gs://bucket/key'.")
         key = parsed.path.lstrip("/")
         if not key:
             raise ValueError(f"GCS URI '{uri}' is missing an object key.")

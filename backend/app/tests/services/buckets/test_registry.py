@@ -42,9 +42,7 @@ class TestGetBucketProvider:
         }
 
         with (
-            patch(
-                "app.crud.credentials.get_provider_credential"
-            ) as mock_get_creds,
+            patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
             patch(
                 "app.services.buckets.providers.gcs.service_account."
                 "Credentials.from_service_account_info"
@@ -72,9 +70,7 @@ class TestGetBucketProvider:
     def test_get_bucket_provider_missing_credential_raises(self, db: Session):
         project = get_project(db)
 
-        with patch(
-            "app.crud.credentials.get_provider_credential"
-        ) as mock_get_creds:
+        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
             mock_get_creds.return_value = None
 
             with pytest.raises(ValueError) as exc_info:
