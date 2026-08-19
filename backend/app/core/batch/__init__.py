@@ -2,7 +2,12 @@
 
 from .anthropic import AnthropicBatchProvider, MessageBatchStatus
 from .base import BATCH_KEY, BatchProvider
-from .client import GeminiClient, GeminiClientError
+from .client import (
+    GeminiClient,
+    GeminiClientError,
+    get_gemini_batch_provider,
+    is_vertex_batch_provider,
+)
 from .gemini import (
     BatchJobState,
     GeminiBatchProvider,
@@ -11,6 +16,7 @@ from .gemini import (
     extract_text_from_response_dict,
 )
 from .openai import OpenAIBatchProvider
+from .vertex import VertexBatchProvider
 from .operations import (
     download_batch_results,
     process_completed_batch,
@@ -28,6 +34,9 @@ __all__ = [
     "GeminiClient",
     "GeminiClientError",
     "GeminiBatchProvider",
+    "VertexBatchProvider",
+    "get_gemini_batch_provider",
+    "is_vertex_batch_provider",
     "OpenAIBatchProvider",
     "create_stt_batch_requests",
     "create_tts_batch_requests",

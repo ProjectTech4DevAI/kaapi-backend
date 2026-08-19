@@ -388,6 +388,14 @@ class TestParseOne:
         assert result["output"] is None
         assert result["error"] == "Empty response"
 
+    def test_google_gcp_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="vertex text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-gcp")
+        assert result["output"] == "vertex text"
+
     def test_unknown_provider(self) -> None:
         result = _parse_one({"response": {}}, "cohere")
         assert result["output"] is None
@@ -860,10 +868,10 @@ class TestBuildBatchProvider:
 
     def test_google(self, db) -> None:
         auth = get_user_test_auth_context(db)
-        gemini = MagicMock()
-        gemini.client = MagicMock()
-        with patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls:
-            gemini_cls.from_credentials.return_value = gemini
+        with patch(
+            "app.services.assessment.api.batch.get_gemini_batch_provider",
+            return_value=MagicMock(),
+        ) as get_provider:
             provider = _build_batch_provider(
                 session=db,
                 provider_name="google",
@@ -871,6 +879,21 @@ class TestBuildBatchProvider:
                 project_id=auth.project_id,
             )
         assert provider is not None
+        assert get_provider.call_args.kwargs["provider_name"] in ("google", "google-native")
+
+    def test_google_gcp_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        with patch(
+            "app.services.assessment.api.batch.get_gemini_batch_provider",
+            return_value=MagicMock(),
+        ) as get_provider:
+            _build_batch_provider(
+                session=db,
+                provider_name="google-gcp",
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert get_provider.call_args.kwargs["provider_name"] == "google-gcp"
 
     def test_anthropic(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -915,24 +938,48 @@ class TestSubmitProviderBatch:
 
     def test_google_branch(self, db) -> None:
         auth = get_user_test_auth_context(db)
-        gemini = MagicMock()
-        gemini.client = MagicMock()
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )
         with (
-            patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls,
+            patch(
+                "app.services.assessment.api.batch.get_gemini_batch_provider",
+                return_value=MagicMock(),
+            ) as get_provider,
             patch(
                 "app.services.assessment.api.batch.start_batch_job",
                 return_value=job,
             ) as start,
         ):
-            gemini_cls.from_credentials.return_value = gemini
             result = _submit_provider_batch(
                 **self._kwargs(db, auth, "google", {"model": "gemini-2.5-pro"})
             )
         assert result.id == job.id
         assert start.call_args.kwargs["provider_name"] == "google"
+        assert get_provider.call_args.kwargs["provider_name"] in ("google", "google-native")
+
+    def test_google_gcp_branch_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_gemini_batch_provider",
+                return_value=MagicMock(),
+            ) as get_provider,
+            patch(
+                "app.services.assessment.api.batch.start_batch_job",
+                return_value=job,
+            ) as start,
+        ):
+            _submit_provider_batch(
+                **self._kwargs(db, auth, "google-gcp", {"model": "gemini-2.5-pro"})
+            )
+        assert start.call_args.kwargs["provider_name"] == "google-gcp"
+        assert get_provider.call_args.kwargs["provider_name"] == "google-gcp"
+        # Vertex config omits the "models/" prefixed model (uses bare id).
+        assert "model" not in start.call_args.kwargs["config"]
 
     def test_anthropic_branch_sets_max_tokens(self, db) -> None:
         auth = get_user_test_auth_context(db)

@@ -25,16 +25,16 @@ from app.core.batch import (
     BATCH_KEY,
     AnthropicBatchProvider,
     BatchJobState,
-    GeminiBatchProvider,
     MessageBatchStatus,
     OpenAIBatchProvider,
     extract_text_from_response_dict,
+    get_gemini_batch_provider,
+    is_vertex_batch_provider,
     poll_batch_status,
     process_completed_batch,
     start_batch_job,
 )
 from app.core.batch.base import BatchProvider
-from app.core.batch.client import GeminiClient
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.assessment import api
@@ -43,6 +43,7 @@ from app.crud.assessment.batch import (
     build_google_jsonl,
     build_openai_jsonl,
 )
+from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
@@ -126,6 +127,7 @@ _FAILED_STATUSES = {
 _SUPPORTED_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_GCP,
     LLMProvider.ANTHROPIC,
 }
 
@@ -291,6 +293,16 @@ def _submit_provider_batch(
     description: str,
 ) -> BatchJob:
     """Build provider JSONL and submit it via the shared batch infra."""
+    # Resolve gs:// attachments to provider-reachable URLs before building JSONL.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
+
     if provider_name == LLMProvider.OPENAI:
         mapped, _ = map_kaapi_to_openai_params(session=session, kaapi_params=params)
         jsonl = build_openai_jsonl(
@@ -306,16 +318,24 @@ def _submit_provider_batch(
             "description": description,
             "completion_window": "24h",
         }
-    elif provider_name == LLMProvider.GOOGLE:
+    elif provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
         mapped, _ = map_kaapi_to_google_params(params)
         jsonl = build_google_jsonl(
             rows, text_columns, attachments, prompt, mapped, row_indices
         )
-        gemini = GeminiClient.from_credentials(
-            session=session, org_id=organization_id, project_id=project_id
+        provider = get_gemini_batch_provider(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            provider_name=provider_name,
+            model=model,
         )
-        provider = GeminiBatchProvider(client=gemini.client, model=f"models/{model}")
-        config = {"display_name": description, "model": f"models/{model}"}
+        # Vertex takes a bare model id; AI-Studio uses the "models/" prefix.
+        config = (
+            {"display_name": description}
+            if is_vertex_batch_provider(provider_name)
+            else {"display_name": description, "model": f"models/{model}"}
+        )
     elif provider_name == LLMProvider.ANTHROPIC:
         mapped, _ = map_kaapi_to_anthropic_params(params)
         jsonl = build_anthropic_jsonl(
@@ -362,11 +382,13 @@ def _build_batch_provider(
                 session=session, org_id=organization_id, project_id=project_id
             )
         )
-    if provider_name == LLMProvider.GOOGLE:
-        gemini = GeminiClient.from_credentials(
-            session=session, org_id=organization_id, project_id=project_id
+    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
+        return get_gemini_batch_provider(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            provider_name=provider_name,
         )
-        return GeminiBatchProvider(client=gemini.client)
     if provider_name == LLMProvider.ANTHROPIC:
         return AnthropicBatchProvider(
             client=get_anthropic_client(
@@ -453,7 +475,7 @@ def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
             "response_id": response.get("id"),
         }
 
-    if provider_name == LLMProvider.GOOGLE:
+    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
         response = result.get("response")
         text = extract_text_from_response_dict(response) if response else None
         return {

@@ -42,6 +42,7 @@ from app.services.assessment.utils.attachments import (
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
+    rewrite_gcs_attachment_urls,
 )
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
@@ -418,6 +419,16 @@ def submit_assessment_batch(
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")
+
+    # Resolve attachments url to provider-reachable URLs before building JSONL.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
 
     if base_provider == LLMProvider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(

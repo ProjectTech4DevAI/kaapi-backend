@@ -9,6 +9,8 @@ from sqlmodel import Session
 from fastapi import HTTPException
 from app.crud.credentials import get_provider_credential
 
+from .base import BatchProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,3 +93,51 @@ class GeminiClient:
             f"org_id: {org_id}, project_id: {project_id}"
         )
         return cls(api_key=api_key)
+
+
+# Providers whose batch jobs run on Vertex AI (GCS-backed) rather than AI-Studio.
+VERTEX_BATCH_PROVIDERS = {"google-gcp", "google-gcp-native"}
+
+
+def is_vertex_batch_provider(provider_name: str) -> bool:
+    """Whether a provider name routes batch jobs through Vertex AI (vs AI-Studio)."""
+    return provider_name in VERTEX_BATCH_PROVIDERS
+
+
+def get_gemini_batch_provider(
+    *,
+    session: Session,
+    organization_id: int,
+    project_id: int,
+    provider_name: str,
+    model: str | None = None,
+) -> BatchProvider:
+    """Resolve a Gemini-family batch provider from the provider name.
+
+    ``google-gcp`` routes to Vertex (GCS-backed); ``google``/``google-aistudio``
+    to AI-Studio (File API). Both honor the same BatchProvider contract, so any
+    service (assessment, evaluations, STT/TTS) can call this single resolver.
+    """
+    from .gemini import GeminiBatchProvider
+    from .vertex import VertexBatchProvider
+
+    if is_vertex_batch_provider(provider_name):
+        cred = get_provider_credential(
+            session=session,
+            provider="google-gcp",
+            project_id=project_id,
+            org_id=organization_id,
+        )
+        if not cred:
+            raise HTTPException(
+                status_code=404,
+                detail="google-gcp credentials not configured for this project",
+            )
+        if not isinstance(cred, dict):
+            raise GeminiClientError("Expected decrypted google-gcp credentials dict")
+        return VertexBatchProvider.from_credentials(cred, model=model)
+
+    gemini = GeminiClient.from_credentials(
+        session=session, org_id=organization_id, project_id=project_id
+    )
+    return GeminiBatchProvider(client=gemini.client, model=model)

@@ -159,6 +159,13 @@ class TestSubmit:
         assert "input.data[0]" in exc.value.detail
         assert "must be a URL" in exc.value.detail
 
+    def test_gs_uri_attachment_value_passes_validation(self) -> None:
+        # gs:// is allowed at submit-time; it is resolved before batch build.
+        submission._validate_rows_against_schema(
+            [{"img": "gs://bucket/key.png"}],
+            {"img": {"type": "image", "format": "url"}},
+        )
+
     def test_unsupported_provider_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         # Build a config whose stored blob names an unsupported batch provider.

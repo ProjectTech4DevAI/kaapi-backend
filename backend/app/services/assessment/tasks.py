@@ -28,6 +28,8 @@ from app.models.assessment import (
 )
 from app.models.config.config import ConfigTag
 from app.services.assessment.prefilter import resolve_prefilter_settings
+from app.services.assessment.prefilter.constants import ASSESSMENT_PREFILTER_PROVIDER
+from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
 from app.services.assessment.stages import (
     GATE_STAGES,
     STAGE_PARSERS,
@@ -242,6 +244,19 @@ def _submit_stage(
         selected = cfg.get("tr_attachment_columns")
         if selected is not None:
             attachments = [a for a in attachments if a.column in set(selected)]
+        if attachments:
+            resolved_rows = rewrite_gcs_attachment_urls(
+                session=session,
+                rows=[r for _, r in rows_with_idx],
+                attachments=attachments,
+                llm_provider=ASSESSMENT_PREFILTER_PROVIDER,
+                project_id=project_id,
+                organization_id=organization_id,
+            )
+            rows_with_idx = [
+                (idx, resolved_rows[pos])
+                for pos, (idx, _) in enumerate(rows_with_idx)
+            ]
         jsonl = build_prefilter_requests(stage, rows_with_idx, cfg, attachments)
         batch_job = submit_prefilter_batch(
             session=session,
