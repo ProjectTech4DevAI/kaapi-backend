@@ -38,6 +38,8 @@ KaapiProvider = Literal[
     Provider.GOOGLE_AISTUDIO,
 ]
 
+TextProvider = Literal[Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC]
+
 # Native provider names are the Kaapi providers with a "-native" suffix.
 # Kept as explicit strings since there's no corresponding enum member.
 NativeProvider = Literal[
@@ -64,7 +66,7 @@ class Modality(StrEnum):
 
 
 DEFAULT_STT_MODEL = "gemini-2.5-pro"
-DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_RAG_MODEL = "gpt-4o"
 

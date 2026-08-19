@@ -523,7 +523,7 @@ class TestGoogleAIProviderTTS:
         assert error is None
         call_args = mock_client.models.generate_content.call_args
         assert call_args[1]["model"] == "gemini-2.5-pro-preview-tts"
-        assert call_args[1]["contents"] == "Say this text"
+        assert call_args[1]["contents"] == "<transcript>Say this text</transcript>"
 
     def test_tts_passes_correct_voice_config(
         self, provider, mock_client, tts_config, query_params

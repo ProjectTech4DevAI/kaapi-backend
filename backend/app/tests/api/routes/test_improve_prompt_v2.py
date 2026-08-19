@@ -76,13 +76,13 @@ _JUDGE_TRACES: list[dict] = [
         "scores": [
             {
                 "name": GROUND_TRUTH_SCORE_NAME,
-                "value": 0.4,
+                "value": 2,
                 "data_type": "NUMERIC",
                 "comment": _GT_COMMENT,
             },
             {
                 "name": PROMPT_SCORE_NAME,
-                "value": 0.3,
+                "value": 1,
                 "data_type": "NUMERIC",
                 "comment": _PROMPT_COMMENT,
             },
@@ -577,6 +577,9 @@ class TestV2Worker:
 
         assert _GT_COMMENT in message
         assert _PROMPT_COMMENT in message
+
+        # The v2 brief describes the judge score on the 0–5 integer scale.
+        assert "an integer from 0 (worst) to 5 (best)" in message
 
         # The unscoreable KB metric must be presented as ignore-worthy, not a real
         # score: the prompt tells the model to skip value="N/A" / unscoreable metrics.

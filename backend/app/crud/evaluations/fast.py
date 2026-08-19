@@ -49,6 +49,10 @@ from app.crud.evaluations.core import (
     update_evaluation_run,
 )
 from app.crud.evaluations.cost import attach_cost
+from app.crud.evaluations.dataset import (
+    DATASET_META_DUPLICATION_FACTOR,
+    get_dataset_by_id,
+)
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
     calculate_cosine_similarity,
@@ -81,9 +85,13 @@ from app.crud.evaluations.score import (
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMPTY_OUTPUT,
     EvaluationScore,
+    OverallSummary,
     TraceData,
     TraceScore,
+    compute_overall_summary,
+    verdict_from_score,
 )
+from app.crud.evaluations.summary import generate_run_ai_summary
 from app.crud.job import (
     create_batch_job,
     delete_batch_job,
@@ -952,6 +960,9 @@ def _stage3_score_and_trace(
     unscoreable: dict[str, str] = {}  # {ref: reason}
     write_items: list[dict[str, Any]] = []
     summary_scores: list[dict[str, Any]] = []
+    overall: OverallSummary | None = None
+    # Resolved inside the judge block below, read again after the traces are built.
+    config_prompt: str | None = None
 
     if is_judge_run:
         # v2: no cosine. A row is judgeable only with a non-empty generated AND
@@ -1171,12 +1182,14 @@ def _stage3_score_and_trace(
                     comment = metric_score.reasoning
                     if is_kb:
                         comment = f"{comment} | Top matches: {top_matches}"
+                    rounded_score = round(metric_score.score, 2)
                     trace_scores.append(
                         {
                             "name": spec.score_name,
-                            "value": round(metric_score.score, 2),
+                            "value": rounded_score,
                             "data_type": "NUMERIC",
                             "comment": comment,
+                            "verdict": verdict_from_score(rounded_score),
                         }
                     )
                 elif is_kb:
@@ -1212,6 +1225,43 @@ def _stage3_score_and_trace(
             }
         )
 
+    # Run-level roll-up runs after the traces, since the AI summary diagnoses them.
+    if is_judge_run:
+        avg_by_name = {s["name"]: s["avg"] for s in summary_scores if "avg" in s}
+        metric_avgs = {
+            spec.key.value: avg_by_name[spec.score_name]
+            for spec in metrics
+            if spec.score_name in avg_by_name
+        }
+        overall = compute_overall_summary(
+            metric_avgs=metric_avgs,
+            metric_weights={spec.key.value: spec.weight for spec in metrics},
+            metric_names={spec.key.value: spec.score_name for spec in metrics},
+        )
+        if overall is not None:
+            # Falls back to 1 (no repetition) if the dataset/metadata can't be
+            # resolved, so the summary still generates.
+            dataset = get_dataset_by_id(
+                session=session,
+                dataset_id=eval_run.dataset_id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            metadata = dataset.dataset_metadata if dataset else None
+            duplication_factor = max(
+                1,
+                eval_run.duplication_factor
+                if eval_run.duplication_factor is not None
+                else int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1)),
+            )
+            overall["ai_summary"] = generate_run_ai_summary(
+                model=settings.EVAL_SUMMARY_MODEL,
+                run_name=eval_run.run_name,
+                duplication_factor=duplication_factor,
+                config_prompt=config_prompt or "",
+                traces=traces,
+            )
+
     # Persist cost + unscoreable here; the score unit (summary + traces) is persisted
     # by the caller via save_score so it lands in S3 like the batch path.
     eval_run = update_evaluation_run(
@@ -1227,6 +1277,8 @@ def _stage3_score_and_trace(
         "summary_scores": summary_scores,
         "traces": traces,
     }
+    if overall is not None:
+        score["overall"] = overall
     return eval_run, score, write_items
 
 
@@ -1309,7 +1361,12 @@ def run_fast_evaluation(
         eval_run=eval_run,
         update=EvaluationRunUpdate(
             status="completed",
-            score={"summary_scores": score["summary_scores"]},
+            # Persist the overall alongside the summary so GET run status shows the
+            # run-level score/verdict/breakdown without loading the S3 trace unit.
+            score={
+                "summary_scores": score["summary_scores"],
+                "overall": score.get("overall"),
+            },
             cost=eval_run.cost,
         ),
     )

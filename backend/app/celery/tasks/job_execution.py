@@ -13,6 +13,7 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -23,6 +24,11 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.services.notifications.eval_completion import (
+        EvalCompletionCallbackResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +356,49 @@ def run_assessment_pipeline(
 
 
 @celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
+def run_assessment_api_batch(
+    self,
+    execution_id: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str,
+    **kwargs,
+):
+    """Drive one tick of the BATCH API-client staged pipeline.
+
+    Self-re-enqueues (``apply_async(countdown=...)``) while a stage batch is still
+    in flight or a next stage was just submitted, and stops once the run finalises
+    or fails. Idempotent — the service keys off the stage_status in the exec bag.
+    """
+    from app.services.assessment.api.batch import (
+        POLL_COUNTDOWN_SECONDS,
+        run_batch_stage,
+    )
+
+    _set_trace(trace_id)
+    result = _run_with_otel_parent(
+        self,
+        lambda: run_batch_stage(
+            execution_id=execution_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        ),
+    )
+    if result and result.get("requeue"):
+        self.apply_async(
+            kwargs={
+                "execution_id": execution_id,
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "trace_id": trace_id,
+            },
+            countdown=POLL_COUNTDOWN_SECONDS,
+        )
+    return result
+
+
+@celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -490,3 +539,16 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
     )
 
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
+
+
+@celery_app.task(bind=True, queue="default", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
+def send_eval_completion_callback(
+    self: Task, evaluation_id: int
+) -> "EvalCompletionCallbackResult":
+    """POST the run's status to its registered webhook once it is terminal."""
+    from app.services.notifications.eval_completion import (
+        execute_eval_completion_callback,
+    )
+
+    return execute_eval_completion_callback(evaluation_id=evaluation_id)
