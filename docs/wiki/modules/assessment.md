@@ -33,4 +33,4 @@ Config version (tag=ASSESSMENT, `models/config/assessment_blob.py`) owns system 
 
 ## External
 - Provider Batch APIs, object storage for attachments (incl. `gs://` attachments resolved via `services/buckets/`).
-- Gemini-family batch provider selection is centralized in `core/batch/client.py::get_gemini_batch_provider(provider_name=...)`: `google-gcp` -> `VertexBatchProvider` (Vertex, GCS in/out, `core/batch/vertex.py`), `google` -> `GeminiBatchProvider` (AI-Studio, File API). Shared by any service (assessment/evaluations/STT/TTS); assessment's `api/batch.py` routes through it.
+- Gemini-family batch provider is chosen inline in `api/batch.py` (`_submit_provider_batch` / `_build_batch_provider`): `google-gcp` -> `VertexBatchProvider` (Vertex, GCS in/out, `core/batch/vertex.py`, built from the `google-gcp` credential), `google` -> `GeminiBatchProvider` (AI-Studio, File API, via `GeminiClient`).

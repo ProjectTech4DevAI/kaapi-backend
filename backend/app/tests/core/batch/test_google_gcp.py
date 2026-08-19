@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.batch.vertex import VertexBatchProvider, _parse_gs_uri
+from app.core.batch.google_gcp import VertexBatchProvider, _parse_gs_uri
 
 _BUCKET = "test-bucket"
 
@@ -168,9 +168,9 @@ class TestFromCredentials:
 
     def test_builds_provider(self):
         with (
-            patch("app.core.batch.vertex.service_account") as sa,
-            patch("app.core.batch.vertex.genai.Client") as genai_client,
-            patch("app.core.batch.vertex.gcs.Client") as gcs_client,
+            patch("app.core.batch.google_gcp.service_account") as sa,
+            patch("app.core.batch.google_gcp.genai.Client") as genai_client,
+            patch("app.core.batch.google_gcp.gcs.Client") as gcs_client,
         ):
             provider = VertexBatchProvider.from_credentials(self._CRED)
         assert isinstance(provider, VertexBatchProvider)

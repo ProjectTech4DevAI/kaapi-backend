@@ -868,10 +868,10 @@ class TestBuildBatchProvider:
 
     def test_google(self, db) -> None:
         auth = get_user_test_auth_context(db)
-        with patch(
-            "app.services.assessment.api.batch.get_gemini_batch_provider",
-            return_value=MagicMock(),
-        ) as get_provider:
+        gemini = MagicMock()
+        gemini.client = MagicMock()
+        with patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls:
+            gemini_cls.from_credentials.return_value = gemini
             provider = _build_batch_provider(
                 session=db,
                 provider_name="google",
@@ -879,24 +879,43 @@ class TestBuildBatchProvider:
                 project_id=auth.project_id,
             )
         assert provider is not None
-        assert get_provider.call_args.kwargs["provider_name"] in (
-            "google",
-            "google-native",
-        )
 
     def test_google_gcp_routes_to_vertex(self, db) -> None:
         auth = get_user_test_auth_context(db)
-        with patch(
-            "app.services.assessment.api.batch.get_gemini_batch_provider",
-            return_value=MagicMock(),
-        ) as get_provider:
-            _build_batch_provider(
+        sentinel = MagicMock()
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.VertexBatchProvider.from_credentials",
+                return_value=sentinel,
+            ) as vertex_from_cred,
+        ):
+            provider = _build_batch_provider(
                 session=db,
                 provider_name="google-gcp",
                 organization_id=auth.organization_id,
                 project_id=auth.project_id,
             )
-        assert get_provider.call_args.kwargs["provider_name"] == "google-gcp"
+        assert provider is sentinel
+        vertex_from_cred.assert_called_once()
+
+    def test_google_gcp_missing_credential_raises_404(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        with patch(
+            "app.services.assessment.api.batch.get_provider_credential",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                _build_batch_provider(
+                    session=db,
+                    provider_name="google-gcp",
+                    organization_id=auth.organization_id,
+                    project_id=auth.project_id,
+                )
+        assert exc.value.status_code == 404
 
     def test_anthropic(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -941,28 +960,24 @@ class TestSubmitProviderBatch:
 
     def test_google_branch(self, db) -> None:
         auth = get_user_test_auth_context(db)
+        gemini = MagicMock()
+        gemini.client = MagicMock()
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )
         with (
-            patch(
-                "app.services.assessment.api.batch.get_gemini_batch_provider",
-                return_value=MagicMock(),
-            ) as get_provider,
+            patch("app.services.assessment.api.batch.GeminiClient") as gemini_cls,
             patch(
                 "app.services.assessment.api.batch.start_batch_job",
                 return_value=job,
             ) as start,
         ):
+            gemini_cls.from_credentials.return_value = gemini
             result = _submit_provider_batch(
                 **self._kwargs(db, auth, "google", {"model": "gemini-2.5-pro"})
             )
         assert result.id == job.id
         assert start.call_args.kwargs["provider_name"] == "google"
-        assert get_provider.call_args.kwargs["provider_name"] in (
-            "google",
-            "google-native",
-        )
 
     def test_google_gcp_branch_routes_to_vertex(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -971,9 +986,13 @@ class TestSubmitProviderBatch:
         )
         with (
             patch(
-                "app.services.assessment.api.batch.get_gemini_batch_provider",
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.VertexBatchProvider.from_credentials",
                 return_value=MagicMock(),
-            ) as get_provider,
+            ) as vertex_from_cred,
             patch(
                 "app.services.assessment.api.batch.start_batch_job",
                 return_value=job,
@@ -983,7 +1002,7 @@ class TestSubmitProviderBatch:
                 **self._kwargs(db, auth, "google-gcp", {"model": "gemini-2.5-pro"})
             )
         assert start.call_args.kwargs["provider_name"] == "google-gcp"
-        assert get_provider.call_args.kwargs["provider_name"] == "google-gcp"
+        vertex_from_cred.assert_called_once()
         # Vertex config omits the "models/" prefixed model (uses bare id).
         assert "model" not in start.call_args.kwargs["config"]
 

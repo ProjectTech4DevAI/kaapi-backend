@@ -27,14 +27,17 @@ from app.core.batch import (
     BatchJobState,
     MessageBatchStatus,
     OpenAIBatchProvider,
+    GeminiBatchProvider,
+    VertexBatchProvider,
     extract_text_from_response_dict,
-    get_gemini_batch_provider,
-    is_vertex_batch_provider,
     poll_batch_status,
     process_completed_batch,
     start_batch_job,
 )
 from app.core.batch.base import BatchProvider
+from app.core.batch.client import GeminiClient
+from app.crud.credentials import get_provider_credential
+from fastapi import HTTPException
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.assessment import api
@@ -323,19 +326,29 @@ def _submit_provider_batch(
         jsonl = build_google_jsonl(
             rows, text_columns, attachments, prompt, mapped, row_indices
         )
-        provider = get_gemini_batch_provider(
-            session=session,
-            organization_id=organization_id,
-            project_id=project_id,
-            provider_name=provider_name,
-            model=model,
-        )
-        # Vertex takes a bare model id; AI-Studio uses the "models/" prefix.
-        config = (
-            {"display_name": description}
-            if is_vertex_batch_provider(provider_name)
-            else {"display_name": description, "model": f"models/{model}"}
-        )
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = get_provider_credential(
+                session=session,
+                provider="google-gcp",
+                project_id=project_id,
+                org_id=organization_id,
+            )
+            if not isinstance(cred, dict):
+                raise HTTPException(
+                    status_code=404,
+                    detail="google-gcp credentials not configured for this project",
+                )
+            provider = VertexBatchProvider.from_credentials(cred, model=model)
+            config = {"display_name": description}  # Vertex uses a bare model id
+        else:
+            gemini = GeminiClient.from_credentials(
+                session=session, org_id=organization_id, project_id=project_id
+            )
+            provider = GeminiBatchProvider(
+                client=gemini.client, model=f"models/{model}"
+            )
+            config = {"display_name": description, "model": f"models/{model}"}
+
     elif provider_name == LLMProvider.ANTHROPIC:
         mapped, _ = map_kaapi_to_anthropic_params(params)
         jsonl = build_anthropic_jsonl(
@@ -383,12 +396,23 @@ def _build_batch_provider(
             )
         )
     if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
-        return get_gemini_batch_provider(
-            session=session,
-            organization_id=organization_id,
-            project_id=project_id,
-            provider_name=provider_name,
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = get_provider_credential(
+                session=session,
+                provider="google-gcp",
+                project_id=project_id,
+                org_id=organization_id,
+            )
+            if not isinstance(cred, dict):
+                raise HTTPException(
+                    status_code=404,
+                    detail="google-gcp credentials not configured for this project",
+                )
+            return VertexBatchProvider.from_credentials(cred)
+        gemini = GeminiClient.from_credentials(
+            session=session, org_id=organization_id, project_id=project_id
         )
+        return GeminiBatchProvider(client=gemini.client)
     if provider_name == LLMProvider.ANTHROPIC:
         return AnthropicBatchProvider(
             client=get_anthropic_client(

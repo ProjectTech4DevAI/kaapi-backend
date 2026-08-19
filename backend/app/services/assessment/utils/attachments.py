@@ -1,10 +1,4 @@
-"""Attachment resolution utilities for assessment batch builds.
-
-URL-only: dataset cells hold attachment URLs. Handles Google Drive URL
-normalization and conversion of cell values into provider input objects.
-Attachments are passed to providers by reference (URL), never inlined as base64,
-to keep the batch build memory-light.
-"""
+"""Attachment utilities for assessment batch builds: URL normalization, gs:// resolution, provider parts."""
 
 import logging
 import re
