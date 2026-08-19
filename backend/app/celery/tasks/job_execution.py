@@ -1,14 +1,22 @@
-"""Celery task definitions for the single priority `default` queue.
+"""Celery task definitions, split across two priority queues.
 
-All tasks share one queue (`default`, declared with `x-max-priority=10`) and are
-ordered by the per-task `priority`:
+`default` (every task below except the two fast-eval ones), ordered by the
+per-task `priority`:
 
-    9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
-    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate)
+    9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job,
+       run_guardrails_job)
+    6  Prompt improvement (run_prompt_improvement)
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
-Higher priority drains first; within the same priority, delivery is FIFO.
+`evaluations` (priority 6): run_evaluation_fast_chunk and
+run_evaluation_fast_aggregate only. A fast eval fans out into many chunk tasks
+at once; priority only reorders messages still waiting in a queue, so on a
+shared queue that burst occupies every worker slot and delays priority-9 LLM
+jobs. A separate queue with its own worker pool makes the isolation physical.
+
+Both queues are declared with `x-max-priority=10`. Higher priority drains first;
+within the same priority, delivery is FIFO.
 """
 
 import logging
@@ -20,7 +28,7 @@ from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
 
-from app.celery.celery_app import celery_app
+from app.celery.celery_app import EVALUATIONS_QUEUE, celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
 
@@ -252,7 +260,7 @@ def run_evaluation_batch_submission(
     )
 
 
-# Priority 6 (fast-eval tier): user-blocking interactive prompt iteration in the
+# Priority 6: user-blocking interactive prompt iteration in the
 # evaluation domain, above default batch work but below core LLM call/chain jobs.
 @celery_app.task(bind=True, queue="default", priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_prompt_improvement")
@@ -419,7 +427,7 @@ def run_tts_result_processing(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=6)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_chunk")
 def run_evaluation_fast_chunk(
     self: Task,
@@ -449,7 +457,7 @@ def run_evaluation_fast_chunk(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=6)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_aggregate")
 def run_evaluation_fast_aggregate(
     self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID

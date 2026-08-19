@@ -167,6 +167,9 @@ celery_app = Celery(
 )
 
 # Define exchanges and queues with priority
+DEFAULT_QUEUE = "default"
+EVALUATIONS_QUEUE = "evaluations"
+
 default_exchange = Exchange("default", type="direct")
 
 # Celery configuration using environment variables
@@ -174,13 +177,21 @@ celery_app.conf.update(
     # Queue configuration with priority support
     task_queues=(
         Queue(
-            "default",
+            DEFAULT_QUEUE,
             exchange=default_exchange,
-            routing_key="default",
+            routing_key=DEFAULT_QUEUE,
+            queue_arguments={"x-max-priority": 10},
+        ),
+        # Routing key must differ per queue on the shared direct exchange, or
+        # messages fan out to both.
+        Queue(
+            EVALUATIONS_QUEUE,
+            exchange=default_exchange,
+            routing_key=EVALUATIONS_QUEUE,
             queue_arguments={"x-max-priority": 10},
         ),
     ),
-    task_default_queue="default",
+    task_default_queue=DEFAULT_QUEUE,
     # Enable priority support
     task_inherit_parent_priority=True,
     worker_prefetch_multiplier=settings.CELERY_WORKER_PREFETCH_MULTIPLIER,
