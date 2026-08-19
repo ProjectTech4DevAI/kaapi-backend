@@ -10,11 +10,13 @@ from app.crud.assessment import processing as processing_mod
 from app.crud.assessment.processing import (
     _get_batch_provider,
     _record_gate_stats,
+    _record_stage_cost,
     _sanitize_json_output,
     parse_assessment_output,
     process_run_batches,
 )
 from app.models.assessment import Stage, StageStatus
+from app.services.assessment.prefilter.constants import ASSESSMENT_PREFILTER_MODEL
 
 
 @pytest.fixture(autouse=True)
@@ -328,6 +330,126 @@ class TestRecordGateStats:
             )
         # 2 passes this gate and was in the prior accepted set; 4 wasn't; 3 rejected.
         assert run.execution["pipeline"]["accepted_indices"] == [2]
+
+
+def _openai_row(input_tokens: int, output_tokens: int) -> dict:
+    """Raw OpenAI batch row carrying the usage block _sum_stage_tokens reads."""
+    return {
+        "custom_id": "row_0",
+        "response": {
+            "status_code": 200,
+            "body": {
+                "id": "resp_1",
+                "output_text": "ok",
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            },
+        },
+        "error": None,
+    }
+
+
+class TestRecordStageCost:
+    """execution.cost accumulates per-stage batch USD; totals recompute each call."""
+
+    def _run(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=1, assessment_id=2, config_id=None, config_version=1, execution={}
+        )
+
+    def _price_by_model(self, mapping: dict[str, float | None]):
+        """estimate_model_cost stub keyed by model_name -> total_cost (or None)."""
+
+        def _side_effect(**kwargs) -> dict | None:
+            total = mapping.get(kwargs["model_name"])
+            return None if total is None else {"total_cost": total}
+
+        return _side_effect
+
+    def test_breakdown_recomputes_across_two_stages(self) -> None:
+        run = self._run()
+        batch_job = SimpleNamespace(provider="openai")
+        l2_blob = SimpleNamespace(
+            assessment=SimpleNamespace(params={"model": "l2-model"})
+        )
+
+        with patch.object(
+            processing_mod,
+            "load_raw_batch_results",
+            return_value=[_openai_row(100, 50)],
+        ), patch.object(
+            processing_mod,
+            "estimate_model_cost",
+            side_effect=self._price_by_model(
+                {ASSESSMENT_PREFILTER_MODEL: 0.5, "l2-model": 1.25}
+            ),
+        ), patch.object(
+            processing_mod,
+            "resolve_assessment_config_blob",
+            return_value=(l2_blob, None),
+        ):
+            _record_stage_cost(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, batch_job, 1
+            )
+
+            after_stage_1 = run.execution["cost"]
+            assert after_stage_1["pre_filter"]["topic_relevance"] == 0.5
+            assert after_stage_1["pre_filter"]["total"] == 0.5
+            assert after_stage_1["total"] == 0.5
+            assert "assessment" not in after_stage_1
+            assert after_stage_1["currency"] == "USD"
+
+            _record_stage_cost(MagicMock(), run, Stage.L2_ASSESSMENT, batch_job, 1)
+
+        cost = run.execution["cost"]
+        assert cost["pre_filter"]["topic_relevance"] == 0.5
+        assert cost["pre_filter"]["total"] == 0.5
+        assert cost["assessment"] == 1.25
+        assert cost["total"] == 1.75
+
+    def test_missing_pricing_yields_zero_cost(self) -> None:
+        run = self._run()
+        batch_job = SimpleNamespace(provider="openai")
+
+        with patch.object(
+            processing_mod,
+            "load_raw_batch_results",
+            return_value=[_openai_row(100, 50)],
+        ), patch.object(processing_mod, "estimate_model_cost", return_value=None):
+            _record_stage_cost(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, batch_job, 1
+            )
+
+        cost = run.execution["cost"]
+        assert cost["pre_filter"]["topic_relevance"] == 0.0
+        assert cost["pre_filter"]["total"] == 0.0
+        assert cost["total"] == 0.0
+
+    def test_google_aistudio_fallback_lookup(self) -> None:
+        run = self._run()
+        batch_job = SimpleNamespace(provider="google")
+        calls: list[str] = []
+
+        def _side_effect(**kwargs) -> dict | None:
+            calls.append(kwargs["provider"])
+            # Gemini pricing lives under "google-aistudio", not plain "google".
+            return (
+                {"total_cost": 0.9} if kwargs["provider"] == "google-aistudio" else None
+            )
+
+        with patch.object(
+            processing_mod, "load_raw_batch_results", return_value=[_openai_row(10, 5)]
+        ), patch.object(
+            processing_mod, "estimate_model_cost", side_effect=_side_effect
+        ):
+            _record_stage_cost(
+                MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, batch_job, 1
+            )
+
+        assert calls == ["google", "google-aistudio"]
+        assert run.execution["cost"]["pre_filter"]["topic_relevance"] == 0.9
 
 
 class TestGetBatchProvider:

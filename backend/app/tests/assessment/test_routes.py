@@ -80,6 +80,8 @@ def _run() -> SimpleNamespace:
         total_items=1,
         error_message=None,
         input=None,
+        execution=None,
+        post_processing_config=None,
         batch_job_id=None,
         inserted_at=datetime(2024, 1, 1),
         updated_at=datetime(2024, 1, 1),
@@ -523,3 +525,196 @@ class TestBuildAssessmentResultsResponse:
             )
         assert isinstance(resp, StreamingResponse)
         assert resp.media_type == "application/zip"
+
+
+# ─── Public builders — real logic (no builder mock) ─────────────────────────
+
+CONFIG_UUID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def _run_row(status: object, error: str | None = None) -> SimpleNamespace:
+    """Child-run stub with real enum status for the count/stat helpers."""
+    return SimpleNamespace(
+        id=22,
+        assessment_id=ASSESSMENT_UUID,
+        config_id=CONFIG_UUID,
+        config_version=1,
+        status=status,
+        total_items=3,
+        error_message=error,
+        updated_at=datetime(2024, 1, 1),
+    )
+
+
+def _dispatch_session(parent: object, dataset: object) -> MagicMock:
+    """Session whose .get() returns the parent Assessment / dataset by model type."""
+    from app.models.assessment import Assessment
+    from app.models.evaluation import EvaluationDataset
+
+    session = MagicMock()
+
+    def _get(model: type, _key: object) -> object:
+        if model is Assessment:
+            return parent
+        if model is EvaluationDataset:
+            return dataset
+        return None
+
+    session.get.side_effect = _get
+    return session
+
+
+class TestBuildAssessmentPublic:
+    """_build_assessment_public must surface derived counts/stats/dataset info."""
+
+    def test_populates_derived_fields(self) -> None:
+        from app.api.routes.assessment.assessments import _build_assessment_public
+        from app.models.assessment import AssessmentStatus
+
+        assessment = SimpleNamespace(
+            id=ASSESSMENT_UUID,
+            experiment_name="exp",
+            dataset_id=7,
+            status=AssessmentStatus.COMPLETED_WITH_ERRORS,
+            organization_id=1,
+            project_id=1,
+            inserted_at=datetime(2024, 1, 1),
+            updated_at=datetime(2024, 1, 1),
+        )
+        runs = [
+            _run_row(AssessmentStatus.COMPLETED),
+            _run_row(AssessmentStatus.FAILED, "boom"),
+        ]
+        session = MagicMock()
+        session.get.return_value = SimpleNamespace(id=7, name="ds")
+
+        with patch(
+            "app.api.routes.assessment.assessments.get_assessment_runs_for_assessment",
+            return_value=runs,
+        ):
+            public = _build_assessment_public(session, assessment)
+
+        assert public.dataset_id == 7
+        assert public.dataset_name == "ds"
+        assert public.counts.total == 2
+        assert public.counts.completed == 1
+        assert public.counts.failed == 1
+        assert len(public.run_stats) == 2
+        assert public.error_message == "1 of 2 run(s) failed"
+
+
+class TestBuildRunPublic:
+    """_build_run_public must read runtime state from the execution bag, not columns."""
+
+    def test_sources_from_bag_and_parent(self) -> None:
+        from app.api.routes.assessment.runs import _build_run_public
+        from app.models.assessment import AssessmentStatus, Stage, StageStatus
+
+        run = SimpleNamespace(
+            id=22,
+            assessment_id=ASSESSMENT_UUID,
+            config_id=CONFIG_UUID,
+            config_version=1,
+            status=AssessmentStatus.PROCESSING,
+            total_items=10,
+            error_message=None,
+            execution={
+                "stage": "L2_ASSESSMENT",
+                "stage_status": "PROCESSING",
+                "pipeline": {"steps": ["a"]},
+                "prefilter_total_rows": 10,
+                "prefilter_total_passed": 7,
+                "prefilter_total_rejected": 3,
+            },
+            post_processing_config={"sort": "score"},
+            inserted_at=datetime(2024, 1, 1),
+            updated_at=datetime(2024, 1, 1),
+        )
+        parent = SimpleNamespace(
+            experiment_name="exp",
+            dataset_id=7,
+            input={"prompt": "p"},
+        )
+        session = _dispatch_session(parent, SimpleNamespace(id=7, name="ds"))
+
+        public = _build_run_public(session, run)
+
+        assert public.stage == Stage.L2_ASSESSMENT
+        assert public.stage_status == StageStatus.PROCESSING
+        assert public.pipeline == {"steps": ["a"]}
+        assert public.prefilter_total_rows == 10
+        assert public.prefilter_total_passed == 7
+        assert public.prefilter_total_rejected == 3
+        assert public.input == {"prompt": "p"}
+        assert public.post_processing_config == {"sort": "score"}
+        assert public.experiment_name == "exp"
+        assert public.dataset_id == 7
+        assert public.dataset_name == "ds"
+
+    def test_surfaces_cost_from_bag(self) -> None:
+        from app.api.routes.assessment.runs import _build_run_public
+        from app.models.assessment import AssessmentStatus
+
+        run = SimpleNamespace(
+            id=22,
+            assessment_id=ASSESSMENT_UUID,
+            config_id=CONFIG_UUID,
+            config_version=1,
+            status=AssessmentStatus.COMPLETED,
+            total_items=10,
+            error_message=None,
+            execution={
+                "cost": {
+                    "pre_filter": {"topic_relevance": 0.5, "total": 0.5},
+                    "assessment": 1.25,
+                    "total": 1.75,
+                    "currency": "USD",
+                }
+            },
+            post_processing_config=None,
+            inserted_at=datetime(2024, 1, 1),
+            updated_at=datetime(2024, 1, 1),
+        )
+        parent = SimpleNamespace(experiment_name="exp", dataset_id=7, input=None)
+        session = _dispatch_session(parent, SimpleNamespace(id=7, name="ds"))
+
+        public = _build_run_public(session, run)
+
+        assert public.cost is not None
+        assert public.cost.pre_filter is not None
+        assert public.cost.pre_filter.topic_relevance == 0.5
+        assert public.cost.pre_filter.total == 0.5
+        assert public.cost.assessment == 1.25
+        assert public.cost.total == 1.75
+        assert public.cost.currency == "USD"
+
+    def test_empty_execution_bag_does_not_raise(self) -> None:
+        """Regression: a run with no execution bag must not 500 (was AttributeError)."""
+        from app.api.routes.assessment.runs import _build_run_public
+        from app.models.assessment import AssessmentStatus
+
+        run = SimpleNamespace(
+            id=22,
+            assessment_id=ASSESSMENT_UUID,
+            config_id=CONFIG_UUID,
+            config_version=1,
+            status=AssessmentStatus.PENDING,
+            total_items=0,
+            error_message=None,
+            execution=None,
+            post_processing_config=None,
+            inserted_at=datetime(2024, 1, 1),
+            updated_at=datetime(2024, 1, 1),
+        )
+        parent = SimpleNamespace(experiment_name="exp", dataset_id=7, input=None)
+        session = _dispatch_session(parent, SimpleNamespace(id=7, name="ds"))
+
+        public = _build_run_public(session, run)
+
+        assert public.stage is None
+        assert public.stage_status is None
+        assert public.pipeline is None
+        assert public.prefilter_total_rows is None
+        assert public.input is None
+        assert public.post_processing_config is None
+        assert public.cost is None

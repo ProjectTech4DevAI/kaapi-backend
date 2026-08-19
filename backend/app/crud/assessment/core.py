@@ -5,10 +5,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from app.core.util import now
+from app.crud.config.version import ConfigVersionCrud
 from app.models.assessment import (
     Assessment,
     AssessmentMethod,
@@ -17,8 +19,97 @@ from app.models.assessment import (
     AssessmentRunStat,
     AssessmentStatus,
 )
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
 
 logger = logging.getLogger(__name__)
+
+
+# Keys an input_schema column spec is allowed to carry (mirrors InputColumn).
+_PERMITTED_INPUT_COLUMN_KEYS = {"type", "format", "strict"}
+
+
+def _sanitize_input_schema_keys(config_blob: Any) -> Any:
+    """Drop unknown keys from each ``input_schema`` column spec, logging a warning.
+
+    Config-create rejects extra keys (InputColumn is ``extra='forbid'``), but at
+    RESOLVE time we stay tolerant: a stored blob that carries a stray column key
+    (e.g. a pre-strictness config) should still run — strip the extras and warn
+    rather than raise. Only keys are pruned; invalid values still fail validation.
+    """
+    if not isinstance(config_blob, dict):
+        return config_blob
+    params = (config_blob.get("assessment") or {}).get("params")
+    if not isinstance(params, dict):
+        return config_blob
+    input_schema = params.get("input_schema")
+    if not isinstance(input_schema, dict):
+        return config_blob
+
+    cleaned: dict[str, Any] = {}
+    changed = False
+    for column, spec in input_schema.items():
+        if isinstance(spec, dict):
+            extra = set(spec) - _PERMITTED_INPUT_COLUMN_KEYS
+            if extra:
+                changed = True
+                logger.warning(
+                    "[resolve_assessment_config_blob] Ignoring unknown input_schema "
+                    "key(s) %s on column '%s'",
+                    sorted(extra),
+                    column,
+                )
+                cleaned[column] = {
+                    k: v for k, v in spec.items() if k in _PERMITTED_INPUT_COLUMN_KEYS
+                }
+                continue
+        cleaned[column] = spec
+
+    if not changed:
+        return config_blob
+    # Shallow-copy only the mutated path so the stored dict is never touched.
+    new_blob = dict(config_blob)
+    new_assessment = dict(config_blob["assessment"])
+    new_params = dict(params)
+    new_params["input_schema"] = cleaned
+    new_assessment["params"] = new_params
+    new_blob["assessment"] = new_assessment
+    return new_blob
+
+
+def resolve_assessment_config_blob(
+    session: Session,
+    config_id: UUID,
+    config_version: int,
+    project_id: int,
+) -> tuple[AssessmentConfigBlob | None, str | None]:
+    """Resolve a stored ASSESSMENT config version as an ``AssessmentConfigBlob``.
+
+    The RUN pipeline shares its config store with evals but not their blob shape:
+    ``resolve_evaluation_config`` returns a ``ConfigBlob`` (``{completion}``), while
+    an ASSESSMENT config is stored as ``{assessment, pre_filters}``. Parse it into
+    the right model instead, mirroring the BATCH path's ``_resolve_blob``.
+
+    Returns ``(blob, None)`` on success or ``(None, error)`` on a missing version or
+    an invalid/old-shape blob, so callers surface a clean 400 rather than a 500.
+    """
+    version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=config_id,
+        project_id=project_id,
+        tag=ConfigTag.ASSESSMENT,
+    )
+    version = version_crud.read_one(version_number=config_version)
+    if version is None:
+        return None, f"Config version {config_version} not found"
+
+    try:
+        blob = AssessmentConfigBlob.model_validate(
+            _sanitize_input_schema_keys(version.config_blob)
+        )
+    except ValidationError as exc:
+        return None, f"Stored configuration blob is invalid: {exc}"
+    return blob, None
 
 
 def _read_exec(run: AssessmentRun) -> dict[str, Any]:
@@ -85,6 +176,7 @@ def get_assessment_by_id(
         .where(Assessment.id == assessment_id)
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
+        .where(Assessment.method == AssessmentMethod.RUN)
     )
     assessment = session.exec(statement).first()
     if not assessment:
@@ -107,6 +199,7 @@ def list_assessments(
         select(Assessment)
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
+        .where(Assessment.method == AssessmentMethod.RUN)
         .order_by(Assessment.inserted_at.desc())
         .limit(limit)
         .offset(offset)
@@ -189,6 +282,7 @@ def get_assessment_run_by_id(
         .where(AssessmentRun.id == run_id)
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
+        .where(Assessment.method == AssessmentMethod.RUN)
     )
     run = session.exec(statement).first()
     if not run:
@@ -226,6 +320,7 @@ def list_assessment_runs(
         .join(Assessment, Assessment.id == AssessmentRun.assessment_id)
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
+        .where(Assessment.method == AssessmentMethod.RUN)
     )
     if assessment_id is not None:
         statement = statement.where(AssessmentRun.assessment_id == assessment_id)

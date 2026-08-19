@@ -13,10 +13,10 @@ from app.crud.assessment import (
     get_assessment_dataset_by_id,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
+    resolve_assessment_config_blob,
 )
 from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.config import ConfigCrud
-from app.crud.evaluations.core import resolve_evaluation_config
 from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
@@ -144,12 +144,11 @@ def start_assessment(
                 ),
             )
 
-        config_blob, error = resolve_evaluation_config(
+        config_blob, error = resolve_assessment_config_blob(
             session=session,
             config_id=cfg.id,
             config_version=cfg.version,
             project_id=project_id,
-            tag=ConfigTag.ASSESSMENT,
         )
         if error or config_blob is None:
             raise HTTPException(
@@ -158,7 +157,7 @@ def start_assessment(
                     f"Failed to resolve config {cfg.id} " f"v{cfg.version}: {error}"
                 ),
             )
-        provider = config_blob.completion.provider or LLMProvider.OPENAI
+        provider = config_blob.assessment.provider or LLMProvider.OPENAI
         if provider not in _SUPPORTED_BATCH_PROVIDERS:
             raise HTTPException(
                 status_code=422,

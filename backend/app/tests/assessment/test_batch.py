@@ -18,6 +18,7 @@ from app.crud.assessment.batch import (
     submit_assessment_batch,
 )
 from app.models.assessment import AssessmentAttachment
+from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
@@ -56,7 +57,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         run = _make_run()
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
+            assessment=SimpleNamespace(
                 provider="openai-native",
                 params={"instructions": "config system"},
             )
@@ -115,15 +116,29 @@ class TestSubmitAssessmentBatchProviderRouting:
         )
         assert start_batch.call_args.kwargs["provider_name"] == "openai"
 
-    def test_config_instruction_is_used(self) -> None:
+    def test_config_instruction_and_schema_normalization(self) -> None:
+        """The resolved AssessmentConfigBlob's params reach the mapper normalized:
+        instructions kept, input_schema stripped, json_output_schema -> output_schema.
+        """
         session = MagicMock()
         run = _make_run()
         dataset = _make_dataset()
-        config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
-                provider="openai",
-                params={"instructions": "config system", "model": "gpt-4.1-mini"},
-            )
+        output_schema = {
+            "type": "object",
+            "properties": {"score": {"type": "integer"}},
+        }
+        config_blob = AssessmentConfigBlob(
+            pre_filters=None,
+            assessment={
+                "provider": "openai",
+                "type": "text",
+                "params": {
+                    "model": "gpt-4.1-mini",
+                    "instructions": "config system",
+                    "input_schema": {"question": {"type": "text"}},
+                    "json_output_schema": output_schema,
+                },
+            },
         )
         batch_job = MagicMock()
         batch_job.id = 3
@@ -166,18 +181,21 @@ class TestSubmitAssessmentBatchProviderRouting:
                 project_id=1,
             )
 
+        kaapi_params = map_params.call_args.kwargs["kaapi_params"]
         assert map_params.call_args.kwargs["session"] is session
-        assert (
-            map_params.call_args.kwargs["kaapi_params"]["instructions"]
-            == "config system"
-        )
+        assert kaapi_params["instructions"] == "config system"
+        # input_schema is request-validation only — never a provider param.
+        assert "input_schema" not in kaapi_params
+        # json_output_schema is renamed to the mapper's output_schema key.
+        assert "json_output_schema" not in kaapi_params
+        assert kaapi_params["output_schema"] == output_schema
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()
         run = _make_run()
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
+            assessment=SimpleNamespace(
                 provider="google-native",
                 params={"instructions": "config system"},
             )
@@ -236,7 +254,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         run = _make_run()
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
-            completion=SimpleNamespace(
+            assessment=SimpleNamespace(
                 provider="anthropic-native",
                 params={"instructions": "config system"},
             )

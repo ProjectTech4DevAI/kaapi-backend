@@ -28,9 +28,9 @@ from app.models.assessment import (
     AssessmentRun,
 )
 from app.models.batch_job import BatchJob, BatchJobType
+from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.evaluation import EvaluationDataset
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
-from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
@@ -78,6 +78,18 @@ def _load_dataset_rows(
     if file_ext == ".xlsx":
         return _parse_excel_rows(file_content)
     return _parse_csv_rows(file_content)
+
+
+def list_assessment_dataset_rows(
+    session: Session,
+    dataset: EvaluationDataset,
+) -> list[dict[str, str]]:
+    """Public entry point for loading all dataset rows as column-keyed dicts.
+
+    Thin wrapper over the batch loader so callers outside the batch path (e.g. the
+    legacy rows endpoint) don't reach into the private helper.
+    """
+    return _load_dataset_rows(session, dataset)
 
 
 def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
@@ -367,7 +379,7 @@ def submit_assessment_batch(
     run: AssessmentRun,
     assessment: Assessment,
     dataset: EvaluationDataset,
-    config_blob: ConfigBlob,
+    config_blob: AssessmentConfigBlob,
     assessment_input: dict[str, Any],
     organization_id: int,
     project_id: int,
@@ -407,14 +419,22 @@ def submit_assessment_batch(
         "[submit_assessment_batch] Building JSONL | run_id=%s | rows=%s | provider=%s",
         run.id,
         len(rows),
-        config_blob.completion.provider,
+        config_blob.assessment.provider,
     )
 
     # Determine provider and build params
-    completion = config_blob.completion
-    provider_name = completion.provider or "openai"
+    assessment_cfg = config_blob.assessment
+    provider_name = assessment_cfg.provider or LLMProvider.OPENAI
 
-    params = dict(completion.params)
+    # Normalize assessment params for the mappers, mirroring the BATCH path's
+    # _stage_params: input_schema is request-validation only (not a provider param),
+    # and json_output_schema is the mappers' output_schema. instructions stays in
+    # params — the mappers consume it as the system prompt.
+    params = dict(assessment_cfg.params)
+    params.pop("input_schema", None)
+    json_schema = params.pop("json_output_schema", None)
+    if json_schema is not None:
+        params["output_schema"] = json_schema
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")

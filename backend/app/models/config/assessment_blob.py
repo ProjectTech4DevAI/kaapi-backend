@@ -17,10 +17,16 @@ DEFAULT_PREFILTER_MODEL = "gpt-5.6-luna"
 
 class InputColumn(SQLModel):
     """One BATCH input column: its type (required, no default — every column must
-    declare one), and how an attachment value is provided (`format`)."""
+    declare one), and how an attachment value is provided (`format`).
+
+    Only these keys are permitted — an unknown key in a column spec is rejected
+    (422) rather than silently dropped."""
+
+    model_config = {"extra": "forbid"}
 
     type: Literal["text", "image", "pdf"]
     format: Literal["url", "base64"] | None = None
+    strict: bool = False  # when true, the column must be present in every row
 
 
 class PreFilterParams(TextLLMParams):
