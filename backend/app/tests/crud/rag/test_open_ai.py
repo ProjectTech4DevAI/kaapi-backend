@@ -14,6 +14,7 @@ from app.crud.rag.open_ai import (
     BATCH_INDEX_MAX_ATTEMPTS,
     BATCH_POLL_INTERVAL_SECONDS,
     OpenAIVectorStoreCrud,
+    _provider_file_id,
 )
 from app.tests.utils.openai import get_mock_openai_client_with_vector_store
 
@@ -373,6 +374,25 @@ class TestGetMockOpenAIClientWithVectorStore:
         assert client.beta.assistants.create.return_value.id == "mock_assistant_id"
 
 
+class TestProviderFileIdValidation:
+    """A doc missing its OpenAI file id is a deterministic local failure: it must
+    raise a non-retryable ValueError before any batch request is issued, even with
+    retries enabled (ValueError is outside the retried exception set)."""
+
+    @pytest.mark.parametrize("file_id", [None, {"gemini": "file-g"}])
+    def test_missing_openai_file_id_raises_without_batch_request(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock, file_id
+    ) -> None:
+        TestBatchRetry._enable_retries()
+        doc = MagicMock()
+        doc.file_id = file_id
+
+        with pytest.raises(ValueError):
+            crud.update("vs_1", [doc])
+
+        mock_client.vector_stores.file_batches.create.assert_not_called()
+
+
 class TestBatchRetry:
     """_create_and_index_batch retries the whole create+poll+validate unit on any
     OpenAI/indexing failure, up to BATCH_INDEX_MAX_ATTEMPTS (tenacity)."""
@@ -422,3 +442,28 @@ class TestBatchRetry:
             mock_client.vector_stores.file_batches.create.call_count
             == BATCH_INDEX_MAX_ATTEMPTS
         )
+
+
+class TestProviderFileId:
+    def test_returns_openai_file_id(self) -> None:
+        assert _provider_file_id(_make_doc("file-1", "f1.pdf")) == "file-1"
+
+    def test_missing_file_id_raises(self) -> None:
+        doc = MagicMock()
+        doc.file_id = None
+        with pytest.raises(ValueError, match="no OpenAI file id"):
+            _provider_file_id(doc)
+
+    def test_absent_openai_provider_raises(self) -> None:
+        doc = MagicMock()
+        doc.file_id = {"google-aistudio": "files/x"}
+        with pytest.raises(ValueError, match="no OpenAI file id"):
+            _provider_file_id(doc)
+
+
+class TestDeleteRetriesValidation:
+    def test_retries_below_one_raises(
+        self, crud: OpenAIVectorStoreCrud, mock_client: MagicMock
+    ) -> None:
+        with pytest.raises(ValueError, match="Retries must be greater-than 1"):
+            crud.delete("vs_1", retries=0)
