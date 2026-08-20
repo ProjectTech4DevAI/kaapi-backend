@@ -162,12 +162,14 @@ class TestCredentialEncryption:
             f"{base64.b64encode(bytes(ct)).decode()}"
         )
 
-        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+        with pytest.raises(HTTPException) as exc:
             decrypt_credentials(tampered)
+        assert exc.value.status_code == 502
 
     def test_v2_wrong_segment_count_raises(self, kms_key):
-        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+        with pytest.raises(HTTPException) as exc:
             decrypt_credentials(f"{KMS_ENVELOPE_PREFIX}onlyoneseg")
+        assert exc.value.status_code == 502
 
     def test_encrypt_fernet_forces_fernet_even_with_kms_active(self, kms_key):
         creds = {"api_key": "sk-force-fernet"}
