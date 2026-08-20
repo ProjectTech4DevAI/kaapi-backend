@@ -1,6 +1,9 @@
+import logging
 import re
 from collections import defaultdict
 
+import sentry_sdk
+from asgi_correlation_id import correlation_id
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,6 +13,10 @@ from starlette.status import (
 )
 
 from app.utils import APIResponse
+
+logger = logging.getLogger(__name__)
+
+GENERIC_ERROR_DETAIL = "An unexpected error occurred."
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -102,6 +109,20 @@ def register_exception_handlers(app: FastAPI) -> None:
         detail = exc.detail
         if isinstance(detail, list):
             detail = _sanitize_validation_errors(detail)
+
+        # Tag at the boundary: the status is only known here, and call-site logs
+        # fire before it. 5xx is a server fault (error event); 4xx is the caller's.
+        if sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("http.status_code", str(exc.status_code))
+            sentry_sdk.set_tag(
+                "error.class", "server" if exc.status_code >= 500 else "client"
+            )
+        if exc.status_code >= 500:
+            logger.error(
+                f"[http_exception] {request.method} {request.url.path} "
+                f"-> {exc.status_code}",
+                exc_info=exc,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
@@ -109,9 +130,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
+        logger.error(
+            f"[generic_error_handler] Unhandled exception | "
+            f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            content=APIResponse.failure_response(
-                str(exc) or "An unexpected error occurred."
-            ).model_dump(),
+            content=APIResponse.failure_response(GENERIC_ERROR_DETAIL).model_dump(),
         )

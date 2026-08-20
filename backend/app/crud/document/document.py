@@ -1,11 +1,11 @@
 import logging
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlmodel import Session, and_, col, select
 
-from app.models import Document
 from app.core.util import now
-from app.core.exception_handlers import HTTPException
+from app.models import Document
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,7 @@ class DocumentCrud:
         if not document.project_id:
             document.project_id = self.project_id
         elif document.project_id != self.project_id:
-            error = "Invalid document ownership: project={} attempter={}".format(
-                self.project_id,
-                document.project_id,
-            )
+            error = f"Invalid document ownership: project={self.project_id} attempter={document.project_id}"
             try:
                 raise PermissionError(error)
             except PermissionError as err:

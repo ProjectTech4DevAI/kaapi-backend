@@ -136,7 +136,8 @@ def start_tts_evaluation_batch(
         except Exception as e:
             logger.error(
                 f"[start_tts_evaluation_batch] Failed to submit batch | "
-                f"model: {model}, error: {str(e)}"
+                f"model: {model}, error: {str(e)}",
+                exc_info=True,
             )
             pending = get_pending_results_for_run(
                 session=session, run_id=run.id, provider=model

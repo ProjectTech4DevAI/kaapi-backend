@@ -326,7 +326,8 @@ def parse_evaluation_output(
 
         except Exception as e:
             logger.error(
-                f"[parse_evaluation_output] Unexpected error | line={line_num} | {e}"
+                f"[parse_evaluation_output] Unexpected error | line={line_num} | {e}",
+                exc_info=True,
             )
             continue
 
@@ -1199,7 +1200,8 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                 )
             except HTTPException as http_exc:
                 logger.error(
-                    f"[poll_all_pending_evaluations] Failed to get API clients | org_id={org_id} | project_id={project_id} | error={http_exc.detail}"
+                    f"[poll_all_pending_evaluations] Failed to get API clients | org_id={org_id} | project_id={project_id} | error={http_exc.detail}",
+                    exc_info=True,
                 )
                 # Mark all runs in this project as failed due to client configuration error
                 for eval_run in project_runs:

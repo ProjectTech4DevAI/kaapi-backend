@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
@@ -104,16 +105,31 @@ class ConfigVersionCrud:
             self.session.refresh(version)
 
             logger.info(
-                f"[ConfigVersionCrud.create_from_partial] Version created successfully | "
+                f"[ConfigVersionCrud.create_or_raise] Version created successfully | "
                 f"{{'config_id': '{self.config_id}', 'version_id': '{version.id}'}}"
             )
 
             return version
 
+        except HTTPException:
+            self.session.rollback()
+            raise
+
+        except IntegrityError as e:
+            self.session.rollback()
+            logger.warning(
+                f"[ConfigVersionCrud.create_or_raise] Version conflict | "
+                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="A version with this number already exists for this config.",
+            )
+
         except Exception as e:
             self.session.rollback()
             logger.error(
-                f"[ConfigVersionCrud.create_from_partial] Failed to create version | "
+                f"[ConfigVersionCrud.create_or_raise] Failed to create version | "
                 f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
                 exc_info=True,
             )

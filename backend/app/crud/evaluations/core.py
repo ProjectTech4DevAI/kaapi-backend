@@ -13,8 +13,8 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
+from app.models.evaluation import RunModeEnum
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -103,7 +103,10 @@ def create_evaluation_run(
         session.refresh(eval_run)
     except Exception as e:
         session.rollback()
-        logger.error(f"Failed to create EvaluationRun: {e}", exc_info=True)
+        logger.error(
+            f"[create_evaluation_run] Failed to create EvaluationRun: {e}",
+            exc_info=True,
+        )
         raise
 
     logger.info(
@@ -184,12 +187,12 @@ def get_evaluation_run_by_id(
 
     if eval_run:
         logger.info(
-            f"Found evaluation run {evaluation_id}: status={eval_run.status}, "
+            f"[get_evaluation_run_by_id] Found evaluation run {evaluation_id}: status={eval_run.status}, "
             f"batch_job_id={eval_run.batch_job_id}"
         )
     else:
         logger.warning(
-            f"Evaluation run {evaluation_id} not found or not accessible "
+            f"[get_evaluation_run_by_id] Evaluation run {evaluation_id} not found or not accessible "
             f"for org_id={organization_id}, project_id={project_id}"
         )
 
@@ -237,7 +240,10 @@ def update_evaluation_run(
         session.refresh(eval_run)
     except Exception as e:
         session.rollback()
-        logger.error(f"Failed to update EvaluationRun: {e}", exc_info=True)
+        logger.error(
+            f"[update_evaluation_run] Failed to update EvaluationRun: {e}",
+            exc_info=True,
+        )
         raise
 
     if should_notify:

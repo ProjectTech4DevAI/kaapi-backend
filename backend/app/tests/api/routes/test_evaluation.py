@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -439,13 +440,13 @@ class TestDatasetUploadDuplication:
 class TestDatasetUploadErrors:
     """Test error handling."""
 
-    def test_upload_returns_500_when_langfuse_upload_raises(
+    def test_upload_returns_502_when_langfuse_upload_raises(
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
         valid_csv_content: str,
     ) -> None:
-        """Tracing enabled but the Langfuse upload fails → 500."""
+        """Tracing enabled but the Langfuse upload fails → 502."""
         with (
             patch("app.core.cloud.get_cloud_storage") as _mock_storage,
             patch(
@@ -474,12 +475,12 @@ class TestDatasetUploadErrors:
                 headers=user_api_key_header,
             )
 
-        assert response.status_code == 500, response.text
+        assert response.status_code == 502, response.text
         response_data = response.json()
         error_str = response_data.get(
             "detail", response_data.get("error", str(response_data))
         )
-        assert "Failed to upload dataset to Langfuse" in str(error_str)
+        assert "Langfuse could not accept dataset" in str(error_str)
 
     def test_upload_invalid_csv_format(
         self, client: TestClient, user_api_key_header: dict[str, str]
@@ -1133,7 +1134,7 @@ class TestStartEvaluationBatch:
     ) -> None:
         mock_fetch.return_value = _BATCH_DATASET_ITEMS
 
-        with pytest.raises(ValueError, match="Unsupported provider"):
+        with pytest.raises(HTTPException, match="Unsupported provider"):
             start_evaluation_batch(
                 langfuse=MagicMock(),
                 session=db,
@@ -1157,7 +1158,7 @@ class TestStartEvaluationBatch:
         ]
         mock_map.return_value = ({"model": "gpt-4o"}, [])
 
-        with pytest.raises(ValueError, match="did not produce any JSONL"):
+        with pytest.raises(HTTPException, match="did not produce any JSONL"):
             start_evaluation_batch(
                 langfuse=MagicMock(),
                 session=db,

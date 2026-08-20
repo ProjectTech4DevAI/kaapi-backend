@@ -10,6 +10,7 @@ This module provides utilities for:
 import base64
 import json
 import logging
+from fastapi import HTTPException
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -228,8 +229,12 @@ def encrypt_credentials(credentials: dict[str, Any]) -> str:
         return get_fernet().encrypt(credentials_str.encode()).decode()
     except Exception as e:
         # Log the real cause (may carry AWS ARNs); never surface it to callers.
-        logger.error(f"[encrypt_credentials] Encryption failed | error: {e}")
-        raise ValueError("Failed to encrypt credentials")
+        logger.error(
+            f"[encrypt_credentials] Encryption failed | error: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to encrypt credentials. Retry shortly."
+        )
 
 
 def encrypt_fernet(credentials: dict[str, Any]) -> str:
@@ -271,8 +276,12 @@ def decrypt_credentials(encrypted_credentials: str) -> dict[str, Any]:
         return json.loads(decrypted_str)
     except Exception as e:
         # Log the real cause (may carry AWS ARNs); never surface it to callers.
-        logger.error(f"[decrypt_credentials] Decryption failed | error: {e}")
-        raise ValueError("Failed to decrypt credentials")
+        logger.error(
+            f"[decrypt_credentials] Decryption failed | error: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to decrypt credentials. Retry shortly."
+        )
 
 
 class APIKeyManager:
