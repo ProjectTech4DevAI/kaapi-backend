@@ -1,6 +1,5 @@
 import re
 import secrets
-from typing import Any
 
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
@@ -8,7 +7,9 @@ from pydantic import EmailStr, model_validator, field_validator
 from app.core.providers import (
     Provider,
     ProviderCredentials,
+    ProviderCredentialsBase,
     parse_provider_credentials,
+    validate_provider,
 )
 
 
@@ -92,7 +93,7 @@ class OnboardingRequest(SQLModel):
 
     @field_validator("credentials", mode="before")
     @classmethod
-    def _parse_credential_list(cls, value: Any) -> Any:
+    def _parse_credential_list(cls, value: object) -> object:
         # Ill-typed containers are handed back untouched so Pydantic reports
         # the shape mismatch ("Input should be a valid list/dictionary").
         if not isinstance(value, list) or any(
@@ -100,7 +101,7 @@ class OnboardingRequest(SQLModel):
         ):
             return value
 
-        parsed: list[dict[str, Any]] = []
+        parsed: list[dict[str, ProviderCredentialsBase]] = []
         for item in value:
             if len(item) != 1:
                 raise ValueError(
@@ -109,7 +110,11 @@ class OnboardingRequest(SQLModel):
 
             (provider,) = item.keys()
             parsed.append(
-                {provider: parse_provider_credentials(provider, item[provider])}
+                {
+                    validate_provider(provider).value: parse_provider_credentials(
+                        provider, item[provider]
+                    )
+                }
             )
 
         return parsed

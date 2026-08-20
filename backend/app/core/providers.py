@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 from enum import Enum
 from dataclasses import dataclass, field
 
@@ -175,7 +175,7 @@ def validate_provider(provider: str) -> Provider:
 
 
 def parse_provider_credentials(
-    provider: str, credentials: Any
+    provider: str, credentials: object
 ) -> ProviderCredentialsBase:
     """Validate a raw credential payload and return it as the provider's model.
 

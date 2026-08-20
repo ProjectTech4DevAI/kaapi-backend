@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Any
 
 import sqlalchemy as sa
 from pydantic import field_validator, model_validator
@@ -11,6 +10,7 @@ from app.core.providers import (
     ProviderCredentials,
     mask_credential_fields,
     parse_provider_credentials,
+    validate_provider,
 )
 from app.core.util import now
 from app.models.organization import Organization
@@ -57,16 +57,18 @@ class CredsCreate(SQLModel):
 
     @field_validator("credential", mode="before")
     @classmethod
-    def _parse_credential(cls, value: Any) -> Any:
+    def _parse_credential(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
 
         return {
-            provider: parse_provider_credentials(provider, payload)
+            validate_provider(provider).value: parse_provider_credentials(
+                provider, payload
+            )
             for provider, payload in value.items()
         }
 
-    def credential_payloads(self) -> dict[str, dict[str, Any]]:
+    def credential_payloads(self) -> dict[str, CredentialPayload]:
         """Provider name -> credential dict, exactly as submitted."""
         return {
             provider.value: payload.model_dump(exclude_unset=True)
@@ -91,7 +93,7 @@ class CredsUpdate(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _parse_credential(cls, data: Any) -> Any:
+    def _parse_credential(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
 
@@ -100,18 +102,18 @@ class CredsUpdate(SQLModel):
         if not isinstance(provider, str) or credential is None:
             return data
 
-        provider_key = provider.value if isinstance(provider, Provider) else provider
-        if isinstance(credential, dict) and isinstance(
-            credential.get(provider_key), dict
-        ):
-            credential = credential[provider_key]
+        provider_key = validate_provider(provider).value
+        nested = credential.get(provider_key) if isinstance(credential, dict) else None
+        if isinstance(nested, dict):
+            credential = nested
 
         return {
             **data,
+            "provider": provider_key,
             "credential": parse_provider_credentials(provider_key, credential),
         }
 
-    def credential_payload(self) -> dict[str, Any]:
+    def credential_payload(self) -> CredentialPayload:
         """Credential dict for `provider`, exactly as submitted."""
         return self.credential.model_dump(exclude_unset=True)
 
