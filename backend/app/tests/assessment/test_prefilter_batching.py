@@ -7,8 +7,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
 
-from app.models.assessment import Stage, StageStatus
+from app.crud.assessment import core as assessment_core
+from app.crud.assessment.core import _read_exec
+from app.models.assessment import AssessmentRun, Stage, StageStatus
 from app.services.assessment import tasks
+
+# Runtime state that used to be its own AssessmentRun column now lives in the exec bag.
+_EXEC_BAG_KEYS = (
+    "stage",
+    "stage_status",
+    "pipeline",
+    "stage_batches",
+    "accepted_indices",
+)
+
+# The run input binding moved to the parent assessment; tests that reach the
+# parent-assessment load hand this to an Assessment stub via ``session.get``.
+_ASSESSMENT_INPUT = {
+    "prefilter_config": {"topic_relevance": {"columns": ["a"], "prompt": "p"}}
+}
 
 
 @contextmanager
@@ -17,38 +34,37 @@ def _session_cm(session):
 
 
 def _run(**kw):
+    execution = {key: kw.pop(key) for key in _EXEC_BAG_KEYS if key in kw}
+    kw.pop("input", None)  # run input now lives on the parent assessment
     base = {
         "id": 5,
         "assessment_id": 9,
-        "input": {
-            "prefilter_config": {"topic_relevance": {"columns": ["a"], "prompt": "p"}}
-        },
         "config_id": "c",
         "config_version": 1,
-        "pipeline": None,
-        "stage": None,
-        "stage_status": None,
         "status": "pending",
-        "stage_batches": None,
         "total_items": 0,
     }
     base.update(kw)
+    base["execution"] = execution
     return SimpleNamespace(**base)
 
 
 class TestOrchestrate:
     def test_inits_pipeline_and_submits_first_stage(self) -> None:
         run = _run()
+        assessment = SimpleNamespace(input=_ASSESSMENT_INPUT)
         session = MagicMock()
-        session.get.return_value = run
+        session.get.side_effect = lambda model, _id: (
+            run if model is AssessmentRun else assessment
+        )
         with patch.object(
             tasks, "Session", return_value=_session_cm(session)
-        ), patch.object(tasks, "flag_modified"), patch.object(
+        ), patch.object(assessment_core, "flag_modified"), patch.object(
             tasks, "_submit_stage"
         ) as submit:
             tasks._orchestrate(5, 1, 1)
-        assert run.stage == Stage.PRE_FILTER_TOPIC_RELEVANCE
-        assert run.stage_status == StageStatus.PENDING
+        assert _read_exec(run).get("stage") == Stage.PRE_FILTER_TOPIC_RELEVANCE
+        assert _read_exec(run).get("stage_status") == StageStatus.PENDING
         submit.assert_called_once()
 
     def test_skips_when_not_pending(self) -> None:
@@ -78,11 +94,12 @@ class TestOrchestrate:
 
 class TestSubmitCurrentStage:
     def _ctx(self, accepted):
+        assessment = SimpleNamespace(input=_ASSESSMENT_INPUT)
         return [
             patch.object(
                 tasks,
                 "_resolve_run_context",
-                return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
+                return_value=(assessment, MagicMock(), SimpleNamespace(), None),
             ),
             patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3),
             patch.object(tasks, "_accepted_indices", return_value=accepted),
@@ -98,12 +115,18 @@ class TestSubmitCurrentStage:
         session = MagicMock()
         batch_job = SimpleNamespace(id=7, total_items=3)
         p = self._ctx([0, 1, 2])
-        with p[0], p[1], p[2], p[3], patch.object(tasks, "flag_modified"), patch.object(
+        with p[0], p[1], p[2], p[3], patch.object(
+            assessment_core, "flag_modified"
+        ), patch.object(
             tasks, "build_prefilter_requests", return_value=[{"key": "tr_0"}]
-        ), patch.object(tasks, "submit_prefilter_batch", return_value=batch_job):
+        ), patch.object(
+            tasks, "submit_prefilter_batch", return_value=batch_job
+        ):
             tasks._submit_stage(session, run, 1, 1)
-        assert run.stage_batches[Stage.PRE_FILTER_TOPIC_RELEVANCE] == 7
-        assert run.stage_status == StageStatus.PROCESSING
+        assert (
+            _read_exec(run).get("stage_batches")[Stage.PRE_FILTER_TOPIC_RELEVANCE] == 7
+        )
+        assert _read_exec(run).get("stage_status") == StageStatus.PROCESSING
 
     def test_zero_accepted_advances(self) -> None:
         run = _run(
@@ -180,11 +203,13 @@ class TestMarkRunFailed:
         session.get.return_value = run
         with patch.object(
             tasks, "Session", return_value=_session_cm(session)
-        ), patch.object(tasks, "update_assessment_run_status") as upd, patch.object(
+        ), patch.object(assessment_core, "flag_modified"), patch.object(
+            tasks, "update_assessment_run_status"
+        ) as upd, patch.object(
             tasks, "recompute_assessment_status"
         ):
             tasks._mark_run_failed(5, "dead")
-        assert run.stage_status == StageStatus.FAILED
+        assert _read_exec(run).get("stage_status") == StageStatus.FAILED
         upd.assert_called_once()
 
     def test_skips_terminal_run(self) -> None:
@@ -277,11 +302,13 @@ class TestSubmitStageBranches:
         run = _run(stage=Stage.L2_ASSESSMENT, stage_status=StageStatus.PENDING)
         with patch.object(
             tasks, "_resolve_run_context", return_value=(None, None, None, "boom")
-        ), patch.object(tasks, "update_assessment_run_status") as upd, patch.object(
+        ), patch.object(assessment_core, "flag_modified"), patch.object(
+            tasks, "update_assessment_run_status"
+        ) as upd, patch.object(
             tasks, "recompute_assessment_status"
         ):
             tasks._submit_stage(MagicMock(), run, 1, 1)
-        assert run.stage_status == StageStatus.FAILED
+        assert _read_exec(run).get("stage_status") == StageStatus.FAILED
         upd.assert_called_once()
 
     def test_empty_dataset_fails_run(self) -> None:
@@ -291,12 +318,14 @@ class TestSubmitStageBranches:
             "_resolve_run_context",
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
         ), patch.object(tasks, "_load_dataset_rows", return_value=[]), patch.object(
+            assessment_core, "flag_modified"
+        ), patch.object(
             tasks, "update_assessment_run_status"
         ) as upd, patch.object(
             tasks, "recompute_assessment_status"
         ):
             tasks._submit_stage(MagicMock(), run, 1, 1)
-        assert run.stage_status == StageStatus.FAILED
+        assert _read_exec(run).get("stage_status") == StageStatus.FAILED
         upd.assert_called_once()
 
     def test_submits_l2_batch(self) -> None:
@@ -309,13 +338,18 @@ class TestSubmitStageBranches:
         with patch.object(
             tasks,
             "_resolve_run_context",
-            return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
+            return_value=(
+                SimpleNamespace(input={}),
+                MagicMock(),
+                SimpleNamespace(),
+                None,
+            ),
         ), patch.object(
             tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3
         ), patch.object(
             tasks, "_accepted_indices", return_value=[0, 1]
         ), patch.object(
-            tasks, "flag_modified"
+            assessment_core, "flag_modified"
         ), patch.object(
             tasks, "submit_assessment_batch", return_value=batch_job
         ), patch.object(
@@ -323,14 +357,19 @@ class TestSubmitStageBranches:
         ):
             tasks._submit_stage(MagicMock(), run, 1, 1)
         assert run.total_items == 2
-        assert run.stage_batches[Stage.L2_ASSESSMENT] == 8
+        assert _read_exec(run).get("stage_batches")[Stage.L2_ASSESSMENT] == 8
 
     def test_unknown_stage_raises(self) -> None:
         run = _run(stage="BOGUS", stage_status=StageStatus.PENDING, stage_batches={})
         with patch.object(
             tasks,
             "_resolve_run_context",
-            return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
+            return_value=(
+                SimpleNamespace(input={}),
+                MagicMock(),
+                SimpleNamespace(),
+                None,
+            ),
         ), patch.object(
             tasks, "_load_dataset_rows", return_value=[{"a": "1"}]
         ), patch.object(
@@ -368,8 +407,10 @@ class TestPersistAdvance:
         ), patch.object(tasks, "recompute_assessment_status"), patch.object(
             tasks, "_dispatch", side_effect=RuntimeError("broker down")
         ), patch.object(
+            assessment_core, "flag_modified"
+        ), patch.object(
             tasks, "update_assessment_run_status"
         ) as upd:
             tasks._persist_advance(MagicMock(), run, 1, 1)
-        assert run.stage_status == StageStatus.FAILED
+        assert _read_exec(run).get("stage_status") == StageStatus.FAILED
         upd.assert_called_once()

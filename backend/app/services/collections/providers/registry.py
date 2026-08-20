@@ -5,6 +5,8 @@ from sqlmodel import Session
 from openai import OpenAI
 
 from app.crud import get_provider_credential
+from app.crud.rag.open_ai import OPENAI_TIMEOUT_SECONDS
+from app.models.collection import ProviderType
 from app.services.collections.providers.base import BaseProvider
 from app.services.collections.providers.gemini import GeminiAIStudioProvider
 from app.services.collections.providers.openai import OpenAIProvider
@@ -14,20 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 class LLMProvider:
-    OPENAI = "openai"
-    GOOGLE_AISTUDIO = "google-aistudio"
-    # Future constants for providers:
-    # ANTHROPIC = "ANTHROPIC"
-
-    _registry: dict[str, type[BaseProvider]] = {
-        OPENAI: OpenAIProvider,
-        GOOGLE_AISTUDIO: GeminiAIStudioProvider,
+    _registry: dict[ProviderType, type[BaseProvider]] = {
+        ProviderType.openai: OpenAIProvider,
+        ProviderType.google_aistudio: GeminiAIStudioProvider,
         # Future providers:
-        # ANTHROPIC: BedrockProvider,
+        # ProviderType.anthropic: BedrockProvider,
     }
 
     @classmethod
-    def get(cls, name: str) -> type[BaseProvider]:
+    def get(cls, name: ProviderType) -> type[BaseProvider]:
         """Return the provider class for a given name."""
         provider = cls._registry.get(name)
         if not provider:
@@ -38,13 +35,13 @@ class LLMProvider:
         return provider
 
     @classmethod
-    def supported_providers(cls) -> list[str]:
+    def supported_providers(cls) -> list[ProviderType]:
         """Return a list of supported provider names."""
         return list(cls._registry.keys())
 
 
 def get_llm_provider(
-    session: Session, provider: str, project_id: int, organization_id: int
+    session: Session, provider: ProviderType, project_id: int, organization_id: int
 ) -> BaseProvider:
     provider_class = LLMProvider.get(provider)
 
@@ -55,16 +52,20 @@ def get_llm_provider(
         org_id=organization_id,
     )
 
-    if not credentials:
+    if not credentials or not isinstance(credentials, dict):
         raise ValueError(
             f"Credentials for provider '{provider}' not configured for this project."
         )
 
-    if provider == LLMProvider.OPENAI:
+    if provider == ProviderType.openai:
         if "api_key" not in credentials:
             raise ValueError("OpenAI credentials not configured for this project.")
-        client = OpenAI(api_key=credentials["api_key"])
-    elif provider == LLMProvider.GOOGLE_AISTUDIO:
+        client = OpenAI(
+            api_key=credentials["api_key"],
+            max_retries=0,
+            timeout=OPENAI_TIMEOUT_SECONDS,
+        )
+    elif provider == ProviderType.google_aistudio:
         if "api_key" not in credentials:
             raise ValueError(
                 "Google AI Studio credentials not configured for this project."

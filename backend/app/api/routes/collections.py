@@ -71,14 +71,14 @@ def collection_callback_notification(body: APIResponse[CollectionJobPublic]):
 def list_collections(
     session: SessionDep,
     current_user: AuthContextDep,
-):
+) -> APIResponse[list[CollectionPublic]]:
     collection_crud = CollectionCrud(session, current_user.project_.id)
     rows = collection_crud.read_all()
 
     # Convert each collection to CollectionPublic with correct field mapping
     public_collections = [to_collection_public(collection) for collection in rows]
 
-    return APIResponse.success_response(public_collections)
+    return APIResponse[list[CollectionPublic]].success_response(public_collections)
 
 
 @router.post(
@@ -95,7 +95,7 @@ def create_collection(
     session: SessionDep,
     current_user: AuthContextDep,
     request: CreationRequest,
-):
+) -> APIResponse[CollectionJobImmediatePublic]:
     with log_context(
         tag="collection",
         system="collection",
@@ -131,7 +131,7 @@ def create_collection(
             organization_id=current_user.organization_.id,
         )
 
-        return APIResponse.success_response(
+        return APIResponse[CollectionJobImmediatePublic].success_response(
             CollectionJobImmediatePublic.model_validate(collection_job),
         )
 
@@ -148,13 +148,13 @@ def delete_collection(
     current_user: AuthContextDep,
     collection_id: UUID = FastPath(description="Collection to delete"),
     request: CallbackRequest | None = Body(default=None),
-):
+) -> APIResponse[CollectionJobImmediatePublic]:
     with log_context(
         tag="collection",
         system="collection",
         lifecycle="api.collection.delete",
         action="delete",
-        collection_id=collection_id,
+        collection_id=str(collection_id),
         project_id=current_user.project_.id,
         organization_id=current_user.organization_.id,
     ):
@@ -188,7 +188,7 @@ def delete_collection(
             organization_id=current_user.organization_.id,
         )
 
-        return APIResponse.success_response(
+        return APIResponse[CollectionJobImmediatePublic].success_response(
             CollectionJobImmediatePublic.model_validate(collection_job)
         )
 
@@ -210,7 +210,7 @@ def update_collection(
         system="collection",
         lifecycle="api.collection.update",
         action="update",
-        collection_id=collection_id,
+        collection_id=str(collection_id),
         project_id=current_user.project_.id,
         organization_id=current_user.organization_.id,
     ):
@@ -227,7 +227,9 @@ def update_collection(
             f"[update_collection] Collection updated | {{'collection_id': '{collection_id}'}}"
         )
 
-        return APIResponse.success_response(to_collection_public(collection))
+        return APIResponse[CollectionPublic].success_response(
+            to_collection_public(collection)
+        )
 
 
 @router.get(
@@ -254,7 +256,7 @@ def collection_info(
         le=500,
         description="Limit number of documents returned (default: all, max: 500)",
     ),
-):
+) -> APIResponse[CollectionWithDocsPublic]:
     collection_crud = CollectionCrud(session, current_user.project_.id)
     collection = collection_crud.read_one(collection_id)
 
@@ -276,4 +278,4 @@ def collection_info(
             documents=documents, storage=storage, include_url=include_url
         )
 
-    return APIResponse.success_response(collection_with_docs)
+    return APIResponse[CollectionWithDocsPublic].success_response(collection_with_docs)

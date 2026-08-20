@@ -37,6 +37,7 @@ from app.api.routes import (
 from app.api.routes import (
     assessment as assessment_routes,
 )
+from app.api.routes.assessment import api as assessment_api_routes
 from app.api.routes.evaluations.dataset_v2 import (
     router as evaluations_dataset_v2_router,
 )
@@ -49,6 +50,7 @@ api_router = APIRouter()
 api_router.include_router(analytics.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(assessment_routes.router)
+api_router.include_router(assessment_api_routes.router)
 api_router.include_router(assistants.router)
 api_router.include_router(auth.router)
 api_router.include_router(collection_job.router)

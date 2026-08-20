@@ -1,4 +1,5 @@
-from uuid import uuid4
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
 
 from sqlmodel import Session, select
 
@@ -10,8 +11,15 @@ from app.crud.evaluations.core import (
     list_evaluation_runs,
 )
 from app.crud.evaluations.dataset import create_evaluation_dataset
-from app.models import EvaluationRun, Organization, Project
+from app.models import EvaluationDataset, EvaluationRun, Organization, Project
 from app.models.stt_evaluation import EvaluationType
+from app.tests.utils.auth import (
+    TestAuthContext,
+    get_superuser_test_auth_context,
+    get_user_test_auth_context,
+)
+from app.tests.utils.test_data import create_test_evaluation_dataset
+from app.tests.utils.utils import random_lower_string
 
 
 def _create_config(db: Session, project_id: int) -> tuple:
@@ -40,6 +48,37 @@ def _create_config(db: Session, project_id: int) -> tuple:
     db.refresh(config_version)
 
     return config.id, config_version.version
+
+
+def _create_run(
+    db: Session,
+    auth: TestAuthContext,
+    dataset: EvaluationDataset,
+    config: tuple[UUID, int],
+    run_name: str | None = None,
+    inserted_at: datetime | None = None,
+    run_type: str = EvaluationType.TEXT.value,
+) -> EvaluationRun:
+    """Helper to create an evaluation run, optionally overriding type/inserted_at."""
+    config_id, config_version = config
+    run = create_evaluation_run(
+        session=db,
+        run_name=run_name or f"run_{random_lower_string()}",
+        dataset_name=dataset.name,
+        dataset_id=dataset.id,
+        config_id=config_id,
+        config_version=config_version,
+        organization_id=auth.organization_id,
+        project_id=auth.project_id,
+    )
+
+    run.type = run_type
+    if inserted_at is not None:
+        run.inserted_at = inserted_at
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
 
 
 class TestCreateEvaluationRun:
@@ -247,3 +286,141 @@ class TestListEvaluationRuns:
 
         assert len(runs) == 3
         assert all(r.type == EvaluationType.TEXT.value for r in runs)
+
+    def test_list_evaluation_runs_filters_by_dataset_id(self, db: Session) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _create_config(db, auth.project_id)
+        dataset_a = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+        dataset_b = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+
+        run_a = _create_run(db, auth, dataset_a, config)
+        _create_run(db, auth, dataset_b, config)
+
+        runs = list_evaluation_runs(
+            session=db,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset_a.id,
+        )
+
+        assert [r.run_name for r in runs] == [run_a.run_name]
+
+    def test_list_evaluation_runs_without_dataset_id_returns_all_datasets(
+        self, db: Session
+    ) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _create_config(db, auth.project_id)
+        dataset_a = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+        dataset_b = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+
+        run_a = _create_run(db, auth, dataset_a, config)
+        run_b = _create_run(db, auth, dataset_b, config)
+
+        runs = list_evaluation_runs(
+            session=db,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+        assert {r.run_name for r in runs} == {run_a.run_name, run_b.run_name}
+
+    def test_list_evaluation_runs_dataset_from_other_project_excluded(
+        self, db: Session
+    ) -> None:
+        user_auth = get_user_test_auth_context(db)
+        other_auth = get_superuser_test_auth_context(db)
+
+        other_dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=other_auth.organization_id,
+            project_id=other_auth.project_id,
+        )
+        other_run = _create_run(
+            db, other_auth, other_dataset, _create_config(db, other_auth.project_id)
+        )
+
+        user_dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_auth.organization_id,
+            project_id=user_auth.project_id,
+        )
+        _create_run(
+            db, user_auth, user_dataset, _create_config(db, user_auth.project_id)
+        )
+
+        runs = list_evaluation_runs(
+            session=db,
+            organization_id=user_auth.organization_id,
+            project_id=user_auth.project_id,
+            dataset_id=other_dataset.id,
+        )
+
+        assert runs == []
+
+        # positive control: the same dataset_id resolves in its owning project
+        owner_runs = list_evaluation_runs(
+            session=db,
+            organization_id=other_auth.organization_id,
+            project_id=other_auth.project_id,
+            dataset_id=other_dataset.id,
+        )
+        assert [r.run_name for r in owner_runs] == [other_run.run_name]
+
+    def test_list_evaluation_runs_dataset_id_composes_with_type_and_pagination(
+        self, db: Session
+    ) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _create_config(db, auth.project_id)
+        dataset_a = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+        dataset_b = create_test_evaluation_dataset(
+            db=db, organization_id=auth.organization_id, project_id=auth.project_id
+        )
+
+        base = now()
+        oldest = _create_run(
+            db, auth, dataset_a, config, inserted_at=base - timedelta(minutes=3)
+        )
+        middle = _create_run(
+            db, auth, dataset_a, config, inserted_at=base - timedelta(minutes=2)
+        )
+        newest = _create_run(
+            db, auth, dataset_a, config, inserted_at=base - timedelta(minutes=1)
+        )
+        _create_run(
+            db,
+            auth,
+            dataset_a,
+            config,
+            inserted_at=base,
+            run_type=EvaluationType.STT.value,
+        )
+        _create_run(db, auth, dataset_b, config, inserted_at=base)
+
+        first_page = list_evaluation_runs(
+            session=db,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset_a.id,
+            limit=2,
+        )
+        second_page = list_evaluation_runs(
+            session=db,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset_a.id,
+            limit=2,
+            offset=2,
+        )
+
+        assert [r.run_name for r in first_page] == [newest.run_name, middle.run_name]
+        assert [r.run_name for r in second_page] == [oldest.run_name]

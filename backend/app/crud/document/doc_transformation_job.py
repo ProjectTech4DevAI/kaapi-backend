@@ -1,19 +1,16 @@
 import logging
 from uuid import UUID
-from typing import List, Optional
 
 from fastapi import HTTPException
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, and_, col, select
 
-from app.crud import DocumentCrud
+from app.core.util import now
 from app.models import (
     DocTransformationJob,
-    TransformationStatus,
     DocTransformJobCreate,
     DocTransformJobUpdate,
 )
 from app.models.document import Document
-from app.core.util import now
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +33,15 @@ class DocTransformationJobCrud:
     def read_one(self, job_id: UUID) -> DocTransformationJob:
         statement = (
             select(DocTransformationJob)
-            .join(Document, DocTransformationJob.source_document_id == Document.id)
+            .join(
+                Document,
+                col(DocTransformationJob.source_document_id) == col(Document.id),
+            )
             .where(
                 and_(
                     DocTransformationJob.id == job_id,
                     Document.project_id == self.project_id,
-                    Document.deleted_at.is_(None),
+                    col(Document.deleted_at).is_(None),
                 )
             )
         )
@@ -57,18 +57,21 @@ class DocTransformationJobCrud:
     def read_each(self, job_ids: set[UUID]) -> list[DocTransformationJob]:
         statement = (
             select(DocTransformationJob)
-            .join(Document, DocTransformationJob.source_document_id == Document.id)
+            .join(
+                Document,
+                col(DocTransformationJob.source_document_id) == col(Document.id),
+            )
             .where(
                 and_(
-                    DocTransformationJob.id.in_(list(job_ids)),
+                    col(DocTransformationJob.id).in_(list(job_ids)),
                     Document.project_id == self.project_id,
-                    Document.deleted_at.is_(None),
+                    col(Document.deleted_at).is_(None),
                 )
             )
         )
 
         jobs = self.session.exec(statement).all()
-        return jobs
+        return list(jobs)
 
     def update(
         self,

@@ -13,8 +13,8 @@ from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
 from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
+from app.models.evaluation import RunModeEnum
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -122,6 +122,7 @@ def list_evaluation_runs(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
+    dataset_id: int | None = None,
 ) -> list[EvaluationRun]:
     """
     List all evaluation runs for an organization and project.
@@ -132,6 +133,7 @@ def list_evaluation_runs(
         project_id: Project ID to filter by
         limit: Maximum number of runs to return (default 50)
         offset: Number of runs to skip (for pagination)
+        dataset_id: Optional evaluation dataset ID to filter by
 
     Returns:
         List of EvaluationRun objects, ordered by most recent first
@@ -141,17 +143,16 @@ def list_evaluation_runs(
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
         .where(EvaluationRun.type == EvaluationType.TEXT.value)
-        .order_by(EvaluationRun.inserted_at.desc())
-        .limit(limit)
-        .offset(offset)
+    )
+
+    if dataset_id is not None:
+        statement = statement.where(EvaluationRun.dataset_id == dataset_id)
+
+    statement = (
+        statement.order_by(EvaluationRun.inserted_at.desc()).limit(limit).offset(offset)
     )
 
     runs = session.exec(statement).all()
-
-    logger.info(
-        f"[list_evaluation_runs] Found {len(runs)} evaluation runs for org_id={organization_id}, "
-        f"project_id={project_id}"
-    )
 
     return runs
 
@@ -247,6 +248,8 @@ def update_evaluation_run(
 
     if should_notify:
         _enqueue_eval_completion_notification(eval_run)
+        if eval_run.callback_url:
+            _enqueue_eval_completion_callback(eval_run)
 
     return eval_run
 
@@ -269,6 +272,19 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     except Exception as e:
         logger.error(
             f"[update_evaluation_run] Failed to enqueue completion notification | "
+            f"evaluation_id={eval_run.id} | error={e}",
+            exc_info=True,
+        )
+
+
+def _enqueue_eval_completion_callback(eval_run: EvaluationRun) -> None:
+    try:
+        from app.celery.tasks.job_execution import send_eval_completion_callback
+
+        send_eval_completion_callback.delay(eval_run.id)
+    except Exception as e:
+        logger.error(
+            f"[update_evaluation_run] Failed to enqueue completion callback | "
             f"evaluation_id={eval_run.id} | error={e}",
             exc_info=True,
         )

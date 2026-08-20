@@ -1681,6 +1681,94 @@ class TestListEvaluationRuns:
         response = client.get("/api/v1/evaluations")
         assert response.status_code == 401
 
+    def test_list_evaluation_runs_filtered_by_dataset_id(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        create_test_dataset: EvaluationDataset,
+    ) -> None:
+        other_dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="other_dataset_for_list_runs",
+        )
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
+        run = create_evaluation_run(
+            session=db,
+            run_name="run_on_filtered_dataset",
+            dataset_name=create_test_dataset.name,
+            dataset_id=create_test_dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        create_evaluation_run(
+            session=db,
+            run_name="run_on_other_dataset",
+            dataset_name=other_dataset.name,
+            dataset_id=other_dataset.id,
+            config_id=config.id,
+            config_version=1,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        response = client.get(
+            "/api/v1/evaluations",
+            params={"dataset_id": create_test_dataset.id},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert [r["run_name"] for r in data] == [run.run_name]
+        assert data[0]["dataset_id"] == create_test_dataset.id
+
+    def test_list_evaluation_runs_without_dataset_id_returns_all_datasets(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        create_test_dataset: EvaluationDataset,
+    ) -> None:
+        other_dataset = create_test_evaluation_dataset(
+            db=db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            name="other_dataset_for_unfiltered_list",
+        )
+        config = create_test_config(db, project_id=user_api_key.project_id)
+
+        for run_name, dataset in (
+            ("run_unfiltered_a", create_test_dataset),
+            ("run_unfiltered_b", other_dataset),
+        ):
+            create_evaluation_run(
+                session=db,
+                run_name=run_name,
+                dataset_name=dataset.name,
+                dataset_id=dataset.id,
+                config_id=config.id,
+                config_version=1,
+                organization_id=user_api_key.organization_id,
+                project_id=user_api_key.project_id,
+            )
+
+        response = client.get(
+            "/api/v1/evaluations",
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert {r["run_name"] for r in data} == {"run_unfiltered_a", "run_unfiltered_b"}
+
 
 class TestEvaluationRouterOrdering:
     """Regression tests for router ordering (evaluation vs dataset/stt routes).

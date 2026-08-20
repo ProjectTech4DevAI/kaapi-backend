@@ -18,7 +18,7 @@ class TransformationStatus(str, enum.Enum):
 class DocTransformationJob(SQLModel, table=True):
     """Database model for DocTransformationJob operations."""
 
-    __tablename__ = "doc_transformation_job"
+    __tablename__ = "doc_transformation_job"  # pyright: ignore[reportAssignmentType]
 
     id: UUID = Field(
         default_factory=uuid4,
@@ -85,7 +85,7 @@ class DocTransformationJob(SQLModel, table=True):
 class DocTransformJobCreate(SQLModel):
     source_document_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportAssignmentType]
 
 
 class DocTransformJobUpdate(SQLModel):
