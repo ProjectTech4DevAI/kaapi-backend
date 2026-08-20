@@ -1,7 +1,7 @@
 """Add evaluation_iteration_run table
 
-Revision ID: 076
-Revises: 075
+Revision ID: 082
+Revises: 081
 Create Date: 2026-08-02 00:00:00.000000
 
 Thin tracking row for the eval-iterate-improve LangGraph loop (see
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-revision = "076"
-down_revision = "075"
+revision = "082"
+down_revision = "081"
 branch_labels = None
 depends_on = None
 
