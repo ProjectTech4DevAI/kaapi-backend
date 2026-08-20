@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider, validate_provider_credentials
+from app.core.providers import validate_provider
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
@@ -27,14 +27,6 @@ def set_creds_for_org(
         raise HTTPException(400, "No credentials provided")
 
     for provider, credentials in creds_add.credential_payloads().items():
-        try:
-            validate_provider_credentials(provider, credentials)
-        except ValueError as e:
-            logger.warning(
-                f"[set_creds_for_org] Validation error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
-            )
-            raise HTTPException(status_code=400, detail=str(e))
-
         # Encrypt entire credentials object
         encrypted_credentials = encrypt_credentials(credentials)
 
@@ -191,14 +183,6 @@ def update_creds_for_org(
 
     provider = creds_in.provider.value
     credential_data = creds_in.credential_payload()
-
-    try:
-        validate_provider_credentials(provider, credential_data)
-    except ValueError as e:
-        logger.warning(
-            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
-        )
-        raise HTTPException(status_code=400, detail=str(e))
 
     # Encrypt the entire credentials object
     encrypted_credentials = encrypt_credentials(credential_data)

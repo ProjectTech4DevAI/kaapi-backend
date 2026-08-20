@@ -29,8 +29,10 @@ single source of truth:
   of those models, so the shape lands in the OpenAPI schema instead of
   `dict[str, Any]` — adding or changing a required field is a visible contract
   change.
-- Payloads allow extra keys (provider passthrough, e.g. `model` on an `openai`
-  row); they round-trip via `model_dump(exclude_unset=True)`.
+- Payloads allow extra keys (callers store provider knobs beyond the declared
+  auth fields); they round-trip via `model_dump(exclude_unset=True)`. A model
+  declares the fields Kaapi itself requires — `google` routes to Google AI
+  Studio (`LLMProvider._registry`), so it declares `api_key` only.
 - Responses (`CredsPublic.credential`, `GET /credentials/provider/{provider}`)
   are masked, so they are typed `CredentialPayload` (`dict[str, JsonValue]`)
   rather than a provider model.

@@ -28,10 +28,11 @@ CredentialPayload = dict[str, JsonValue]
 class ProviderCredentialsBase(BaseModel):
     """Base for provider credential payloads.
 
-    Extra keys are allowed and preserved: callers pass provider knobs Kaapi
-    does not itself require (an ``openai`` row carrying ``model`` /
-    ``temperature``, for instance) and those are stored and handed back to the
-    provider verbatim.
+    Extra keys are allowed and preserved. Callers already store keys beyond the
+    declared auth fields, and the payload is written back verbatim, so
+    forbidding them would reject requests that work today. Tightening this to
+    ``extra="forbid"`` is a deliberate breaking change and needs its own
+    migration for existing rows.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -64,23 +65,7 @@ class AnthropicCredentials(ProviderCredentialsBase):
 
 
 class GoogleCredentials(ProviderCredentialsBase):
-    """Google Vertex AI (BYOK).
-
-    Only ``api_key`` is required; each Vertex-specific field falls back to its
-    platform default in settings when omitted.
-    """
-
-    api_key: str = Field(description="Vertex AI API key")
-    project_id: str | None = Field(default=None, description="GCP project ID")
-    location: str | None = Field(
-        default=None, description="Vertex AI region, e.g. 'us-central1'"
-    )
-    sa_key: dict[str, JsonValue] | None = Field(
-        default=None, description="GCP service-account key JSON"
-    )
-    gcs_bucket: str | None = Field(
-        default=None, description="GCS bucket used to stage audio for Vertex"
-    )
+    api_key: str = Field(description="Google API key")
 
 
 class WebhookSecretCredentials(ProviderCredentialsBase):
@@ -189,29 +174,15 @@ def validate_provider(provider: str) -> Provider:
         )
 
 
-def validate_provider_credentials(provider: str, credentials: dict[str, Any]) -> None:
-    """Validate a credential payload against the provider's schema.
-
-    Args:
-        provider: The provider name to validate credentials for
-        credentials: Dictionary containing the provider credentials
-
-    Raises:
-        ValueError: If required fields are missing or a field has the wrong type
-    """
-    parse_provider_credentials(provider, credentials)
-
-
 def parse_provider_credentials(
     provider: str, credentials: Any
 ) -> ProviderCredentialsBase:
     """Validate a raw credential payload and return it as the provider's model.
 
-    Unknown keys survive the round trip (see :class:`ProviderCredentialsBase`).
-
     Raises:
         ValueError: If the provider is unsupported, the payload is not an
-            object, a required field is missing, or a field has the wrong type
+            object, a required field is missing, a field has the wrong type, or
+            the payload carries keys the provider does not declare
     """
     provider_enum = validate_provider(provider)
 
@@ -243,11 +214,6 @@ def parse_provider_credentials(
             f"[parse_provider_credentials] Invalid credential fields | provider: {provider}, errors: {invalid_fields}"
         )
         raise ValueError(f"Invalid credentials for {provider}: {invalid_fields}")
-
-
-def get_supported_providers() -> list[str]:
-    """Return a list of all supported provider names."""
-    return [p.value for p in Provider]
 
 
 def mask_credential_fields(
