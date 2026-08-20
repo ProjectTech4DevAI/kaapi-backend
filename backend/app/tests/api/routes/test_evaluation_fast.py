@@ -402,13 +402,6 @@ class TestFastEvaluationRoute:
         assert "101" in error_str
         _patch_dispatch.assert_not_called()
 
-    # FR-1's `type != "text"` check in fast.py is defensive/unreachable dead code
-    # under the current type system: `provider == "openai"` (bare, not "-native")
-    # only ever occurs on a KaapiTextCompletionConfig, whose `type` is a
-    # `Literal[CompletionType.TEXT]` — so a real, validly-loaded config can never
-    # have provider="openai" with a non-text type. No test exercises it without
-    # fabricating a state construction itself forbids.
-
     def test_fr3_rejects_duplicate_run_name(
         self,
         client: TestClient,

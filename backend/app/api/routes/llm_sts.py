@@ -218,9 +218,6 @@ def speech_to_speech(
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
 
-    # Code membership + the auto/unknown exclusion on output_language are now
-    # enforced by SpeechToSpeechRequest itself (STSLanguageCode Literal +
-    # validate_output_language), so FastAPI 422s before this handler runs.
     input_lang, output_lang = _resolve_languages(request)
 
     blocks = [

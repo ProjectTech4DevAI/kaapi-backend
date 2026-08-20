@@ -33,11 +33,8 @@ TextProvider = Literal[
     Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC, Provider.GOOGLE_AISTUDIO
 ]
 
-# Union of the per-type provider sets — derived so the set can't drift when a
-# provider is added to one completion type.
 KaapiProvider = Union[TextProvider, STTProvider, TTSProvider]
 
-# Google variants a credential-aware audio default may pick between.
 GoogleProvider = Literal[Provider.GOOGLE, Provider.GOOGLE_AISTUDIO]
 
 # Native provider names are the Kaapi providers with a "-native" suffix.
@@ -68,7 +65,7 @@ class Modality(StrEnum):
 # BCP-47 language codes accepted by the speech-to-speech endpoint (STT input /
 # TTS output). This Literal is the single source of truth; `SUPPORTED_LANGUAGE_CODES`
 # in `app/services/llm/chain/utils.py` is derived from it via `get_args`.
-STSLanguageCode = Literal[
+SUPPORTED_STS_LANGUAGE_CODES = Literal[
     "auto",
     "unknown",
     "en-IN",
@@ -98,7 +95,7 @@ STSLanguageCode = Literal[
 
 # Aliases accepted for STT/TTS/STS language fields — bare ISO 639 codes and
 # English language names, all lowercase — mapped to the canonical BCP-47 tag.
-LANGUAGE_ALIASES: dict[str, str] = {
+LANGUAGE_ALIAS_TO_BCP47: dict[str, str] = {
     "en": "en-IN",
     "english": "en-IN",
     "hi": "hi-IN",
@@ -159,11 +156,11 @@ def normalize_bcp47_language(value: str) -> str:
     Unrecognized input is returned unchanged so callers keep validating/
     rejecting it themselves.
     """
-    if value in ("auto", "unknown"):
-        return value
     key = value.strip().lower()
-    if key in LANGUAGE_ALIASES:
-        return LANGUAGE_ALIASES[key]
+    if key in ("auto", "unknown"):
+        return key
+    if key in LANGUAGE_ALIAS_TO_BCP47:
+        return LANGUAGE_ALIAS_TO_BCP47[key]
     parts = key.split("-")
     if len(parts) == 2:
         return f"{parts[0]}-{parts[1].upper()}"

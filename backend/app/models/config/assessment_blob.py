@@ -136,13 +136,8 @@ class AssessmentCompletionConfig(KaapiTextCompletionConfig):
         ..., description="Provider to use for the assessment completion call."
     )
     type: Literal[CompletionType.TEXT] = CompletionType.TEXT
-    # Overrides the inherited `TextLLMParams` field (same reasoning as
-    # `PreFilterBase.params` above): kept as a plain dict, not a typed model,
-    # so (a) input_schema/json_output_schema survive field validation instead
-    # of being dropped as unknown TextLLMParams keys, and (b) dumping this
-    # blob doesn't invoke `ParamSerialization`'s custom serializer against a
-    # value that no longer matches a typed field once this validator below
-    # normalizes it.
+    # Kept as a plain dict (not TextLLMParams) so input_schema/json_output_schema
+    # survive validation instead of being dropped as unknown keys.
     params: dict[str, JsonValue] = Field(
         ...,
         description="Assessment-scoped Kaapi text params (adds input/output schemas).",
@@ -152,10 +147,10 @@ class AssessmentCompletionConfig(KaapiTextCompletionConfig):
     def validate_params(self):
         user_set_temp = "temperature" in self.params
         validated = AssessmentTextParams.model_validate(self.params)
-        dumped = validated.model_dump(exclude_none=True)
+        model_params = validated.model_dump(exclude_none=True)
         if not user_set_temp:
-            dumped.pop("temperature", None)
-        self.params = dumped
+            model_params.pop("temperature", None)
+        self.params = model_params
         return self
 
 

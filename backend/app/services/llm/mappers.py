@@ -58,7 +58,7 @@ def bcp47_to_elevenlabs_lang(bcp47_code: str) -> str | None:
     return BCP47_TO_ELEVENLABS_LANG.get(bcp47_code)
 
 
-def _ensure_openai_strict_schema(schema: dict) -> dict:
+def _ensure_openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Recursively add additionalProperties: false and require every property, for OpenAI strict JSON schema validation."""
     normalized = dict(schema)
 
@@ -86,7 +86,7 @@ def _ensure_openai_strict_schema(schema: dict) -> dict:
     return normalized
 
 
-def _strip_additional_properties(schema: dict) -> dict:
+def _strip_additional_properties(schema: dict[str, Any]) -> dict[str, Any]:
     """Recursively strip additionalProperties — unsupported by Google GenAI."""
     normalized_schema = dict(schema)
     normalized_schema.pop("additionalProperties", None)
@@ -109,7 +109,7 @@ def _strip_additional_properties(schema: dict) -> dict:
     return normalized_schema
 
 
-def _convert_json_schema_to_google(schema: dict) -> dict:
+def _convert_json_schema_to_google(schema: dict[str, Any]) -> dict[str, Any]:
     """Convert a JSON Schema dict to Google GenAI's OpenAPI-style schema.
 
     Strips unsupported fields, then normalizes the schema through the Gemini SDK
@@ -132,8 +132,8 @@ def _convert_json_schema_to_google(schema: dict) -> dict:
 
 
 def map_kaapi_to_openai_params(
-    session: Session, kaapi_params: dict
-) -> tuple[dict, list[str]]:
+    session: Session, kaapi_params: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
     This mapper transforms standardized Kaapi parameters into OpenAI-specific
@@ -158,7 +158,7 @@ def map_kaapi_to_openai_params(
         - Dictionary of OpenAI API parameters ready to be passed to the API
         - List of warnings describing suppressed or ignored parameters
     """
-    openai_params = {}
+    openai_params: dict[str, Any] = {}
     warnings = []
 
     model = kaapi_params.get("model")
@@ -233,8 +233,8 @@ def map_kaapi_to_openai_params(
 
 
 def map_kaapi_to_google_params(
-    kaapi_params: dict, completion_type: str
-) -> tuple[dict, list[str]]:
+    kaapi_params: dict[str, Any], completion_type: str
+) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
     This mapper transforms standardized Kaapi parameters into Google-specific
@@ -255,7 +255,7 @@ def map_kaapi_to_google_params(
         - Dictionary of Google AI API parameters ready to be passed to the API
         - List of warnings describing suppressed or ignored parameters
     """
-    google_params = {}
+    google_params: dict[str, Any] = {}
     warnings = []
 
     # Model is present in all param types; text falls back to the centralized
@@ -347,8 +347,8 @@ def map_kaapi_to_google_params(
 
 
 def map_kaapi_to_sarvam_params(
-    kaapi_params: dict, completion_type: str
-) -> tuple[dict, list[str]]:
+    kaapi_params: dict[str, Any], completion_type: str
+) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to SarvamAI API parameters.
 
     Handles both STTLLMParams and TTSLLMParams.
@@ -365,7 +365,7 @@ def map_kaapi_to_sarvam_params(
         - Dictionary of SarvamAI API parameters
         - List of warnings for unsupported parameters
     """
-    sarvam_params = {}
+    sarvam_params: dict[str, Any] = {}
     warnings = []
 
     # Model falls back to the per-type Sarvam default.
@@ -454,8 +454,8 @@ def map_kaapi_to_sarvam_params(
 
 
 def map_kaapi_to_elevenlabs_params(
-    kaapi_params: dict, completion_type: str
-) -> tuple[dict, list[str]]:
+    kaapi_params: dict[str, Any], completion_type: str
+) -> tuple[dict[str, Any], list[str]]:
     """
     Map Kaapi-abstracted parameters to ElevenLab API params
     Handles both STTLLMParams and TTSLLMParams.
@@ -473,7 +473,7 @@ def map_kaapi_to_elevenlabs_params(
         - List of warnings for unsupported parameters
 
     """
-    elevenlabs_params = {}
+    elevenlabs_params: dict[str, Any] = {}
     warnings = []
 
     model_id = kaapi_params.get("model") or ELEVENLABS_DEFAULTS_BY_TYPE.get(
@@ -561,8 +561,8 @@ def map_kaapi_to_elevenlabs_params(
 
 
 def map_kaapi_to_anthropic_params(
-    kaapi_params: dict,
-) -> tuple[dict, list[str]]:
+    kaapi_params: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
 
     Supported Mapping:
@@ -579,7 +579,7 @@ def map_kaapi_to_anthropic_params(
         - reasoning / effort / summary: Messages API does not expose a
           reasoning-effort knob, dropped with warning.
     """
-    anthropic_params: dict = {}
+    anthropic_params: dict[str, Any] = {}
     warnings: list[str] = []
 
     model = kaapi_params.get("model")

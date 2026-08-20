@@ -23,7 +23,7 @@ from app.models.llm.constants import (
     NativeProvider,
     Provider,
     RAGProvider,
-    STSLanguageCode,
+    SUPPORTED_STS_LANGUAGE_CODES,
     STTProvider,
     TextProvider,
     TTSProvider,
@@ -42,11 +42,13 @@ class ParamSerialization:
     """
 
     @model_serializer(mode="wrap")
-    def _dump_compact(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        data = {k: v for k, v in handler(self).items() if v is not None}
+    def _dump_compact(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        serialized_params = {k: v for k, v in handler(self).items() if v is not None}
         if "temperature" not in self.model_fields_set:
-            data.pop("temperature", None)
-        return data
+            serialized_params.pop("temperature", None)
+        return serialized_params
 
 
 class TextLLMParams(ParamSerialization, SQLModel):
@@ -123,7 +125,7 @@ class STTLLMParams(ParamSerialization, SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_language_casing(cls, data: Any) -> Any:
+    def normalize_language_casing(cls, data: object) -> object:
         """Accept a language name, bare ISO code, or BCP-47 tag in any casing
         (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
         on the canonical tag still find a match."""
@@ -147,7 +149,7 @@ class TTSLLMParams(ParamSerialization, SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_language_casing(cls, data: Any) -> Any:
+    def normalize_language_casing(cls, data: object) -> object:
         """Accept a language name, bare ISO code, or BCP-47 tag in any casing
         (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
         on the canonical tag still find a match."""
@@ -1059,7 +1061,7 @@ class SpeechToSpeechRequest(SQLModel):
     )
 
     # Optional language config (BCP-47 codes)
-    input_language: STSLanguageCode = Field(
+    input_language: SUPPORTED_STS_LANGUAGE_CODES = Field(
         "auto",
         description=(
             "BCP-47 language code for STT input (auto-detect by default). "
@@ -1068,7 +1070,7 @@ class SpeechToSpeechRequest(SQLModel):
             "'sd-IN', 'sa-IN', 'sat-IN', 'mni-IN', 'brx-IN', 'mai-IN', 'doi-IN'"
         ),
     )
-    output_language: STSLanguageCode | None = Field(
+    output_language: SUPPORTED_STS_LANGUAGE_CODES | None = Field(
         None,
         description=(
             "BCP-47 language code for TTS output (defaults to input_language if not specified). "
@@ -1117,10 +1119,10 @@ class SpeechToSpeechRequest(SQLModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_language_casing(cls, data: Any) -> Any:
+    def normalize_language_casing(cls, data: object) -> object:
         """Normalize language input (name, bare ISO code, or BCP-47 tag, any
         casing — e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') before the
-        STSLanguageCode Literal check runs, so it validates against the
+        SUPPORTED_STS_LANGUAGE_CODES Literal check runs, so it validates against the
         supported-code allowlist."""
         if not isinstance(data, dict):
             return data

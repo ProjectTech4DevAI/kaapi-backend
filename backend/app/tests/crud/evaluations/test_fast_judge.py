@@ -200,7 +200,7 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
 DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
 
 
-def _summary_response(text: str):
+def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
     )
@@ -930,7 +930,7 @@ class TestRunOverallSummary:
 
     def test_summary_brief_carries_the_scored_traces(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
-    ):
+    ) -> None:
         # The summary must be generated AFTER the traces are built: rolled up first,
         # it would brief the model on an empty trace list.
         eval_run = self._seed_all_three_metrics_run(
