@@ -30,6 +30,58 @@ logger = logging.getLogger(__name__)
 FILES_API_BETA = "files-api-2025-04-14"
 
 
+def log_anthropic_error(exc: Exception, *, fn_name: str, context: str = "") -> None:
+    """Log an Anthropic `messages.create` failure at the right level/tag.
+
+    Shared by one-shot call sites outside `ClaudeProvider.execute` (its own
+    dispatch has a wider, return-tuple-based ladder and stays self-contained) —
+    currently `crud/evaluations/summary.py` and
+    `services/evaluations/prompt_improvement.py`, which otherwise duplicated
+    this same 6-branch ladder verbatim. Callers keep their own control flow
+    (return `None` vs. `raise`); this only logs.
+    """
+    tail = f" | {context}" if context else ""
+    if isinstance(exc, anthropic.AuthenticationError):
+        logger.warning(
+            f"[{fn_name}] [ANTHROPIC] Authentication failed (code: 401){tail}: "
+            "verify the API key is valid and not expired.",
+            exc_info=True,
+        )
+    elif isinstance(exc, anthropic.RateLimitError):
+        logger.warning(
+            f"[{fn_name}] [ANTHROPIC] Rate limit exceeded (code: 429){tail}.",
+            exc_info=True,
+        )
+    elif isinstance(exc, anthropic.APITimeoutError):
+        # Must come before APIConnectionError — APITimeoutError is a subclass.
+        logger.error(
+            f"[{fn_name}] [KAAPI] Anthropic request timed out "
+            f"(code: APITimeoutError){tail}.",
+            exc_info=True,
+        )
+    elif isinstance(exc, anthropic.APIConnectionError):
+        logger.error(
+            f"[{fn_name}] [KAAPI] Anthropic connection failed "
+            f"(code: APIConnectionError){tail}.",
+            exc_info=True,
+        )
+    elif isinstance(exc, anthropic.APIStatusError):
+        status = exc.status_code
+        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted).
+        log = logger.error if status and status >= 500 else logger.warning
+        log(
+            f"[{fn_name}] [ANTHROPIC] API status error (code: {status}){tail}: "
+            f"{exc.message}.",
+            exc_info=True,
+        )
+    else:
+        logger.error(
+            f"[{fn_name}] [KAAPI] Unexpected error during Anthropic call "
+            f"(code: {type(exc).__name__}){tail}: {exc}.",
+            exc_info=True,
+        )
+
+
 class ClaudeProvider(BaseProvider):
     def __init__(self, client: Anthropic):
         """Initialize Anthropic Claude provider with client.
