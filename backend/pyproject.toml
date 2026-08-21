@@ -86,6 +86,11 @@ build-backend = "hatchling.build"
 [project.scripts]
 ai-cli = "app.cli.main:cli"
 
+# Keeps coverage.xml paths as "app/..." (relative to backend/) so Codecov
+# can map them to repo files for the per-file view.
+[tool.coverage.run]
+relative_files = true
+
 [tool.mypy]
 strict = true
 exclude = ["venv", ".venv", "alembic"]
