@@ -31,8 +31,14 @@ from app.models import APIKey, AuthContext, Organization, Project, User
 
 logger = logging.getLogger(__name__)
 
-# Password hashing configuration
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing configuration.
+# Tests use the minimum bcrypt cost: the default (12 rounds, ~175ms per
+# hash/verify) is deliberate brute-force resistance that only slows the
+# thousands of auth calls the test suite makes.
+_BCRYPT_ROUNDS = 4 if settings.ENVIRONMENT == "testing" else 12
+pwd_context = CryptContext(
+    schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=_BCRYPT_ROUNDS
+)
 
 # JWT configuration
 ALGORITHM = "HS256"
@@ -299,7 +305,7 @@ class APIKeyManager:
     KEY_LENGTH = 65  # Total length: 22 (prefix) + 43 (secret)
     HASH_ALGORITHM = "bcrypt"
 
-    pwd_context = CryptContext(schemes=[HASH_ALGORITHM], deprecated="auto")
+    pwd_context = pwd_context  # module-level context, shares the rounds config
 
     @classmethod
     def generate(cls) -> tuple[str, str, str]:
