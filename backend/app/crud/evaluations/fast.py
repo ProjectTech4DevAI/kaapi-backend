@@ -1249,7 +1249,10 @@ def _stage3_score_and_trace(
             )
             metadata = dataset.dataset_metadata if dataset else None
             duplication_factor = max(
-                1, int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1))
+                1,
+                eval_run.duplication_factor
+                if eval_run.duplication_factor is not None
+                else int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1)),
             )
             overall["ai_summary"] = generate_run_ai_summary(
                 model=settings.EVAL_SUMMARY_MODEL,
