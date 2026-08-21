@@ -4,6 +4,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,8 +15,8 @@ class BaseBucketProvider(ABC):
     # URI scheme this provider handles (e.g. "gs", "s3").
     SCHEME: str = ""
 
-    # Cap on signed-URL lifetime (24h), matching AmazonCloudStorage.
-    MAX_SIGNED_URL_EXPIRY: int = 86400
+    # Cap on signed-URL lifetime, enforced by concrete providers.
+    MAX_SIGNED_URL_EXPIRY: int = settings.MAX_SIGNED_URL_EXPIRY_SECONDS
 
     def __init__(self, client: Any):
         self.client = client
@@ -26,23 +28,15 @@ class BaseBucketProvider(ABC):
         raise NotImplementedError("Bucket providers must implement create_client")
 
     @abstractmethod
-    def get_signed_url(self, uri: str, expires_in: int = 3600) -> str:
+    def get_signed_url(self, uri: str, expires_in: int | None = None) -> str:
         """Generate a time-limited signed URL for a single object."""
         raise NotImplementedError("Bucket providers must implement get_signed_url")
 
     def get_bulk_signed_urls(
-        self, uris: list[str], expires_in: int = 3600
+        self, uris: list[str], expires_in: int | None = None
     ) -> dict[str, str]:
         """Sign many object URIs, reusing this provider's single client."""
         signed: dict[str, str] = {}
         for uri in uris:
             signed[uri] = self.get_signed_url(uri, expires_in=expires_in)
         return signed
-
-    def to_public_url(self, uri: str, expires_in: int = 3600) -> str:
-        """Resolve a private object URI to a fetchable signed URL."""
-        return self.get_signed_url(uri, expires_in=expires_in)
-
-    def get_provider_name(self) -> str:
-        """Return the provider name derived from the class name."""
-        return self.__class__.__name__.replace("BucketProvider", "").lower()

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
 from app.models.llm.constants import KaapiProvider
 from app.services.buckets.attachments import is_gcs_uri, resolve_attachments
@@ -62,6 +63,7 @@ def rewrite_gcs_attachment_urls(
         llm_provider=cast(KaapiProvider, llm_provider),
         project_id=project_id,
         organization_id=organization_id,
+        expires_in=settings.MAX_SIGNED_URL_EXPIRY_SECONDS,
     )
     assert isinstance(resolved, dict)  # list input always yields a dict
 

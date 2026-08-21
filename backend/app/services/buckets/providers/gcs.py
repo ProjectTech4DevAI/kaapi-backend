@@ -74,9 +74,33 @@ class GCSBucketProvider(BaseBucketProvider):
             raise ValueError(f"GCS URI '{uri}' is missing an object key.")
         return parsed.netloc, key
 
-    def get_signed_url(self, uri: str, expires_in: int = 3600) -> str:
+    def _assert_in_credential_bucket(self, bucket_name: str, uri: str) -> None:
+        """Path A: SA can only sign its own bucket; a foreign URI would 403 mid-batch."""
+        expected = self.client.default_bucket
+        if expected and bucket_name != expected:
+            raise ValueError(
+                f"Attachment bucket '{bucket_name}' does not match the credential "
+                f"bucket '{expected}' ({uri}); the service account cannot access it."
+            )
+
+    def _assert_all_in_credential_bucket(self, uris: list[str]) -> None:
+        """Validate the whole batch upfront so every mismatch surfaces before signing."""
+        expected = self.client.default_bucket
+        if not expected:
+            return
+        mismatched = [uri for uri in uris if self._parse_gcs_uri(uri)[0] != expected]
+        if mismatched:
+            raise ValueError(
+                f"{len(mismatched)} attachment(s) not in credential bucket "
+                f"'{expected}'; the service account cannot access them: {mismatched}"
+            )
+
+    def get_signed_url(self, uri: str, expires_in: int | None = None) -> str:
+        if expires_in is None:
+            expires_in = settings.SIGNED_URL_EXPIRY_SECONDS
         expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
         bucket_name, key = self._parse_gcs_uri(uri)
+        self._assert_in_credential_bucket(bucket_name, uri)
 
         try:
             blob = self.client.storage_client.bucket(bucket_name).blob(key)
@@ -100,9 +124,14 @@ class GCSBucketProvider(BaseBucketProvider):
         return signed_url
 
     def get_bulk_signed_urls(
-        self, uris: list[str], expires_in: int = 3600
+        self, uris: list[str], expires_in: int | None = None
     ) -> dict[str, str]:
         """Sign each URI reusing this provider's single client."""
+        if expires_in is None:
+            expires_in = settings.SIGNED_URL_EXPIRY_SECONDS
+
+        self._assert_all_in_credential_bucket(uris)
+
         logger.info(
             f"[GCSBucketProvider.get_bulk_signed_urls] Signing batch | "
             f"count={len(uris)}, expires_in={expires_in}"
