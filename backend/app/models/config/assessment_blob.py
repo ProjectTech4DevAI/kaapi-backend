@@ -173,7 +173,10 @@ class AssessmentConfigBlob(SQLModel):
         topic_relevance = self.pre_filters.topic_relevance if self.pre_filters else None
         if topic_relevance is not None and topic_relevance.params.get("submission"):
             blocks.append(
-                ("pre_filter topic_relevance", str(topic_relevance.params["submission"]))
+                (
+                    "pre_filter topic_relevance",
+                    str(topic_relevance.params["submission"]),
+                )
             )
 
         for block, template in blocks:
