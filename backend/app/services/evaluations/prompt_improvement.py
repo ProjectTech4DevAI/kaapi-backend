@@ -1,12 +1,8 @@
 """AI-assisted prompt improvement service.
 
-Split into a fast request-side path (validate + enqueue a Celery job) and a
-worker-side path that does the heavy Anthropic round-trip. The LLM call stays
-synchronous — blocking in a Celery worker is fine, and it holds no FastAPI
-threadpool thread.
-
-Loads the evaluation run's stored score traces from object storage, asks Claude
-to rewrite the system prompt, and persists the result as a new config_version.
+Fast request-side path validates + enqueues a Celery job; the worker-side path
+loads the run's score traces, asks Claude to rewrite the system prompt, and
+persists the result as a new config_version.
 """
 
 import copy
@@ -46,7 +42,7 @@ from app.models.evaluation import (
     PromptRecommendationJobPublic,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider
+from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -89,9 +85,7 @@ def _resolve_source_version(
 ) -> ConfigVersion | None:
     """Resolve the exact config_version the run evaluated.
 
-    read_one() raises 404 when the config itself is missing/soft-deleted and
-    returns None when only the version is gone — the caller treats both as the
-    run's source config no longer resolving.
+    Returns None if the config or version is missing/soft-deleted (404).
     """
     try:
         return ConfigVersionCrud(
@@ -114,14 +108,10 @@ def validate_improve_prompt(
     project_id: int,
     require_judge_run: bool = False,
 ) -> EvaluationRun:
-    """Run the cheap DB precondition checks for prompt improvement.
+    """Cheap DB precondition checks for prompt improvement; no LLM call, no trace download.
 
-    Raises HTTPException for every domain failure so the request-side caller
-    returns a real 4xx before any job is enqueued. No LLM call, no trace
-    download. Returns the run for reuse by the worker path.
-
-    When require_judge_run is True (v2 callers), the run must be a judged run;
-    v1 callers leave it False and are unaffected.
+    Raises HTTPException (4xx) on any domain failure. Returns the run for reuse
+    by the worker path. require_judge_run=True (v2) requires a judged run.
     """
     run = get_evaluation_run_by_id(
         session=session,
@@ -181,8 +171,7 @@ def start_prompt_improvement_job(
 ) -> Job:
     """Validate preconditions, create a job row, and enqueue the worker task.
 
-    Returns the created Job immediately; the result is delivered to callback_url.
-    v2 callers pass require_judge_run=True to reject non-judged runs up front.
+    Returns the Job immediately; the result is delivered to callback_url.
     """
     validate_improve_prompt(
         session=session,
@@ -246,10 +235,8 @@ def _build_improve_prompt_payload(
 ) -> dict:
     """Build the callback body: the job-result model inside an APIResponse.
 
-    Judge (v2) runs emit PromptRecommendationJobPublic (adds recommendation_type);
-    v1 runs emit PromptImprovementJobPublic byte-for-byte unchanged. Pre-dump the
-    inner model to JSON so no UUID/datetime survives into the dict send_callback
-    serialises.
+    Judge (v2) runs emit PromptRecommendationJobPublic; v1 runs emit
+    PromptImprovementJobPublic.
     """
     status = JobStatus.FAILED if error_message else JobStatus.SUCCESS
     if is_judge_run:
@@ -325,10 +312,8 @@ def execute_prompt_improvement(
 ) -> dict:
     """Worker entrypoint: run the full prompt-improvement flow and record it on the Job.
 
-    Opens its own session (the request session is long gone). On success the new
-    config_version's id/version and the rationale land on Job.meta; on failure the
-    Job is marked FAILED with a clean message and the error is re-raised so Celery
-    records the failure.
+    Opens its own session. On success, new config_version id/version + rationale
+    land on Job.meta; on failure, Job is marked FAILED and the error re-raised.
     """
     task_id = kwargs.get("task_id")
     callback_url = kwargs.get("callback_url")
@@ -537,11 +522,7 @@ def execute_prompt_improvement(
 
 
 def _target_config_from_params(config_params: dict) -> dict:
-    """Read-only config context shown to the model.
-
-    instructions is rendered separately; knowledge_base_ids are opaque ids the
-    model can't act on, so both are stripped.
-    """
+    """Config context shown to the model; instructions and knowledge_base_ids stripped."""
     excluded_keys = {"instructions", "knowledge_base_ids"}
     return {
         key: value for key, value in config_params.items() if key not in excluded_keys
@@ -577,73 +558,44 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
 
-    except anthropic.AuthenticationError:
-        logger.warning(
-            "[_call_prompt_drafting_llm] [ANTHROPIC] Authentication failed "
-            "(code: 401): Verify the ANTHROPIC_API_KEY is "
-            "valid, not expired, and configured correctly.",
-            exc_info=True,
-        )
+    except anthropic.AuthenticationError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
             "verify the platform API key is valid and not expired"
         )
 
-    except anthropic.RateLimitError:
-        logger.warning(
-            "[_call_prompt_drafting_llm] [ANTHROPIC] Rate limit exceeded "
-            "(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
-            exc_info=True,
-        )
+    except anthropic.RateLimitError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
             "wait at least 1 minute and retry"
         )
 
-    except anthropic.APITimeoutError:
+    except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
-        logger.error(
-            "[_call_prompt_drafting_llm] [KAAPI] Anthropic request timed out "
-            "(code: APITimeoutError): retry with a smaller payload.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
             "retry. If persistent, contact Kaapi"
         )
 
-    except anthropic.APIConnectionError:
-        logger.error(
-            "[_call_prompt_drafting_llm] [KAAPI] Anthropic connection failed "
-            "(code: APIConnectionError): network or DNS issue reaching Anthropic.",
-            exc_info=True,
-        )
+    except anthropic.APIConnectionError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
             "check connectivity. If persistent, contact Kaapi"
         )
 
     except anthropic.APIStatusError as exc:
-        status = exc.status_code
-        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
-        log = logger.error if status and status >= 500 else logger.warning
-        log(
-            f"[_call_prompt_drafting_llm] [ANTHROPIC] API status error "
-            f"(code: {status}): {exc.message}.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
-            f"prompt_generation_failed: Anthropic returned HTTP {status} — "
+            f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
             "retry or contact Kaapi if persistent"
         )
 
     except Exception as exc:
-        logger.error(
-            f"[_call_prompt_drafting_llm] [KAAPI] Unexpected error during LLM call "
-            f"(code: {type(exc).__name__}): not raised by the Anthropic SDK — "
-            f"likely a Kaapi-side failure. Contact Kaapi if persistent.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
             "contact Kaapi if persistent"

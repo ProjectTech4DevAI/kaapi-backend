@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
+ERR_DUPLICATION_FACTOR_NOT_SUPPORTED = "duplication_factor_override_not_supported"
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -65,6 +66,7 @@ def load_run_dataset_items(
     session: Session,
     dataset: EvaluationDataset,
     langfuse: Langfuse | None,
+    duplication_factor: int | None = None,
 ) -> list[dict[str, Any]]:
     """Load a run's dataset items, choosing the source by the dataset row.
 
@@ -75,7 +77,9 @@ def load_run_dataset_items(
       ×duplication_factor with a unique item id per copy.
 
     Both the fan-out sizing and the per-chunk load call this, so they agree on the
-    same expanded item set.
+    same expanded item set. `duplication_factor`, when set, overrides the dataset's
+    stored factor for runtime-duplicated datasets only (see
+    `_load_items_from_object_store`); it never applies to a Langfuse dataset.
     """
     if dataset.langfuse_dataset_id:
         if langfuse is None:
@@ -85,11 +89,16 @@ def load_run_dataset_items(
             )
         return fetch_dataset_items(langfuse=langfuse, dataset_name=dataset.name)
 
-    return _load_items_from_object_store(session=session, dataset=dataset)
+    return _load_items_from_object_store(
+        session=session, dataset=dataset, duplication_factor=duplication_factor
+    )
 
 
 def _load_items_from_object_store(
-    *, session: Session, dataset: EvaluationDataset
+    *,
+    session: Session,
+    dataset: EvaluationDataset,
+    duplication_factor: int | None = None,
 ) -> list[dict[str, Any]]:
     """Parse the dataset's original-items CSV from S3 into fast-pipeline items.
 
@@ -108,11 +117,12 @@ def _load_items_from_object_store(
 
     metadata = dataset.dataset_metadata or {}
     duplicate_at_runtime = bool(metadata.get(DATASET_META_DUPLICATE_AT_RUNTIME, False))
-    duplication_factor = (
-        max(1, int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1)))
-        if duplicate_at_runtime
-        else 1
+    effective_factor = (
+        duplication_factor
+        if duplication_factor is not None
+        else int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1))
     )
+    duplication_factor = max(1, effective_factor) if duplicate_at_runtime else 1
 
     items: list[dict[str, Any]] = []
     for row_idx, item in enumerate(original_items):
@@ -147,6 +157,8 @@ def validate_and_start_fast_evaluation(
     project_id: int,
     trace_id: str = "N/A",
     is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
 ) -> EvaluationRun:
     """Validate + create + dispatch a fast evaluation run.
 
@@ -167,6 +179,14 @@ def validate_and_start_fast_evaluation(
     time. It defaults to the v1 behavior — no judging, Langfuse sync as today —
     so the v1 call path is unchanged. Judging is system-config only: the judge
     always uses the fallback model + built-in prompt, so there is no per-run config.
+
+    `callback_url` is an optional HTTPS webhook (v2 only) persisted on the run so
+    the terminal-transition hook can POST the result. v1 callers pass nothing, so
+    it stays NULL and no webhook fires.
+
+    `duplication_factor`, when provided, overrides the dataset's stored factor for
+    this run only and is supported for runtime-duplicated (v2) datasets exclusively
+    (rejected with 422 otherwise).
     """
     logger.info(
         f"[validate_and_start_fast_evaluation] Starting fast eval | "
@@ -197,6 +217,17 @@ def validate_and_start_fast_evaluation(
             detail=(
                 f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
                 "evaluation."
+            ),
+        )
+
+    if duplication_factor is not None and not (dataset.dataset_metadata or {}).get(
+        DATASET_META_DUPLICATE_AT_RUNTIME
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{ERR_DUPLICATION_FACTOR_NOT_SUPPORTED}: this dataset is not "
+                "runtime-duplicated; re-upload to change its factor"
             ),
         )
 
@@ -258,13 +289,20 @@ def validate_and_start_fast_evaluation(
         log_context="validate_and_start_fast_evaluation",
     )
 
-    # Persist the judge marker before dispatch so the post-barrier aggregate reads
-    # it. Skipped for v1 runs (is_judge_run=False), keeping that path unchanged.
-    if is_judge_run:
+    # Persist the judge marker + callback_url + duplication_factor before dispatch:
+    # the aggregate (which only knows eval_run_id) reads is_judge_run at judge time
+    # and duplication_factor for the ai_summary math, the terminal hook reads
+    # callback_url, and the chunk re-load reads duplication_factor so its slice count
+    # matches the fan-out sizing below.
+    if is_judge_run or callback_url or duplication_factor is not None:
         eval_run = update_evaluation_run(
             session=session,
             eval_run=eval_run,
-            update=EvaluationRunUpdate(is_judge_run=True),
+            update=EvaluationRunUpdate(
+                is_judge_run=is_judge_run or None,
+                callback_url=callback_url,
+                duplication_factor=duplication_factor,
+            ),
         )
 
     # Fetch the dataset items now to size the fan-out: ceil(total / chunk_size)
@@ -283,7 +321,10 @@ def validate_and_start_fast_evaluation(
             else None
         )
         dataset_items = load_run_dataset_items(
-            session=session, dataset=dataset, langfuse=langfuse_client
+            session=session,
+            dataset=dataset,
+            langfuse=langfuse_client,
+            duplication_factor=duplication_factor,
         )
         total_items = len(dataset_items)
         if total_items == 0:
@@ -417,7 +458,10 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
                 session=session, eval_run=eval_run, dataset=dataset
             )
             dataset_items = load_run_dataset_items(
-                session=session, dataset=dataset, langfuse=langfuse_client
+                session=session,
+                dataset=dataset,
+                langfuse=langfuse_client,
+                duplication_factor=eval_run.duplication_factor,
             )
             # Same order across every chunk task, so slices never overlap or miss.
             dataset_items.sort(key=lambda item: item["id"])
@@ -458,10 +502,6 @@ def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
     completed/failed transition, so on terminal failure it marks the run failed
     and re-raises.
     """
-    logger.info(
-        f"[execute_fast_evaluation_aggregate] Starting | eval_run_id={eval_run_id}"
-    )
-
     with Session(engine) as session:
         eval_run = _get_fast_run(session=session, eval_run_id=eval_run_id)
         if eval_run.status == "completed":
