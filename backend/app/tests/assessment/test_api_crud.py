@@ -168,8 +168,7 @@ class TestDeriveMethod:
 
     def test_batch_input(self) -> None:
         assert (
-            derive_method(BatchInput(data=[{"a": "1"}]), None)
-            == AssessmentMethod.BATCH
+            derive_method(BatchInput(data=[{"a": "1"}]), None) == AssessmentMethod.BATCH
         )
 
     def test_dataset_only_is_run(self) -> None:
@@ -320,7 +319,9 @@ def _blob_with_submissions(
         "input_schema": input_schema or {"a": {"type": "text"}},
         "submission": submission,
     }
-    blob: dict = {"assessment": {"provider": "openai", "type": "text", "params": params}}
+    blob: dict = {
+        "assessment": {"provider": "openai", "type": "text", "params": params}
+    }
     if topic_submission is not None:
         blob["pre_filters"] = {
             "topic_relevance": {
@@ -346,9 +347,7 @@ class TestSubmissionPlaceholderValidator:
             )
         )
         assert blob.assessment.params["submission"] == "assess {a} and {b}"
-        assert (
-            blob.pre_filters.topic_relevance.params["submission"] == "rank {b}"
-        )
+        assert blob.pre_filters.topic_relevance.params["submission"] == "rank {b}"
 
     def test_unknown_placeholder_in_assessment_submission_raises(self) -> None:
         with pytest.raises(ValidationError, match="assessment submission.*unknown"):
