@@ -59,7 +59,6 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
     AssessmentConfigBlob,
     AssessmentPreFilters,
-    DuplicateDetectionFilter,
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
@@ -81,7 +80,6 @@ class ApiStage(StrEnum):
     """Pipeline stage identifiers; names match the pre-filter config + result fields."""
 
     TOPIC_RELEVANCE = "topic_relevance"
-    DUPLICATE_DETECTION = "duplicate_detection"
     ASSESSMENT = "assessment"
 
 
@@ -138,14 +136,10 @@ def build_pipeline(
     pre_filters: AssessmentPreFilters | None,
 ) -> list[dict[str, str]]:
     """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
-    present: list[tuple[ApiStage, TopicRelevanceFilter | DuplicateDetectionFilter]] = []
+    present: list[tuple[ApiStage, TopicRelevanceFilter]] = []
     if pre_filters is not None:
         if pre_filters.topic_relevance is not None:
             present.append((ApiStage.TOPIC_RELEVANCE, pre_filters.topic_relevance))
-        if pre_filters.duplicate_detection is not None:
-            present.append(
-                (ApiStage.DUPLICATE_DETECTION, pre_filters.duplicate_detection)
-            )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
@@ -213,28 +207,28 @@ def build_rows(
     return rows, text_columns, attachments
 
 
-def _stage_prompt(batch_input: BatchInput, stage: str) -> str | None:
+def _stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
+    """Per-row prompt template for a stage, sourced from the config's ``submission``.
+
+    The assessment carries a mandatory ``submission``; a pre-filter may carry its own
+    optional one (None when it declares none — its criteria then live entirely in
+    params.instructions with the item's columns + attachments as the user content).
+    """
     if stage == ApiStage.ASSESSMENT:
-        return batch_input.query
-    # Pre-filter criteria live in params.instructions (system prompt); the item's
-    # own columns + attachments are the user content, so there is no per-row
-    # prompt template for a pre-filter stage.
-    return None
+        return blob.assessment.params["submission"]
+    return cast(
+        "str | None", _prefilter_for_stage(blob, stage).params.get("submission")
+    )
 
 
 def _prefilter_for_stage(
     blob: AssessmentConfigBlob, stage: str
-) -> TopicRelevanceFilter | DuplicateDetectionFilter:
-    """The pre-filter config object for a pre-filter stage (topic_relevance / duplicate_detection)."""
+) -> TopicRelevanceFilter:
+    """The pre-filter config object for a pre-filter stage (topic_relevance)."""
     pre = blob.pre_filters
     if pre is not None:
         if stage == ApiStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
             return pre.topic_relevance
-        if (
-            stage == ApiStage.DUPLICATE_DETECTION
-            and pre.duplicate_detection is not None
-        ):
-            return pre.duplicate_detection
     raise ValueError(
         f"[_prefilter_for_stage] No pre-filter configured for stage {stage}"
     )
@@ -248,28 +242,27 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
-        params.pop(
-            "input_schema", None
-        )  # request-validation only, not a provider param
+        # input_schema + submission are request/prompt concerns, not provider params.
+        params.pop("input_schema", None)
+        params.pop("submission", None)
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
         return params
 
     flt = _prefilter_for_stage(blob, stage)
     params = dict(flt.params)
+    params.pop("submission", None)  # prompt template, not a provider param
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     # The config's criteria (mandatory params.instructions) is the system prompt;
     # append the gate directive so the model returns the verdict+reasoning contract.
     criteria = params.get("instructions") or ""
     params["instructions"] = f"{criteria}\n\n{_PREFILTER_INSTRUCTION}"
-    if isinstance(flt, DuplicateDetectionFilter) and flt.knowledge_base_id:
-        params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
 
 
 def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
-    if stage in (ApiStage.TOPIC_RELEVANCE, ApiStage.DUPLICATE_DETECTION):
+    if stage == ApiStage.TOPIC_RELEVANCE:
         flt = _prefilter_for_stage(blob, stage)
         return flt.provider, flt.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
@@ -571,7 +564,7 @@ def _submit_stage(
         rows=[rows[i] for i in subset],
         text_columns=text_columns,
         attachments=attachments,
-        prompt=_stage_prompt(batch_input, stage),
+        prompt=_stage_prompt(blob, stage),
         params=_stage_params(blob, stage),
         row_indices=subset,
         organization_id=organization_id,

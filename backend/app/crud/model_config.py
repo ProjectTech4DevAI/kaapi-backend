@@ -167,18 +167,14 @@ def validate_blob_completion_models(
     _validate_completion_model_or_raise(session, completion)
 
     if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
-        pre_filters = (
-            blob.pre_filters.topic_relevance,
-            blob.pre_filters.duplicate_detection,
-        )
-        for flt in pre_filters:
-            if flt is not None:
-                _validate_model_or_raise(
-                    session,
-                    raw_provider=flt.provider,
-                    completion_type=CompletionType.TEXT,
-                    params=flt.params,
-                )
+        flt = blob.pre_filters.topic_relevance
+        if flt is not None:
+            _validate_model_or_raise(
+                session,
+                raw_provider=flt.provider,
+                completion_type=CompletionType.TEXT,
+                params=flt.params,
+            )
 
 
 def _validate_completion_model_or_raise(

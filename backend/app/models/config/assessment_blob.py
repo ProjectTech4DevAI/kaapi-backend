@@ -1,3 +1,5 @@
+import logging
+import re
 from typing import Literal
 
 from pydantic import JsonValue, model_validator
@@ -6,9 +8,14 @@ from sqlmodel import Field, SQLModel
 from app.models.llm.constants import Provider, TextProvider
 from app.models.llm.request import CompletionType, KaapiCompletionConfig, TextLLMParams
 
+logger = logging.getLogger(__name__)
+
 # json_output_schema is validated shallowly at config time: it must be a non-empty
 # object-typed dict. Provider strict-mode normalisation is a run-mode concern.
 JSON_SCHEMA_OBJECT_TYPE = "object"
+
+# {column} placeholders in a submission template; the capture group is the column name.
+PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 # Default llm for a pre-filter call when the config does not override it.
 DEFAULT_PREFILTER_PROVIDER = Provider.OPENAI
@@ -39,6 +46,13 @@ class PreFilterParams(TextLLMParams):
         ...,
         min_length=1,
         description="The pre-filter's criteria (system instruction). Mandatory.",
+    )
+    submission: str | None = Field(
+        default=None,
+        description=(
+            "Optional per-row prompt template with {column} placeholders for this "
+            "pre-filter. Placeholders must resolve against the assessment's input_schema."
+        ),
     )
 
 
@@ -84,30 +98,10 @@ class TopicRelevanceFilter(PreFilterBase):
     )
 
 
-class DuplicateDetectionFilter(PreFilterBase):
-    """Pre-filter that flags items duplicating prior corpus content.
-
-    Its criteria live in ``params.instructions`` (like the assessment call).
-    """
-
-    knowledge_base_id: str | None = Field(
-        default=None,
-        description="Vector store to compare against; defaults to the platform corpus when unset.",
-    )
-    stop_on_fail: bool = Field(
-        default=False,
-        description=(
-            "If true, a failing verdict stops the chain and skips the assessment for "
-            "that item; if false, the verdict is just recorded and the assessment runs."
-        ),
-    )
-
-
 class AssessmentPreFilters(SQLModel):
     """Optional pre-filters applied before the main assessment call."""
 
     topic_relevance: TopicRelevanceFilter | None = None
-    duplicate_detection: DuplicateDetectionFilter | None = None
 
 
 class AssessmentTextParams(TextLLMParams):
@@ -119,6 +113,14 @@ class AssessmentTextParams(TextLLMParams):
         description=(
             "Per-column spec for BATCH submissions ({type, format}). Mandatory and "
             "non-empty; every declared column must be present in every submission row."
+        ),
+    )
+    submission: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Per-row prompt template with {column} placeholders. Mandatory; every "
+            "placeholder must resolve against input_schema."
         ),
     )
     json_output_schema: dict[str, JsonValue] | None = Field(
@@ -153,3 +155,36 @@ class AssessmentConfigBlob(SQLModel):
 
     pre_filters: AssessmentPreFilters | None = None
     assessment: AssessmentCompletionConfig
+
+    @model_validator(mode="after")
+    def _validate_submission_placeholders(self):
+        """Every {column} in every submission template must be a declared input_schema key.
+
+        Pre-filter submissions validate against the *assessment* block's input_schema
+        (cross-block visibility), so this check lives at the blob level. At this point
+        assessment.params and each pre-filter's params are plain dicts (their own
+        validators already dumped the typed params), so read via dict access.
+        """
+        declared = set(self.assessment.params.get("input_schema") or {})
+
+        blocks: list[tuple[str, str]] = [
+            ("assessment", self.assessment.params.get("submission") or "")
+        ]
+        pre = self.pre_filters
+        if pre is not None:
+            for name, flt in (("topic_relevance", pre.topic_relevance),):
+                if flt is not None and flt.params.get("submission"):
+                    blocks.append((f"pre_filter {name}", str(flt.params["submission"])))
+
+        for block, template in blocks:
+            unknown = sorted(set(PLACEHOLDER_RE.findall(template)) - declared)
+            if unknown:
+                logger.error(
+                    f"[_validate_submission_placeholders] Unknown placeholder(s) "
+                    f"| block: {block} | unknown: {unknown} | declared: {sorted(declared)}"
+                )
+                raise ValueError(
+                    f"{block} submission references unknown input_schema column(s): "
+                    f"{', '.join(unknown)}"
+                )
+        return self
