@@ -51,7 +51,7 @@ class PreFilterParams(TextLLMParams):
         default=None,
         description=(
             "Optional per-row prompt template with {column} placeholders for this "
-            "pre-filter. Placeholders must resolve against the assessment's input_schema."
+            "pre-filter. Placeholders must resolve against the blob-level input_schema."
         ),
     )
 
@@ -105,16 +105,8 @@ class AssessmentPreFilters(SQLModel):
 
 
 class AssessmentTextParams(TextLLMParams):
-    """Text params + structured input/output schemas, scoped to assessment."""
+    """Text params + structured output schema, scoped to assessment."""
 
-    input_schema: dict[str, InputColumn] = Field(
-        ...,
-        min_length=1,
-        description=(
-            "Per-column spec for BATCH submissions ({type, format}). Mandatory and "
-            "non-empty; every declared column must be present in every submission row."
-        ),
-    )
     submission: str = Field(
         ...,
         min_length=1,
@@ -153,6 +145,15 @@ class AssessmentConfigBlob(SQLModel):
     comes from {{col}} prompt interpolation), and no post_processing.
     """
 
+    input_schema: dict[str, InputColumn] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Per-column spec for the BATCH `data` rows ({type, format}). Shared by the "
+            "pre-filter and assessment consumers, so it lives once at the blob root. "
+            "Mandatory and non-empty; every declared column must be present in every row."
+        ),
+    )
     pre_filters: AssessmentPreFilters | None = None
     assessment: AssessmentCompletionConfig
 
@@ -160,21 +161,20 @@ class AssessmentConfigBlob(SQLModel):
     def _validate_submission_placeholders(self):
         """Every {column} in every submission template must be a declared input_schema key.
 
-        Pre-filter submissions validate against the *assessment* block's input_schema
-        (cross-block visibility), so this check lives at the blob level. At this point
-        assessment.params and each pre-filter's params are plain dicts (their own
-        validators already dumped the typed params), so read via dict access.
+        Pre-filter and assessment submissions both validate against the blob-level
+        input_schema. Each params dict is already plain (their own validators dumped the
+        typed params), so submissions are read via dict access.
         """
-        declared = set(self.assessment.params.get("input_schema") or {})
+        declared = set(self.input_schema)
 
         blocks: list[tuple[str, str]] = [
             ("assessment", self.assessment.params.get("submission") or "")
         ]
-        pre = self.pre_filters
-        if pre is not None:
-            for name, flt in (("topic_relevance", pre.topic_relevance),):
-                if flt is not None and flt.params.get("submission"):
-                    blocks.append((f"pre_filter {name}", str(flt.params["submission"])))
+        topic_relevance = self.pre_filters.topic_relevance if self.pre_filters else None
+        if topic_relevance is not None and topic_relevance.params.get("submission"):
+            blocks.append(
+                ("pre_filter topic_relevance", str(topic_relevance.params["submission"]))
+            )
 
         for block, template in blocks:
             unknown = sorted(set(PLACEHOLDER_RE.findall(template)) - declared)

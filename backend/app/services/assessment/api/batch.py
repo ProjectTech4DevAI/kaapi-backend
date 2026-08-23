@@ -242,8 +242,7 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
-        # input_schema + submission are request/prompt concerns, not provider params.
-        params.pop("input_schema", None)
+        # submission is a prompt concern, not a provider param.
         params.pop("submission", None)
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
@@ -539,7 +538,10 @@ def _submit_stage(
 ) -> bool:
     """Build + submit the current stage's batch on its row subset. Returns success."""
     kind = _stage_kind(bag["pipeline"], stage)
-    input_columns = blob.assessment.params.get("input_schema")
+    input_columns = {
+        name: col.model_dump(exclude_none=True)
+        for name, col in blob.input_schema.items()
+    }
     rows, text_columns, attachments = build_rows(batch_input, input_columns)
     subset = _row_subset(bag, stage, kind, len(rows))
 

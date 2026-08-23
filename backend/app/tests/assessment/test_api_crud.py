@@ -29,15 +29,15 @@ from app.tests.utils.utils import random_lower_string
 def _config(db, project_id):
     blob = AssessmentConfigBlob.model_validate(
         {
+            "input_schema": {"a": {"type": "text"}},
             "assessment": {
                 "provider": "openai",
                 "type": "text",
                 "params": {
                     "model": "gpt-4o",
-                    "input_schema": {"a": {"type": "text"}},
                     "submission": "assess {a}",
                 },
-            }
+            },
         }
     )
     return create_test_config(
@@ -236,14 +236,16 @@ class TestPreFilterValidators:
         assert "effort" not in flt.params
 
 
-def _assessment_params(**extra) -> dict:
+def _assessment_params(*, input_schema: dict | None = None, **extra) -> dict:
     params = {
         "model": "gpt-4o",
-        "input_schema": {"a": {"type": "text"}},
         "submission": "Assess this submission.",
     }
     params.update(extra)
-    return {"assessment": {"provider": "openai", "type": "text", "params": params}}
+    return {
+        "input_schema": input_schema or {"a": {"type": "text"}},
+        "assessment": {"provider": "openai", "type": "text", "params": params},
+    }
 
 
 class TestAssessmentCompletionConfigValidator:
@@ -258,13 +260,15 @@ class TestAssessmentCompletionConfigValidator:
 
 class TestInputSchemaValidators:
     def test_missing_input_schema_rejected(self) -> None:
+        # No top-level input_schema; the rest of the blob is otherwise valid, so the
+        # only failure is the mandatory top-level input_schema field.
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {"model": "gpt-4o"},
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
                     }
                 }
             )
@@ -273,11 +277,12 @@ class TestInputSchemaValidators:
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
+                    "input_schema": {},
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {"model": "gpt-4o", "input_schema": {}},
-                    }
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
+                    },
                 }
             )
 
@@ -285,14 +290,12 @@ class TestInputSchemaValidators:
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
+                    "input_schema": {"a": {"format": "url"}},
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {
-                            "model": "gpt-4o",
-                            "input_schema": {"a": {"format": "url"}},
-                        },
-                    }
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
+                    },
                 }
             )
 
@@ -305,7 +308,7 @@ class TestInputSchemaValidators:
                 }
             )
         )
-        assert set(blob.assessment.params["input_schema"]) == {"name", "sheet"}
+        assert set(blob.input_schema) == {"name", "sheet"}
 
 
 def _blob_with_submissions(
@@ -316,11 +319,11 @@ def _blob_with_submissions(
 ) -> dict:
     params: dict = {
         "model": "gpt-4o",
-        "input_schema": input_schema or {"a": {"type": "text"}},
         "submission": submission,
     }
     blob: dict = {
-        "assessment": {"provider": "openai", "type": "text", "params": params}
+        "input_schema": input_schema or {"a": {"type": "text"}},
+        "assessment": {"provider": "openai", "type": "text", "params": params},
     }
     if topic_submission is not None:
         blob["pre_filters"] = {
@@ -367,26 +370,24 @@ class TestSubmissionPlaceholderValidator:
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
+                    "input_schema": {"a": {"type": "text"}},
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {
-                            "model": "gpt-4o",
-                            "input_schema": {"a": {"type": "text"}},
-                        },
-                    }
+                        "params": {"model": "gpt-4o"},
+                    },
                 }
             )
 
     def test_prefilter_submission_absent_is_accepted(self) -> None:
         blob = AssessmentConfigBlob.model_validate(
             {
+                "input_schema": {"a": {"type": "text"}},
                 "assessment": {
                     "provider": "openai",
                     "type": "text",
                     "params": {
                         "model": "gpt-4o",
-                        "input_schema": {"a": {"type": "text"}},
                         "submission": "assess {a}",
                     },
                 },

@@ -93,15 +93,15 @@ def _blob_dict(
     assessment_params: dict = {
         "model": model,
         "json_output_schema": OUTPUT_SCHEMA,
-        "input_schema": input_schema or {"a": {"type": "text"}},
         "submission": submission,
     }
     blob: dict = {
+        "input_schema": input_schema or {"a": {"type": "text"}},
         "assessment": {
             "provider": provider,
             "type": "text",
             "params": assessment_params,
-        }
+        },
     }
     if pre_filters:
         blob["pre_filters"] = pre_filters

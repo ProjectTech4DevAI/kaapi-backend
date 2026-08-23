@@ -34,11 +34,13 @@ def _assessment_config(
             "type": "object",
             "properties": {"s": {"type": "integer"}},
         },
-        "input_schema": input_schema or {"a": {"type": "text"}},
         "submission": "Assess this submission.",
     }
     blob = AssessmentConfigBlob.model_validate(
-        {"assessment": {"provider": provider, "type": "text", "params": params}}
+        {
+            "input_schema": input_schema or {"a": {"type": "text"}},
+            "assessment": {"provider": provider, "type": "text", "params": params},
+        }
     )
     return create_test_config(
         db,
