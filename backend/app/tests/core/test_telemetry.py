@@ -11,7 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from opentelemetry.trace import SpanKind, StatusCode
+from opentelemetry.util.http import ExcludeList
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import QueuePool
 
 from app.core import telemetry
@@ -230,7 +234,7 @@ class TestInstrumentDbEngine:
         ):
             telemetry.instrument_db_engine(engine)
             with engine.connect() as conn:
-                with pytest.raises(Exception):
+                with pytest.raises(OperationalError):
                     conn.execute(text("SELECT * FROM does_not_exist"))
 
         query_failed.assert_called_once()
@@ -269,3 +273,255 @@ class TestInstrumentDbEngine:
 
         instrumentor.assert_not_called()
         assert not getattr(engine, "_kaapi_db_telemetry_instrumented", False)
+
+
+class TestShouldDropBareHttpTrace:
+    def test_drops_root_http_span_with_no_children(self):
+        assert telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+    def test_keeps_when_trace_has_children(self):
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=True,
+        )
+
+    def test_keeps_error_trace_even_without_children(self):
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.ERROR,
+            had_children=False,
+        )
+
+    def test_keeps_non_root_span(self):
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=False,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+    def test_keeps_non_server_root(self):
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.INTERNAL,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+
+class TestInstrumentApp:
+    def _app(self) -> FastAPI:
+        return FastAPI(openapi_url="/api/v1/openapi.json")
+
+    def _excluded(self) -> ExcludeList:
+        instrument = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
+        ):
+            telemetry.instrument_app(self._app())
+
+        excluded_urls = instrument.call_args.kwargs["excluded_urls"]
+        return ExcludeList(excluded_urls.split(","))
+
+    def test_health_and_cron_paths_excluded_from_traces(self):
+        el = self._excluded()
+        assert el.url_disabled("/health")
+        assert el.url_disabled("/api/v1/utils/health")
+        assert el.url_disabled("/api/v1/cron/run_batches")
+
+    def test_framework_doc_paths_excluded_from_traces(self):
+        el = self._excluded()
+        assert el.url_disabled("/docs")
+        assert el.url_disabled("/redoc")
+        assert el.url_disabled("/api/v1/openapi.json")
+        assert el.url_disabled("/docs/oauth2-redirect")
+
+    def test_real_endpoints_still_traced(self):
+        el = self._excluded()
+        assert not el.url_disabled("/api/v1/llm/generate")
+        assert not el.url_disabled("/api/v1/cronies")
+        assert not el.url_disabled("/api/v1/documents")
+
+    def test_noop_when_otel_disabled(self):
+        instrument = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
+        ):
+            telemetry.instrument_app(self._app())
+
+        instrument.assert_not_called()
+
+
+class TestRecordDbSlowQuery:
+    def test_emits_count_with_operation(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_slow_query("SELECT")
+
+        fake.metrics.count.assert_called_once()
+        kwargs = fake.metrics.count.call_args.kwargs
+        assert kwargs["name"] == "db.query.slow"
+        assert kwargs["value"] == 1
+        assert kwargs["attributes"]["db.operation"] == "SELECT"
+
+    def test_noop_when_otel_disabled(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_slow_query("SELECT")
+
+        fake.metrics.count.assert_not_called()
+
+
+class TestRecordDbConnectionEvent:
+    def test_known_event_emits_named_metric(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_connection_event("invalidated")
+
+        assert (
+            fake.metrics.count.call_args.kwargs["name"] == "db.connection.invalidated"
+        )
+
+    def test_unknown_event_is_noop(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_connection_event("teleported")
+
+        fake.metrics.count.assert_not_called()
+
+    def test_noop_when_otel_disabled(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_connection_event("opened")
+
+        fake.metrics.count.assert_not_called()
+
+
+class TestRecordDbTransaction:
+    @pytest.mark.parametrize(
+        ("outcome", "metric"),
+        [
+            ("commit", "db.transaction.commit"),
+            ("rollback", "db.transaction.rollback"),
+        ],
+    )
+    def test_known_outcome_emits_named_metric(self, outcome, metric):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_transaction(outcome)
+
+        assert fake.metrics.count.call_args.kwargs["name"] == metric
+
+    def test_unknown_outcome_is_noop(self):
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_transaction("savepoint")
+
+        fake.metrics.count.assert_not_called()
+
+
+class TestInstrumentDbEngineMetrics:
+    """Drive the new slow-query/connection/transaction hooks with a real SQLite engine."""
+
+    def _engine(self):
+        return create_engine("sqlite://", poolclass=QueuePool)
+
+    def test_slow_query_counted_when_over_threshold(self):
+        engine = self._engine()
+        slow = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.settings, "DB_SLOW_QUERY_MS", 0),
+            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_slow_query", slow),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+        slow.assert_called()
+        assert "SELECT" in [c.args[0] for c in slow.call_args_list]
+
+    def test_fast_query_not_counted_when_under_threshold(self):
+        engine = self._engine()
+        slow = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.settings, "DB_SLOW_QUERY_MS", 10_000),
+            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_slow_query", slow),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+        slow.assert_not_called()
+
+    def test_connection_open_event_recorded(self):
+        engine = self._engine()
+        conn_event = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_connection_event", conn_event),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+
+        assert "opened" in [c.args[0] for c in conn_event.call_args_list]
+
+    def test_commit_and_rollback_recorded(self):
+        engine = self._engine()
+        txn = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_transaction", txn),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("CREATE TABLE t (x)"))
+                conn.commit()
+            with engine.connect() as conn:
+                conn.execute(text("INSERT INTO t VALUES (1)"))
+                conn.rollback()
+
+        outcomes = [c.args[0] for c in txn.call_args_list]
+        assert "commit" in outcomes
+        assert "rollback" in outcomes
