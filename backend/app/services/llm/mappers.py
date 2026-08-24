@@ -23,6 +23,10 @@ from app.models.llm.constants import (
 )
 from google.genai import _transformers as genai_transformers
 
+# Mappers accept typed Kaapi params where the caller has them; the dict form
+# stays for native/stored configs whose params are persisted as plain JSON.
+KaapiParamsInput = TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any]
+
 SARVAM_DEFAULTS_BY_TYPE = {
     "stt": DEFAULT_SARVAM_STT_MODEL,
     "tts": DEFAULT_SARVAM_TTS_MODEL,
@@ -132,7 +136,7 @@ def _convert_json_schema_to_google(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def map_kaapi_to_openai_params(
-    session: Session, kaapi_params: dict[str, Any]
+    session: Session, kaapi_params: KaapiParamsInput
 ) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to OpenAI API parameters.
 
@@ -141,7 +145,7 @@ def map_kaapi_to_openai_params(
 
     Args:
         session: Database session used to look up the model's config
-        kaapi_params: Dictionary with standardized Kaapi parameters
+        kaapi_params: Typed Kaapi params, or a plain dict for native/stored configs
 
     Supported Mapping:
         - model → model
@@ -158,19 +162,20 @@ def map_kaapi_to_openai_params(
         - Dictionary of OpenAI API parameters ready to be passed to the API
         - List of warnings describing suppressed or ignored parameters
     """
+    params = kaapi_params_as_dict(kaapi_params)
     openai_params: dict[str, Any] = {}
     warnings = []
 
-    model = kaapi_params.get("model")
-    reasoning = kaapi_params.get("reasoning")
-    effort = kaapi_params.get("effort")
-    summary = kaapi_params.get("summary")
-    temperature = kaapi_params.get("temperature")
-    instructions = kaapi_params.get("instructions")
-    knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
-    max_num_results = kaapi_params.get("max_num_results")
+    model = params.get("model")
+    reasoning = params.get("reasoning")
+    effort = params.get("effort")
+    summary = params.get("summary")
+    temperature = params.get("temperature")
+    instructions = params.get("instructions")
+    knowledge_base_ids = params.get("knowledge_base_ids")
+    max_num_results = params.get("max_num_results")
     # NOTE: Json Schema can only be used for the assessment pipeline
-    json_schema = kaapi_params.get("json_schema")
+    json_schema = params.get("json_schema")
 
     support_reasoning = bool(model) and is_reasoning_model(
         session=session, provider="openai", model_name=model
@@ -233,7 +238,7 @@ def map_kaapi_to_openai_params(
 
 
 def map_kaapi_to_google_params(
-    kaapi_params: dict[str, Any], completion_type: str
+    kaapi_params: KaapiParamsInput, completion_type: str
 ) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
@@ -241,7 +246,7 @@ def map_kaapi_to_google_params(
     parameter format for the Gemini API.
 
     Args:
-        kaapi_params: Dictionary with standardized Kaapi parameters
+        kaapi_params: Typed Kaapi params, or a plain dict for native/stored configs
         completion_type: Type of completion ("text", "stt", or "tts")
 
     Supported Mapping:
@@ -255,12 +260,13 @@ def map_kaapi_to_google_params(
         - Dictionary of Google AI API parameters ready to be passed to the API
         - List of warnings describing suppressed or ignored parameters
     """
+    params = kaapi_params_as_dict(kaapi_params)
     google_params: dict[str, Any] = {}
     warnings = []
 
     # Model is present in all param types; text falls back to the centralized
     # default. STT/TTS require an explicit model (Gemini variant differs by mode).
-    model = kaapi_params.get("model")
+    model = params.get("model")
     if not model and completion_type == CompletionType.TEXT:
         model = DEFAULT_TEXT_MODELS["google"]
     if not model:
@@ -270,44 +276,44 @@ def map_kaapi_to_google_params(
 
     if completion_type == CompletionType.TEXT:
         # Text completion - instructions, temperature, reasoning, knowledge_base_ids
-        instructions = kaapi_params.get("instructions")
+        instructions = params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
 
-        temperature = kaapi_params.get("temperature")
+        temperature = params.get("temperature")
         if temperature is not None:
             google_params["temperature"] = temperature
 
-        reasoning = kaapi_params.get("reasoning")
+        reasoning = params.get("reasoning")
         if reasoning:
             google_params["reasoning"] = reasoning
 
-        knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
+        knowledge_base_ids = params.get("knowledge_base_ids")
         if knowledge_base_ids:
             google_params["knowledge_base_ids"] = knowledge_base_ids
 
-        if kaapi_params.get("max_num_results"):
+        if params.get("max_num_results"):
             warnings.append(
                 "Parameter 'max_num_results' is not supported by the Gemini "
                 "FileSearch tool and was ignored."
             )
 
         # NOTE: Json Schema can only be used for the assessment pipeline
-        json_schema = kaapi_params.get("json_schema")
+        json_schema = params.get("json_schema")
         if json_schema:
             google_params["json_schema"] = _convert_json_schema_to_google(json_schema)
 
     elif completion_type == CompletionType.TTS:
         # TTS mode - voice, language, response_format
         # Apply smart defaults for voice and response_format (following ElevenLabs pattern)
-        voice = kaapi_params.get("voice") or DEFAULT_TTS_VOICE
+        voice = params.get("voice") or DEFAULT_TTS_VOICE
         google_params["voice"] = voice
 
-        response_format = kaapi_params.get("response_format") or "wav"
+        response_format = params.get("response_format") or "wav"
         google_params["response_format"] = response_format
 
         # Language: Only set if explicitly provided (None/missing = auto-detect)
-        language = kaapi_params.get("language")
+        language = params.get("language")
         if language:
             google_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language) or None
             if not google_lang:
@@ -320,23 +326,23 @@ def map_kaapi_to_google_params(
     elif completion_type == CompletionType.STT:
         # STT mode - instructions, temperature, input_language, output_language, response_format
         # Apply smart default for input_language
-        input_language = kaapi_params.get("input_language") or "auto"
+        input_language = params.get("input_language") or "auto"
         google_params["input_language"] = input_language
 
         # Optional parameters - only set if provided
-        instructions = kaapi_params.get("instructions")
+        instructions = params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
 
-        temperature = kaapi_params.get("temperature")
+        temperature = params.get("temperature")
         if temperature is not None:
             google_params["temperature"] = temperature
 
-        output_language = kaapi_params.get("output_language")
+        output_language = params.get("output_language")
         if output_language:
             google_params["output_language"] = output_language
 
-        response_format = kaapi_params.get("response_format")
+        response_format = params.get("response_format")
         if response_format:
             google_params["response_format"] = response_format
 
@@ -347,7 +353,7 @@ def map_kaapi_to_google_params(
 
 
 def map_kaapi_to_sarvam_params(
-    kaapi_params: dict[str, Any], completion_type: str
+    kaapi_params: KaapiParamsInput, completion_type: str
 ) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to SarvamAI API parameters.
 
@@ -357,7 +363,7 @@ def map_kaapi_to_sarvam_params(
     TTSLLMParams: model, voice, language, response_format
 
     Args:
-        kaapi_params: Dictionary with standardized Kaapi parameters
+        kaapi_params: Typed Kaapi params, or a plain dict for native/stored configs
         completion_type: Type of completion ("stt" or "tts")
 
     Returns:
@@ -365,11 +371,12 @@ def map_kaapi_to_sarvam_params(
         - Dictionary of SarvamAI API parameters
         - List of warnings for unsupported parameters
     """
+    params = kaapi_params_as_dict(kaapi_params)
     sarvam_params: dict[str, Any] = {}
     warnings = []
 
     # Model falls back to the per-type Sarvam default.
-    model = kaapi_params.get("model") or SARVAM_DEFAULTS_BY_TYPE.get(completion_type)
+    model = params.get("model") or SARVAM_DEFAULTS_BY_TYPE.get(completion_type)
     if not model:
         return {}, [f"Unsupported completion type '{completion_type}' for SarvamAI"]
     sarvam_params["model"] = model
@@ -377,18 +384,18 @@ def map_kaapi_to_sarvam_params(
     if completion_type == CompletionType.TTS:
         # TTS mode - map TTSLLMParams
         # Required: target_language_code (API requirement)
-        language = kaapi_params.get("language")
+        language = params.get("language")
         if not language:
             return {}, ["Missing required 'language' parameter for TTS"]
         sarvam_params["target_language_code"] = language
 
         # Optional: speaker (has API default: Shubh for v3, Anushka for v2)
-        voice = kaapi_params.get("voice")
+        voice = params.get("voice")
         if voice:
             sarvam_params["speaker"] = voice
 
         # Optional: output_audio_codec
-        response_format = kaapi_params.get("response_format")
+        response_format = params.get("response_format")
         if response_format:
             # Map audio format to SarvamAI codec
             # Supported: mp3, linear16, mulaw, alaw, opus, flac, aac, wav
@@ -403,8 +410,8 @@ def map_kaapi_to_sarvam_params(
 
     elif completion_type == CompletionType.STT:
         # STT mode - map STTLLMParams
-        input_language = kaapi_params.get("input_language")
-        output_language = kaapi_params.get("output_language")
+        input_language = params.get("input_language")
+        output_language = params.get("output_language")
 
         # Set language_code (optional, defaults to "unknown" for auto-detection)
         if input_language == "auto":
@@ -429,19 +436,19 @@ def map_kaapi_to_sarvam_params(
             sarvam_params["mode"] = transcription_mode
 
         # Warn about unsupported STT parameters
-        instructions = kaapi_params.get("instructions")
+        instructions = params.get("instructions")
         if instructions:
             warnings.append(
                 "Parameter 'instructions' is not supported by SarvamAI STT and was ignored"
             )
 
-        temperature = kaapi_params.get("temperature")
+        temperature = params.get("temperature")
         if temperature is not None:
             warnings.append(
                 "Parameter 'temperature' is not supported by SarvamAI STT and was ignored"
             )
 
-        response_format = kaapi_params.get("response_format")
+        response_format = params.get("response_format")
         if response_format:
             warnings.append(
                 "Parameter 'response_format' is not supported by SarvamAI STT and was ignored"
@@ -454,7 +461,7 @@ def map_kaapi_to_sarvam_params(
 
 
 def map_kaapi_to_elevenlabs_params(
-    kaapi_params: dict[str, Any], completion_type: str
+    kaapi_params: KaapiParamsInput, completion_type: str
 ) -> tuple[dict[str, Any], list[str]]:
     """
     Map Kaapi-abstracted parameters to ElevenLab API params
@@ -464,7 +471,7 @@ def map_kaapi_to_elevenlabs_params(
     TTSLLMParams: model, voice, language, response_format
 
     Args:
-        kaapi_params: Dictionary with standardized Kaapi parameters
+        kaapi_params: Typed Kaapi params, or a plain dict for native/stored configs
         completion_type: Type of completion ("stt" or "tts")
 
     Returns:
@@ -473,19 +480,18 @@ def map_kaapi_to_elevenlabs_params(
         - List of warnings for unsupported parameters
 
     """
+    params = kaapi_params_as_dict(kaapi_params)
     elevenlabs_params: dict[str, Any] = {}
     warnings = []
 
-    model_id = kaapi_params.get("model") or ELEVENLABS_DEFAULTS_BY_TYPE.get(
-        completion_type
-    )
+    model_id = params.get("model") or ELEVENLABS_DEFAULTS_BY_TYPE.get(completion_type)
     if not model_id:
         return {}, [f"Unsupported completion type '{completion_type}' for ElevenLabs"]
     elevenlabs_params["model_id"] = model_id
 
     if completion_type == CompletionType.TTS:
         # TTS Mode - map TTSLLMParams
-        voice = kaapi_params.get("voice")
+        voice = params.get("voice")
         if not voice:
             return {}, ["Missing required 'voice' parameter for TTS"]
 
@@ -494,7 +500,7 @@ def map_kaapi_to_elevenlabs_params(
             return {}, [f"Unsupported voice '{voice}' for ElevenLabs TTS"]
         elevenlabs_params["voice_id"] = voice_id
 
-        language = kaapi_params.get("language")
+        language = params.get("language")
         if language:
             elevenlabs_lang = bcp47_to_elevenlabs_lang(language)
             if not elevenlabs_lang:
@@ -504,7 +510,7 @@ def map_kaapi_to_elevenlabs_params(
             else:
                 elevenlabs_params["language_code"] = elevenlabs_lang
 
-        response_format = kaapi_params.get("response_format")
+        response_format = params.get("response_format")
         if response_format:
             # Map audio format to Elevenlabs codec
             # supports mp3, wav and opus (ogg maps to opus)
@@ -519,8 +525,8 @@ def map_kaapi_to_elevenlabs_params(
 
     elif completion_type == CompletionType.STT:
         # STT mode - map STTLLMParams
-        input_language = kaapi_params.get("input_language")
-        output_language = kaapi_params.get("output_language")
+        input_language = params.get("input_language")
+        output_language = params.get("output_language")
 
         if input_language == "auto":
             elevenlabs_params["language_code"] = None
@@ -540,16 +546,16 @@ def map_kaapi_to_elevenlabs_params(
                 "The audio will be transcribed in its original language."
             )
 
-        temperature = kaapi_params.get("temperature")
+        temperature = params.get("temperature")
         if temperature is not None:
             elevenlabs_params["temperature"] = temperature
 
-        response_format = kaapi_params.get("response_format")
+        response_format = params.get("response_format")
         if response_format:
             warnings.append("Kaapi only supports 'txt' as the default response format.")
 
         # Warn about unsupported STT parameters
-        instructions = kaapi_params.get("instructions")
+        instructions = params.get("instructions")
         if instructions:
             warnings.append(
                 "Parameter 'instructions' is not supported by ElevenLabs STT and was ignored."
@@ -561,7 +567,7 @@ def map_kaapi_to_elevenlabs_params(
 
 
 def map_kaapi_to_anthropic_params(
-    kaapi_params: dict[str, Any],
+    kaapi_params: KaapiParamsInput,
 ) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
 
@@ -579,18 +585,19 @@ def map_kaapi_to_anthropic_params(
         - reasoning / effort / summary: Messages API does not expose a
           reasoning-effort knob, dropped with warning.
     """
+    params = kaapi_params_as_dict(kaapi_params)
     anthropic_params: dict[str, Any] = {}
     warnings: list[str] = []
 
-    model = kaapi_params.get("model")
-    instructions = kaapi_params.get("instructions")
-    temperature = kaapi_params.get("temperature")
-    top_p = kaapi_params.get("top_p")
-    max_output_tokens = kaapi_params.get("max_output_tokens")
-    knowledge_base_ids = kaapi_params.get("knowledge_base_ids")
-    reasoning = kaapi_params.get("reasoning")
-    effort = kaapi_params.get("effort")
-    summary = kaapi_params.get("summary")
+    model = params.get("model")
+    instructions = params.get("instructions")
+    temperature = params.get("temperature")
+    top_p = params.get("top_p")
+    max_output_tokens = params.get("max_output_tokens")
+    knowledge_base_ids = params.get("knowledge_base_ids")
+    reasoning = params.get("reasoning")
+    effort = params.get("effort")
+    summary = params.get("summary")
 
     anthropic_params["model"] = model or DEFAULT_TEXT_MODELS["anthropic"]
 
@@ -621,11 +628,9 @@ def map_kaapi_to_anthropic_params(
     return anthropic_params, warnings
 
 
-def kaapi_params_as_dict(
-    params: TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any],
-) -> dict[str, Any]:
-    """Normalize a Kaapi completion config's `params` to a plain dict for the
-    provider mappers below, which are dict-in/dict-out.
+def kaapi_params_as_dict(params: KaapiParamsInput) -> dict[str, Any]:
+    """Normalize Kaapi params to a plain dict — each provider mapper calls this
+    on its input so callers can pass typed params or raw dicts interchangeably.
 
     The dump already drops None fields and an unset temperature —
     `ParamSerialization` on the params models owns that wire format.
@@ -671,7 +676,7 @@ def transform_kaapi_config_to_native(
         - NativeCompletionConfig with provider-native parameters ready for API
         - List of warnings for suppressed/ignored parameters
     """
-    kaapi_params = kaapi_params_as_dict(kaapi_config.params)
+    kaapi_params = kaapi_config.params
 
     if kaapi_config.provider == Provider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(

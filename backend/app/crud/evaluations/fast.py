@@ -495,7 +495,7 @@ def run_response_chunk(
     )
 
     base_params, mapper_warnings = map_kaapi_to_openai_params(
-        session=session, kaapi_params=config.model_dump(exclude_unset=True)
+        session=session, kaapi_params=config
     )
     if mapper_warnings:
         logger.info(
