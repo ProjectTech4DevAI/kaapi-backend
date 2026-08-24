@@ -458,7 +458,11 @@ class GoogleVertexAIProvider(BaseProvider):
                 or f"vertex-{uuid.uuid4().hex}",
                 model=data.get("modelVersion") or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=transcript.strip())),
+                output=TextOutput(
+                    content=TextContent(
+                        value=transcript.strip(), language_code=output_language
+                    )
+                ),
             ),
             usage=self._extract_usage(data),
         )
