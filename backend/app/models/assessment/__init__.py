@@ -1,0 +1,104 @@
+"""Assessment models package.
+
+Split across two files so the API-client surface is separate from the legacy UI one:
+  - ``assessment.py``      — the shared DB tables/enums + the legacy Assessment Run UI models.
+  - ``assessment_api.py``  — the API-client request/response models for ``/assessments``.
+
+Everything is re-exported here, so ``from app.models.assessment import X`` resolves a
+symbol from either file, unchanged for every existing importer.
+"""
+
+from app.models.assessment.assessment import (
+    Assessment,
+    AssessmentAttachment,
+    AssessmentConfigRef,
+    AssessmentDatasetPreview,
+    AssessmentDatasetResponse,
+    AssessmentExecutionPublic,
+    AssessmentExportRow,
+    AssessmentMethod,
+    AssessmentPublic,
+    AssessmentResponse,
+    AssessmentRun,
+    AssessmentRunCounts,
+    AssessmentRunCreate,
+    AssessmentRunOverview,
+    AssessmentRunPublic,
+    AssessmentRunResponse,
+    AssessmentRunStat,
+    AssessmentRunSummary,
+    AssessmentStatus,
+    InputBinding,
+    RunExecution,
+    Stage,
+    StageStatus,
+)
+from app.models.assessment.assessment_api import (
+    AssessmentBatchResult,
+    AssessmentCallback,
+    AssessmentCounts,
+    AssessmentCreate,
+    AssessmentInput,
+    AssessmentOutput,
+    AssessmentResult,
+    AssessmentResultData,
+    AssessmentSubmitResponse,
+    Attachment,
+    BatchInput,
+    BatchRunState,
+    ParsedResult,
+    PreFilter,
+    PreFilterVerdict,
+    ResponseInput,
+    Submission,
+    Verdict,
+    derive_method,
+)
+
+__all__ = [
+    # shared tables + enums
+    "Assessment",
+    "AssessmentRun",
+    "AssessmentMethod",
+    "AssessmentStatus",
+    "AssessmentConfigRef",
+    # legacy RUN (UI) surface
+    "Stage",
+    "StageStatus",
+    "AssessmentAttachment",
+    "InputBinding",
+    "RunExecution",
+    "AssessmentExecutionPublic",
+    "AssessmentResponse",
+    "AssessmentPublic",
+    "AssessmentExportRow",
+    "AssessmentRunCreate",
+    "AssessmentRunCounts",
+    "AssessmentRunStat",
+    "AssessmentRunSummary",
+    "AssessmentRunPublic",
+    "AssessmentRunResponse",
+    "AssessmentRunOverview",
+    "AssessmentDatasetPreview",
+    "AssessmentDatasetResponse",
+    # API-client surface
+    "Attachment",
+    "ResponseInput",
+    "BatchInput",
+    "BatchRunState",
+    "ParsedResult",
+    "Verdict",
+    "Submission",
+    "AssessmentInput",
+    "derive_method",
+    "AssessmentCreate",
+    "AssessmentSubmitResponse",
+    "AssessmentCallback",
+    "PreFilterVerdict",
+    "PreFilter",
+    "AssessmentOutput",
+    "AssessmentResult",
+    "AssessmentCounts",
+    "AssessmentBatchResult",
+    "AssessmentResultData",
+]

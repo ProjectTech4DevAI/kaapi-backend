@@ -9,9 +9,17 @@ from app.crud.assessment.cron import (
     _log_config_progress,
     poll_all_pending_assessment_evaluations,
 )
+from app.models.assessment import StageStatus
 
 
-def _make_assessment(*, id: int = 1, status: str = "processing") -> MagicMock:
+@pytest.fixture(autouse=True)
+def _stub_flag_modified():
+    """Runtime state lives in run.execution (flagged via core._write_exec)."""
+    with patch("app.crud.assessment.core.flag_modified"):
+        yield
+
+
+def _make_assessment(*, id: int = 1, status: str = "PROCESSING") -> MagicMock:
     a = MagicMock()
     a.id = id
     a.status = status
@@ -26,6 +34,7 @@ def _make_run(
     config_id=None,
     config_version: int | None = 1,
     updated_at=None,
+    execution: dict | None = None,
 ) -> MagicMock:
     r = MagicMock()
     r.id = id
@@ -33,6 +42,8 @@ def _make_run(
     r.config_id = config_id
     r.config_version = config_version
     r.updated_at = updated_at or datetime(2024, 6, 1, 12, 0, 0)
+    # Active-run detection reads stage_status from the execution bag.
+    r.execution = execution if execution is not None else {}
     return r
 
 
@@ -89,12 +100,13 @@ class TestPollAllPendingAssessmentEvaluations:
     @pytest.mark.asyncio
     async def test_no_active_runs_recompute(self) -> None:
         session = MagicMock()
-        assessment = _make_assessment(id=1, status="processing")
+        assessment = _make_assessment(id=1)
         session.exec.return_value.all.return_value = [assessment]
-        refreshed = _make_assessment(id=1, status="processing")
+        refreshed = _make_assessment(id=1, status="PROCESSING")
 
-        run = _make_run(id=11, config_version=1)
-        run.status = "completed"
+        # No stage_status=PROCESSING in the bag -> inactive -> recompute path.
+        run = _make_run(id=11, config_version=1, execution={})
+        run.status = "COMPLETED"
 
         with patch(
             "app.crud.assessment.cron.get_assessment_runs_for_assessment",
@@ -114,8 +126,7 @@ class TestPollAllPendingAssessmentEvaluations:
     async def test_active_run_processed(self) -> None:
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
-        run = _make_run(id=11)
-        run.stage_status = "PROCESSING"
+        run = _make_run(id=11, execution={"stage_status": StageStatus.PROCESSING})
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
@@ -140,8 +151,7 @@ class TestPollAllPendingAssessmentEvaluations:
         """A transient error while polling leaves the run active for retry."""
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
-        run = _make_run(id=11)
-        run.stage_status = "PROCESSING"
+        run = _make_run(id=11, execution={"stage_status": StageStatus.PROCESSING})
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
@@ -161,8 +171,7 @@ class TestPollAllPendingAssessmentEvaluations:
         """A deterministic ValueError fails the run instead of retrying forever."""
         session = MagicMock()
         assessment = _make_assessment(id=1, status="processing")
-        run = _make_run(id=11)
-        run.stage_status = "PROCESSING"
+        run = _make_run(id=11, execution={"stage_status": StageStatus.PROCESSING})
         session.exec.return_value.all.return_value = [assessment]
 
         with patch(
@@ -178,4 +187,4 @@ class TestPollAllPendingAssessmentEvaluations:
 
         assert result["failed"] == 1
         assert result["still_processing"] == 0
-        assert mark_failed.call_args.kwargs["status"] == "failed"
+        assert mark_failed.call_args.kwargs["status"] == "FAILED"

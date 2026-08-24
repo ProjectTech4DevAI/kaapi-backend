@@ -1,195 +1,300 @@
 """`generate_run_ai_summary` — the best-effort natural-language note on a run.
 
-The summary reuses the judge's reasoning-model invocation: params built via
-`map_kaapi_to_openai_params` (mocked here to skip its DB lookup) and one
-`responses.create` call (the external boundary, also mocked). The Responses `input`
-is a qualitative brief (band words + plain area names + consistency phrases + a
-repetition line) — never raw scores or the internal "Adherence to X" labels. Every
-failure mode (OpenAI error, generic error, empty output) must resolve to None
-WITHOUT raising, leaving the deterministic overall to persist.
+The function builds its own Anthropic client from the platform-owned
+ANTHROPIC_API_KEY and makes one `messages.create` call (the external boundary,
+mocked here). The user message is a diagnostic brief: run name, duplication
+factor, the evaluated AI config, and the per-question judge traces as JSON —
+question, golden answer, generated answer, and each judge score with its
+rationale. Trace bookkeeping (`data_type`, `verdict`, `unscoreable`) stays out of
+the payload. Every failure mode (provider error, generic error, unparseable
+payload, empty output) must resolve to None WITHOUT raising, leaving the
+deterministic overall to persist.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import openai
+import anthropic
 import pytest
 
-from app.crud.evaluations.score import OverallSummary
-from app.crud.evaluations.summary import _consistency_read, generate_run_ai_summary
+from app.core.config import settings
+from app.crud.evaluations.score import TraceData
+from app.crud.evaluations.summary import generate_run_ai_summary
 
-_MODEL = "gpt-5-mini"
-
-
-def _overall() -> OverallSummary:
-    return {
-        "overall_score": 3.3,
-        "verdict": "Needs Refinement",
-        "ai_summary": None,
-        "breakdown": [
-            {
-                "name": "Adherence to Ground Truth",
-                "key": "ground_truth",
-                "score": 4,
-                "weight": 0.5,
-                "delta": 0.7,
-                "verdict": "Good",
-            },
-            {
-                "name": "Adherence to Knowledge Base",
-                "key": "knowledge_base",
-                "score": 3,
-                "weight": 0.3,
-                "delta": -0.3,
-                "verdict": "Needs Refinement",
-            },
-            {
-                "name": "Adherence to Prompt",
-                "key": "prompt",
-                "score": 2,
-                "weight": 0.2,
-                "delta": -1.3,
-                "verdict": "Needs Refinement",
-            },
-        ],
-    }
+_MODEL = "claude-sonnet-4-6"
+_RUN_NAME = "run-x"
+_CONFIG_PROMPT = "You are a farming helpline bot. Always answer in Hindi."
+_TRACES_MARKER = "## Per-question judge traces (JSON)\n"
 
 
-def _summary_scores() -> list[dict]:
-    # std per dimension drives the consistency read (0–5 spread; cutoffs 0.5 / 1.0);
-    # names match the overall's dims.
+def _traces() -> list[TraceData]:
     return [
-        {"name": "Adherence to Ground Truth", "avg": 4.0, "std": 0.3},
-        {"name": "Adherence to Knowledge Base", "avg": 3.0, "std": 0.8},
-        {"name": "Adherence to Prompt", "avg": 2.0, "std": 1.5},
+        {
+            "trace_id": "item_1_1",
+            "question": "How much urea per acre?",
+            "llm_answer": "About 50 kg per acre.",
+            "question_id": 1,
+            "ground_truth_answer": "Roughly 45-55 kg per acre.",
+            "category": "fertiliser",
+            "scores": [
+                {
+                    "name": "Adherence to Ground Truth",
+                    "value": 4,
+                    "data_type": "NUMERIC",
+                    "comment": "conveys the same dosage range",
+                    "verdict": "Good",
+                },
+                {
+                    "name": "Adherence to Prompt",
+                    "value": 1,
+                    "data_type": "NUMERIC",
+                    "comment": "answered in English, not Hindi",
+                    "verdict": "Needs Improvement",
+                },
+            ],
+        },
+        {
+            "trace_id": "item_2_1",
+            "question": "Is the helpline open on Sunday?",
+            "llm_answer": "Information not available.",
+            "question_id": 2,
+            "ground_truth_answer": "Yes, 9am to 1pm.",
+            "category": "general",
+            # No comment key: the judge left no rationale for this placeholder.
+            "scores": [
+                {
+                    "name": "Adherence to Knowledge Base",
+                    "value": "N/A",
+                    "data_type": "CATEGORICAL",
+                    "unscoreable": True,
+                }
+            ],
+        },
     ]
 
 
-def _responses_result(output_text: str):
-    return SimpleNamespace(output_text=output_text, output=[])
+def _message(summary: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text=json.dumps({"summary": summary})),
+        ]
+    )
+
+
+def _http_error(exc_type: type, *, status_code: int) -> Exception:
+    return exc_type(
+        message="provider said no",
+        response=MagicMock(status_code=status_code, request=MagicMock(), headers={}),
+        body=None,
+    )
 
 
 def _call(
     client: MagicMock,
     *,
     duplication_factor: int = 5,
-    summary_scores: list[dict] | None = None,
+    config_prompt: str = _CONFIG_PROMPT,
+    traces: list[TraceData] | None = None,
 ) -> str | None:
-    # The mapper does a real DB lookup (is_reasoning_model); patch it so the unit
-    # test stays about the summary logic, not model resolution.
-    with patch(
-        "app.crud.evaluations.summary.map_kaapi_to_openai_params",
-        return_value=({"model": _MODEL, "effort": "medium"}, []),
+    # ANTHROPIC_API_KEY is unset in .env.test, which would short-circuit before
+    # the client is ever built.
+    with (
+        patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+        patch(
+            "app.crud.evaluations.summary.ClaudeProvider.create_client",
+            return_value=client,
+        ),
     ):
         return generate_run_ai_summary(
-            session=MagicMock(),
-            openai_client=client,
             model=_MODEL,
-            overall=_overall(),
-            run_name="run-x",
-            summary_scores=summary_scores
-            if summary_scores is not None
-            else _summary_scores(),
+            run_name=_RUN_NAME,
             duplication_factor=duplication_factor,
+            config_prompt=config_prompt,
+            traces=_traces() if traces is None else traces,
         )
 
 
+def _brief_for(**kwargs) -> str:
+    client = MagicMock()
+    client.messages.create.return_value = _message("A note.")
+    _call(client, **kwargs)
+    return client.messages.create.call_args.kwargs["messages"][0]["content"]
+
+
+def _payload_from(brief: str) -> list[dict]:
+    return json.loads(brief.split(_TRACES_MARKER, 1)[1])
+
+
 class TestHappyPath:
-    def test_returns_the_responses_output_text_stripped(self) -> None:
+    def test_returns_the_summary_field_stripped(self) -> None:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result(
+        client.messages.create.return_value = _message(
             "  Consistently grounded and on-tone across the set.  "
         )
         assert _call(client) == "Consistently grounded and on-tone across the set."
 
-
-class TestQualitativeBrief:
-    def _input_for(self, *, duplication_factor: int) -> str:
+    def test_call_params_carry_the_model_token_cap_and_json_schema(self) -> None:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result("A note.")
-        _call(client, duplication_factor=duplication_factor)
-        return client.responses.create.call_args.kwargs["input"]
+        client.messages.create.return_value = _message("A note.")
+        _call(client)
 
-    def test_input_carries_plain_area_and_consistency_phrases_and_token_cap(
-        self,
-    ) -> None:
-        client = MagicMock()
-        client.responses.create.return_value = _responses_result("A note.")
-        _call(client, duplication_factor=5)
+        params = client.messages.create.call_args.kwargs
+        assert params["model"] == _MODEL
+        assert params["max_tokens"] == 3000
+        assert params["messages"][0]["role"] == "user"
+        assert params["output_config"]["format"]["type"] == "json_schema"
 
-        params = client.responses.create.call_args.kwargs
-        brief = params["input"]
-        assert params["max_output_tokens"] == 2000
-        assert "temperature" not in params
 
-        assert "Accuracy against the expected answers" in brief
-        assert "Grounding in the source material" in brief
-        assert "Tone and instruction-following" in brief
+class TestTraceBrief:
+    def test_header_carries_run_name_duplication_factor_and_config_prompt(self) -> None:
+        brief = _brief_for(duplication_factor=5)
+        assert f"Run: {_RUN_NAME}" in brief
+        assert "Duplication factor: 5" in brief
+        assert _CONFIG_PROMPT in brief
 
-        assert "answers stayed consistent" in brief  # std 0.3
-        assert "answers were mostly consistent, with some variation" in brief  # 0.8
-        assert "answers varied" in brief  # 1.5
+    def test_duplication_factor_of_one_renders_plainly(self) -> None:
+        assert "Duplication factor: 1" in _brief_for(duplication_factor=1)
 
-    def test_brief_leaks_no_raw_scores_or_internal_labels(self) -> None:
-        brief = self._input_for(duplication_factor=5)
-        assert "Adherence to" not in brief
-        assert "verdict" not in brief
-        # Raw score / weight / delta values must not cross into the brief.
-        for leaked in ("3.3", "0.7", "-1.3", "0.5", "0.3"):
+    def test_blank_config_prompt_falls_back_to_the_placeholder(self) -> None:
+        brief = _brief_for(config_prompt="")
+        assert "(no instructions configured)" in brief
+        assert _CONFIG_PROMPT not in brief
+
+    def test_each_trace_carries_its_qa_and_scored_rationales(self) -> None:
+        payload = _payload_from(_brief_for())
+
+        assert [t["trace_id"] for t in payload] == ["item_1_1", "item_2_1"]
+        first = payload[0]
+        assert first["question"] == "How much urea per acre?"
+        assert first["ground_truth_answer"] == "Roughly 45-55 kg per acre."
+        assert first["llm_answer"] == "About 50 kg per acre."
+        assert first["scores"] == [
+            {
+                "name": "Adherence to Ground Truth",
+                "value": 4,
+                "rationale": "conveys the same dosage range",
+            },
+            {
+                "name": "Adherence to Prompt",
+                "value": 1,
+                "rationale": "answered in English, not Hindi",
+            },
+        ]
+
+    def test_score_without_a_comment_gets_an_empty_rationale(self) -> None:
+        payload = _payload_from(_brief_for())
+        assert payload[1]["scores"] == [
+            {"name": "Adherence to Knowledge Base", "value": "N/A", "rationale": ""}
+        ]
+
+    def test_trace_bookkeeping_keys_never_reach_the_model(self) -> None:
+        brief = _brief_for()
+        payload = _payload_from(brief)
+
+        assert set(payload[0]) == {
+            "trace_id",
+            "question",
+            "ground_truth_answer",
+            "llm_answer",
+            "scores",
+        }
+        for trace in payload:
+            for score in trace["scores"]:
+                assert set(score) == {"name", "value", "rationale"}
+        for leaked in ("data_type", "verdict", "unscoreable", "NUMERIC", "category"):
             assert leaked not in brief
 
-    def test_repetition_line_states_the_repeat_count_when_gt_one(self) -> None:
-        brief = self._input_for(duplication_factor=5)
-        assert "Each question was asked 5 times." in brief
+    def test_empty_traces_render_an_empty_payload(self) -> None:
+        assert _payload_from(_brief_for(traces=[])) == []
 
-    def test_repetition_line_softens_when_asked_once(self) -> None:
-        brief = self._input_for(duplication_factor=1)
-        assert "asked once (no repetition to speak of)" in brief
-        assert "Each question was asked 1 times" not in brief
+    def test_devanagari_qa_survives_unescaped(self) -> None:
+        traces = _traces()
+        traces[0]["question"] = "एक एकड़ में कितनी यूरिया डालें?"
+        traces[0]["llm_answer"] = "लगभग 50 किलो प्रति एकड़।"
+        brief = _brief_for(traces=traces)
+
+        assert "एक एकड़ में कितनी यूरिया डालें?" in brief
+        # Everything else in the brief is ASCII, so any \u escape means ensure_ascii.
+        assert "\\u" not in brief
+        assert _payload_from(brief)[0]["llm_answer"] == "लगभग 50 किलो प्रति एकड़।"
 
 
-class TestConsistencyRead:
-    @pytest.mark.parametrize(
-        ("std", "expected"),
-        [
-            (0.3, "answers stayed consistent"),
-            (0.5, "answers stayed consistent"),
-            (0.8, "answers were mostly consistent, with some variation"),
-            (1.0, "answers were mostly consistent, with some variation"),
-            (1.5, "answers varied"),
-            (None, "consistency unknown"),
-        ],
-    )
-    def test_bands_and_boundaries(self, std, expected) -> None:
-        assert _consistency_read(std) == expected
+class TestMissingApiKey:
+    def test_empty_api_key_returns_none_without_building_a_client(self) -> None:
+        with (
+            patch.object(settings, "ANTHROPIC_API_KEY", ""),
+            patch(
+                "app.crud.evaluations.summary.ClaudeProvider.create_client"
+            ) as create_client,
+        ):
+            result = generate_run_ai_summary(
+                model=_MODEL,
+                run_name=_RUN_NAME,
+                duplication_factor=5,
+                config_prompt=_CONFIG_PROMPT,
+                traces=_traces(),
+            )
+
+        assert result is None
+        create_client.assert_not_called()
 
 
 class TestFailureIsNonFatal:
-    def test_openai_error_returns_none_without_raising(self) -> None:
+    @pytest.mark.parametrize(
+        "exception_factory",
+        [
+            pytest.param(
+                lambda: _http_error(anthropic.AuthenticationError, status_code=401),
+                id="authentication_error",
+            ),
+            pytest.param(
+                lambda: _http_error(anthropic.RateLimitError, status_code=429),
+                id="rate_limit_error",
+            ),
+            pytest.param(
+                lambda: anthropic.APITimeoutError(request=MagicMock()),
+                id="timeout_error",
+            ),
+            pytest.param(
+                lambda: anthropic.APIConnectionError(request=MagicMock()),
+                id="connection_error",
+            ),
+            # 4xx and 5xx take different log branches; both must still return None.
+            pytest.param(
+                lambda: _http_error(anthropic.APIStatusError, status_code=400),
+                id="status_error_4xx",
+            ),
+            pytest.param(
+                lambda: _http_error(anthropic.APIStatusError, status_code=503),
+                id="status_error_5xx",
+            ),
+            pytest.param(lambda: RuntimeError("unexpected shape"), id="generic_error"),
+        ],
+    )
+    def test_provider_errors_return_none_without_raising(
+        self, exception_factory
+    ) -> None:
         client = MagicMock()
-        client.responses.create.side_effect = openai.OpenAIError("provider down")
+        client.messages.create.side_effect = exception_factory()
         assert _call(client) is None
 
-    def test_generic_error_returns_none_without_raising(self) -> None:
+    @pytest.mark.parametrize("summary", ["", "   \n\t"])
+    def test_empty_or_whitespace_summary_returns_none(self, summary: str) -> None:
         client = MagicMock()
-        client.responses.create.side_effect = RuntimeError("unexpected shape")
+        client.messages.create.return_value = _message(summary)
         assert _call(client) is None
 
-    @pytest.mark.parametrize("output_text", ["", "   \n\t"])
-    def test_empty_or_whitespace_output_returns_none(self, output_text: str) -> None:
+    def test_non_json_text_block_returns_none_without_raising(self) -> None:
         client = MagicMock()
-        client.responses.create.return_value = _responses_result(output_text)
+        client.messages.create.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="not json at all")]
+        )
         assert _call(client) is None
 
-    def test_malformed_payload_parse_error_returns_none_without_raising(self) -> None:
-        # extract_response_text runs inside the try, so a raise on an unexpected
-        # Responses payload must degrade to None, never escape to fail the run.
+    def test_response_without_a_text_block_returns_none_without_raising(self) -> None:
         client = MagicMock()
-        client.responses.create.return_value = (
-            SimpleNamespace()
-        )  # no output_text/output
-        with patch(
-            "app.crud.evaluations.summary.extract_response_text",
-            side_effect=ValueError("unexpected Responses payload"),
-        ):
-            assert _call(client) is None
+        client.messages.create.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="tool_use", text=None)]
+        )
+        assert _call(client) is None
