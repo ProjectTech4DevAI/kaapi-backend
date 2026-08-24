@@ -39,7 +39,9 @@ router = APIRouter(prefix="/users", tags=["Users"])
 def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> UsersPublic:
     count = session.exec(select(func.count()).select_from(User)).one()
     users = session.exec(select(User).offset(skip).limit(limit)).all()
-    return UsersPublic(data=users, count=count)
+    return UsersPublic(
+        data=[UserPublic.model_validate(user) for user in users], count=count
+    )
 
 
 @router.post(
