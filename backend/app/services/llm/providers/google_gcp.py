@@ -1,9 +1,7 @@
 import base64
 import json
 import logging
-import os
 import uuid
-from pathlib import Path
 from typing import Any
 
 import requests
@@ -139,6 +137,8 @@ class GoogleGCPProvider(BaseProvider):
                 ("api_key", api_key),
                 ("project_id", project_id),
                 ("location", location),
+                ("sa_key", sa_info),
+                ("gcs_bucket", gcs_bucket),
             )
             if not value
         ]

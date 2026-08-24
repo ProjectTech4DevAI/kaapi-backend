@@ -125,7 +125,13 @@ class TestGoogleGCPProvider:
 
     def test_create_client_builds_endpoint(self):
         c = GoogleGCPProvider.create_client(
-            {"api_key": "k", "project_id": "p", "location": "us-central1"}
+            {
+                "api_key": "k",
+                "project_id": "p",
+                "location": "us-central1",
+                "sa_key": {"type": "service_account"},
+                "gcs_bucket": "test-bucket",
+            }
         )
         assert "us-central1-aiplatform.googleapis.com" in c.endpoint("m")
         assert "projects/p/locations/us-central1" in c.endpoint("m")
@@ -782,6 +788,7 @@ class TestCreateClientFallback:
                 "api_key": "byok-key",
                 "project_id": "byok-proj",
                 "location": "europe-west4",
+                "sa_key": {"type": "service_account"},
                 "gcs_bucket": "byok-bucket",
             }
         )
@@ -796,7 +803,7 @@ class TestCreateClientFallback:
         mock_settings.GCP_VERTEX_API_KEY = "platform-key"
         mock_settings.GCP_PROJECT_ID = "platform-proj"
         mock_settings.GCP_VERTEX_LOCATION = "us-central1"
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GCP_SA_KEY = json.dumps({"type": "service_account"})
         mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
 
         c = GoogleGCPProvider.create_client({"api_key": "byok-key"})
@@ -818,3 +825,5 @@ class TestCreateClientFallback:
         assert "api_key" in msg
         assert "project_id" in msg
         assert "location" in msg
+        assert "sa_key" in msg
+        assert "gcs_bucket" in msg

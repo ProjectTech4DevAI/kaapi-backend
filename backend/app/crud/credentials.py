@@ -199,17 +199,6 @@ def update_creds_for_org(
     ):
         credential_data = credential_data[creds_in.provider]
 
-    try:
-        validate_provider_credentials(creds_in.provider, credential_data)
-    except ValueError as e:
-        logger.warning(
-            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
-        )
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Encrypt the entire credentials object
-    encrypted_credentials = encrypt_credentials(credential_data)
-
     statement = select(Credential).where(
         Credential.organization_id == org_id,
         Credential.provider == creds_in.provider,
@@ -217,6 +206,27 @@ def update_creds_for_org(
         Credential.project_id == project_id,
     )
     creds = session.exec(statement).one_or_none()
+
+    # Merge onto the existing credentials so a partial payload (PATCH) only
+    # overwrites the fields it supplies instead of dropping the rest.
+    merged_credential_data = credential_data
+    if creds and creds.credential:
+        merged_credential_data = {
+            **decrypt_credentials(creds.credential),
+            **credential_data,
+        }
+
+    try:
+        validate_provider_credentials(creds_in.provider, merged_credential_data)
+    except ValueError as e:
+        logger.warning(
+            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Encrypt the entire credentials object
+    encrypted_credentials = encrypt_credentials(merged_credential_data)
+
     if creds is None:
         # Create new credential if it doesn't exist
         creds = Credential(
