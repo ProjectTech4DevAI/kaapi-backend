@@ -26,6 +26,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Queries at/above this duration increment the db.query.slow counter.
+DB_SLOW_QUERY_MS: int = 500
+
+# Row count attached to a query span (count only, never row data).
+DB_ROWS_ATTRIBUTE: str = "db.rows_affected"
+
+# Continuous profiling; session rate sampled once per process at init.
+SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = 1.0
+SENTRY_PROFILE_LIFECYCLE: str = "trace"
+
+
+def resolve_sentry_release() -> str:
+    """Shared release id for both sentry_sdk.init sites; SENTRY_RELEASE overrides."""
+    if settings.SENTRY_RELEASE:
+        return settings.SENTRY_RELEASE
+    return f"{settings.BACKEND_SERVICE_NAME}@{settings.API_VERSION}"
+
+
 # Postgres SQLSTATE codes surfaced as named Sentry tags; others pass through as the raw code.
 NOTABLE_SQLSTATES: dict[str, str] = {
     "40P01": "deadlock_detected",
@@ -116,12 +134,16 @@ def _emit_sentry_metric(
 def set_request_log_context(
     org_id: int | None = None,
     project_id: int | None = None,
+    user_id: int | None = None,
 ) -> None:
     """Attach org/project to the current request's log context and Sentry scope.
 
     Call once per authenticated request (from the auth dependency). All subsequent
     log records in this request will carry org_id and project_id automatically
     via LogContextFilter — no need to add them to individual log statements.
+
+    user_id, when provided, is bound to the Sentry scope so issues report the
+    users/orgs affected; it is not added to the log context.
     """
     current = _log_context_var.get() or {}
     payload = dict(current)
@@ -137,6 +159,15 @@ def set_request_log_context(
                 sentry_sdk.set_tag("tenant.org_id", str(org_id))
             if project_id is not None:
                 sentry_sdk.set_tag("tenant.project_id", str(project_id))
+            sentry_user: dict[str, str] = {}
+            if user_id is not None:
+                sentry_user["id"] = str(user_id)
+            if org_id is not None:
+                sentry_user["org_id"] = str(org_id)
+            if project_id is not None:
+                sentry_user["project_id"] = str(project_id)
+            if sentry_user:
+                sentry_sdk.set_user(sentry_user)
     except Exception:
         pass
 
@@ -305,6 +336,20 @@ def setup_telemetry(service_name: str | None = None) -> None:
         CeleryInstrumentor().instrument()
     except Exception:
         logger.exception("[setup_telemetry] Failed to instrument Celery")
+
+    try:
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+        RedisInstrumentor().instrument()
+    except Exception:
+        logger.exception("[setup_telemetry] Failed to instrument Redis")
+
+    try:
+        from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
+
+        BotocoreInstrumentor().instrument()
+    except Exception:
+        logger.exception("[setup_telemetry] Failed to instrument botocore")
 
     logger.debug(
         "[setup_telemetry] OpenTelemetry initialized (service=%s, sink=Sentry)",
@@ -489,7 +534,7 @@ def record_db_query_failed(
 
 
 def record_db_slow_query(operation: str | None = None) -> None:
-    """Emit a slow-query counter to Sentry (queries at/above settings.DB_SLOW_QUERY_MS)."""
+    """Emit a slow-query counter to Sentry (queries at/above DB_SLOW_QUERY_MS)."""
     if not settings.OTEL_ENABLED:
         return
 
@@ -750,9 +795,23 @@ def instrument_db_engine(engine: object) -> None:
         started_at = getattr(context, "_kaapi_db_started_at", None)
         if started_at is not None:
             duration_ms = (time.perf_counter() - started_at) * 1000
-            if duration_ms >= settings.DB_SLOW_QUERY_MS:
+            if duration_ms >= DB_SLOW_QUERY_MS:
                 record_db_slow_query(getattr(context, "_kaapi_db_operation", None))
         _emit_pool_metrics(conn.engine.pool)
+
+    # insert=True: must run before the instrumentor's own after hook ends the
+    # DB span (stored on context._otel_span); set_attribute after end() is a no-op.
+    @event.listens_for(engine, "after_cursor_execute", insert=True)
+    def _record_db_rows(
+        conn, cursor, statement, parameters, context, executemany
+    ) -> None:
+        del conn, statement, parameters, executemany
+        span = getattr(context, "_otel_span", None)
+        rowcount = getattr(cursor, "rowcount", None)
+        if span is None or rowcount is None or rowcount < 0:
+            return
+        if span.is_recording():
+            span.set_attribute(DB_ROWS_ATTRIBUTE, int(rowcount))
 
     @event.listens_for(engine, "handle_error")
     def _handle_error(exception_context: ExceptionContext) -> None:

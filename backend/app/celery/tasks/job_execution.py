@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 # app/core/logger.py and app/celery/utils.py).
 DEFAULT_TRACE_ID = "N/A"
 
+# Start a fresh trace per poll cycle; otherwise one trace spans every re-enqueue.
+SENTRY_NO_PROPAGATE_HEADERS: dict[str, bool] = {"sentry-propagate-traces": False}
+
 
 def _set_trace(trace_id: str) -> None:
     correlation_id.set(trace_id)
@@ -399,6 +402,7 @@ def run_assessment_api_batch(
                 "trace_id": trace_id,
             },
             countdown=POLL_COUNTDOWN_SECONDS,
+            headers=SENTRY_NO_PROPAGATE_HEADERS,
         )
     return result
 

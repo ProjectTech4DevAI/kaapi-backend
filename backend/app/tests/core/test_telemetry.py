@@ -34,6 +34,150 @@ def _inactive_sentry() -> MagicMock:
     return fake
 
 
+class TestSetRequestLogContext:
+    @pytest.fixture(autouse=True)
+    def _clean_log_context(self):
+        token = telemetry._log_context_var.set(None)
+        yield
+        telemetry._log_context_var.reset(token)
+
+    def test_binds_all_ids_stringified_to_sentry_user(self):
+        fake = _active_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            telemetry.set_request_log_context(org_id=3, project_id=5, user_id=7)
+
+        fake.set_user.assert_called_once_with(
+            {"id": "7", "org_id": "3", "project_id": "5"}
+        )
+
+    def test_only_present_keys_included_in_sentry_user(self):
+        fake = _active_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            telemetry.set_request_log_context(user_id=7)
+
+        fake.set_user.assert_called_once_with({"id": "7"})
+
+    def test_all_ids_none_does_not_call_set_user(self):
+        fake = _active_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            telemetry.set_request_log_context()
+
+        fake.set_user.assert_not_called()
+
+    def test_inactive_sentry_does_not_call_set_user(self):
+        fake = _inactive_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            # Must not raise even with all ids present.
+            telemetry.set_request_log_context(org_id=3, project_id=5, user_id=7)
+
+        fake.set_user.assert_not_called()
+
+    def test_org_and_project_still_set_as_tags(self):
+        fake = _active_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            telemetry.set_request_log_context(org_id=3, project_id=5, user_id=7)
+
+        fake.set_tag.assert_any_call("tenant.org_id", "3")
+        fake.set_tag.assert_any_call("tenant.project_id", "5")
+
+    def test_only_org_and_project_land_in_log_context(self):
+        fake = _active_sentry()
+        with patch.object(telemetry, "sentry_sdk", fake):
+            telemetry.set_request_log_context(org_id=3, project_id=5, user_id=7)
+
+        # user_id is scope-only; it must never enter the request log context.
+        assert telemetry._log_context_var.get() == {"org_id": "3", "project_id": "5"}
+
+
+class TestSetupTelemetryInstrumentors:
+    """Assert Redis/Botocore auto-instrumentation wiring without mutating the
+    global OTel provider: TracerProvider and set_tracer_provider are stubbed so
+    setup_telemetry runs to the instrumentor calls but registers nothing real.
+    """
+
+    def test_enabled_calls_instrument_on_both(self):
+        redis, botocore = MagicMock(), MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.settings, "SENTRY_DSN", None),
+            patch.object(telemetry, "TracerProvider", MagicMock()),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        redis.return_value.instrument.assert_called_once()
+        botocore.return_value.instrument.assert_called_once()
+
+    def test_redis_failure_does_not_propagate_and_botocore_still_instruments(self):
+        redis = MagicMock()
+        redis.return_value.instrument.side_effect = RuntimeError("boom")
+        botocore = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.settings, "SENTRY_DSN", None),
+            patch.object(telemetry, "TracerProvider", MagicMock()),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
+            ),
+        ):
+            # The defensive try/except must swallow the Redis failure.
+            telemetry.setup_telemetry()
+
+        botocore.return_value.instrument.assert_called_once()
+
+    def test_noop_when_otel_disabled(self):
+        redis, botocore = MagicMock(), MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        redis.assert_not_called()
+        botocore.assert_not_called()
+
+
+class TestResolveSentryRelease:
+    def test_uses_sentry_release_when_set(self):
+        with patch.object(telemetry.settings, "SENTRY_RELEASE", "kaapi-backend@9.9.9"):
+            assert telemetry.resolve_sentry_release() == "kaapi-backend@9.9.9"
+
+    def test_falls_back_to_service_and_version(self):
+        with (
+            patch.object(telemetry.settings, "SENTRY_RELEASE", None),
+            patch.object(telemetry.settings, "BACKEND_SERVICE_NAME", "kaapi-backend"),
+            patch.object(telemetry.settings, "API_VERSION", "1.2.3"),
+        ):
+            assert telemetry.resolve_sentry_release() == "kaapi-backend@1.2.3"
+
+
+class TestProfilingConstants:
+    def test_continuous_profiling_enabled(self):
+        assert telemetry.SENTRY_PROFILE_SESSION_SAMPLE_RATE == 1.0
+        assert telemetry.SENTRY_PROFILE_LIFECYCLE == "trace"
+
+
 class TestNotableSqlstates:
     def test_maps_known_postgres_codes(self):
         assert telemetry.NOTABLE_SQLSTATES["40P01"] == "deadlock_detected"
@@ -274,6 +418,40 @@ class TestInstrumentDbEngine:
         instrumentor.assert_not_called()
         assert not getattr(engine, "_kaapi_db_telemetry_instrumented", False)
 
+    def test_rowcount_attribute_set_on_query_span(self):
+        from sqlalchemy import event
+
+        engine = self._engine()
+        span = MagicMock()
+        span.is_recording.return_value = True
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+        ):
+            telemetry.instrument_db_engine(engine)
+
+            # The stubbed instrumentor never populates context._otel_span, so stand in
+            # for it: the rowcount listener reads the span off the execution context.
+            @event.listens_for(engine, "before_cursor_execute")
+            def _attach_span(conn, cursor, statement, parameters, context, executemany):
+                context._otel_span = span
+
+            with engine.connect() as conn:
+                conn.execute(text("CREATE TABLE t (x)"))
+                conn.execute(text("INSERT INTO t VALUES (1)"))
+                conn.commit()
+
+        rows_calls = [
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == telemetry.DB_ROWS_ATTRIBUTE
+        ]
+        assert rows_calls
+        # The INSERT affected one row; the count is an int, never row data.
+        assert 1 in [c.args[1] for c in rows_calls]
+        assert all(isinstance(c.args[1], int) for c in rows_calls)
+
 
 class TestShouldDropBareHttpTrace:
     def test_drops_root_http_span_with_no_children(self):
@@ -462,7 +640,7 @@ class TestInstrumentDbEngineMetrics:
         slow = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(telemetry.settings, "DB_SLOW_QUERY_MS", 0),
+            patch.object(telemetry, "DB_SLOW_QUERY_MS", 0),
             patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_slow_query", slow),
@@ -479,7 +657,7 @@ class TestInstrumentDbEngineMetrics:
         slow = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(telemetry.settings, "DB_SLOW_QUERY_MS", 10_000),
+            patch.object(telemetry, "DB_SLOW_QUERY_MS", 10_000),
             patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_slow_query", slow),

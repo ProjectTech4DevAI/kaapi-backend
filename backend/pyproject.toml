@@ -19,7 +19,7 @@ dependencies = [
     # Pin bcrypt until passlib supports the latest
     "bcrypt==4.0.1",
     "pydantic-settings<3.0.0,>=2.2.1",
-    "sentry-sdk[fastapi]>=2.20.0",
+    "sentry-sdk[fastapi]>=2.24.1",
     "opentelemetry-api>=1.30.0",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-instrumentation>=0.51b0",
@@ -29,6 +29,8 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.51b0",
     "opentelemetry-instrumentation-logging>=0.51b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.51b0",
+    "opentelemetry-instrumentation-redis>=0.51b0",
+    "opentelemetry-instrumentation-botocore>=0.51b0",
     "pyjwt>=2.13.0,<3.0.0",
     "boto3>=1.37.20",
     "moto[s3]>=5.1.1",

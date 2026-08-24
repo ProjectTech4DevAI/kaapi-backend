@@ -153,8 +153,12 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "kaapi-backend"
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
-    # Queries at/above this duration increment the db.query.slow counter.
-    DB_SLOW_QUERY_MS: int = 500
+
+    # Defaults preserve current behavior; production .env needs no changes.
+    SENTRY_TRACES_SAMPLE_RATE: float = 1.0
+    SENTRY_RELEASE: str | None = None
+    SENTRY_SEND_DEFAULT_PII: bool = False
+    SENTRY_ERROR_SAMPLE_RATE: float = 1.0
 
     # Threshold Request Rate per minute
     THRESHOLD_LLM_CALL_RATE: int = 15

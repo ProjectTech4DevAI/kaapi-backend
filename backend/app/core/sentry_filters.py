@@ -1,6 +1,13 @@
 import re
 from typing import Any
 
+from app.core.config import settings
+
+# Request headers stripped from error events while PII is off (case-insensitive).
+_SENSITIVE_HEADERS: frozenset[str] = frozenset(
+    {"authorization", "cookie", "set-cookie", "x-api-key"}
+)
+_SCRUBBED = "[scrubbed]"
 
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
 _HTTP_SEND_RECEIVE = re.compile(r"http (send|receive)$", re.IGNORECASE)
@@ -84,4 +91,37 @@ def before_send_transaction_filter(
         filtered.append(span)
 
     event["spans"] = filtered
+    return event
+
+
+def _scrub_request_pii(event: dict[str, Any]) -> None:
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return
+
+    headers = request.get("headers")
+    if isinstance(headers, dict):
+        for key in list(headers):
+            if str(key).lower() in _SENSITIVE_HEADERS:
+                headers[key] = _SCRUBBED
+
+    if "cookies" in request:
+        request["cookies"] = _SCRUBBED
+    if request.get("query_string"):
+        request["query_string"] = _SCRUBBED
+    if "data" in request:
+        request["data"] = _SCRUBBED
+
+
+def before_send_error_filter(
+    event: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Drop probe/scanner error events; scrub request PII while PII is off."""
+    try:
+        if _should_drop_transaction(event):
+            return None
+        if not settings.SENTRY_SEND_DEFAULT_PII:
+            _scrub_request_pii(event)
+    except Exception:
+        return event
     return event

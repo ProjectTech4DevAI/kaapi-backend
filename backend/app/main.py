@@ -18,8 +18,17 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
 from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
-from app.core.sentry_filters import before_send_transaction_filter
-from app.core.telemetry import instrument_app, setup_telemetry
+from app.core.sentry_filters import (
+    before_send_error_filter,
+    before_send_transaction_filter,
+)
+from app.core.telemetry import (
+    SENTRY_PROFILE_LIFECYCLE,
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+    instrument_app,
+    resolve_sentry_release,
+    setup_telemetry,
+)
 from app.load_env import load_environment
 
 # Load environment variables
@@ -31,10 +40,15 @@ if settings.SENTRY_DSN:
     sentry_sdk.init(
         dsn=str(settings.SENTRY_DSN),
         environment=settings.ENVIRONMENT,
-        release=settings.API_VERSION,
+        release=resolve_sentry_release(),
         instrumenter="otel",
-        traces_sample_rate=1.0,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
+        profile_session_sample_rate=SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+        profile_lifecycle=SENTRY_PROFILE_LIFECYCLE,
+        send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
         enable_logs=True,
+        before_send=before_send_error_filter,
         before_send_transaction=before_send_transaction_filter,
         integrations=[
             LoggingIntegration(
