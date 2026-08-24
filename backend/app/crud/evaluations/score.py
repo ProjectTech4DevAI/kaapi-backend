@@ -347,8 +347,13 @@ def compute_overall_summary(
 
 
 class EvaluationScore(TypedDict):
-    """Complete evaluation score data with traces and summary statistics."""
+    """Complete evaluation score data with traces and summary statistics.
+
+    `traces` is omitted from the DB-persisted summary-only variant (when
+    per-trace records are uploaded to S3 instead), so it's optional here.
+    """
 
     summary_scores: list[SummaryScore]
-    traces: list[TraceData]
+    traces: NotRequired[list[TraceData]]
     overall: NotRequired[OverallSummary]
+    category_metrics: NotRequired[list[CategoryMetrics]]

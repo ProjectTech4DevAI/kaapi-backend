@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
@@ -12,7 +12,7 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
+from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, TraceData
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
@@ -336,11 +336,12 @@ def get_or_fetch_score(
         "traces": langfuse_score.get("traces", []),
     }
 
-    # Update score column using existing helper
+    # Update score column using existing helper.
+    # TypedDict -> dict is invariant, so a cast is needed for the JSONB column.
     update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(score=cast(dict[str, Any], score)),
+        update=EvaluationRunUpdate(score=cast(dict[str, object], score)),
     )
 
     total_traces = len(score.get("traces", []))
@@ -357,7 +358,7 @@ def _upload_score_traces(
     session: Session,
     eval_run_id: int,
     project_id: int,
-    traces: Sequence[Mapping[str, Any]],
+    traces: Sequence[TraceData],
 ) -> str | None:
     """Upload per-trace records to S3 for an evaluation run.
 
@@ -400,7 +401,7 @@ def persist_score_traces(
     eval_run_id: int,
     organization_id: int,
     project_id: int,
-    traces: Sequence[Mapping[str, Any]],
+    traces: Sequence[TraceData],
 ) -> EvaluationRun | None:
     """Persist the Q&A trace skeleton to S3 and record the ``score_trace_url``
     pointer, WITHOUT touching the ``score`` column (keeps the run score-less
@@ -485,19 +486,19 @@ def save_score(
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
-            db_score: dict[str, Any] = {"summary_scores": summary_score}
+            db_score: EvaluationScore = {"summary_scores": summary_score}
             overall = score.get("overall")
             if overall is not None:
                 db_score["overall"] = overall
         else:
             # fallback to store data in db if failed to store in s3
-            db_score = cast(dict[str, Any], score)
+            db_score = score
 
         update_evaluation_run(
             session=session,
             eval_run=eval_run,
             update=EvaluationRunUpdate(
-                score=db_score,
+                score=cast(dict[str, object], db_score),
                 score_trace_url=score_trace_url or None,
             ),
         )

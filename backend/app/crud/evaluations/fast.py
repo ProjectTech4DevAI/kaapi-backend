@@ -1415,7 +1415,7 @@ def run_fast_evaluation(
     )
     if saved is not None:
         eval_run = saved
-        eval_run.score = cast(dict[str, Any], score)
+        eval_run.score = cast(dict[str, object], score)
 
     logger.info(
         f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "

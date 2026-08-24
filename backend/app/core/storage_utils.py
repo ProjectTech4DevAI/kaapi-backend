@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
@@ -110,7 +110,7 @@ def upload_to_object_store(
 
 def upload_jsonl_to_object_store(
     storage: CloudStorage,
-    results: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, object]],
     filename: str,
     subdirectory: str,
     format: Literal["json", "jsonl"] = "jsonl",
