@@ -49,7 +49,7 @@ def _parse_gs_uri(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
-class VertexBatchProvider(BatchProvider):
+class GoogleGCPBatchProvider(BatchProvider):
     """Vertex AI implementation of the BatchProvider interface (GCS in/out).
 
     Each JSONL line is the Vertex request schema, e.g.
@@ -77,7 +77,7 @@ class VertexBatchProvider(BatchProvider):
     @classmethod
     def from_credentials(
         cls, credentials: dict[str, Any], model: str | None = None
-    ) -> "VertexBatchProvider":
+    ) -> "GoogleGCPBatchProvider":
         """Build a Vertex batch provider from a ``google-gcp`` credential dict."""
         project_id = credentials.get("project_id")
         location = credentials.get("location")

@@ -1,11 +1,11 @@
-"""Test cases for VertexBatchProvider (Vertex AI batch, GCS-backed)."""
+"""Test cases for GoogleGCPBatchProvider (Vertex AI batch, GCS-backed)."""
 
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.batch.google_gcp import VertexBatchProvider, _parse_gs_uri
+from app.core.batch.google_gcp import GoogleGCPBatchProvider, _parse_gs_uri
 
 _BUCKET = "test-bucket"
 
@@ -22,7 +22,7 @@ def mock_storage():
 
 @pytest.fixture
 def provider(mock_genai, mock_storage):
-    return VertexBatchProvider(
+    return GoogleGCPBatchProvider(
         client=mock_genai,
         storage_client=mock_storage,
         gcs_bucket=_BUCKET,
@@ -172,8 +172,8 @@ class TestFromCredentials:
             patch("app.core.batch.google_gcp.genai.Client") as genai_client,
             patch("app.core.batch.google_gcp.gcs.Client") as gcs_client,
         ):
-            provider = VertexBatchProvider.from_credentials(self._CRED)
-        assert isinstance(provider, VertexBatchProvider)
+            provider = GoogleGCPBatchProvider.from_credentials(self._CRED)
+        assert isinstance(provider, GoogleGCPBatchProvider)
         sa.Credentials.from_service_account_info.assert_called_once()
         assert genai_client.call_args.kwargs["vertexai"] is True
         gcs_client.assert_called_once()
@@ -182,4 +182,4 @@ class TestFromCredentials:
     def test_missing_field_raises(self, drop):
         cred = {k: v for k, v in self._CRED.items() if k != drop}
         with pytest.raises(ValueError, match=drop):
-            VertexBatchProvider.from_credentials(cred)
+            GoogleGCPBatchProvider.from_credentials(cred)

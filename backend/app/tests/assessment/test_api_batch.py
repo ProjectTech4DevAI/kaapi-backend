@@ -889,7 +889,7 @@ class TestBuildBatchProvider:
                 return_value={"gcs_bucket": "b", "sa_key": {}},
             ),
             patch(
-                "app.services.assessment.api.batch.VertexBatchProvider.from_credentials",
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
                 return_value=sentinel,
             ) as vertex_from_cred,
         ):
@@ -990,7 +990,7 @@ class TestSubmitProviderBatch:
                 return_value={"gcs_bucket": "b", "sa_key": {}},
             ),
             patch(
-                "app.services.assessment.api.batch.VertexBatchProvider.from_credentials",
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
                 return_value=MagicMock(),
             ) as vertex_from_cred,
             patch(

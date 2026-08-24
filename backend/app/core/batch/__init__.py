@@ -11,7 +11,7 @@ from .gemini import (
     extract_text_from_response_dict,
 )
 from .openai import OpenAIBatchProvider
-from .google_gcp import VertexBatchProvider
+from .google_gcp import GoogleGCPBatchProvider
 from .operations import (
     download_batch_results,
     process_completed_batch,
@@ -29,7 +29,7 @@ __all__ = [
     "GeminiClient",
     "GeminiClientError",
     "GeminiBatchProvider",
-    "VertexBatchProvider",
+    "GoogleGCPBatchProvider",
     "OpenAIBatchProvider",
     "create_stt_batch_requests",
     "create_tts_batch_requests",

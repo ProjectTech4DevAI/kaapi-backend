@@ -28,7 +28,7 @@ from app.core.batch import (
     MessageBatchStatus,
     OpenAIBatchProvider,
     GeminiBatchProvider,
-    VertexBatchProvider,
+    GoogleGCPBatchProvider,
     extract_text_from_response_dict,
     poll_batch_status,
     process_completed_batch,
@@ -350,7 +350,7 @@ def _submit_provider_batch(
                 organization_id=organization_id,
                 project_id=project_id,
             )
-            provider = VertexBatchProvider.from_credentials(cred, model=model)
+            provider = GoogleGCPBatchProvider.from_credentials(cred, model=model)
             config = {"display_name": description}  # Vertex uses a bare model id
         else:
             gemini = GeminiClient.from_credentials(
@@ -414,7 +414,7 @@ def _build_batch_provider(
                 organization_id=organization_id,
                 project_id=project_id,
             )
-            return VertexBatchProvider.from_credentials(cred)
+            return GoogleGCPBatchProvider.from_credentials(cred)
         gemini = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
