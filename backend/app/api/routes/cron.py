@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import sentry_sdk
 from fastapi import APIRouter, Depends
@@ -8,6 +9,7 @@ from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
+from app.services.health_probes import run_health_probe_tick
 from app.services.job_monitoring import monitor_pending_jobs
 
 logger = logging.getLogger(__name__)
@@ -15,13 +17,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Cron"])
 
 EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
-    # Expected cadence: a check-in every CRON_INTERVAL_MINUTES minutes.
     "schedule": {
         "type": "interval",
         "value": settings.CRON_INTERVAL_MINUTES,
         "unit": "minute",
     },
-    # Timezone for the schedule (only affects crontab-style schedules).
     "timezone": "UTC",
     # Grace period (minutes) before a late check-in is marked as missed.
     "checkin_margin": 2,
@@ -119,6 +119,27 @@ async def evaluation_cron_job(
             f"[evaluation_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+@router.get(
+    "/cron/health-probes",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+def health_probes_cron_job() -> dict[str, Any]:
+    # Runs synchronously (no Celery task of its own) — the probe makes an
+    # authenticated HTTP call to this app's own `/llm/call` endpoint.
+    try:
+        result = run_health_probe_tick()
+        logger.info(
+            f"[health_probes_cron_job] Tick complete | job_id: {result.get('job_id')}, "
+            f"probe_index: {result.get('probe_index')}"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"[health_probes_cron_job] Tick failed: {e}", exc_info=True)
         sentry_sdk.capture_exception(e)
         raise
 

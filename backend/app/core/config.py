@@ -193,6 +193,11 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
+    HEALTH_PROBE_INTERVAL_MINUTES: int = 3
+    HEALTH_PROBE_API_KEY: str | None = None
+    # Full URL, e.g. http://localhost:8000/api/v1/llm/call
+    HEALTH_PROBE_LLM_CALL_URL: str | None = None
+
     # AI-assisted prompt improvement settings.
     # See docs/srd-ai-prompt-improvement.md for the full design rationale.
     # Platform-owned Anthropic key shared by every org/project for this feature,

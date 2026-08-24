@@ -19,7 +19,6 @@ from celery import Task, current_task
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
-
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
