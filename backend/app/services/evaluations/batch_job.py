@@ -42,6 +42,7 @@ def execute_evaluation_batch_submission(
         )
         if not run:
             return {"success": False, "error": "Run not found"}
+        confirmed_run = run
         try:
             config, error = resolve_evaluation_config(
                 session=session,
@@ -49,13 +50,21 @@ def execute_evaluation_batch_submission(
                 config_version=config_version,
                 project_id=project_id,
             )
-            if error:
+
+            def _fail(msg: str) -> dict:
                 update_evaluation_run(
                     session=session,
-                    eval_run=run,
-                    update=EvaluationRunUpdate(status="failed", error_message=error),
+                    eval_run=confirmed_run,
+                    update=EvaluationRunUpdate(status="failed", error_message=msg),
                 )
-                return {"success": False, "error": error}
+                return {"success": False, "error": msg}
+
+            if error or config is None:
+                return _fail(error or "Config could not be resolved")
+
+            provider = config.completion.provider
+            if provider is None:
+                return _fail("Config has no resolvable provider")
 
             langfuse = get_langfuse_client(
                 session=session, org_id=organization_id, project_id=project_id

@@ -1,9 +1,10 @@
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 from uuid import UUID
 
 from langfuse import Langfuse
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
@@ -11,7 +12,7 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
+from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, TraceData
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
@@ -120,7 +121,7 @@ def list_evaluation_runs(
     limit: int = 50,
     offset: int = 0,
     dataset_id: int | None = None,
-) -> list[EvaluationRun]:
+) -> Sequence[EvaluationRun]:
     """
     List all evaluation runs for an organization and project.
 
@@ -146,7 +147,9 @@ def list_evaluation_runs(
         statement = statement.where(EvaluationRun.dataset_id == dataset_id)
 
     statement = (
-        statement.order_by(EvaluationRun.inserted_at.desc()).limit(limit).offset(offset)
+        statement.order_by(col(EvaluationRun.inserted_at).desc())
+        .limit(limit)
+        .offset(offset)
     )
 
     runs = session.exec(statement).all()
@@ -317,7 +320,7 @@ def get_or_fetch_score(
         logger.info(
             f"[get_or_fetch_score] Returning existing score | evaluation_id={eval_run.id}"
         )
-        return eval_run.score
+        return cast(EvaluationScore, eval_run.score)
 
     logger.info(
         f"[get_or_fetch_score] Fetching score from Langfuse | "
@@ -351,11 +354,12 @@ def get_or_fetch_score(
         "traces": langfuse_score.get("traces", []),
     }
 
-    # Update score column using existing helper
+    # Update score column using existing helper.
+    # TypedDict -> dict is invariant, so a cast is needed for the JSONB column.
     update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(score=score),
+        update=EvaluationRunUpdate(score=cast(dict[str, object], score)),
     )
 
     total_traces = len(score.get("traces", []))
@@ -372,7 +376,7 @@ def _upload_score_traces(
     session: Session,
     eval_run_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[TraceData],
 ) -> str | None:
     """Upload per-trace records to S3 for an evaluation run.
 
@@ -415,7 +419,7 @@ def persist_score_traces(
     eval_run_id: int,
     organization_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[TraceData],
 ) -> EvaluationRun | None:
     """Persist the Q&A trace skeleton to S3 and record the ``score_trace_url``
     pointer, WITHOUT touching the ``score`` column (keeps the run score-less
@@ -500,9 +504,10 @@ def save_score(
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
-            db_score = {"summary_scores": summary_score}
-            if score.get("overall") is not None:
-                db_score["overall"] = score["overall"]
+            db_score: EvaluationScore = {"summary_scores": summary_score}
+            overall = score.get("overall")
+            if overall is not None:
+                db_score["overall"] = overall
         else:
             # fallback to store data in db if failed to store in s3
             db_score = score
@@ -511,7 +516,7 @@ def save_score(
             session=session,
             eval_run=eval_run,
             update=EvaluationRunUpdate(
-                score=db_score,
+                score=cast(dict[str, object], db_score),
                 score_trace_url=score_trace_url or None,
             ),
         )
@@ -555,6 +560,8 @@ def group_traces_by_question_id(
 
     for trace in traces:
         question_id = trace.get("question_id")
+        if question_id is None:
+            continue
         if question_id not in groups:
             groups[question_id] = []
         groups[question_id].append(trace)

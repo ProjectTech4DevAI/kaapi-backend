@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.crud import (
@@ -135,7 +136,9 @@ def test_set_credentials_for_google_with_sa_key(db: Session) -> None:
 def test_get_provider_credential(db: Session) -> None:
     """Test retrieving credentials for a specific provider."""
     credentials_create = test_credential_data(db)
-    original_api_key = credentials_create.credential[Provider.OPENAI.value]["api_key"]
+    original_api_key = credentials_create.credential_payloads()[Provider.OPENAI.value][
+        "api_key"
+    ]
 
     project = create_test_project(db)
     set_creds_for_org(
@@ -250,28 +253,17 @@ def test_remove_creds_for_org(db: Session) -> None:
     assert creds == []
 
 
-def test_invalid_provider(db: Session) -> None:
-    """Test handling of invalid provider names."""
-    from app.core.exception_handlers import HTTPException
-
-    project = create_test_project(db)
-
+def test_invalid_provider() -> None:
+    """Unsupported providers are rejected while building the request model."""
     credentials_data = {"invalid_provider": {"api_key": "test-key"}}
-    credentials_create = CredsCreate(
-        is_active=True,
-        credential=credentials_data,
-    )
 
-    with pytest.raises(HTTPException) as exc_info:
-        set_creds_for_org(
-            session=db,
-            creds_add=credentials_create,
-            organization_id=project.organization_id,
-            project_id=project.id,
+    with pytest.raises(ValidationError) as exc_info:
+        CredsCreate(
+            is_active=True,
+            credential=credentials_data,
         )
 
-    assert exc_info.value.status_code == 400
-    assert "Unsupported provider" in exc_info.value.detail
+    assert "Unsupported provider" in str(exc_info.value)
 
 
 def test_duplicate_provider_credentials(db: Session) -> None:
@@ -304,8 +296,6 @@ def test_duplicate_provider_credentials(db: Session) -> None:
 
 def test_langfuse_credential_validation(db: Session) -> None:
     """Test validation of Langfuse credentials structure."""
-    from app.core.exception_handlers import HTTPException
-
     project = create_test_project(db)
 
     # Test with missing required fields
@@ -316,21 +306,14 @@ def test_langfuse_credential_validation(db: Session) -> None:
             # Missing host
         }
     }
-    credentials_create = CredsCreate(
-        is_active=True,
-        credential=invalid_credentials,
-    )
 
-    with pytest.raises(HTTPException) as exc_info:
-        set_creds_for_org(
-            session=db,
-            creds_add=credentials_create,
-            organization_id=project.organization_id,
-            project_id=project.id,
+    with pytest.raises(ValidationError) as exc_info:
+        CredsCreate(
+            is_active=True,
+            credential=invalid_credentials,
         )
 
-    assert exc_info.value.status_code == 400
-    assert "Missing required fields for langfuse" in exc_info.value.detail
+    assert "Missing required fields for langfuse" in str(exc_info.value)
 
     valid_credentials = {
         "langfuse": {
