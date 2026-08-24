@@ -24,3 +24,12 @@ All paths relative to `backend/app/`.
 ## Services / CRUD
 - `crud/user.py`, `crud/organization.py`, `crud/project.py`, `crud/user_project.py`, `crud/api_key.py`, `crud/auth.py`, `crud/onboarding.py`
 - `services/auth.py`
+
+## API contracts
+- `OnboardingRequest.credentials` is a list of single-entry `{Provider: payload}`
+  maps typed against the per-provider credential models in `core/providers.py`
+  (see `modules/platform.md`). Unsupported providers, non-object payloads and
+  missing required fields are rejected at the request boundary (422).
+- `ProjectPublic.settings` is `dict[str, JsonValue]` — free-form JSONB whose
+  writable keys are defined by `ProjectSettingsUpdate` (`PATCH
+  /projects/settings`), currently just `tracing`.
