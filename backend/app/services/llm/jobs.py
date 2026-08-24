@@ -1252,6 +1252,12 @@ def execute_llm_call(
 
     except (Timeout, SoftTimeLimitExceeded):
         raise
+    except HTTPException as e:
+        logger.error(
+            f"[execute_llm_call] HTTP error: {e.detail} | job_id={job_id}",
+            exc_info=True,
+        )
+        return BlockResult(error=str(e.detail), llm_call_id=llm_call_id)
     except Exception as e:
         logger.error(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",
