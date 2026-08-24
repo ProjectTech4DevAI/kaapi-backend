@@ -86,6 +86,7 @@ DEFAULT_TEXT_MODELS: dict[str, str] = {
     "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4.1-mini",
     "google": "gemini-2.5-pro",
+    "google-gcp": "gemini-3.1-pro-preview",
 }
 
 DEFAULT_ANTHROPIC_MAX_TOKENS = 4096

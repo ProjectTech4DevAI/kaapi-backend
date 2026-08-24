@@ -109,7 +109,7 @@ class TestResolveAttachmentsList:
             "gs://b/2.png": "https://signed2",
         }
         provider.get_bulk_signed_urls.assert_called_once_with(
-            ["gs://b/2.png"], expires_in=3600
+            ["gs://b/2.png"], expires_in=None
         )
 
     def test_all_native_skips_provider(self):

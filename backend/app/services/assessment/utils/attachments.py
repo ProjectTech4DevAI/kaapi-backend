@@ -74,10 +74,16 @@ def rewrite_gcs_attachment_urls(
             value = row.get(att.column)
             if not value:
                 continue
-            new_row[att.column] = ", ".join(
-                resolved.get(attachment_url, attachment_url)
-                for attachment_url in split_attachment_urls(value)
-            )
+            rewritten_urls: list[str] = []
+            for attachment_url in split_attachment_urls(value):
+                target = resolved.get(attachment_url)
+                if target is None and is_gcs_uri(attachment_url):
+                    logger.warning(
+                        "[rewrite_gcs_attachment_urls] Unresolved gs:// attachment | column=%s",
+                        att.column,
+                    )
+                rewritten_urls.append(target or attachment_url)
+            new_row[att.column] = ", ".join(rewritten_urls)
         rewritten.append(new_row)
     return rewritten
 

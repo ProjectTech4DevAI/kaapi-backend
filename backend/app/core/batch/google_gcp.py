@@ -56,7 +56,7 @@ class VertexBatchProvider(BatchProvider):
         {"request": {"contents": [{"parts": [...], "role": "user"}]}}
     """
 
-    DEFAULT_MODEL = "gemini-2.5-pro"
+    DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
     def __init__(
         self,

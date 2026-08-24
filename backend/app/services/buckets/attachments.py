@@ -4,7 +4,6 @@ from enum import Enum
 
 from sqlmodel import Session
 
-from app.core.config import settings
 from app.models.llm.constants import KaapiProvider, Provider
 from app.services.buckets.providers.registry import get_bucket_provider
 
@@ -55,9 +54,6 @@ def resolve_attachments(
     Path-B URIs are bulk-signed with a single bucket-provider client per call.
     Returns a ``str`` for a single input, a ``uri -> url`` dict for a list.
     """
-    if expires_in is None:
-        expires_in = settings.SIGNED_URL_EXPIRY_SECONDS
-
     is_single = isinstance(source, str)
     uris = [source] if is_single else list(source)
 

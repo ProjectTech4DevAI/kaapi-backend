@@ -295,15 +295,23 @@ class TestGoogleGCPProvider:
         assert speech["languageCode"] == "en-US"
 
     # ── execute dispatcher ───────────────────────────────────────────────────
-    def test_text_completion_is_rejected(self, provider, query):
+    def test_text_completion_happy_path(self, provider, query):
         config = NativeCompletionConfig(
-            provider="google-native",
+            provider="google-gcp-native",
             type=CompletionType.TEXT,
-            params={"model": "gemini-2.5-flash"},
+            params={"model": "gemini-2.5-flash", "temperature": 0.2},
         )
-        resp, err = provider.execute(config, query, "hello")
-        assert resp is None
-        assert "Unsupported completion type 'text'" in err
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("generated answer")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, "hello")
+
+        assert err is None
+        assert resp.response.output.content.value == "generated answer"
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["contents"][0]["parts"] == [{"text": "hello"}]
+        assert payload["generationConfig"]["temperature"] == 0.2
 
     def test_raw_response_included_when_requested(
         self, provider, stt_config, query, audio_ref
@@ -561,16 +569,22 @@ def test_execute_tts_unsupported_response_format_falls_back_to_wav():
     assert resp.response.output.content.mime_type == "audio/wav"
 
 
-def test_execute_rejects_unsupported_completion_type():
+def test_execute_text_forwards_system_instruction():
     provider = _provider()
     config = NativeCompletionConfig(
-        provider="google-native",
+        provider="google-gcp-native",
         type=CompletionType.TEXT,
-        params={"model": "gemini-2.5-flash"},
+        params={"model": "gemini-2.5-flash", "instructions": "be terse"},
     )
-    resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
-    assert resp is None
-    assert "Unsupported completion type" in err
+    with patch(
+        "app.services.llm.providers.google_gcp.requests.post",
+        return_value=_mock_http_ok(_stt_response("ok")),
+    ) as mock_post:
+        resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+
+    assert err is None
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["systemInstruction"] == {"parts": [{"text": "be terse"}]}
 
 
 def test_execute_tts_language_is_forwarded():

@@ -280,6 +280,24 @@ def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, 
     return blob.assessment.provider, blob.assessment.params["model"]
 
 
+def _google_gcp_credential(
+    *, session: Session, organization_id: int, project_id: int
+) -> dict[str, Any]:
+    """Vertex needs the SA key + bucket; a missing credential is a client-fixable 404."""
+    cred = get_provider_credential(
+        session=session,
+        provider=LLMProvider.GOOGLE_GCP,
+        project_id=project_id,
+        org_id=organization_id,
+    )
+    if not isinstance(cred, dict):
+        raise HTTPException(
+            status_code=404,
+            detail="google-gcp credentials not configured for this project",
+        )
+    return cred
+
+
 def _submit_provider_batch(
     *,
     session: Session,
@@ -327,17 +345,11 @@ def _submit_provider_batch(
             rows, text_columns, attachments, prompt, mapped, row_indices
         )
         if provider_name == LLMProvider.GOOGLE_GCP:
-            cred = get_provider_credential(
+            cred = _google_gcp_credential(
                 session=session,
-                provider="google-gcp",
+                organization_id=organization_id,
                 project_id=project_id,
-                org_id=organization_id,
             )
-            if not isinstance(cred, dict):
-                raise HTTPException(
-                    status_code=404,
-                    detail="google-gcp credentials not configured for this project",
-                )
             provider = VertexBatchProvider.from_credentials(cred, model=model)
             config = {"display_name": description}  # Vertex uses a bare model id
         else:
@@ -397,17 +409,11 @@ def _build_batch_provider(
         )
     if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
         if provider_name == LLMProvider.GOOGLE_GCP:
-            cred = get_provider_credential(
+            cred = _google_gcp_credential(
                 session=session,
-                provider="google-gcp",
+                organization_id=organization_id,
                 project_id=project_id,
-                org_id=organization_id,
             )
-            if not isinstance(cred, dict):
-                raise HTTPException(
-                    status_code=404,
-                    detail="google-gcp credentials not configured for this project",
-                )
             return VertexBatchProvider.from_credentials(cred)
         gemini = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id

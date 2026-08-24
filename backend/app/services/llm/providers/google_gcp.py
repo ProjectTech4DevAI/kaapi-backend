@@ -25,10 +25,12 @@ from app.models.llm import (
 )
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     CompletionType,
 )
+from app.models.llm.request import ImageContent, PDFContent
 from app.models.llm.response import AudioContent, AudioOutput
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
@@ -106,9 +108,8 @@ class GoogleGCPClient:
 class GoogleGCPProvider(BaseProvider):
     """Google GCP provider using REST + API key auth.
 
-    Supports STT (audio → text) and TTS (text → audio) via Gemini multimodal
-    models on GCP. Text-only completions are routed through the standard
-    `google` provider.
+    Supports TEXT (prompt → text), STT (audio → text) and TTS (text → audio)
+    via Gemini multimodal models on GCP.
     """
 
     def __init__(self, client: GoogleGCPClient):
@@ -655,6 +656,110 @@ class GoogleGCPProvider(BaseProvider):
         )
         return llm_response, None
 
+    @staticmethod
+    def _format_parts_rest(parts: list[ContentPart]) -> list[dict[str, Any]]:
+        """Map resolved content parts to REST generateContent ``parts`` (camelCase)."""
+        items: list[dict[str, Any]] = []
+        for part in parts:
+            if isinstance(part, TextContent):
+                items.append({"text": part.value})
+            elif isinstance(part, (ImageContent, PDFContent)):
+                if part.format == "base64":
+                    items.append(
+                        {"inlineData": {"data": part.value, "mimeType": part.mime_type}}
+                    )
+                else:
+                    items.append(
+                        {
+                            "fileData": {
+                                "fileUri": part.value,
+                                "mimeType": part.mime_type,
+                            }
+                        }
+                    )
+        return items
+
+    def _execute_text(
+        self,
+        completion_config: NativeCompletionConfig,
+        resolved_input: str | list[ContentPart] | MultiModalInput,
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        """Execute a text completion via Google GCP generateContent.
+
+        HTTP / network errors return pre-logged from ``_post()``; this method
+        only handles payload building and response-shape validation.
+        """
+        provider = completion_config.provider
+        params = completion_config.params
+        model = params.get("model") or DEFAULT_TEXT_MODELS["google-gcp"]
+
+        if isinstance(resolved_input, MultiModalInput):
+            parts = self._format_parts_rest(resolved_input.parts)
+        elif isinstance(resolved_input, list):
+            parts = self._format_parts_rest(resolved_input)
+        else:
+            parts = [{"text": resolved_input}]
+
+        instructions = params.get("instructions")
+        temperature = params.get("temperature")
+        max_output_tokens = params.get("max_output_tokens")
+
+        generation_config: dict[str, Any] = {}
+        if temperature is not None:
+            generation_config["temperature"] = temperature
+        if max_output_tokens is not None:
+            generation_config["maxOutputTokens"] = max_output_tokens
+
+        payload: dict[str, Any] = {"contents": [{"role": "user", "parts": parts}]}
+        if generation_config:
+            payload["generationConfig"] = generation_config
+        if instructions:
+            payload["systemInstruction"] = {"parts": [{"text": instructions}]}
+
+        data, err = self._post(
+            model, payload, log_context=f"provider={provider}, type=text"
+        )
+        if err:
+            return None, err
+
+        try:
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            error_message = (
+                "[GOOGLE_GCP] Text response is missing generated content. Google "
+                "GCP returned a 200 response but the expected "
+                "candidates[0].content.parts[0].text path is absent — this "
+                "typically means the response was blocked by safety filters or "
+                "truncated by token limits. Review the prompt and safety "
+                "settings, then retry."
+            )
+            logger.warning(
+                f"[GoogleGCPProvider._execute_text] {error_message} | "
+                f"provider={provider}, model={model}, response_id={data.get('responseId')}"
+            )
+            return None, error_message
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=data.get("responseId")
+                or f"google-gcp-{uuid.uuid4().hex}",
+                model=data.get("modelVersion") or model,
+                provider=provider,
+                output=TextOutput(content=TextContent(value=text)),
+            ),
+            usage=self._extract_usage(data),
+        )
+
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = data
+
+        logger.info(
+            f"[GoogleGCPProvider._execute_text] Generated text | "
+            f"provider={provider}, model={model}"
+        )
+        return llm_response, None
+
     def execute(
         self,
         completion_config: NativeCompletionConfig,
@@ -665,6 +770,12 @@ class GoogleGCPProvider(BaseProvider):
         provider = completion_config.provider
         completion_type = completion_config.type
         try:
+            if completion_type == CompletionType.TEXT:
+                return self._execute_text(
+                    completion_config=completion_config,
+                    resolved_input=resolved_input,
+                    include_provider_raw_response=include_provider_raw_response,
+                )
             if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
@@ -679,8 +790,8 @@ class GoogleGCPProvider(BaseProvider):
                 )
             error_message = (
                 f"[KAAPI] Unsupported completion type '{completion_type}' for "
-                f"google-gcp provider. Google GCP supports 'stt' and 'tts' only; "
-                f"use the 'google-aistudio' provider for text completions."
+                f"google-gcp provider. Google GCP supports 'text', 'stt', and "
+                f"'tts' only."
             )
             logger.warning(
                 f"[GoogleGCPProvider.execute] {error_message} | provider={provider}"
