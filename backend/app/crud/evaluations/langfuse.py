@@ -282,10 +282,6 @@ def update_traces_with_cosine_scores(
         else:
             value = score_item.get("cosine_similarity")
             if value is None:
-                logger.warning(
-                    "[update_traces_with_cosine_scores] "
-                    f"Score item missing cosine_similarity, skipping | trace_id={trace_id}"
-                )
                 continue
             comment = COSINE_SCORE_COMMENT
 
