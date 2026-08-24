@@ -108,13 +108,10 @@ class OnboardingRequest(SQLModel):
                     "Credential must have exactly one provider key like {'openai': {...}}."
                 )
 
-            (provider,) = item.keys()
+            (provider, payload) = next(iter(item.items()))
+            canonical_provider = validate_provider(provider).value
             parsed.append(
-                {
-                    validate_provider(provider).value: parse_provider_credentials(
-                        provider, item[provider]
-                    )
-                }
+                {canonical_provider: parse_provider_credentials(provider, payload)}
             )
 
         return parsed
