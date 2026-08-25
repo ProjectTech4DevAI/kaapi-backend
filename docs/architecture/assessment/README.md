@@ -36,7 +36,7 @@ You never set a "mode". Kaapi looks at your input and decides:
 | Method | When | Input shape | Status |
 |---|---|---|---|
 | **BATCH** | Many items at once | `data` is a list of rows | ✅ Available |
-| **RESPONSE** | A single item, fast | a single `query` | 🚧 WIP (returns `501` today) |
+| **RESPONSE** | A single item, fast | a single item's `attachments` (no `data`) | 🚧 WIP (returns `501` today) |
 
 This guide covers **BATCH**, the method that is live.
 

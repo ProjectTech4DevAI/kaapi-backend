@@ -20,8 +20,7 @@ https://drive.google.com/drive/folders/1BCaauUuXr9DaZTWI-_-x101SDT4ktwp5?usp=sha
 | `config` | object | ✅ | which saved config version to run |
 | `config.id` | UUID | ✅ | config id (must be tagged `ASSESSMENT`) |
 | `config.version` | int ≥ 1 | ✅ | config version to pin |
-| `input` | object | ✅ | a `data` list ⇒ BATCH; a bare `query` ⇒ RESPONSE (501) |
-| `input.query` | string (non-empty) | ✅ | template; `{column}` placeholders filled per row |
+| `input` | object | ✅ | a `data` list ⇒ BATCH; `attachments` only (no `data`) ⇒ RESPONSE (501) |
 | `input.data` | array (≥ 1) | ✅ | rows; each row is a flat `{ column: string }` object |
 | `callback_url` | URL (**HTTPS**) | ✅ | webhook the result is POSTed to |
 | `request_metadata` | object | optional | echoed back unchanged in the result |
@@ -38,7 +37,6 @@ Rules:
 {
   "config": { "id": "a9015dbf-…", "version": 1 },
   "input": {
-    "query": "Grade {answer_sheet} for submission {submission_id}.",
     "data": [
       { "submission_id": "s1", "answer_sheet": "https://cdn.example.com/s1.jpg" }
     ]
@@ -50,19 +48,22 @@ Rules:
 
 ### Building the batch input
 
-The `input` object is built from your configuration's `input_schema`:
+The `input` object carries only your rows; the prompt template lives in the config
+(`config_blob.assessment.params.submission`), not in the request. Each row's keys
+match the config's top-level `input_schema`:
 
 1. **One object per item** goes in `input.data`. Each object's keys are the column
    names declared in the config's `input_schema`, and the values are strings.
 2. **Attachment columns** (`image` / `pdf`) take a URL string; text columns take
    plain text.
-3. **`input.query`** is a template. Any `{column}` placeholder is replaced with
-   that row's value at grading time, so one template applies to every row.
+3. **The prompt is the config's `submission` template.** Any `{column}` placeholder
+   in it is replaced with that row's value at grading time, so one template applies
+   to every row. The request no longer carries a `query`.
 4. **Match the schema exactly** — every declared column present, no extra columns.
 
 Example: for `input_schema = { submission_id: text, answer_sheet: image(url) }`,
 each row is `{ "submission_id": "...", "answer_sheet": "https://..." }` and the
-`query` can reference `{submission_id}` and `{answer_sheet}`.
+config's `submission` template can reference `{submission_id}` and `{answer_sheet}`.
 
 ---
 
@@ -122,7 +123,6 @@ Delivered once, on completion.
 |---|---|---|
 | `output.assessment` | object \| string \| null | your `json_output_schema` filled in; string for free-text; `null` if gated out / failed |
 | `output.pre_filter.topic_relevance` | `{verdict: bool, reasoning: string}` \| null | null if not configured |
-| `output.pre_filter.duplicate_detection` | `{verdict: bool, reasoning: string}` \| null | null if not configured |
 | `error` | string \| null | per-row error |
 
 ```json
@@ -173,5 +173,5 @@ Delivered once, on completion.
 |---|---|
 | `422` | invalid body, or a row doesn't match `input_schema`, or a non-HTTPS/private `callback_url` |
 | `404` | config id not found |
-| `501` | RESPONSE-shaped input (single `query`) — WIP |
+| `501` | RESPONSE-shaped input (`attachments` only, no `data`) — WIP |
 | `503` | failed to dispatch for processing (retry) |

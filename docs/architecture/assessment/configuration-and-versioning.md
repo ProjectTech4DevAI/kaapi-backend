@@ -32,19 +32,22 @@ tag = ASSESSMENT
 
 ## The shape (`config_blob`)
 
-An `ASSESSMENT` config has two parts:
+An `ASSESSMENT` config has three parts:
 
 ```json
 {
   "name": "answer-sheet grader",
   "tag": "ASSESSMENT",
   "config_blob": {
-    "pre_filters": { "...": "optional checks before grading" },
-    "assessment":  { "...": "the grading call (required)" }
+    "input_schema": { "...": "the columns you will submit (required)" },
+    "pre_filters":  { "...": "optional checks before grading" },
+    "assessment":   { "...": "the grading call (required)" }
   }
 }
 ```
 
+- **`input_schema`** (required) — the columns every submitted row will have. It is
+  a top-level field on `config_blob` (a sibling of `pre_filters` and `assessment`).
 - **`assessment`** (required) — the grading call.
 - **`pre_filters`** (optional) — quick checks that run before grading.
 
@@ -60,7 +63,7 @@ The grading call.
 | `type` | always `"text"` |
 | `params.model` | the model id, e.g. `gpt-4o` |
 | `params.instructions` | the **rubric** — how to grade (system prompt) |
-| `params.input_schema` | **required** — the columns you will submit, and their types |
+| `params.submission` | **required** — the per-row prompt template; `{column}` placeholders are filled from each row |
 | `params.json_output_schema` | the **result shape** returned per item |
 
 ```json
@@ -70,19 +73,25 @@ The grading call.
   "params": {
     "model": "gpt-4o",
     "instructions": "Grade each section out of 25 against the rubric and give brief feedback.",
-    "input_schema": { "...": "see Component 2" },
+    "submission": "Grade {answer_sheet} for submission {submission_id}.",
     "json_output_schema": { "...": "see Component 3" }
   }
 }
 ```
 
+`submission` is **mandatory** and must be non-empty. Every `{column}` it references
+must be a column declared in the top-level `input_schema` (see Component 2) — this
+is checked when you save the config, so a placeholder for an unknown column is
+rejected at save time.
+
 ---
 
 ## Component 2 — `input_schema` (the columns)
 
-`input_schema` declares the columns every submitted row will have. It is
-**mandatory** and must list at least one column; every column must declare a
-`type`.
+`input_schema` is a **top-level** field on `config_blob` (a sibling of `assessment`
+and `pre_filters`, not nested under `assessment.params`). It declares the columns
+every submitted row will have. It is **mandatory** and must list at least one
+column; every column must declare a `type`.
 
 | `type` | Value in a row |
 |---|---|
@@ -131,7 +140,6 @@ its own model and criteria.
 | Pre-filter | Purpose | Default on a "no" |
 |---|---|---|
 | `topic_relevance` | Is the item on-topic / worth grading? | Skips grading for that item (`stop_on_fail: true`) |
-| `duplicate_detection` (WIP) | Is the item a duplicate? | Records only, still grades (`stop_on_fail: false`) |
 
 Each pre-filter carries:
 
@@ -140,8 +148,8 @@ Each pre-filter carries:
 | `provider` | `openai` / `google` / `anthropic` (defaults to `openai`) |
 | `params.model` | the model for this check (a cheaper one is fine) |
 | `params.instructions` | **required** — the criteria for the check |
+| `params.submission` | *(optional)* a per-row prompt template for this check; `{column}` placeholders resolve against the top-level `input_schema` |
 | `stop_on_fail` | `true` = a "no" skips grading for that item; `false` = record only |
-| `knowledge_base_id` | *(duplicate_detection only)* the corpus to compare against |
 
 ```json
 "pre_filters": {

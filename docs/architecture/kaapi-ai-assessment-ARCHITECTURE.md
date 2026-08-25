@@ -16,7 +16,7 @@ The method is **inferred from the input shape**, never passed as a flag:
 | Method | Input | Status |
 |---|---|---|
 | **BATCH** | a `data` list of rows | ✅ shipped |
-| **RESPONSE** | a single `query` | 🚧 WIP — returns `501` |
+| **RESPONSE** | a single item's `attachments` (no `data`) | 🚧 WIP — returns `501` |
 
 This document describes the **BATCH** path (the one that is built) and notes the
 RESPONSE path as WIP. Grading runs on a **provider Batch API** — OpenAI, Google
@@ -100,7 +100,7 @@ backend/app/
 └── models/
     ├── assessment/assessment_api.py   request/response models + BatchRunState (the bag)
     ├── assessment/assessment.py       Assessment · AssessmentRun tables · enums
-    └── config/assessment_blob.py      AssessmentConfigBlob (pre_filters + assessment)
+    └── config/assessment_blob.py      AssessmentConfigBlob (input_schema + pre_filters + assessment)
 ```
 
 `★` = read first: [submission.py](../../backend/app/services/assessment/api/submission.py)
@@ -145,13 +145,17 @@ is set up in migration `078_refactor_assessment_tables`.
 A run resolves one `ASSESSMENT`-tagged config into an `AssessmentConfigBlob`
 ([assessment_blob.py](../../backend/app/models/config/assessment_blob.py)):
 
+- **`input_schema`** (required, top-level) — the typed submission columns
+  (`{type, format}` per column). It is a sibling of `assessment` and `pre_filters`
+  on the blob, **mandatory** and non-empty. Every `{column}` placeholder in any
+  `submission` template must resolve against it — enforced at config-save time.
 - **`assessment`** (required) — `provider` (`openai` / `google` / `anthropic`),
   `type: text`, and `params`: `model`, `instructions` (the rubric), a **mandatory**
-  typed `input_schema` (the submission columns), and an optional
+  non-empty `submission` (the per-row `{column}` prompt template), and an optional
   `json_output_schema` (the structured result shape).
-- **`pre_filters`** (optional) — `topic_relevance` and/or `duplicate_detection`.
-  Each is its own LLM call with its own `provider` + `params` (criteria live in
-  `params.instructions`, **mandatory**) and a `stop_on_fail` flag.
+- **`pre_filters`** (optional) — `topic_relevance`. It is its own LLM call with its
+  own `provider` + `params` (criteria live in `params.instructions`, **mandatory**;
+  an optional `params.submission` template) and a `stop_on_fail` flag.
 
 See **[configuration-and-versioning.md](assessment/configuration-and-versioning.md)** for the authoring guide.
 
@@ -167,7 +171,7 @@ through it like this:
 ```mermaid
 flowchart LR
     Rows["all rows"] --> Gate{"GATE stage\n(e.g. topic relevance)"}
-    Gate -->|verdict pass| PT["PASS_THROUGH stage\n(e.g. duplicate detection)\nannotate, drop nothing"]
+    Gate -->|verdict pass| PT["PASS_THROUGH stage\n(a record-only pre-filter)\nannotate, drop nothing"]
     Gate -->|verdict fail| Gated["gate_passed = false"]
     PT --> Assess["ASSESSMENT stage\ngrade gate-passed rows only"]
     Assess --> Res["AssessmentBatchResult\none item per row"]
@@ -176,7 +180,7 @@ flowchart LR
 
 - **GATE** (`stop_on_fail: true`, e.g. topic relevance) — runs on every row; a
   failing verdict marks that row `gate_passed = false`.
-- **PASS_THROUGH** (`stop_on_fail: false`, e.g. duplicate detection) — runs on
+- **PASS_THROUGH** (`stop_on_fail: false`, a record-only pre-filter) — runs on
   every row, records a verdict, drops nothing.
 - **ASSESSMENT** — always last; batches **only** `gate_passed` rows. Gate-failed
   rows carry `assessment: null` plus their pre-filter verdicts into the result.
@@ -241,15 +245,15 @@ pre-filter verdicts, and counts.
 | **Non-transient tick error** | A bad/deleted config version or a provider/credential/network error during submit routes through `_fail` → status `FAILED` + a failure webhook. |
 | **Transient poll error** | A provider/network hiccup while polling just retries next tick — a running batch is never failed for a transient error. |
 | **Idempotent redelivery** | State is keyed off `stage_status`, so a duplicate Celery delivery re-polls or re-submits the same stage safely. |
-| **Per-row validation** | Rows are validated against `input_schema` at submit; a missing/extra column or a non-URL attachment fails `422`, naming the row. |
+| **Per-row validation** | Rows are validated against `input_schema` at submit; a missing/extra column or a non-URL attachment fails `422`, naming the row. Template placeholders are validated earlier, at config-save: every `{column}` in any `submission` must resolve against `input_schema`, or the save is rejected. |
 
 ---
 
 ## 8. RESPONSE method 🚧 (WIP)
 
-A single-item, low-latency path (one `query` → one `AssessmentResult`, optionally
-via an LLM-chain when pre-filters are configured) is planned. It is not built —
-the route returns `501` for RESPONSE-shaped input. See the
+A single-item, low-latency path (one item's `attachments` → one `AssessmentResult`,
+optionally via an LLM-chain when pre-filters are configured) is planned. It is not
+built — the route returns `501` for RESPONSE-shaped input. See the
 [planned RESPONSE flow](assessment/assets/response-flow.png).
 
 ---
@@ -260,5 +264,3 @@ the route returns `501` for RESPONSE-shaped input. See the
   guide, config authoring, and how to run an assessment.
 - `kaapi-llm-call-ARCHITECTURE.md` — the production single-call endpoint whose
   versioned config store backs assessment configs (`tag=ASSESSMENT`).
-- `kaapi-knowledge-base-ARCHITECTURE.md` — File Search vector stores used by the
-  duplicate-detection pre-filter (WIP).
