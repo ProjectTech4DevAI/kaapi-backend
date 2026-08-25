@@ -28,13 +28,11 @@ class BaseBucketProvider(ABC):
         raise NotImplementedError("Bucket providers must implement create_client")
 
     @abstractmethod
-    def get_signed_url(self, uri: str, expires_in: int | None = None) -> str:
+    def get_signed_url(self, uri: str, expires_in: int) -> str:
         """Generate a time-limited signed URL for a single object."""
         raise NotImplementedError("Bucket providers must implement get_signed_url")
 
-    def get_bulk_signed_urls(
-        self, uris: list[str], expires_in: int | None = None
-    ) -> dict[str, str]:
+    def get_bulk_signed_urls(self, uris: list[str], expires_in: int) -> dict[str, str]:
         """Sign many object URIs, reusing this provider's single client."""
         signed: dict[str, str] = {}
         for uri in uris:

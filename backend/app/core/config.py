@@ -117,9 +117,7 @@ class Settings(BaseSettings):
     # Used by the registry fallback when a project has no ``google`` row.
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
-    # Signed-URL lifetime for private bucket attachments (Path B); default 1h.
-    SIGNED_URL_EXPIRY_SECONDS: int = 3600
-    # Hard cap on signed-URL lifetime (24h) enforced by bucket providers.
+    # A batch can run for hours; sign attachment URLs for 24h so they don't expire mid-run.
     MAX_SIGNED_URL_EXPIRY_SECONDS: int = 86400
 
     # RabbitMQ configuration for Celery broker

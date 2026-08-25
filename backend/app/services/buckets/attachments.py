@@ -44,7 +44,7 @@ def resolve_attachments(
     llm_provider: KaapiProvider,
     project_id: int,
     organization_id: int,
-    expires_in: int | None = None,
+    expires_in: int,
     bucket_provider_type: str = DEFAULT_BUCKET_PROVIDER,
 ) -> str | dict[str, str]:
     """Make attachment(s) LLM-reachable. Accepts a single URL or a list.

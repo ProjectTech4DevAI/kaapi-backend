@@ -8,10 +8,8 @@ from urllib.parse import urlparse
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
 
-from app.core.config import settings
 from app.core.cloud.storage import GCS_SCOPES, CloudStorageError
 from app.services.buckets.providers.base import BaseBucketProvider
-from app.services.llm.providers.google_gcp import _load_platform_sa_info
 
 logger = logging.getLogger(__name__)
 
@@ -37,23 +35,24 @@ class GCSBucketProvider(BaseBucketProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> GCSClient:
-        """Build a signing-capable GCS client with BYOK-over-settings precedence."""
+        """Build a signing-capable GCS client from the given credentials."""
         credentials = credentials or {}
-        gcs_bucket = credentials.get("gcs_bucket") or settings.GCS_AUDIO_BUCKET
-        sa_info = credentials.get("sa_key") or _load_platform_sa_info()
+        sa_info = credentials.get("sa_key")
+        gcs_bucket = credentials.get("gcs_bucket")
 
-        source = "byok" if credentials.get("sa_key") else "platform"
-        logger.info(
-            f"[GCSBucketProvider.create_client] gcs creds | source={source}, "
-            f"bucket={gcs_bucket}"
-        )
-
-        # Signing needs the SA private key, so a missing sa_info is fatal.
         if not sa_info:
             raise ValueError(
-                "GCS bucket provider requires a service-account key (sa_key) to "
-                "sign URLs; none configured for this project or platform default."
+                "GCS bucket provider requires a service-account key (sa_key) in "
+                "the credentials to sign URLs."
             )
+        if not gcs_bucket:
+            raise ValueError(
+                "GCS bucket provider requires a gcs_bucket in the credentials."
+            )
+
+        logger.info(
+            f"[GCSBucketProvider.create_client] gcs creds | bucket={gcs_bucket}"
+        )
 
         creds = service_account.Credentials.from_service_account_info(
             sa_info, scopes=list(GCS_SCOPES)
@@ -74,9 +73,7 @@ class GCSBucketProvider(BaseBucketProvider):
             raise ValueError(f"GCS URI '{uri}' is missing an object key.")
         return parsed.netloc, key
 
-    def get_signed_url(self, uri: str, expires_in: int | None = None) -> str:
-        if expires_in is None:
-            expires_in = settings.SIGNED_URL_EXPIRY_SECONDS
+    def get_signed_url(self, uri: str, expires_in: int) -> str:
         if expires_in < 1:
             raise ValueError(
                 f"Signed-URL expiry must be at least 1 second, got {expires_in}."
@@ -105,13 +102,8 @@ class GCSBucketProvider(BaseBucketProvider):
         )
         return signed_url
 
-    def get_bulk_signed_urls(
-        self, uris: list[str], expires_in: int | None = None
-    ) -> dict[str, str]:
+    def get_bulk_signed_urls(self, uris: list[str], expires_in: int) -> dict[str, str]:
         """Sign each URI reusing this provider's single client."""
-        if expires_in is None:
-            expires_in = settings.SIGNED_URL_EXPIRY_SECONDS
-
         logger.info(
             f"[GCSBucketProvider.get_bulk_signed_urls] Signing batch | "
             f"count={len(uris)}, expires_in={expires_in}"

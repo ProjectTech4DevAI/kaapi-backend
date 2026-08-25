@@ -56,6 +56,7 @@ class TestResolveAttachmentsSingle:
                 llm_provider="openai",
                 project_id=1,
                 organization_id=2,
+                expires_in=86400,
             )
         assert url == "https://example.com/img.png"
         mock_get.assert_not_called()
@@ -68,6 +69,7 @@ class TestResolveAttachmentsSingle:
                 llm_provider="google-gcp",
                 project_id=1,
                 organization_id=2,
+                expires_in=86400,
             )
         assert url == "gs://bucket/key.png"
         mock_get.assert_not_called()
@@ -103,13 +105,14 @@ class TestResolveAttachmentsList:
                 llm_provider="anthropic",
                 project_id=1,
                 organization_id=2,
+                expires_in=86400,
             )
         assert result == {
             "https://x/1.png": "https://x/1.png",
             "gs://b/2.png": "https://signed2",
         }
         provider.get_bulk_signed_urls.assert_called_once_with(
-            ["gs://b/2.png"], expires_in=None
+            ["gs://b/2.png"], expires_in=86400
         )
 
     def test_all_native_skips_provider(self):
@@ -120,6 +123,7 @@ class TestResolveAttachmentsList:
                 llm_provider="google-gcp",
                 project_id=1,
                 organization_id=2,
+                expires_in=86400,
             )
         assert result == {
             "gs://b/1.wav": "gs://b/1.wav",

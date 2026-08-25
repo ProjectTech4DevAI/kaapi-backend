@@ -24,18 +24,10 @@ def _make_provider() -> tuple[GCSBucketProvider, MagicMock]:
 
 
 class TestCreateClient:
-    def test_byok_credentials_win_over_settings(self, monkeypatch):
-        monkeypatch.setattr(
-            "app.services.buckets.providers.gcs.settings.GCS_AUDIO_BUCKET",
-            "platform-bucket",
-        )
+    def test_uses_byok_credentials(self):
         byok_sa = {"project_id": "byok-project"}
 
         with (
-            patch(
-                "app.services.buckets.providers.gcs._load_platform_sa_info",
-                return_value={"project_id": "platform-project"},
-            ),
             patch(
                 "app.services.buckets.providers.gcs.service_account."
                 "Credentials.from_service_account_info"
@@ -52,39 +44,17 @@ class TestCreateClient:
             project="byok-project", credentials=mock_from_info.return_value
         )
 
-    def test_falls_back_to_settings_and_platform_sa(self, monkeypatch):
-        monkeypatch.setattr(
-            "app.services.buckets.providers.gcs.settings.GCS_AUDIO_BUCKET",
-            "platform-bucket",
-        )
-
-        with (
-            patch(
-                "app.services.buckets.providers.gcs._load_platform_sa_info",
-                return_value={"project_id": "platform-project"},
-            ),
-            patch(
-                "app.services.buckets.providers.gcs.service_account."
-                "Credentials.from_service_account_info"
-            ) as mock_from_info,
-            patch("app.services.buckets.providers.gcs.gcs.Client"),
-        ):
-            client = GCSBucketProvider.create_client({})
-
-        assert client.default_bucket == "platform-bucket"
-        mock_from_info.assert_called_once_with(
-            {"project_id": "platform-project"}, scopes=list(GCS_SCOPES)
-        )
-
     def test_missing_sa_info_raises(self):
-        with patch(
-            "app.services.buckets.providers.gcs._load_platform_sa_info",
-            return_value=None,
-        ):
-            with pytest.raises(ValueError) as exc_info:
-                GCSBucketProvider.create_client({})
+        with pytest.raises(ValueError) as exc_info:
+            GCSBucketProvider.create_client({"gcs_bucket": "b"})
 
         assert "sa_key" in str(exc_info.value)
+
+    def test_missing_bucket_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            GCSBucketProvider.create_client({"sa_key": {"project_id": "p"}})
+
+        assert "gcs_bucket" in str(exc_info.value)
 
 
 class TestParseGcsUri:
@@ -142,7 +112,7 @@ class TestGetBulkSignedUrls:
         ]
 
         result = provider.get_bulk_signed_urls(
-            ["gs://bucket/a.wav", "gs://bucket/b.wav"]
+            ["gs://bucket/a.wav", "gs://bucket/b.wav"], expires_in=86400
         )
 
         assert result == {
