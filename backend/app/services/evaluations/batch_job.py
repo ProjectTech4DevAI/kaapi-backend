@@ -13,6 +13,7 @@ from app.crud.evaluations import (
 )
 from app.crud.evaluations.core import update_evaluation_run
 from app.models.evaluation import EvaluationRunUpdate
+from app.services.llm.mappers import kaapi_params_as_dict
 from app.utils import get_langfuse_client
 
 logger = logging.getLogger(__name__)
@@ -72,8 +73,8 @@ def execute_evaluation_batch_submission(
                 langfuse=langfuse,
                 session=session,
                 eval_run=run,
-                params=config.completion.params,
-                provider=provider,
+                params=kaapi_params_as_dict(config.completion.params),
+                provider=config.completion.provider,
             )
             return {"success": True, "batch_job_id": run.batch_job_id}
         except (Timeout, SoftTimeLimitExceeded):
