@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
-# Retrieve projects
 @router.get(
     "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
@@ -55,7 +54,7 @@ def read_projects(
         True,
         description="Filter by active status. Pass false to list soft-deleted projects.",
     ),
-):
+) -> APIResponse[list[ProjectPublic]]:
     filters = [Project.is_active.is_(is_active)]
     if search and search.strip():
         filters.append(Project.name.ilike(f"%{search.strip()}%"))
@@ -77,7 +76,9 @@ def read_projects(
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/create.md"),
 )
-def create_new_project(*, session: SessionDep, project_in: ProjectCreate):
+def create_new_project(
+    *, session: SessionDep, project_in: ProjectCreate
+) -> APIResponse[ProjectPublic]:
     project = create_project(session=session, project_create=project_in)
     return APIResponse.success_response(project)
 
@@ -146,7 +147,7 @@ def update_project_settings_by_id_route(
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/get.md"),
 )
-def read_project(*, session: SessionDep, project_id: int):
+def read_project(*, session: SessionDep, project_id: int) -> APIResponse[ProjectPublic]:
     """
     Retrieve a project by ID.
     """
@@ -163,7 +164,9 @@ def read_project(*, session: SessionDep, project_id: int):
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/update.md"),
 )
-def update_project(*, session: SessionDep, project_id: int, project_in: ProjectUpdate):
+def update_project(
+    *, session: SessionDep, project_id: int, project_in: ProjectUpdate
+) -> APIResponse[ProjectPublic]:
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -228,7 +231,7 @@ def delete_project_endpoint(
     session: SessionDep,
     project_id: int,
     body: DeleteRequest | None = None,
-):
+) -> APIResponse[None]:
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")

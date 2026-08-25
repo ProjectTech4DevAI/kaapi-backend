@@ -395,6 +395,9 @@ def execute_prompt_improvement(
             params = blob.get("completion", {}).get("params", {}) or {}
             current_instructions = params.get("instructions") or ""
 
+            if not run.score_trace_url:
+                raise RuntimeError("trace_download_failed: run has no score_trace_url")
+
             storage = get_cloud_storage(session=session, project_id=project_id)
             traces = load_json_from_object_store(
                 storage=storage, url=run.score_trace_url

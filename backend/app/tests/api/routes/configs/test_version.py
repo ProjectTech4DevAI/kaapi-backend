@@ -526,11 +526,11 @@ def test_create_version_cannot_change_type_from_text_to_stt(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that config type cannot be changed from 'text' to 'stt' in a new version."""
-    from app.models.llm.request import KaapiCompletionConfig, TextLLMParams
+    from app.models.llm.request import TextLLMParams, build_kaapi_completion_config
 
     # Create initial config with type='text'
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o", "temperature": 0.7},
@@ -577,11 +577,11 @@ def test_create_version_same_type_succeeds(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that creating a new version with the same type succeeds."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     # Create initial config with type='text'
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={
@@ -630,11 +630,11 @@ def test_create_version_partial_update_params_only(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test partial update - only updating params, inheriting provider and type."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     # Create initial config
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={
@@ -688,10 +688,10 @@ def test_create_version_cannot_change_type_from_stt_to_tts(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that config type cannot be changed from 'stt' to 'tts' in a new version."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="google",
             type="stt",
             params={"model": "gemini-2.5-pro"},
@@ -733,10 +733,10 @@ def test_create_version_cannot_change_type_from_tts_to_text(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test that config type cannot be changed from 'tts' to 'text' in a new version."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
@@ -778,10 +778,10 @@ def test_create_version_with_kaapi_stt_provider_success(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test creating a new STT version with tweaked params succeeds."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="google",
             type="stt",
             params={"model": "gemini-2.5-pro"},
@@ -824,10 +824,10 @@ def test_create_version_with_kaapi_tts_provider_success(
     user_api_key: TestAuthContext,
 ) -> None:
     """Test creating a new TTS version switching model and voice succeeds."""
-    from app.models.llm.request import KaapiCompletionConfig
+    from app.models.llm.request import build_kaapi_completion_config
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
