@@ -31,6 +31,8 @@ from app.models import APIKey, AuthContext, Organization, Project, User
 
 logger = logging.getLogger(__name__)
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 # JWT configuration
 ALGORITHM = "HS256"
 
