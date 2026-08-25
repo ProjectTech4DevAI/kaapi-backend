@@ -622,8 +622,13 @@ def resolve_model_from_config(
             f"(config_id={eval_run.config_id}, version={eval_run.config_version}): {error}"
         )
 
-    # params is a dict, not a Pydantic model, so use dict access
-    model = config.completion.params.get("model")
+    # Native params are a plain dict; Kaapi params are now a typed submodel.
+    completion_params = config.completion.params
+    model = (
+        completion_params.get("model")
+        if isinstance(completion_params, dict)
+        else getattr(completion_params, "model", None)
+    )
     if not model:
         raise ValueError(
             f"Config for evaluation {eval_run.id} does not contain a 'model' parameter"
