@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider
+from app.core.providers import parse_provider_credentials, validate_provider
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
@@ -181,15 +181,6 @@ def update_creds_for_org(
     if not creds_in.provider or not creds_in.credential:
         raise ValueError("Provider and credential must be provided")
 
-    # Auto-unwrap nested format: {"google": {"api_key": "..."}} -> {"api_key": "..."}
-    # so the same payload shape works for both create and update.
-    credential_data = creds_in.credential
-    if (
-        isinstance(credential_data, dict)
-        and creds_in.provider in credential_data
-        and isinstance(credential_data[creds_in.provider], dict)
-    ):
-        credential_data = credential_data[creds_in.provider]
     provider = creds_in.provider.value
     credential_data = creds_in.credential_payload()
 
@@ -214,7 +205,7 @@ def update_creds_for_org(
         }
 
     try:
-        validate_provider_credentials(creds_in.provider, merged_credential_data)
+        parse_provider_credentials(creds_in.provider, merged_credential_data)
     except ValueError as e:
         logger.warning(
             f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
