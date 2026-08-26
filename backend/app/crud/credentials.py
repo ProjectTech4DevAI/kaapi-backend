@@ -205,10 +205,10 @@ def update_creds_for_org(
         }
 
     try:
-        parse_provider_credentials(creds_in.provider, merged_credential_data)
+        parse_provider_credentials(provider, merged_credential_data)
     except ValueError as e:
         logger.warning(
-            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
+            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
         )
         raise HTTPException(status_code=400, detail=str(e))
 
