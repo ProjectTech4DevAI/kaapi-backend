@@ -15,9 +15,11 @@ from app.core.audio_utils import (
 from app.core.cloud.storage import upload_audio_to_gcs
 from app.core.config import settings
 from app.models.llm import (
+    ImageContent,
     LLMCallResponse,
     LLMResponse,
     NativeCompletionConfig,
+    PDFContent,
     QueryParams,
     TextContent,
     TextOutput,
@@ -108,8 +110,8 @@ class GoogleGCPClient:
 class GoogleGCPProvider(BaseProvider):
     """Google GCP provider using REST + API key auth.
 
-    Supports TEXT (prompt → text), STT (audio → text) and TTS (text → audio)
-    via Gemini multimodal models on GCP.
+    Supports text, STT (audio → text), and TTS (text → audio) via Gemini
+    multimodal models on GCP.
     """
 
     def __init__(self, client: GoogleGCPClient):
@@ -311,6 +313,106 @@ class GoogleGCPProvider(BaseProvider):
             reasoning_tokens=reasoning_tokens,
         )
 
+    @staticmethod
+    def _format_content_parts(parts: list[ContentPart]) -> list[dict]:
+        """Render Kaapi content parts as GCP REST `parts` entries (camelCase
+        keys, matching the generateContent wire format used elsewhere in
+        this file — not the genai SDK's snake_case Python bindings)."""
+        items = []
+        for part in parts:
+            if isinstance(part, TextContent):
+                items.append({"text": part.value})
+            elif isinstance(part, (ImageContent, PDFContent)):
+                if part.format == "base64":
+                    items.append(
+                        {"inlineData": {"mimeType": part.mime_type, "data": part.value}}
+                    )
+                else:
+                    items.append(
+                        {
+                            "fileData": {
+                                "mimeType": part.mime_type,
+                                "fileUri": part.value,
+                            }
+                        }
+                    )
+        return items
+
+    def _execute_text(
+        self,
+        completion_config: NativeCompletionConfig,
+        resolved_input: str | list[ContentPart] | MultiModalInput,
+        include_provider_raw_response: bool = False,
+    ) -> tuple[LLMCallResponse | None, str | None]:
+        """Execute a text completion via Google GCP generateContent."""
+        provider = completion_config.provider
+        params = completion_config.params
+
+        if isinstance(resolved_input, MultiModalInput):
+            gemini_parts = self._format_content_parts(resolved_input.parts)
+        elif isinstance(resolved_input, list):
+            gemini_parts = self._format_content_parts(resolved_input)
+        else:
+            gemini_parts = [{"text": resolved_input}]
+
+        model = params.get("model") or DEFAULT_TEXT_MODELS["google"]
+        instructions = params.get("instructions")
+        temperature = params.get("temperature")
+
+        payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": gemini_parts}],
+        }
+        if instructions:
+            payload["systemInstruction"] = {"parts": [{"text": instructions}]}
+
+        generation_config: dict[str, Any] = {}
+        if temperature is not None:
+            generation_config["temperature"] = temperature
+        if generation_config:
+            payload["generationConfig"] = generation_config
+
+        data, err = self._post(
+            model, payload, log_context=f"provider={provider}, type=text"
+        )
+        if err:
+            return None, err
+
+        try:
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError):
+            error_message = (
+                "[GOOGLE_GCP] Text response is missing generated content. "
+                "Google GCP returned a 200 response but the expected "
+                "candidates[0].content.parts[0].text path is absent — this "
+                "typically means the response was blocked by safety filters "
+                "or truncated. Review the prompt and safety settings, then "
+                "retry."
+            )
+            logger.warning(
+                f"[GoogleGCPProvider._execute_text] {error_message} | "
+                f"provider={provider}, model={model}, response_id={data.get('responseId')}"
+            )
+            return None, error_message
+
+        llm_response = LLMCallResponse(
+            response=LLMResponse(
+                provider_response_id=data.get("responseId")
+                or f"google-gcp-{uuid.uuid4().hex}",
+                model=data.get("modelVersion") or model,
+                provider=provider,
+                output=TextOutput(content=TextContent(value=text)),
+            ),
+            usage=self._extract_usage(data),
+        )
+
+        if include_provider_raw_response:
+            llm_response.provider_raw_response = data
+
+        logger.info(
+            f"[GoogleGCPProvider._execute_text] Generated text response | provider={provider}, model={model}"
+        )
+        return llm_response, None
+
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
@@ -459,7 +561,11 @@ class GoogleGCPProvider(BaseProvider):
                 or f"google-gcp-{uuid.uuid4().hex}",
                 model=data.get("modelVersion") or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=transcript.strip())),
+                output=TextOutput(
+                    content=TextContent(
+                        value=transcript.strip(), language_code=output_language
+                    )
+                ),
             ),
             usage=self._extract_usage(data),
         )
@@ -790,8 +896,7 @@ class GoogleGCPProvider(BaseProvider):
                 )
             error_message = (
                 f"[KAAPI] Unsupported completion type '{completion_type}' for "
-                f"google-gcp provider. Google GCP supports 'text', 'stt', and "
-                f"'tts' only."
+                f"google-gcp provider. Google GCP supports 'text', 'stt' and 'tts'."
             )
             logger.warning(
                 f"[GoogleGCPProvider.execute] {error_message} | provider={provider}"

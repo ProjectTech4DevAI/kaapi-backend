@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from langfuse import Langfuse
@@ -55,6 +55,7 @@ from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
+    EvaluationScore,
     TraceData,
 )
 from app.crud.job import get_batch_job, update_batch_job
@@ -133,7 +134,7 @@ def _extract_batch_error_message(
                 continue
 
         if error_counts:
-            top_error = max(error_counts, key=error_counts.get)
+            top_error = max(error_counts, key=lambda msg: error_counts[msg])
             top_count = error_counts[top_error]
             total = sum(error_counts.values())
             error_msg = f"{top_error} ({top_count}/{total} requests)"
@@ -349,7 +350,10 @@ def build_trace_skeleton(
     """
     traces: list[TraceData] = []
     for result in results:
-        trace_id = trace_id_mapping.get(result.get("item_id"))
+        item_id = result.get("item_id")
+        if item_id is None:
+            continue
+        trace_id = trace_id_mapping.get(item_id)
         if not trace_id:
             continue
         traces.append(
@@ -811,7 +815,10 @@ async def process_completed_embedding_batch(
                 },
                 unscoreable=eval_run.unscoreable or {},
             )
-            full_score = {"summary_scores": summary_scores, "traces": traces}
+            full_score: EvaluationScore = {
+                "summary_scores": summary_scores,
+                "traces": traces,
+            }
             saved = save_score(
                 eval_run_id=eval_run.id,
                 organization_id=eval_run.organization_id,
@@ -820,7 +827,7 @@ async def process_completed_embedding_batch(
             )
             if saved is not None:
                 eval_run = saved
-                eval_run.score = full_score
+                eval_run.score = cast(dict[str, Any], full_score)
             logger.info(
                 f"[process_completed_embedding_batch] {log_prefix} Persisted "
                 f"durable trace unit | traces={len(traces)}"
@@ -1009,7 +1016,7 @@ async def check_and_process_evaluation(
                 and status_result.get("error_file_id")
             ):
                 error_msg = _extract_batch_error_message(
-                    provider=provider,
+                    provider=cast(OpenAIBatchProvider, provider),
                     error_file_id=status_result["error_file_id"],
                     batch_job=batch_job,
                     session=session,

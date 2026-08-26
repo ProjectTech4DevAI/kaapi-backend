@@ -4,7 +4,12 @@ from typing import Annotated, Any, Literal, Self, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from pydantic import HttpUrl, model_validator
+from pydantic import (
+    HttpUrl,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Index, SQLModel, text
 
@@ -18,12 +23,35 @@ from app.models.llm.constants import (
     NativeProvider,
     Provider,
     RAGProvider,
+    SUPPORTED_STS_LANGUAGE_CODES,
     STTProvider,
+    TextProvider,
     TTSProvider,
+    normalize_bcp47_language,
 )
 
 
-class TextLLMParams(SQLModel):
+class ParamSerialization:
+    """Serialize params in the pre-typed wire format: None fields dropped, and
+    the defaulted `temperature` dropped when the caller never set it.
+
+    Every dump site (Celery `request_data`, persisted config blobs, responses)
+    relies on this — without it, a JSON round-trip bakes `temperature: 0.1`
+    into `model_fields_set` and the unset-temperature semantics are lost, so
+    providers would receive a temperature the user never asked for.
+    """
+
+    @model_serializer(mode="wrap")
+    def _dump_compact(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        serialized_params = {k: v for k, v in handler(self).items() if v is not None}
+        if "temperature" not in self.model_fields_set:
+            serialized_params.pop("temperature", None)
+        return serialized_params
+
+
+class TextLLMParams(ParamSerialization, SQLModel):
     model: str | None = Field(
         default=None,
         description=(
@@ -77,7 +105,7 @@ class TextLLMParams(SQLModel):
     )
 
 
-class STTLLMParams(SQLModel):
+class STTLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_STT_MODEL
@@ -95,8 +123,22 @@ class STTLLMParams(SQLModel):
         description="Temperature parameter (not supported by all STT providers)",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_casing(cls, data: object) -> object:
+        """Accept a language name, bare ISO code, or BCP-47 tag in any casing
+        (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
+        on the canonical tag still find a match."""
+        if not isinstance(data, dict):
+            return data
+        for field in ("input_language", "output_language"):
+            value = data.get(field)
+            if isinstance(value, str):
+                data[field] = normalize_bcp47_language(value)
+        return data
 
-class TTSLLMParams(SQLModel):
+
+class TTSLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_TTS_MODEL
@@ -104,6 +146,16 @@ class TTSLLMParams(SQLModel):
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
     instructions: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_casing(cls, data: object) -> object:
+        """Accept a language name, bare ISO code, or BCP-47 tag in any casing
+        (e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') so provider mappers keyed
+        on the canonical tag still find a match."""
+        if isinstance(data, dict) and isinstance(data.get("language"), str):
+            data["language"] = normalize_bcp47_language(data["language"])
+        return data
 
     @model_validator(mode="after")
     def _reject_nonempty_instructions(self) -> Self:
@@ -284,53 +336,85 @@ class NativeCompletionConfig(SQLModel):
     )
 
 
-class KaapiCompletionConfig(SQLModel):
-    """
-    Kaapi abstraction for LLM completion providers.
-    Uses standardized Kaapi parameters that are mapped to provider-specific APIs internally.
-    Supports multiple providers: OpenAI, Claude, Gemini, etc.
-    """
+class KaapiTextCompletionConfig(SQLModel):
+    """Kaapi-standardized text completion config (OpenAI/Google/Anthropic)."""
 
-    provider: KaapiProvider | None = Field(
-        None,
+    provider: TextProvider | None = Field(
+        default=None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
-            "google-aistudio, google-gcp). 'google-aistudio' uses Google AI "
-            "Studio; 'google-gcp' uses Google GCP directly for STT/TTS."
+            "LLM provider for text completions (openai, google, anthropic, "
+            "google-aistudio, google-gcp). Omit to use the platform default "
+            "for the type."
         ),
     )
-
-    type: CompletionType = Field(
+    type: Literal[CompletionType.TEXT] = Field(
         ..., description="Completion config type. Params schema varies by type"
     )
-    params: dict[str, Any] = Field(
-        ...,
-        description="Kaapi-standardized parameters mapped to provider-specific API",
+    params: TextLLMParams = Field(
+        ..., description="Kaapi-standardized parameters mapped to provider-specific API"
     )
 
-    # validate all these 3 config types
-    @model_validator(mode="after")
-    def validate_params(self):
-        param_models = {
-            "text": TextLLMParams,
-            "stt": STTLLMParams,
-            "tts": TTSLLMParams,
-        }
-        model_class = param_models[self.type]
 
-        if (
-            self.type in (CompletionType.STT, CompletionType.TTS)
-            and self.provider is None
-        ):
-            self.provider = Provider.GOOGLE
+class KaapiSTTCompletionConfig(SQLModel):
+    """Kaapi-standardized STT completion config (Google/Sarvam/ElevenLabs)."""
 
-        user_provided_temperature = "temperature" in self.params
-        validated = model_class.model_validate(self.params)
+    provider: STTProvider | None = Field(
+        default=None,
+        description=(
+            "LLM provider for STT (google, google-aistudio, sarvamai, elevenlabs). "
+            "Omit to auto-select the configured Google credential at run time."
+        ),
+    )
+    type: Literal[CompletionType.STT] = Field(
+        ..., description="Completion config type. Params schema varies by type"
+    )
+    params: STTLLMParams = Field(
+        ..., description="Kaapi-standardized parameters mapped to provider-specific API"
+    )
 
-        self.params = validated.model_dump(exclude_none=True)
-        if not user_provided_temperature:
-            self.params.pop("temperature", None)
-        return self
+
+class KaapiTTSCompletionConfig(SQLModel):
+    """Kaapi-standardized TTS completion config (Google/Sarvam/ElevenLabs)."""
+
+    provider: TTSProvider | None = Field(
+        default=None,
+        description=(
+            "LLM provider for TTS (google, google-aistudio, sarvamai, elevenlabs). "
+            "Omit to auto-select the configured Google credential at run time."
+        ),
+    )
+    type: Literal[CompletionType.TTS] = Field(
+        ..., description="Completion config type. Params schema varies by type"
+    )
+    params: TTSLLMParams = Field(
+        ..., description="Kaapi-standardized parameters mapped to provider-specific API"
+    )
+
+
+KaapiCompletionConfig = Annotated[
+    Union[
+        KaapiTextCompletionConfig, KaapiSTTCompletionConfig, KaapiTTSCompletionConfig
+    ],
+    Field(discriminator="type"),
+]
+
+
+_KAAPI_CONFIG_BY_TYPE: dict[CompletionType, type[SQLModel]] = {
+    CompletionType.TEXT: KaapiTextCompletionConfig,
+    CompletionType.STT: KaapiSTTCompletionConfig,
+    CompletionType.TTS: KaapiTTSCompletionConfig,
+}
+
+
+def build_kaapi_completion_config(
+    *,
+    provider: KaapiProvider | str | None,
+    type: CompletionType | str,
+    params: TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any],
+) -> KaapiTextCompletionConfig | KaapiSTTCompletionConfig | KaapiTTSCompletionConfig:
+    """Construct the KaapiCompletionConfig variant matching `type`."""
+    config_class = _KAAPI_CONFIG_BY_TYPE[CompletionType(type)]
+    return config_class(provider=provider, type=type, params=params)
 
 
 class ProxyCompletionConfig(SQLModel):
@@ -349,23 +433,21 @@ class ProxyCompletionConfig(SQLModel):
         ),
     )
     type: Literal["proxy"] = Field(..., description="Must be 'proxy'.")
-    params: dict[str, Any] = Field(
+    params: ProxyLLMParams = Field(
         ...,
         description="Proxy params (client_llm_url, ...)",
     )
 
-    @model_validator(mode="after")
-    def validate_params(self) -> Self:
-        validated = ProxyLLMParams.model_validate(self.params)
-        # mode="json" coerces HttpUrl → plain str so downstream consumers
-        # (httpx.post, urlparse) get the type they expect from params dict.
-        self.params = validated.model_dump(mode="json", exclude_none=True)
-        return self
-
 
 # Discriminated union for completion configs based on provider field
 CompletionConfig = Annotated[
-    Union[NativeCompletionConfig, KaapiCompletionConfig, ProxyCompletionConfig],
+    Union[
+        NativeCompletionConfig,
+        KaapiTextCompletionConfig,
+        KaapiSTTCompletionConfig,
+        KaapiTTSCompletionConfig,
+        ProxyCompletionConfig,
+    ],
     Field(discriminator="provider"),
 ]
 
@@ -980,7 +1062,7 @@ class SpeechToSpeechRequest(SQLModel):
     )
 
     # Optional language config (BCP-47 codes)
-    input_language: str = Field(
+    input_language: SUPPORTED_STS_LANGUAGE_CODES = Field(
         "auto",
         description=(
             "BCP-47 language code for STT input (auto-detect by default). "
@@ -989,11 +1071,11 @@ class SpeechToSpeechRequest(SQLModel):
             "'sd-IN', 'sa-IN', 'sat-IN', 'mni-IN', 'brx-IN', 'mai-IN', 'doi-IN'"
         ),
     )
-    output_language: str | None = Field(
+    output_language: SUPPORTED_STS_LANGUAGE_CODES | None = Field(
         None,
         description=(
             "BCP-47 language code for TTS output (defaults to input_language if not specified). "
-            "Supported codes: same as input_language (except 'auto')."
+            "Supported codes: same as input_language (except 'auto'/'unknown')."
         ),
     )
 
@@ -1036,20 +1118,26 @@ class SpeechToSpeechRequest(SQLModel):
         None, description="Client-provided metadata"
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_casing(cls, data: object) -> object:
+        """Normalize language input (name, bare ISO code, or BCP-47 tag, any
+        casing — e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') before the
+        SUPPORTED_STS_LANGUAGE_CODES Literal check runs, so it validates against the
+        supported-code allowlist."""
+        if not isinstance(data, dict):
+            return data
+        for field in ("input_language", "output_language"):
+            value = data.get(field)
+            if isinstance(value, str):
+                data[field] = normalize_bcp47_language(value)
+        return data
+
     @model_validator(mode="after")
-    def validate_languages(self):
-        """Normalize BCP-47 language codes to standard format (e.g., 'hi-in' -> 'hi-IN')."""
-        # Normalize input_language
-        if self.input_language and self.input_language != "auto":
-            # Normalize BCP-47: lowercase language, uppercase region (e.g., "hi-IN")
-            parts = self.input_language.split("-")
-            if len(parts) == 2:
-                self.input_language = f"{parts[0].lower()}-{parts[1].upper()}"
-
-        # Normalize output_language
-        if self.output_language:
-            parts = self.output_language.split("-")
-            if len(parts) == 2:
-                self.output_language = f"{parts[0].lower()}-{parts[1].upper()}"
-
+    def validate_output_language(self) -> Self:
+        """'auto'/'unknown' are STT-only detection modes, not valid TTS targets."""
+        if self.output_language in ("auto", "unknown"):
+            raise ValueError(
+                f"output_language must be a concrete language code, not '{self.output_language}'"
+            )
         return self
