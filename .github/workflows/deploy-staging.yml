@@ -48,11 +48,11 @@ jobs:
           echo "Sent SSM command: $CMD_ID"
 
       - name: Wait for SSM command to finish
-        timeout-minutes: 20
+        timeout-minutes: 10
         env:
           INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
           CMD_ID: ${{ steps.ssm.outputs.cmd_id }}
-          POLL_INTERVAL: "20"
+          POLL_INTERVAL: "10"
         run: |
           poll_status() {
             aws ssm get-command-invocation \
