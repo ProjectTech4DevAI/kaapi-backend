@@ -73,6 +73,22 @@ class TestRewriteGcsAttachmentUrls:
         assert out is rows
         mock_resolve.assert_not_called()
 
+    def test_empty_cell_skipped_and_unresolved_gcs_left_as_is(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": ""}, {"img": "gs://b/missing.png"}]
+        with patch(_REWRITE_RESOLVER, return_value={}):
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="openai",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out[0]["img"] == ""
+        # unresolved gs:// URI stays put rather than becoming a broken/empty value
+        assert out[1]["img"] == "gs://b/missing.png"
+
 
 def _make_run() -> MagicMock:
     run = MagicMock()

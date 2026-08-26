@@ -31,6 +31,16 @@ class TestBucketProviderRegistry:
         assert "s3" in message
         assert "is not supported" in message
 
+    def test_supported_providers_lists_gcs(self):
+        assert BucketProvider.supported_providers() == ["gcs"]
+
+    def test_get_credential_provider_maps_gcs_to_google_gcp(self):
+        assert BucketProvider.get_credential_provider("gcs") == "google-gcp"
+
+    def test_get_credential_provider_unknown_raises(self):
+        with pytest.raises(ValueError, match="no credential mapping"):
+            BucketProvider.get_credential_provider("s3")
+
 
 class TestGetBucketProvider:
     def test_get_bucket_provider_with_gcs(self, db: Session):
@@ -93,3 +103,63 @@ class TestGetBucketProvider:
             )
 
         assert "s3" in str(exc_info.value)
+
+    def test_get_bucket_provider_non_dict_credential_raises(self, db: Session):
+        project = get_project(db)
+
+        with patch("app.crud.credentials.get_provider_credential") as mock_get_creds:
+            mock_get_creds.return_value = "not-a-dict"
+
+            with pytest.raises(ValueError) as exc_info:
+                get_bucket_provider(
+                    session=db,
+                    provider_type="gcs",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )
+
+        assert "decrypted credentials dict" in str(exc_info.value)
+
+    def test_get_bucket_provider_client_value_error_surfaces_as_is(self, db: Session):
+        project = get_project(db)
+        credential = {"gcs_bucket": "b", "sa_key": {"project_id": "p"}}
+
+        with (
+            patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
+            patch.object(
+                GCSBucketProvider,
+                "create_client",
+                side_effect=ValueError("bad sa_key"),
+            ),
+        ):
+            mock_get_creds.return_value = credential
+
+            with pytest.raises(ValueError, match="bad sa_key"):
+                get_bucket_provider(
+                    session=db,
+                    provider_type="gcs",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )
+
+    def test_get_bucket_provider_client_error_wraps_in_runtime_error(self, db: Session):
+        project = get_project(db)
+        credential = {"gcs_bucket": "b", "sa_key": {"project_id": "p"}}
+
+        with (
+            patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
+            patch.object(
+                GCSBucketProvider,
+                "create_client",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            mock_get_creds.return_value = credential
+
+            with pytest.raises(RuntimeError, match="Could not connect to gcs"):
+                get_bucket_provider(
+                    session=db,
+                    provider_type="gcs",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )

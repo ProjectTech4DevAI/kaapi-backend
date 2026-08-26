@@ -400,6 +400,15 @@ class TestParseOne:
             result = _parse_one({"response": {"candidates": []}}, "google-gcp")
         assert result["output"] == "vertex text"
 
+    def test_google_aistudio_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="aistudio text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-aistudio")
+        assert result["output"] == "aistudio text"
+        assert result["error"] is None
+
     def test_unknown_provider(self) -> None:
         result = _parse_one({"response": {}}, "cohere")
         assert result["output"] is None

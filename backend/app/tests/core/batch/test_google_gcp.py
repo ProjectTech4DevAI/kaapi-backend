@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.core.batch.google_gcp import GoogleGCPBatchProvider, _parse_gs_uri
+from app.core.cloud.storage import CloudStorageError
 
 _BUCKET = "test-bucket"
 
@@ -61,6 +62,11 @@ class TestCreateBatch:
         assert result["provider_status"] == "JOB_STATE_PENDING"
         assert result["total_items"] == 1
 
+    def test_create_failure_propagates(self, provider, mock_genai):
+        mock_genai.batches.create.side_effect = RuntimeError("vertex down")
+        with pytest.raises(RuntimeError, match="vertex down"):
+            provider.create_batch([{"request": {"contents": []}}], {})
+
 
 class TestGetBatchStatus:
     def test_succeeded_returns_output_uri(self, provider, mock_genai):
@@ -85,6 +91,11 @@ class TestGetBatchStatus:
         assert result["provider_status"] == "JOB_STATE_FAILED"
         assert result["error_message"] == "boom"
         assert result["provider_output_file_id"] == "batches/123"
+
+    def test_poll_failure_propagates(self, provider, mock_genai):
+        mock_genai.batches.get.side_effect = RuntimeError("poll boom")
+        with pytest.raises(RuntimeError, match="poll boom"):
+            provider.get_batch_status("batches/123")
 
 
 class TestDownloadBatchResults:
@@ -140,6 +151,28 @@ class TestDownloadBatchResults:
         with pytest.raises(ValueError, match="not complete"):
             provider.download_batch_results("batches/123")
 
+    def test_succeeded_job_without_dest_raises(self, provider, mock_genai):
+        job = MagicMock()
+        job.state.name = "JOB_STATE_SUCCEEDED"
+        job.dest = None
+        mock_genai.batches.get.return_value = job
+        with pytest.raises(ValueError, match="no GCS output"):
+            provider.download_batch_results("batches/123")
+
+    def test_blank_lines_are_skipped(self, provider, mock_storage):
+        content = (
+            '{"key": "row_1", "response": {"text": "a"}}\n\n'
+            '{"key": "row_2", "response": {"text": "b"}}'
+        )
+        mock_storage.list_blobs.return_value = [self._blob("out/p.jsonl", content)]
+        results = provider.download_batch_results("gs://b/out/")
+        assert [r["custom_id"] for r in results] == ["row_1", "row_2"]
+
+    def test_read_failure_propagates(self, provider, mock_storage):
+        mock_storage.list_blobs.side_effect = RuntimeError("list boom")
+        with pytest.raises(RuntimeError, match="list boom"):
+            provider.download_batch_results("gs://b/out/")
+
 
 class TestFileIO:
     def test_upload_file_returns_gs_uri(self, provider, mock_storage):
@@ -156,6 +189,18 @@ class TestFileIO:
             "hello"
         )
         assert provider.download_file("gs://b/k.jsonl") == "hello"
+
+    def test_upload_failure_wraps_cloud_storage_error(self, provider, mock_storage):
+        blob = mock_storage.bucket.return_value.blob.return_value
+        blob.upload_from_string.side_effect = RuntimeError("denied")
+        with pytest.raises(CloudStorageError, match="GCS upload failed"):
+            provider.upload_file('{"x":1}')
+
+    def test_download_failure_wraps_cloud_storage_error(self, provider, mock_storage):
+        blob = mock_storage.bucket.return_value.blob.return_value
+        blob.download_as_text.side_effect = RuntimeError("gone")
+        with pytest.raises(CloudStorageError, match="GCS download failed"):
+            provider.download_file("gs://b/k.jsonl")
 
 
 class TestFromCredentials:

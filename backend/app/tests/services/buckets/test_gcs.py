@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.core.cloud.storage import CloudStorageError
 from app.services.buckets.providers.gcs import (
     GCSBucketProvider,
     GCSClient,
@@ -99,6 +100,17 @@ class TestGetSignedUrl:
 
         _, kwargs = blob.generate_signed_url.call_args
         assert kwargs["expiration"] == timedelta(seconds=provider.MAX_SIGNED_URL_EXPIRY)
+
+    def test_expiry_below_one_raises(self):
+        provider, _ = _make_provider()
+        with pytest.raises(ValueError, match="at least 1 second"):
+            provider.get_signed_url("gs://my-bucket/key.wav", expires_in=0)
+
+    def test_signing_failure_raises_cloud_storage_error(self):
+        provider, blob = _make_provider()
+        blob.generate_signed_url.side_effect = RuntimeError("no signer creds")
+        with pytest.raises(CloudStorageError, match="GCS signing failed"):
+            provider.get_signed_url("gs://my-bucket/key.wav", expires_in=1800)
 
 
 class TestGetBulkSignedUrls:

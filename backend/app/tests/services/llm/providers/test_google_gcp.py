@@ -680,6 +680,41 @@ def test_execute_tts_unsupported_response_format_falls_back_to_wav():
     assert resp.response.output.content.mime_type == "audio/wav"
 
 
+def test_execute_text_forwards_max_output_tokens():
+    provider = _provider()
+    config = NativeCompletionConfig(
+        provider="google-gcp-native",
+        type=CompletionType.TEXT,
+        params={"model": "gemini-2.5-flash", "max_output_tokens": 256},
+    )
+    with patch(
+        "app.services.llm.providers.google_gcp.requests.post",
+        return_value=_mock_http_ok(_stt_response("ok")),
+    ) as mock_post:
+        resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+
+    assert err is None
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["generationConfig"]["maxOutputTokens"] == 256
+
+
+def test_execute_text_http_error_returns_message():
+    provider = _provider()
+    config = NativeCompletionConfig(
+        provider="google-gcp-native",
+        type=CompletionType.TEXT,
+        params={"model": "gemini-2.5-flash"},
+    )
+    with patch(
+        "app.services.llm.providers.google_gcp.requests.post",
+        return_value=_mock_http_err(403, "permission denied"),
+    ):
+        resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "403" in err
+    assert "permission denied" in err
+
+
 def test_execute_text_forwards_system_instruction():
     provider = _provider()
     config = NativeCompletionConfig(
@@ -813,6 +848,19 @@ def test_execute_wraps_unexpected_exception():
     assert resp is None
     assert "Unexpected error" in err
     assert "kaboom" in err
+
+
+def test_execute_unsupported_completion_type_returns_error():
+    provider = _provider()
+    # SimpleNamespace bypasses NativeCompletionConfig's enum validation to reach
+    # the dispatcher's unsupported-type fallthrough.
+    from types import SimpleNamespace
+
+    config = SimpleNamespace(provider="google-gcp-native", type="embedding")
+    resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+    assert resp is None
+    assert "Unsupported completion type" in err
+    assert "embedding" in err
 
 
 # ---------------------------------------------------------------------------
