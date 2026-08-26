@@ -51,9 +51,9 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     PromptTemplate,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
 from app.tests.utils.auth import TestAuthContext
@@ -87,7 +87,7 @@ def _make_text_config(
     if instructions is not None:
         params["instructions"] = instructions
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params=params,
@@ -200,7 +200,7 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
 DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
 
 
-def _summary_response(text: str):
+def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
     )
@@ -930,7 +930,7 @@ class TestRunOverallSummary:
 
     def test_summary_brief_carries_the_scored_traces(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
-    ):
+    ) -> None:
         # The summary must be generated AFTER the traces are built: rolled up first,
         # it would brief the model on an empty trace list.
         eval_run = self._seed_all_three_metrics_run(
@@ -969,6 +969,32 @@ class TestRunOverallSummary:
         }
         gt = next(s for s in scores if s["name"] == GROUND_TRUTH_SCORE_NAME)
         assert gt["rationale"] == "gt"
+
+    def test_run_override_drives_the_summary_repetition_math(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """The run's persisted duplication_factor feeds "asked N times", not the
+        dataset metadata: dataset factor is 1, the run override is 7 → brief says 7."""
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        eval_run.duplication_factor = 7
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+        summary_client = MagicMock()
+
+        _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_client=summary_client,
+        )
+
+        brief = summary_client.messages.create.call_args.kwargs["messages"][0][
+            "content"
+        ]
+        assert "Duplication factor: 7" in brief
 
     def test_summary_failure_leaves_overall_intact_with_null_ai_summary(
         self, db: Session, user_api_key: TestAuthContext, _s3_store

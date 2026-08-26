@@ -8,11 +8,11 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 from sqlmodel import Session
 
 from app.models.llm.request import (
-    KaapiCompletionConfig,
     NativeCompletionConfig,
     STTLLMParams,
     TextLLMParams,
     TTSLLMParams,
+    build_kaapi_completion_config,
 )
 from app.services.llm.mappers import (
     bcp47_to_elevenlabs_lang,
@@ -38,8 +38,19 @@ class TestMapKaapiToOpenAIParams:
             session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        # TextLLMParams has default temperature=0.1
-        assert result == {"model": "gpt-4o", "temperature": 0.1}
+        # Unset temperature is dropped from the dump (ParamSerialization),
+        # so the provider decides the default — never a temperature the user didn't set.
+        assert result == {"model": "gpt-4o"}
+        assert warnings == []
+
+    def test_explicit_temperature_forwarded(self, db: Session):
+        kaapi_params = TextLLMParams(model="gpt-4o", temperature=0.7)
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result == {"model": "gpt-4o", "temperature": 0.7}
         assert warnings == []
 
     def test_reasoning_mapping_for_reasoning_models(self, db: Session):
@@ -55,10 +66,11 @@ class TestMapKaapiToOpenAIParams:
 
         assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high"}
-        # Temperature is suppressed for reasoning models (even default value)
         assert "temperature" not in result
-        assert len(warnings) == 1
-        assert "temperature" in warnings[0].lower()
+        # Unset temperature never reaches the mapper, so no spurious
+        # "suppressed" warning for reasoning models (explicit-temperature
+        # suppression is covered by test_temperature_suppressed_for_reasoning_models).
+        assert warnings == []
 
     def test_knowledge_base_ids_mapping(self, db: Session):
         """Test knowledge_base_ids mapping to OpenAI tools format."""
@@ -892,7 +904,7 @@ class TestTransformGoogleVertexRouting:
     def test_text_completion_maps_via_google_mapper(self, db: Session):
         """``google`` text completions reuse the Google mapper and produce a
         ``google-native`` config (param shape is identical to Google's)."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="text",
             params={"model": "gemini-2.5-pro"},
@@ -908,7 +920,7 @@ class TestTransformGoogleVertexRouting:
     def test_unsupported_language_emits_warning(self, db: Session):
         """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
         and surface a warning, rather than silently being dropped."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={
@@ -983,7 +995,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_elevenlabs_tts_config(self, db: Session):
         """Test transformation of ElevenLabs TTS config."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="elevenlabs",
             type="tts",
             params={
@@ -1009,7 +1021,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_elevenlabs_stt_config(self, db: Session):
         """Test transformation of ElevenLabs STT config."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="elevenlabs",
             type="stt",
             params={
@@ -1033,7 +1045,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_sarvamai_stt_with_saaras_model(self, db: Session):
         """Test transformation of SarvamAI STT with saaras:v3 model."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="sarvamai",
             type="stt",
             params={
@@ -1061,7 +1073,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_sarvamai_tts_with_voice(self, db: Session):
         """Test transformation of SarvamAI TTS with explicit voice."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="sarvamai",
             type="tts",
             params={
@@ -1085,7 +1097,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_text_completion(self, db: Session):
         """Text completions route through ``google-aistudio`` (AI Studio)."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google-aistudio",
             type="text",
             params={
@@ -1109,7 +1121,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_stt_completion(self, db: Session):
         """Test transformation of Google STT completion."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="stt",
             params={"model": "gemini-2.5-pro", "instructions": "Transcribe accurately"},
@@ -1128,7 +1140,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_tts_completion(self, db: Session):
         """Test transformation of Google TTS completion."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={
