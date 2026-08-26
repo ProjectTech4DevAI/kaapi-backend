@@ -57,6 +57,8 @@ dependencies = [
     "anthropic>=0.104.1",
     "google-cloud-storage>=3.10.1",
     "filetype>=1.2.0",
+    "langgraph>=1.2.10",
+    "langgraph-checkpoint-postgres>=3.1.1",
 ]
 
 [tool.uv]
