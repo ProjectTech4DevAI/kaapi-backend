@@ -153,7 +153,10 @@ def submit(
 
     # input_schema is mandatory (enforced on the config), so every row must match it:
     # all declared columns present, no undeclared columns, attachments url-valued.
-    input_columns = blob.assessment.params.get("input_schema") or {}
+    input_columns = {
+        name: col.model_dump(exclude_none=True)
+        for name, col in blob.input_schema.items()
+    }
     _validate_rows_against_schema(batch_input.data, input_columns)
 
     # Validate transposition up front so bad attachment shapes fail as 422, not async.

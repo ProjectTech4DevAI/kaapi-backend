@@ -43,6 +43,7 @@ from app.services.assessment.utils.attachments import (
     build_gemini_attachment_parts,
     resolve_attachment_values,
 )
+from app.services.llm.mappers import kaapi_params_as_dict
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
 
@@ -414,7 +415,10 @@ def submit_assessment_batch(
     completion = config_blob.completion
     provider_name = completion.provider or "openai"
 
-    params = dict(completion.params)
+    # Normalize params to a plain dict: for typed Kaapi params this applies the
+    # compact wire format (None fields and an unset temperature dropped), so
+    # the batch never forwards defaults the caller didn't set.
+    params = kaapi_params_as_dict(completion.params)
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")
