@@ -19,6 +19,11 @@ SILENT_LOG_PATHS: frozenset[str] = frozenset(
     }
 )
 
+CRON_PATH_PREFIX: str = f"{settings.API_V1_STR}/cron/"
+
+# Excluded from traces only; logs/metrics and spans inside the handler still emit.
+TRACE_EXCLUDED_PATH_PREFIXES: frozenset[str] = frozenset({CRON_PATH_PREFIX})
+
 
 class StripTrailingSlashMiddleware:
     """
@@ -50,8 +55,33 @@ def _resolve_http_route(request: Request) -> str:
     return templated or "unmatched"
 
 
+def _emit_http_metrics(
+    *, method: str, http_route: str, status: int, duration_ms: float
+) -> None:
+    """Emit HTTP traffic/latency/error counters to Sentry. No-op if the SDK is inactive."""
+    try:
+        if not sentry_sdk.get_client().is_active():
+            return
+        attrs = {
+            "http.method": method,
+            "http.route": http_route,
+            "http.status_code": str(status),
+        }
+        sentry_sdk.metrics.count("http.server.request.count", 1, attributes=attrs)
+        sentry_sdk.metrics.distribution(
+            "http.server.request.duration",
+            duration_ms,
+            unit="millisecond",
+            attributes=attrs,
+        )
+        if status >= 400:
+            sentry_sdk.metrics.count("http.server.request.error", 1, attributes=attrs)
+    except Exception:
+        logger.debug("[_emit_http_metrics] Sentry metric emit failed")
+
+
 async def http_request_logger(request: Request, call_next) -> Response:
-    if request.url.path.startswith(f"{settings.API_V1_STR}/cron/"):
+    if request.url.path.startswith(CRON_PATH_PREFIX):
         with log_service_name(settings.CRON_SERVICE_NAME):
             return await _log_http_request(request, call_next)
 
@@ -62,6 +92,8 @@ async def _log_http_request(request: Request, call_next) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
+    # Health/utility paths excluded so they don't skew platform traffic metrics.
+    metrics_enabled = raw_path not in SILENT_LOG_PATHS
 
     span = trace.get_current_span()
     if span.is_recording():
@@ -78,6 +110,7 @@ async def _log_http_request(request: Request, call_next) -> Response:
     try:
         response = await call_next(request)
     except Exception:
+        duration_ms = (time.time() - start_time) * 1000
         status = 500
         http_route = _resolve_http_route(request)
         if span.is_recording():
@@ -88,6 +121,13 @@ async def _log_http_request(request: Request, call_next) -> Response:
             sentry_sdk.set_tag("http.route", http_route)
             sentry_sdk.set_tag("http.status_code", str(status))
             sentry_sdk.set_tag("http.response.status_code", str(status))
+        if metrics_enabled:
+            _emit_http_metrics(
+                method=method,
+                http_route=http_route,
+                status=status,
+                duration_ms=duration_ms,
+            )
         logger.exception("Unhandled exception during request")
         raise
 
@@ -101,32 +141,18 @@ async def _log_http_request(request: Request, call_next) -> Response:
         span.set_attribute("http.response.status_code", status)
         span.set_attribute("http.request.duration_ms", round(duration_ms, 2))
 
-    if raw_path not in SILENT_LOG_PATHS:
+    if sentry_sdk.get_client().is_active():
+        sentry_sdk.set_tag("http.route", http_route)
+        sentry_sdk.set_tag("http.status_code", str(status))
+        sentry_sdk.set_tag("http.response.status_code", str(status))
+
+    if metrics_enabled:
         logger.info(f"{method} {raw_path} - {status} [{duration_ms:.2f}ms]")
-
-    try:
-        if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("http.route", http_route)
-            sentry_sdk.set_tag("http.status_code", str(status))
-            sentry_sdk.set_tag("http.response.status_code", str(status))
-
-            attrs = {
-                "http.method": method,
-                "http.route": http_route,
-                "http.status_code": str(status),
-            }
-            sentry_sdk.metrics.count("http.server.request.count", 1, attributes=attrs)
-            sentry_sdk.metrics.distribution(
-                "http.server.request.duration",
-                duration_ms,
-                unit="millisecond",
-                attributes=attrs,
-            )
-            if status >= 400:
-                sentry_sdk.metrics.count(
-                    "http.server.request.error", 1, attributes=attrs
-                )
-    except Exception:
-        logger.debug("[http_request_logger] Sentry metric emit failed")
+        _emit_http_metrics(
+            method=method,
+            http_route=http_route,
+            status=status,
+            duration_ms=duration_ms,
+        )
 
     return response

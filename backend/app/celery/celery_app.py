@@ -13,7 +13,10 @@ from kombu import Exchange, Queue
 
 from app.core.config import settings
 from app.core.logger import configure_logging
-from app.core.sentry_filters import before_send_transaction_filter
+from app.core.sentry_filters import (
+    before_send_error_filter,
+    before_send_transaction_filter,
+)
 
 logger = logging.getLogger(__name__)
 _telemetry_initialized = False
@@ -38,21 +41,34 @@ def _initialize_worker_observability() -> None:
         from sentry_sdk.integrations.logging import LoggingIntegration
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
+        from app.core.telemetry import (
+            SENTRY_PROFILE_LIFECYCLE,
+            SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+            resolve_sentry_release,
+        )
+
         sentry_sdk.init(
             dsn=str(settings.SENTRY_DSN),
             environment=settings.ENVIRONMENT,
-            release=settings.API_VERSION,
+            release=resolve_sentry_release(),
             instrumenter="otel",
-            traces_sample_rate=1.0,
+            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+            sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
+            profile_session_sample_rate=SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+            profile_lifecycle=SENTRY_PROFILE_LIFECYCLE,
+            send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
             enable_logs=True,
+            before_send=before_send_error_filter,
             before_send_transaction=before_send_transaction_filter,
             integrations=[
                 LoggingIntegration(
                     level=logging.INFO,
                     sentry_logs_level=logging.INFO,
                 ),
+                # propagate_traces=True links an API request to the task it
+                # enqueues as one trace; poll-loop re-enqueues opt out per-call.
                 CeleryIntegration(
-                    propagate_traces=False,
+                    propagate_traces=True,
                     monitor_beat_tasks=False,
                 ),
             ],

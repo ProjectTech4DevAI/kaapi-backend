@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
 
+    # Defaults preserve current behavior; production .env needs no changes.
+    SENTRY_TRACES_SAMPLE_RATE: float = 1.0
+    SENTRY_RELEASE: str | None = None
+    SENTRY_SEND_DEFAULT_PII: bool = False
+    SENTRY_ERROR_SAMPLE_RATE: float = 1.0
+
     # Threshold Request Rate per minute
     THRESHOLD_LLM_CALL_RATE: int = 15
     THRESHOLD_COLLECTIONS_RATE: int = 3

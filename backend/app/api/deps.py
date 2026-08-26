@@ -63,6 +63,7 @@ def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
     set_request_log_context(
         org_id=auth_context.organization.id if auth_context.organization else None,
         project_id=auth_context.project.id if auth_context.project else None,
+        user_id=auth_context.user.id,
     )
 
 

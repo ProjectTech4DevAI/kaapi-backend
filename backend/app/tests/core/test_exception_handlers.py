@@ -1,7 +1,15 @@
+from unittest.mock import patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.exception_handlers import _sanitize_validation_errors
+from app.core.exception_handlers import (
+    _sanitize_validation_errors,
+    register_exception_handlers,
+)
 from app.tests.utils.auth import TestAuthContext
 
 
@@ -103,6 +111,63 @@ class TestSanitizeValidationErrors:
         malformed = [None, 42]  # type: ignore[list-item]
         result = _sanitize_validation_errors(malformed)
         assert result == malformed
+
+
+class TestSentryCaptureRouting:
+    """Only the generic 500 handler reports to Sentry; 4xx handlers stay quiet."""
+
+    @pytest.fixture
+    def client(self) -> TestClient:
+        app = FastAPI()
+        register_exception_handlers(app)
+
+        class Body(BaseModel):
+            x: int
+
+        @app.get("/boom")
+        def boom() -> None:
+            raise ValueError("boom")
+
+        @app.get("/http-error")
+        def http_error() -> None:
+            raise HTTPException(status_code=404, detail="nope")
+
+        @app.post("/validate")
+        def validate(body: Body) -> dict:
+            return {"ok": True}
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_generic_handler_captures_unhandled_exception(
+        self, client: TestClient
+    ) -> None:
+        with patch(
+            "app.core.exception_handlers.sentry_sdk.capture_exception"
+        ) as capture:
+            response = client.get("/boom")
+
+        assert response.status_code == 500
+        capture.assert_called_once()
+
+    def test_http_exception_handler_does_not_capture(self, client: TestClient) -> None:
+        with patch(
+            "app.core.exception_handlers.sentry_sdk.capture_exception"
+        ) as capture:
+            response = client.get("/http-error")
+
+        assert response.status_code == 404
+        capture.assert_not_called()
+
+    def test_validation_error_handler_does_not_capture(
+        self, client: TestClient
+    ) -> None:
+        with patch(
+            "app.core.exception_handlers.sentry_sdk.capture_exception"
+        ) as capture:
+            response = client.post("/validate", json={})
+
+        assert response.status_code == 422
+        capture.assert_not_called()
 
 
 class TestValidationErrorResponse:
