@@ -32,18 +32,12 @@ TTSProvider = Literal[
 ]
 RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
 
-KaapiProvider = Literal[
+TextProvider = Literal[
     Provider.OPENAI,
     Provider.GOOGLE,
-    Provider.GOOGLE_GCP,
-    Provider.SARVAMAI,
-    Provider.ELEVENLABS,
     Provider.ANTHROPIC,
     Provider.GOOGLE_AISTUDIO,
-]
-
-TextProvider = Literal[
-    Provider.OPENAI, Provider.GOOGLE, Provider.ANTHROPIC, Provider.GOOGLE_AISTUDIO
+    Provider.GOOGLE_GCP,
 ]
 
 KaapiProvider = Union[TextProvider, STTProvider, TTSProvider]

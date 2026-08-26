@@ -342,11 +342,9 @@ class KaapiTextCompletionConfig(SQLModel):
     provider: TextProvider | None = Field(
         default=None,
         description=(
-            "LLM provider (openai, google, sarvamai, elevenlabs, anthropic, "
-            "google-aistudio, google-gcp). 'google-aistudio' uses Google AI "
-            "Studio; 'google-gcp' uses Google GCP directly for STT/TTS."
-            "LLM provider for text completions (openai, google, anthropic). "
-            "Omit to use the platform default for the type."
+            "LLM provider for text completions (openai, google, anthropic, "
+            "google-aistudio, google-gcp). Omit to use the platform default "
+            "for the type."
         ),
     )
     type: Literal[CompletionType.TEXT] = Field(
