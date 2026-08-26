@@ -1,10 +1,17 @@
 from datetime import datetime
-from typing import Any
 
 import sqlalchemy as sa
+from pydantic import field_validator, model_validator
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.core.providers import mask_credential_fields
+from app.core.providers import (
+    CredentialPayload,
+    Provider,
+    ProviderCredentials,
+    mask_credential_fields,
+    parse_provider_credentials,
+    validate_provider,
+)
 from app.core.util import now
 from app.models.organization import Organization
 from app.models.project import Project
@@ -38,15 +45,35 @@ class CredsBase(SQLModel):
 
 class CredsCreate(SQLModel):
     """Create new credentials for an organization.
-    The credential field should be a dictionary mapping provider names to their credentials.
+    The credential field maps each provider to its own credential payload.
     Example: {"openai": {"api_key": "..."}, "langfuse": {"public_key": "..."}}
     """
 
     is_active: bool = True
-    credential: dict[str, Any] = Field(
+    credential: dict[Provider, ProviderCredentials] | None = Field(
         default=None,
-        description="Dictionary mapping provider names to their credentials",
+        description="Credential payload per provider, keyed by provider name",
     )
+
+    @field_validator("credential", mode="before")
+    @classmethod
+    def _parse_credential(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        return {
+            validate_provider(provider).value: parse_provider_credentials(
+                provider, payload
+            )
+            for provider, payload in value.items()
+        }
+
+    def credential_payloads(self) -> dict[str, CredentialPayload]:
+        """Provider name -> credential dict, exactly as submitted."""
+        return {
+            provider.value: payload.model_dump(exclude_unset=True)
+            for provider, payload in (self.credential or {}).items()
+        }
 
 
 class CredsUpdate(SQLModel):
@@ -54,15 +81,51 @@ class CredsUpdate(SQLModel):
     Can update a specific provider's credentials or add a new provider.
     """
 
-    provider: str = Field(
+    provider: Provider = Field(
         description="Name of the provider to update/add credentials for"
     )
-    credential: dict[str, Any] = Field(
-        description="Credentials for the specified provider",
+    credential: CredentialPayload = Field(
+        description=(
+            "Credentials for the specified provider. May be a partial payload "
+            "(PATCH semantics) — completeness is validated after merging with "
+            "any existing stored credentials, not on this raw payload."
+        ),
     )
     is_active: bool | None = Field(
         default=None, description="Whether the credentials are active"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_credential(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        provider = data.get("provider")
+        credential = data.get("credential")
+        if not isinstance(provider, str) or credential is None:
+            return data
+
+        provider_key = validate_provider(provider).value
+        nested = credential.get(provider_key) if isinstance(credential, dict) else None
+        if isinstance(nested, dict):
+            credential = nested
+
+        # An empty payload has nothing to merge with an existing stored
+        # credential, so it is rejected here rather than deferred to the
+        # crud-level merge check.
+        if isinstance(credential, dict) and not credential:
+            parse_provider_credentials(provider_key, credential)
+
+        return {
+            **data,
+            "provider": provider_key,
+            "credential": credential,
+        }
+
+    def credential_payload(self) -> CredentialPayload:
+        """Credential dict for `provider`, exactly as submitted."""
+        return self.credential
 
 
 class Credential(CredsBase, table=True):
@@ -132,7 +195,7 @@ class Credential(CredsBase, table=True):
             organization_id=self.organization_id,
             project_id=self.project_id,
             is_active=self.is_active,
-            provider=self.provider,
+            provider=Provider(self.provider),
             credential=decrypted,
             inserted_at=self.inserted_at,
             updated_at=self.updated_at,
@@ -143,7 +206,10 @@ class CredsPublic(CredsBase):
     """Public representation of credentials, excluding sensitive information."""
 
     id: int
-    provider: str
-    credential: dict[str, Any] | None = None
+    provider: Provider
+    credential: CredentialPayload | None = Field(
+        default=None,
+        description="Provider credential with its sensitive fields masked",
+    )
     inserted_at: datetime
     updated_at: datetime

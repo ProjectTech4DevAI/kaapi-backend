@@ -12,7 +12,7 @@ from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.models.llm.constants import CompletionType
 from app.models.llm.constants import Provider as ProviderEnum
-from app.models.llm.request import CompletionConfig, ConfigBlob
+from app.models.llm.request import CompletionConfig, ConfigBlob, KaapiLLMParams
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
@@ -167,18 +167,14 @@ def validate_blob_completion_models(
     _validate_completion_model_or_raise(session, completion)
 
     if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
-        pre_filters = (
-            blob.pre_filters.topic_relevance,
-            blob.pre_filters.duplicate_detection,
-        )
-        for flt in pre_filters:
-            if flt is not None:
-                _validate_model_or_raise(
-                    session,
-                    raw_provider=flt.provider,
-                    completion_type=CompletionType.TEXT,
-                    params=flt.params,
-                )
+        topic_relevance = blob.pre_filters.topic_relevance
+        if topic_relevance is not None:
+            _validate_model_or_raise(
+                session,
+                raw_provider=topic_relevance.provider,
+                completion_type=CompletionType.TEXT,
+                params=topic_relevance.params,
+            )
 
 
 def _validate_completion_model_or_raise(
@@ -193,12 +189,19 @@ def _validate_completion_model_or_raise(
     )
 
 
+def _get_param(params: KaapiLLMParams | dict[str, Any] | None, key: str) -> Any:
+    """Read a field from completion params, dict or typed Kaapi model alike."""
+    if isinstance(params, dict):
+        return params.get(key)
+    return getattr(params, key, None)
+
+
 def _validate_model_or_raise(
     session: Session,
     *,
     raw_provider: str | None,
     completion_type: str,
-    params: dict[str, Any] | None,
+    params: KaapiLLMParams | dict[str, Any] | None,
 ) -> None:
     """Reject a (provider, type, params) whose params.model is not in model_config.
 
@@ -222,7 +225,7 @@ def _validate_model_or_raise(
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (params or {}).get("model") or None
+    model_name = _get_param(params, "model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -241,7 +244,7 @@ def _validate_model_or_raise(
         )
 
     if completion_type == "tts" and model_row is not None:
-        voice = (params or {}).get("voice")
+        voice = _get_param(params, "voice")
         voice_spec = (
             model_row.config.get("voice")
             if isinstance(model_row.config, dict)

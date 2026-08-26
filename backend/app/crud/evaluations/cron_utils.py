@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Integer
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.batch import (
     BatchJobState,
@@ -49,7 +49,7 @@ def fetch_processing_runs(
     statement = select(EvaluationRun).where(
         EvaluationRun.type == eval_type,
         EvaluationRun.status == "processing",
-        EvaluationRun.batch_job_id.is_not(None),
+        col(EvaluationRun.batch_job_id).is_not(None),
     )
     return list(session.exec(statement).all())
 

@@ -66,44 +66,42 @@ OUTPUT_SCHEMA = {
 
 # Pre-filter criteria now live in params.instructions (mandatory), no top-level prompt/content.
 TOPIC_CRITERIA = "Is this on topic?"
-DUPLICATE_CRITERIA = "Is this a duplicate?"
 
 
 def _blob_dict(
     *,
     topic_relevance: bool | None = None,
-    duplicate_detection: bool | None = None,
     provider: str = "openai",
     model: str = "gpt-4o",
     input_schema: dict | None = None,
+    submission: str = "assess {a}",
+    topic_submission: str | None = None,
 ) -> dict:
-    """Assessment config blob dict. ``topic_relevance``/``duplicate_detection`` are the
-    filter's ``stop_on_fail`` value, or None to omit the filter entirely."""
+    """Assessment config blob dict. ``topic_relevance`` is the filter's ``stop_on_fail``
+    value, or None to omit the filter entirely. ``topic_submission`` sets the pre-filter's
+    own optional prompt template."""
     pre_filters: dict = {}
     if topic_relevance is not None:
+        params: dict = {"model": "gpt-4o", "instructions": TOPIC_CRITERIA}
+        if topic_submission is not None:
+            params["submission"] = topic_submission
         pre_filters["topic_relevance"] = {
             "provider": "openai",
-            "params": {"model": "gpt-4o", "instructions": TOPIC_CRITERIA},
+            "params": params,
             "stop_on_fail": topic_relevance,
-        }
-    if duplicate_detection is not None:
-        pre_filters["duplicate_detection"] = {
-            "provider": "openai",
-            "params": {"model": "gpt-4o", "instructions": DUPLICATE_CRITERIA},
-            "stop_on_fail": duplicate_detection,
-            "knowledge_base_id": "vs_dup",
         }
     assessment_params: dict = {
         "model": model,
         "json_output_schema": OUTPUT_SCHEMA,
-        "input_schema": input_schema or {"a": {"type": "text"}},
+        "submission": submission,
     }
     blob: dict = {
+        "input_schema": input_schema or {"a": {"type": "text"}},
         "assessment": {
             "provider": provider,
             "type": "text",
             "params": assessment_params,
-        }
+        },
     }
     if pre_filters:
         blob["pre_filters"] = pre_filters
@@ -129,27 +127,27 @@ class TestBuildPipeline:
             {"stage": ApiStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value}
         ]
 
-    def test_gate_before_passthrough_before_assessment(self) -> None:
-        # topic_relevance is a GATE (stop_on_fail=True), duplicate_detection PASS_THROUGH.
-        blob = _blob(topic_relevance=True, duplicate_detection=False)
+    def test_gate_precedes_assessment(self) -> None:
+        blob = _blob(topic_relevance=True)  # stop_on_fail=True -> GATE
         pipeline = build_pipeline(blob.pre_filters)
         assert [s["stage"] for s in pipeline] == [
             ApiStage.TOPIC_RELEVANCE.value,
-            ApiStage.DUPLICATE_DETECTION.value,
             ApiStage.ASSESSMENT.value,
         ]
         assert [s["kind"] for s in pipeline] == [
             StageKind.GATE.value,
-            StageKind.PASS_THROUGH.value,
             StageKind.ASSESSMENT.value,
         ]
 
-    def test_both_gates_precede_assessment(self) -> None:
-        blob = _blob(topic_relevance=True, duplicate_detection=True)
+    def test_passthrough_precedes_assessment(self) -> None:
+        blob = _blob(topic_relevance=False)  # stop_on_fail=False -> PASS_THROUGH
         pipeline = build_pipeline(blob.pre_filters)
+        assert [s["stage"] for s in pipeline] == [
+            ApiStage.TOPIC_RELEVANCE.value,
+            ApiStage.ASSESSMENT.value,
+        ]
         assert [s["kind"] for s in pipeline] == [
-            StageKind.GATE.value,
-            StageKind.GATE.value,
+            StageKind.PASS_THROUGH.value,
             StageKind.ASSESSMENT.value,
         ]
 
@@ -175,16 +173,14 @@ class TestNextStageAndKind:
 
 class TestBuildRows:
     def test_text_only_rows(self) -> None:
-        batch_input = BatchInput(query="q {a}", data=[{"a": "1", "b": "2"}])
+        batch_input = BatchInput(data=[{"a": "1", "b": "2"}])
         rows, text_columns, attachments = build_rows(batch_input)
         assert rows == [{"a": "1", "b": "2"}]
         assert set(text_columns) == {"a", "b"}
         assert attachments == []
 
     def test_attachment_column_is_split_out(self) -> None:
-        batch_input = BatchInput(
-            query="q", data=[{"text": "hi", "img": "https://x/a.png"}]
-        )
+        batch_input = BatchInput(data=[{"text": "hi", "img": "https://x/a.png"}])
         input_columns = {"img": {"type": "image", "format": "url"}}
         rows, text_columns, attachments = build_rows(batch_input, input_columns)
         assert text_columns == ["text"]
@@ -194,32 +190,35 @@ class TestBuildRows:
         assert attachments[0].type == "image"
 
     def test_base64_attachment_rejected(self) -> None:
-        batch_input = BatchInput(query="q", data=[{"img": "data"}])
+        batch_input = BatchInput(data=[{"img": "data"}])
         input_columns = {"img": {"type": "image", "format": "base64"}}
         with pytest.raises(ValueError, match="url-format"):
             build_rows(batch_input, input_columns)
 
     def test_empty_submissions(self) -> None:
-        batch_input = BatchInput.model_construct(query="q", data=[])
+        batch_input = BatchInput.model_construct(data=[])
         rows, text_columns, attachments = build_rows(batch_input)
         assert rows == []
         assert text_columns == []
 
 
 class TestStagePrompt:
-    def test_assessment_uses_query(self) -> None:
-        batch_input = BatchInput(query="assess me", data=[{"a": "1"}])
-        assert _stage_prompt(batch_input, ApiStage.ASSESSMENT.value) == "assess me"
+    def test_assessment_uses_config_submission(self) -> None:
+        blob = _blob(submission="assess {a} now")
+        assert _stage_prompt(blob, ApiStage.ASSESSMENT.value) == "assess {a} now"
 
-    def test_prefilter_stages_have_no_prompt(self) -> None:
-        batch_input = BatchInput(query="q", data=[{"a": "1"}])
-        assert _stage_prompt(batch_input, ApiStage.TOPIC_RELEVANCE.value) is None
-        assert _stage_prompt(batch_input, ApiStage.DUPLICATE_DETECTION.value) is None
+    def test_prefilter_returns_its_own_submission(self) -> None:
+        blob = _blob(topic_relevance=True, topic_submission="rank {a}")
+        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) == "rank {a}"
+
+    def test_prefilter_without_submission_is_none(self) -> None:
+        blob = _blob(topic_relevance=True)
+        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) is None
 
 
 class TestPrefilterForStage:
     def test_returns_configured_filter(self) -> None:
-        blob = _blob(topic_relevance=True, duplicate_detection=False)
+        blob = _blob(topic_relevance=True)
         tr = _prefilter_for_stage(blob, ApiStage.TOPIC_RELEVANCE.value)
         assert tr.params["instructions"] == TOPIC_CRITERIA
 
@@ -246,10 +245,15 @@ class TestStageParams:
             == f"{TOPIC_CRITERIA}\n\n{batch_service._PREFILTER_INSTRUCTION}"
         )
 
-    def test_duplicate_detection_adds_knowledge_base_ids(self) -> None:
-        blob = _blob(duplicate_detection=False)
-        params = _stage_params(blob, ApiStage.DUPLICATE_DETECTION.value)
-        assert params["knowledge_base_ids"] == ["vs_dup"]
+    def test_submission_is_not_a_provider_param(self) -> None:
+        # submission is a prompt template, popped from both branches' provider params.
+        blob = _blob(
+            submission="assess {a}",
+            topic_relevance=True,
+            topic_submission="rank {a}",
+        )
+        assert "submission" not in _stage_params(blob, ApiStage.ASSESSMENT.value)
+        assert "submission" not in _stage_params(blob, ApiStage.TOPIC_RELEVANCE.value)
 
 
 class TestStageProviderModel:
@@ -451,12 +455,12 @@ class TestRecordStage:
         }
         _record_stage(
             bag,
-            ApiStage.DUPLICATE_DETECTION.value,
+            ApiStage.TOPIC_RELEVANCE.value,
             StageKind.PASS_THROUGH.value,
             parsed,
         )
         assert bag["gate_passed"] == [True, True]
-        assert bag["counters"][ApiStage.DUPLICATE_DETECTION.value]["rejected"] == 1
+        assert bag["counters"][ApiStage.TOPIC_RELEVANCE.value]["rejected"] == 1
 
 
 class TestRowSubset:
@@ -503,7 +507,7 @@ def _make_batch_job(db, *, org_id, project_id, **kwargs) -> BatchJob:
 
 
 def _seed_assessment(db, *, org_id, project_id, config_id, bag, data, status=None):
-    batch_input = BatchInput(query="assess {a}", data=data)
+    batch_input = BatchInput(data=data)
     assessment = api.create_assessment(
         session=db,
         method=AssessmentMethod.BATCH,
@@ -984,7 +988,7 @@ class TestSubmitStageEmptySubset:
         pipeline = build_pipeline(None)
         bag = _bag_for(pipeline, total=2)
         bag["gate_passed"] = [False, False]
-        batch_input = BatchInput(query="q {a}", data=[{"a": "1"}, {"a": "2"}])
+        batch_input = BatchInput(data=[{"a": "1"}, {"a": "2"}])
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
@@ -1663,7 +1667,7 @@ class TestBuildResult:
     The cloud-storage read is the only external seam mocked."""
 
     def _seed(self, db, auth, *, data, bag):
-        batch_input = BatchInput(query="assess {a}", data=data)
+        batch_input = BatchInput(data=data)
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
