@@ -8,7 +8,14 @@ import pytest
 import requests
 
 from app.core.audio_utils import AudioRef
-from app.models.llm import NativeCompletionConfig, QueryParams
+from app.models.llm import (
+    ImageContent,
+    NativeCompletionConfig,
+    PDFContent,
+    QueryParams,
+    TextContent,
+)
+from app.services.llm.providers.base import MultiModalInput
 from app.services.llm.providers.google_gcp import (
     GoogleGCPProvider,
     GoogleGCPClient,
@@ -319,6 +326,110 @@ class TestGoogleGCPProvider:
         ):
             resp, _ = provider.execute(
                 stt_config, query, audio_ref, include_provider_raw_response=True
+            )
+        assert resp.provider_raw_response == raw
+
+    # ── text ─────────────────────────────────────────────────────────────────
+    def test_text_forwards_instructions_and_temperature(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={
+                "model": "gemini-2.5-flash",
+                "instructions": "be concise",
+                "temperature": 0.4,
+            },
+        )
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            provider.execute(config, query, "hello")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["systemInstruction"] == {"parts": [{"text": "be concise"}]}
+        assert payload["generationConfig"]["temperature"] == 0.4
+
+    def test_text_accepts_multimodal_list_input(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        parts = [
+            TextContent(value="describe this"),
+            ImageContent(format="base64", value="aW1n", mime_type="image/png"),
+            ImageContent(
+                format="url", value="https://x/img.png", mime_type="image/png"
+            ),
+            PDFContent(format="base64", value="cGRm", mime_type="application/pdf"),
+            PDFContent(
+                format="url", value="https://x/doc.pdf", mime_type="application/pdf"
+            ),
+        ]
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("described")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, parts)
+        assert err is None
+        sent_parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert sent_parts == [
+            {"text": "describe this"},
+            {"inlineData": {"mimeType": "image/png", "data": "aW1n"}},
+            {"fileData": {"mimeType": "image/png", "fileUri": "https://x/img.png"}},
+            {"inlineData": {"mimeType": "application/pdf", "data": "cGRm"}},
+            {
+                "fileData": {
+                    "mimeType": "application/pdf",
+                    "fileUri": "https://x/doc.pdf",
+                }
+            },
+        ]
+
+    def test_text_accepts_multimodal_input_wrapper(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        multimodal = MultiModalInput(parts=[TextContent(value="hi")])
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, multimodal)
+        assert err is None
+        sent_parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert sent_parts == [{"text": "hi"}]
+
+    def test_text_missing_content_returns_error(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        malformed = {"candidates": [], "modelVersion": "gemini-2.5-flash"}
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(malformed),
+        ):
+            resp, err = provider.execute(config, query, "hello")
+        assert resp is None
+        assert "Text response is missing generated content" in err
+
+    def test_text_raw_response_included_when_requested(self, provider, query):
+        raw = _stt_response("hi there")
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(raw),
+        ):
+            config = NativeCompletionConfig(
+                provider="google-native",
+                type=CompletionType.TEXT,
+                params={"model": "gemini-2.5-flash"},
+            )
+            resp, _ = provider.execute(
+                config, query, "hello", include_provider_raw_response=True
             )
         assert resp.provider_raw_response == raw
 
