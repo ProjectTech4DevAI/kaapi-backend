@@ -25,10 +25,10 @@ from app.core.batch import (
     BATCH_KEY,
     AnthropicBatchProvider,
     BatchJobState,
+    GoogleGCPBatchProvider,
     MessageBatchStatus,
     OpenAIBatchProvider,
     GeminiBatchProvider,
-    GoogleGCPBatchProvider,
     extract_text_from_response_dict,
     poll_batch_status,
     process_completed_batch,
@@ -36,11 +36,11 @@ from app.core.batch import (
 )
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
-from app.crud.credentials import get_provider_credential
 from fastapi import HTTPException
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.assessment import api
+from app.crud.credentials import get_provider_credential
 from app.crud.assessment.batch import (
     build_anthropic_jsonl,
     build_google_jsonl,
@@ -72,9 +72,31 @@ from app.services.assessment.mappers import (
     map_kaapi_to_openai_params,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _google_gcp_credential(
+    *, session: Session, organization_id: int, project_id: int
+) -> dict[str, Any]:
+    """Vertex needs the SA key + bucket; a missing credential is client-fixable."""
+    cred = get_provider_credential(
+        session=session,
+        provider=LLMProvider.GOOGLE_GCP,
+        project_id=project_id,
+        org_id=organization_id,
+    )
+    if not isinstance(cred, dict):
+        raise HTTPException(
+            status_code=404,
+            detail="google-gcp credentials not configured for this project",
+        )
+    return cred
+
 
 # Re-poll cadence for a stage's provider batch, mirroring the assessment cron tick.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
@@ -128,6 +150,7 @@ _FAILED_STATUSES = {
 _SUPPORTED_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_AISTUDIO,
     LLMProvider.GOOGLE_GCP,
     LLMProvider.ANTHROPIC,
 }
@@ -272,24 +295,6 @@ def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, 
     return blob.assessment.provider, blob.assessment.params["model"]
 
 
-def _google_gcp_credential(
-    *, session: Session, organization_id: int, project_id: int
-) -> dict[str, Any]:
-    """Vertex needs the SA key + bucket; a missing credential is a client-fixable 404."""
-    cred = get_provider_credential(
-        session=session,
-        provider=LLMProvider.GOOGLE_GCP,
-        project_id=project_id,
-        org_id=organization_id,
-    )
-    if not isinstance(cred, dict):
-        raise HTTPException(
-            status_code=404,
-            detail="google-gcp credentials not configured for this project",
-        )
-    return cred
-
-
 def _submit_provider_batch(
     *,
     session: Session,
@@ -331,7 +336,11 @@ def _submit_provider_batch(
             "description": description,
             "completion_window": "24h",
         }
-    elif provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
+    elif provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         mapped, _ = map_kaapi_to_google_params(params)
         jsonl = build_google_jsonl(
             rows, text_columns, attachments, prompt, mapped, row_indices
@@ -399,7 +408,11 @@ def _build_batch_provider(
                 session=session, org_id=organization_id, project_id=project_id
             )
         )
-    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         if provider_name == LLMProvider.GOOGLE_GCP:
             cred = _google_gcp_credential(
                 session=session,

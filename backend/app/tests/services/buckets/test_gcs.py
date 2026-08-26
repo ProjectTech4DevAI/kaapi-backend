@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.cloud.storage import GCS_SCOPES
 from app.services.buckets.providers.gcs import (
     GCSBucketProvider,
     GCSClient,
@@ -29,9 +28,8 @@ class TestCreateClient:
 
         with (
             patch(
-                "app.services.buckets.providers.gcs.service_account."
-                "Credentials.from_service_account_info"
-            ) as mock_from_info,
+                "app.services.buckets.providers.gcs.build_gcp_sa_credentials"
+            ) as mock_build,
             patch("app.services.buckets.providers.gcs.gcs.Client") as mock_client,
         ):
             client = GCSBucketProvider.create_client(
@@ -39,9 +37,9 @@ class TestCreateClient:
             )
 
         assert client.default_bucket == "byok-bucket"
-        mock_from_info.assert_called_once_with(byok_sa, scopes=list(GCS_SCOPES))
+        mock_build.assert_called_once_with(byok_sa)
         mock_client.assert_called_once_with(
-            project="byok-project", credentials=mock_from_info.return_value
+            project="byok-project", credentials=mock_build.return_value
         )
 
     def test_missing_sa_info_raises(self):

@@ -43,10 +43,7 @@ class TestGetBucketProvider:
 
         with (
             patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
-            patch(
-                "app.services.buckets.providers.gcs.service_account."
-                "Credentials.from_service_account_info"
-            ),
+            patch("app.services.buckets.providers.gcs.build_gcp_sa_credentials"),
             patch("app.services.buckets.providers.gcs.gcs.Client") as mock_client,
         ):
             mock_get_creds.return_value = credential

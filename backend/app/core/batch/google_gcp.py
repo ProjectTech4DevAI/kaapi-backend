@@ -8,15 +8,19 @@ therefore ride the project's ``google-gcp`` credential (SA key + ``gcs_bucket``)
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from google import genai
 from google.genai import types
 from google.cloud import storage as gcs
-from google.oauth2 import service_account
 
-from app.core.cloud.storage import GCS_SCOPES, CloudStorageError
+from app.core.cloud.storage import CloudStorageError, build_gcp_sa_credentials
+from app.core.providers import (
+    GoogleGcpCredentials,
+    Provider,
+    parse_provider_credentials,
+)
 
 from .base import BATCH_KEY, BatchProvider
 from .gemini import BatchJobState
@@ -79,36 +83,23 @@ class GoogleGCPBatchProvider(BatchProvider):
         cls, credentials: dict[str, Any], model: str | None = None
     ) -> "GoogleGCPBatchProvider":
         """Build a Vertex batch provider from a ``google-gcp`` credential dict."""
-        project_id = credentials.get("project_id")
-        location = credentials.get("location")
-        gcs_bucket = credentials.get("gcs_bucket")
-        sa_info = credentials.get("sa_key")
-        missing = [
-            name
-            for name, value in (
-                ("project_id", project_id),
-                ("location", location),
-                ("gcs_bucket", gcs_bucket),
-                ("sa_key", sa_info),
-            )
-            if not value
-        ]
-        if missing:
-            raise ValueError(
-                f"Vertex batch provider missing required fields: {', '.join(missing)}"
-            )
+        creds_model = cast(
+            GoogleGcpCredentials,
+            parse_provider_credentials(Provider.GOOGLE_GCP, credentials),
+        )
 
-        creds = service_account.Credentials.from_service_account_info(
-            sa_info, scopes=list(GCS_SCOPES)
-        )
+        creds = build_gcp_sa_credentials(cast(dict[str, Any], creds_model.sa_key))
         client = genai.Client(
-            vertexai=True, project=project_id, location=location, credentials=creds
+            vertexai=True,
+            project=creds_model.project_id,
+            location=creds_model.location,
+            credentials=creds,
         )
-        storage_client = gcs.Client(project=project_id, credentials=creds)
+        storage_client = gcs.Client(project=creds_model.project_id, credentials=creds)
         return cls(
             client=client,
             storage_client=storage_client,
-            gcs_bucket=gcs_bucket,
+            gcs_bucket=creds_model.gcs_bucket,
             model=model,
         )
 

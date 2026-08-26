@@ -6,9 +6,8 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 from google.cloud import storage as gcs
-from google.oauth2 import service_account
 
-from app.core.cloud.storage import GCS_SCOPES, CloudStorageError
+from app.core.cloud.storage import CloudStorageError, build_gcp_sa_credentials
 from app.services.buckets.providers.base import BaseBucketProvider
 
 logger = logging.getLogger(__name__)
@@ -54,9 +53,7 @@ class GCSBucketProvider(BaseBucketProvider):
             f"[GCSBucketProvider.create_client] gcs creds | bucket={gcs_bucket}"
         )
 
-        creds = service_account.Credentials.from_service_account_info(
-            sa_info, scopes=list(GCS_SCOPES)
-        )
+        creds = build_gcp_sa_credentials(sa_info)
         storage_client = gcs.Client(
             project=sa_info.get("project_id"), credentials=creds
         )

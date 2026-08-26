@@ -160,6 +160,7 @@ class TestFileIO:
 
 class TestFromCredentials:
     _CRED = {
+        "api_key": "test-key",
         "project_id": "proj",
         "location": "us-central1",
         "gcs_bucket": _BUCKET,
@@ -168,13 +169,13 @@ class TestFromCredentials:
 
     def test_builds_provider(self):
         with (
-            patch("app.core.batch.google_gcp.service_account") as sa,
+            patch("app.core.batch.google_gcp.build_gcp_sa_credentials") as build_creds,
             patch("app.core.batch.google_gcp.genai.Client") as genai_client,
             patch("app.core.batch.google_gcp.gcs.Client") as gcs_client,
         ):
             provider = GoogleGCPBatchProvider.from_credentials(self._CRED)
         assert isinstance(provider, GoogleGCPBatchProvider)
-        sa.Credentials.from_service_account_info.assert_called_once()
+        build_creds.assert_called_once()
         assert genai_client.call_args.kwargs["vertexai"] is True
         gcs_client.assert_called_once()
 
