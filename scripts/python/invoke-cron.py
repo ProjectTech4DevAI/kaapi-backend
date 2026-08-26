@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 ENDPOINTS = [
     "/api/v1/cron/evaluations",
     "/api/v1/cron/pending-jobs",
+    "/api/v1/cron/daily-stats",
 ]
 REQUEST_TIMEOUT = 30  # Timeout for requests in seconds
 
