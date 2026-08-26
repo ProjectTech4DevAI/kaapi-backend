@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.fast import CHUNK_CONFIG_INDEX, list_response_chunk_jobs
+from app.crud.evaluations.iteration import list_processing_evaluation_iteration_runs
 from app.crud.evaluations.processing import poll_all_pending_evaluations
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
@@ -100,6 +101,32 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
     }
 
 
+def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str, Any]:
+    """Resume trigger for the eval-iterate-improve LangGraph loop.
+
+    For every thin `evaluation_iteration_run` row still `PROCESSING`, dispatch a
+    `resume=True` graph-step task. Cheap even when the loop is still waiting on
+    the same sub-job as last tick: the task just re-checks status and interrupts
+    again immediately if not ready — same cost profile as a plain polling barrier.
+    """
+    from app.celery.utils import start_evaluation_iteration_round
+
+    runs = list_processing_evaluation_iteration_runs(session=session)
+    for run in runs:
+        start_evaluation_iteration_round(
+            iteration_run_id=run.id,
+            resume=True,
+            organization_id=run.organization_id,
+            project_id=run.project_id,
+        )
+
+    logger.info(
+        f"[dispatch_pending_evaluation_iteration_resumes] Dispatched resumes | "
+        f"count={len(runs)}"
+    )
+    return {"total": len(runs), "resumes_dispatched": len(runs)}
+
+
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     """
     Process all pending evaluations across all organizations.
@@ -133,6 +160,11 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
         # Fan-in barrier + stall healer for chunked fast-mode text evaluations.
         fast_summary = dispatch_fast_evaluation_barriers(session=session)
 
+        # Resume trigger for the eval-iterate-improve LangGraph loop.
+        iteration_summary = dispatch_pending_evaluation_iteration_resumes(
+            session=session
+        )
+
         # Merge summaries
         total_processed = (
             text_summary["processed"]
@@ -158,7 +190,8 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
             f"{total_processed} processed, {total_failed} failed, "
             f"{total_still_processing} still processing | "
             f"fast_aggregates={fast_summary['aggregates_dispatched']} | "
-            f"fast_chunks_reenqueued={fast_summary['chunks_reenqueued']}"
+            f"fast_chunks_reenqueued={fast_summary['chunks_reenqueued']} | "
+            f"iteration_resumes={iteration_summary['resumes_dispatched']}"
         )
 
         return {
@@ -168,6 +201,7 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "total_still_processing": total_still_processing,
             "results": all_details,
             "fast": fast_summary,
+            "iteration": iteration_summary,
         }
 
     except Exception as e:

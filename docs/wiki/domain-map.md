@@ -31,6 +31,7 @@ APIKey → Organization, Project, User  # programmatic access
 | BatchJob | batch_job.py | Org, Project | EvaluationRun, Assessment; batch polling cron (logical) |
 | EvaluationDataset | evaluation.py | Org, Project, Language | EvaluationRun, STTSample (via stt_evaluation), Assessment |
 | EvaluationRun | evaluation.py | Dataset, Config, BatchJob, Org, Project, Language | STTResult, TTSResult; Langfuse scores (logical); console UI (logical) |
+| EvaluationIterationRun | evaluation_iteration.py | Dataset, Config, Org, Project | EvaluationRun, Job (referenced only inside the LangGraph checkpoint state, not FK columns on this table, logical); callback_url caller (logical) |
 | STTSample / STTResult | stt_evaluation.py | Dataset, Run, File, Language | human annotation UI (logical) |
 | TTSResult | tts_evaluation.py | Run, Org, Project | human annotation UI (logical) |
 | Assessment / AssessmentRun | assessment.py | Config, Dataset, BatchJob, Job, Org, Project | console UI (logical) |
