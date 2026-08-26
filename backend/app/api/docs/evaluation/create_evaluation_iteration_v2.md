@@ -23,8 +23,8 @@ always runs judged.
 ## Rounds cap (optional)
 
 `max_rounds` bounds how many eval/improve rounds the loop may run. Omit it to
-use `EVAL_ITERATION_MAX_ROUNDS_DEFAULT`; an oversized value is silently
-clamped to `EVAL_ITERATION_MAX_ROUNDS_HARD_CAP` rather than rejected.
+use `EVAL_ITERATION_MAX_ROUNDS_DEFAULT`; a value above
+`EVAL_ITERATION_MAX_ROUNDS_HARD_CAP` is rejected with a 422.
 
 ## Completion webhook (required)
 

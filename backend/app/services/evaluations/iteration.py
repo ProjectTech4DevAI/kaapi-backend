@@ -58,9 +58,9 @@ def validate_and_start_evaluation_iteration(
 
     Reuses `validate_fast_evaluation_inputs` (dataset/config checks) unchanged —
     always `is_judge_run=True` since the loop only ever runs judged (v2) evals.
-    `max_rounds` is clamped to `EVAL_ITERATION_MAX_ROUNDS_HARD_CAP`, not rejected,
-    so a caller passing an oversized value degrades to the safety cap instead of
-    failing outright.
+    The API layer rejects `max_rounds` above `EVAL_ITERATION_MAX_ROUNDS_HARD_CAP`
+    with a 422 (see `EvaluationIterationCreateRequest`); the clamp here is a
+    defensive floor for any other caller of this service function.
     """
     resolved_max_rounds = min(
         max_rounds or settings.EVAL_ITERATION_MAX_ROUNDS_DEFAULT,

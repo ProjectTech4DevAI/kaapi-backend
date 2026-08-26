@@ -121,7 +121,7 @@ class TestCreateEvaluationIterationRoute:
         assert resp.status_code == 422
         _patch_dispatch.assert_not_called()
 
-    def test_max_rounds_above_hard_cap_is_clamped_not_rejected(
+    def test_max_rounds_above_hard_cap_is_rejected(
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
@@ -145,8 +145,5 @@ class TestCreateEvaluationIterationRoute:
             headers=user_api_key_header,
         )
 
-        assert resp.status_code == 202, resp.text
-        assert (
-            _patch_dispatch.call_args.kwargs["max_rounds"]
-            == settings.EVAL_ITERATION_MAX_ROUNDS_HARD_CAP
-        )
+        assert resp.status_code == 422, resp.text
+        _patch_dispatch.assert_not_called()

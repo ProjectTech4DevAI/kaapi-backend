@@ -429,7 +429,11 @@ def build_evaluation_iteration_graph(checkpointer: PostgresSaver) -> CompiledSta
         {"finalize_node": "finalize_node", "start_improve_node": "start_improve_node"},
     )
     graph.add_edge("start_improve_node", "wait_improve_node")
-    graph.add_edge("wait_improve_node", "start_eval_node")
+    graph.add_conditional_edges(
+        "wait_improve_node",
+        route_after_eval,
+        {"finalize_node": "finalize_node", "start_improve_node": "start_eval_node"},
+    )
     graph.add_edge("finalize_node", END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -501,6 +505,14 @@ def _mark_iteration_run_failed(
                     error_message=error_message,
                 ),
             )
+            callback_url = iteration_run.callback_url
+
+        envelope = APIResponse.failure_response(error=error_message)
+        webhook_secret = get_webhook_secret(project_id, organization_id)
+        send_callback(
+            callback_url, envelope.model_dump(), webhook_secret=webhook_secret
+        )
+
         logger.info(
             f"[_mark_iteration_run_failed] iteration_run_id={iteration_run_id} marked failed"
         )

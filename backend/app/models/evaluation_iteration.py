@@ -7,6 +7,7 @@ from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlmodel import Field, SQLModel
 
+from app.core.config import settings
 from app.core.util import now
 
 
@@ -150,9 +151,10 @@ class EvaluationIterationCreateRequest(SQLModel):
     max_rounds: int | None = Field(
         default=None,
         ge=1,
+        le=settings.EVAL_ITERATION_MAX_ROUNDS_HARD_CAP,
         description=(
             "Safety cap on rounds; defaults to EVAL_ITERATION_MAX_ROUNDS_DEFAULT, "
-            "capped at EVAL_ITERATION_MAX_ROUNDS_HARD_CAP"
+            "rejected above EVAL_ITERATION_MAX_ROUNDS_HARD_CAP"
         ),
     )
     callback_url: HttpUrl = Field(
