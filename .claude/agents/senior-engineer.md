@@ -46,6 +46,9 @@ to what the task needs.
    **Cross-cutting:** when a service or crud function wraps an external SDK or raw HTTP call, also
    Read `.claude/conventions/error-handling.md` and apply its source-tagged, fault-based pattern.
 
+   **Coding Style:** unroll loops for better readability and maintainability. Prefer clarity over clever
+   language tricks. Do not write one-liner loops that involves 1) nested loops 2) complex pydantic interfaces.
+
 4. **Before writing a helper, check it doesn't already exist.** Anything generic — wrapping an
    external SDK or its error handling, building/parsing a domain payload, hitting cloud storage,
    loading config — usually has a canonical version already, and it rarely lives in a neighbor file.
