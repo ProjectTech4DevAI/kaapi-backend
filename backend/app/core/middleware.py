@@ -58,16 +58,29 @@ async def http_request_logger(request: Request, call_next) -> Response:
     return await _log_http_request(request, call_next)
 
 
+def _resolve_request_body_size(request: Request) -> int:
+    """
+    Read the request payload size from Content-Length.
+    Returns 0 when the header is absent or malformed (e.g. chunked transfer).
+    """
+    try:
+        return int(request.headers.get("content-length") or 0)
+    except ValueError:
+        return 0
+
+
 async def _log_http_request(request: Request, call_next) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
+    request_body_size = _resolve_request_body_size(request)
 
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("http.request.method", method)
         span.set_attribute("http.request_method", method)
         span.set_attribute("http.method", method)
+        span.set_attribute("http.request.body.size", request_body_size)
 
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.method", method)
@@ -102,7 +115,11 @@ async def _log_http_request(request: Request, call_next) -> Response:
         span.set_attribute("http.request.duration_ms", round(duration_ms, 2))
 
     if raw_path not in SILENT_LOG_PATHS:
-        logger.info(f"{method} {raw_path} - {status} [{duration_ms:.2f}ms]")
+        logger.info(
+            f"{method} {raw_path} - {status} [{duration_ms:.2f}ms] "
+            f"| request_body_size: {request_body_size}B "
+            f"| correlation_id: {correlation_id.get()}"
+        )
 
     try:
         if sentry_sdk.get_client().is_active():
@@ -116,6 +133,12 @@ async def _log_http_request(request: Request, call_next) -> Response:
                 "http.status_code": str(status),
             }
             sentry_sdk.metrics.count("http.server.request.count", 1, attributes=attrs)
+            sentry_sdk.metrics.distribution(
+                "http.server.request.body.size",
+                request_body_size,
+                unit="byte",
+                attributes=attrs,
+            )
             sentry_sdk.metrics.distribution(
                 "http.server.request.duration",
                 duration_ms,
