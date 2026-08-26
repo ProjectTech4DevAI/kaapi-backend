@@ -475,7 +475,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == LLMProvider.GOOGLE:
+    elif base_provider in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_AISTUDIO):
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)

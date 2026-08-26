@@ -510,7 +510,11 @@ def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
             "response_id": response.get("id"),
         }
 
-    if provider_name in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_GCP):
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         response = result.get("response")
         text = extract_text_from_response_dict(response) if response else None
         return {
