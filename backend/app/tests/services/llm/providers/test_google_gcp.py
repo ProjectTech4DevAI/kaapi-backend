@@ -1,4 +1,4 @@
-"""Tests for the Google Vertex AI provider."""
+"""Tests for the Google GCP provider."""
 
 import base64
 import json
@@ -7,18 +7,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-# ponytail: Vertex provider is temporarily disabled in the registry; skip only
-# the routing/execute tests. Pure client tests (endpoint, sa_info, credential
-# fallback) still run for coverage.
-_vertex_disabled = pytest.mark.skip(
-    reason="Vertex provider disabled — routing swapped to GoogleAIProvider"
-)
-
 from app.core.audio_utils import AudioRef
-from app.models.llm import NativeCompletionConfig, QueryParams
-from app.services.llm.providers.google_ai import (
-    GoogleVertexAIProvider,
-    VertexClient,
+from app.models.llm import (
+    ImageContent,
+    NativeCompletionConfig,
+    PDFContent,
+    QueryParams,
+    TextContent,
+)
+from app.services.llm.providers.base import MultiModalInput
+from app.services.llm.providers.google_gcp import (
+    GoogleGCPProvider,
+    GoogleGCPClient,
     _load_platform_sa_info,
 )
 from app.models.llm.constants import CompletionType
@@ -81,16 +81,15 @@ def _mock_http_err(status: int = 400, body: str = "bad request") -> MagicMock:
 def _mock_gcs(monkeypatch):
     """Stub out GCS upload so STT tests don't touch external services."""
     monkeypatch.setattr(
-        "app.services.llm.providers.google_ai.upload_audio_to_gcs",
+        "app.services.llm.providers.google_gcp.upload_audio_to_gcs",
         lambda *, audio_bytes, bucket_name, sa_info, **kw: f"gs://{bucket_name}/audio/test.wav",
     )
 
 
-@_vertex_disabled
-class TestGoogleVertexAIProvider:
+class TestGoogleGCPProvider:
     @pytest.fixture
-    def client(self) -> VertexClient:
-        return VertexClient(
+    def client(self) -> GoogleGCPClient:
+        return GoogleGCPClient(
             api_key="k",
             project_id="p",
             location="us-central1",
@@ -99,8 +98,8 @@ class TestGoogleVertexAIProvider:
         )
 
     @pytest.fixture
-    def provider(self, client) -> GoogleVertexAIProvider:
-        return GoogleVertexAIProvider(client=client)
+    def provider(self, client) -> GoogleGCPProvider:
+        return GoogleGCPProvider(client=client)
 
     @pytest.fixture
     def query(self) -> QueryParams:
@@ -129,11 +128,17 @@ class TestGoogleVertexAIProvider:
     # ── create_client ────────────────────────────────────────────────────────
     def test_create_client_requires_all_fields(self):
         with pytest.raises(ValueError, match="project_id, location"):
-            GoogleVertexAIProvider.create_client({"api_key": "k"})
+            GoogleGCPProvider.create_client({"api_key": "k"})
 
     def test_create_client_builds_endpoint(self):
-        c = GoogleVertexAIProvider.create_client(
-            {"api_key": "k", "project_id": "p", "location": "us-central1"}
+        c = GoogleGCPProvider.create_client(
+            {
+                "api_key": "k",
+                "project_id": "p",
+                "location": "us-central1",
+                "sa_key": {"type": "service_account"},
+                "gcs_bucket": "test-bucket",
+            }
         )
         assert "us-central1-aiplatform.googleapis.com" in c.endpoint("m")
         assert "projects/p/locations/us-central1" in c.endpoint("m")
@@ -142,7 +147,7 @@ class TestGoogleVertexAIProvider:
     # ── STT ──────────────────────────────────────────────────────────────────
     def test_stt_happy_path(self, provider, stt_config, query, audio_ref):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok(_stt_response("hi there")),
         ) as mock_post:
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -175,24 +180,24 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref, monkeypatch
     ):
         monkeypatch.setattr(
-            "app.services.llm.providers.google_ai.upload_audio_to_gcs",
+            "app.services.llm.providers.google_gcp.upload_audio_to_gcs",
             MagicMock(side_effect=RuntimeError("bucket denied")),
         )
         resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Failed to stage audio for Vertex STT" in err
+        assert "Failed to stage audio for Google GCP STT" in err
         assert "bucket denied" in err
 
     def test_stt_http_error_returns_clean_message(
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_err(403, "permission denied"),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "[VERTEX]" in err
+        assert "[GOOGLE_GCP]" in err
         assert "403" in err
         assert "permission denied" in err
 
@@ -200,18 +205,18 @@ class TestGoogleVertexAIProvider:
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             side_effect=requests.ConnectionError("dns boom"),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
         assert resp is None
-        assert "Vertex AI connection failed" in err
+        assert "Google GCP connection failed" in err
 
     def test_stt_missing_transcript_returns_error(
         self, provider, stt_config, query, audio_ref
     ):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok({"candidates": []}),
         ):
             resp, err = provider.execute(stt_config, query, audio_ref)
@@ -230,7 +235,7 @@ class TestGoogleVertexAIProvider:
             },
         )
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok(_stt_response()),
         ) as mock_post:
             provider.execute(config, query, audio_ref)
@@ -243,7 +248,7 @@ class TestGoogleVertexAIProvider:
     # ── TTS ──────────────────────────────────────────────────────────────────
     def test_tts_happy_path_wav(self, provider, tts_config, query):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok(_tts_response()),
         ) as mock_post:
             resp, err = provider.execute(tts_config, query, "hello")
@@ -275,7 +280,7 @@ class TestGoogleVertexAIProvider:
 
     def test_tts_missing_audio_returns_error(self, provider, tts_config, query):
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok({"candidates": [{"content": {"parts": []}}]}),
         ):
             resp, err = provider.execute(tts_config, query, "hello")
@@ -289,7 +294,7 @@ class TestGoogleVertexAIProvider:
             params={"model": "gemini-2.5-flash-preview-tts", "language": "en-US"},
         )
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok(_tts_response()),
         ) as mock_post:
             provider.execute(config, query, "hi")
@@ -297,26 +302,134 @@ class TestGoogleVertexAIProvider:
         assert speech["languageCode"] == "en-US"
 
     # ── execute dispatcher ───────────────────────────────────────────────────
-    def test_text_completion_is_rejected(self, provider, query):
+    def test_text_completion_happy_path(self, provider, query):
         config = NativeCompletionConfig(
             provider="google-native",
             type=CompletionType.TEXT,
             params={"model": "gemini-2.5-flash"},
         )
-        resp, err = provider.execute(config, query, "hello")
-        assert resp is None
-        assert "Unsupported completion type 'text'" in err
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ):
+            resp, err = provider.execute(config, query, "hello")
+        assert err is None
+        assert resp.response.output.content.value == "hi there"
 
     def test_raw_response_included_when_requested(
         self, provider, stt_config, query, audio_ref
     ):
         raw = _stt_response()
         with patch(
-            "app.services.llm.providers.google_ai.requests.post",
+            "app.services.llm.providers.google_gcp.requests.post",
             return_value=_mock_http_ok(raw),
         ):
             resp, _ = provider.execute(
                 stt_config, query, audio_ref, include_provider_raw_response=True
+            )
+        assert resp.provider_raw_response == raw
+
+    # ── text ─────────────────────────────────────────────────────────────────
+    def test_text_forwards_instructions_and_temperature(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={
+                "model": "gemini-2.5-flash",
+                "instructions": "be concise",
+                "temperature": 0.4,
+            },
+        )
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            provider.execute(config, query, "hello")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["systemInstruction"] == {"parts": [{"text": "be concise"}]}
+        assert payload["generationConfig"]["temperature"] == 0.4
+
+    def test_text_accepts_multimodal_list_input(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        parts = [
+            TextContent(value="describe this"),
+            ImageContent(format="base64", value="aW1n", mime_type="image/png"),
+            ImageContent(
+                format="url", value="https://x/img.png", mime_type="image/png"
+            ),
+            PDFContent(format="base64", value="cGRm", mime_type="application/pdf"),
+            PDFContent(
+                format="url", value="https://x/doc.pdf", mime_type="application/pdf"
+            ),
+        ]
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("described")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, parts)
+        assert err is None
+        sent_parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert sent_parts == [
+            {"text": "describe this"},
+            {"inlineData": {"mimeType": "image/png", "data": "aW1n"}},
+            {"fileData": {"mimeType": "image/png", "fileUri": "https://x/img.png"}},
+            {"inlineData": {"mimeType": "application/pdf", "data": "cGRm"}},
+            {
+                "fileData": {
+                    "mimeType": "application/pdf",
+                    "fileUri": "https://x/doc.pdf",
+                }
+            },
+        ]
+
+    def test_text_accepts_multimodal_input_wrapper(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        multimodal = MultiModalInput(parts=[TextContent(value="hi")])
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            resp, err = provider.execute(config, query, multimodal)
+        assert err is None
+        sent_parts = mock_post.call_args.kwargs["json"]["contents"][0]["parts"]
+        assert sent_parts == [{"text": "hi"}]
+
+    def test_text_missing_content_returns_error(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash"},
+        )
+        malformed = {"candidates": [], "modelVersion": "gemini-2.5-flash"}
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(malformed),
+        ):
+            resp, err = provider.execute(config, query, "hello")
+        assert resp is None
+        assert "Text response is missing generated content" in err
+
+    def test_text_raw_response_included_when_requested(self, provider, query):
+        raw = _stt_response("hi there")
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(raw),
+        ):
+            config = NativeCompletionConfig(
+                provider="google-native",
+                type=CompletionType.TEXT,
+                params={"model": "gemini-2.5-flash"},
+            )
+            resp, _ = provider.execute(
+                config, query, "hello", include_provider_raw_response=True
             )
         assert resp.provider_raw_response == raw
 
@@ -325,21 +438,21 @@ class TestGoogleVertexAIProvider:
 # TTS payload shape — not routing-dependent, kept unskipped for coverage.
 # ---------------------------------------------------------------------------
 def test_tts_wraps_input_in_transcript_tags():
-    client = VertexClient(
+    client = GoogleGCPClient(
         api_key="k",
         project_id="p",
         location="us-central1",
         sa_info={"type": "service_account", "project_id": "p"},
         gcs_bucket="test-bucket",
     )
-    provider = GoogleVertexAIProvider(client=client)
+    provider = GoogleGCPProvider(client=client)
     config = NativeCompletionConfig(
         provider="google-native",
         type=CompletionType.TTS,
         params={"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"},
     )
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ) as mock_post:
         provider.execute(config, QueryParams(input="ignored"), "Say this text")
@@ -352,15 +465,15 @@ def test_tts_wraps_input_in_transcript_tags():
 # Standalone _post / _execute_tts / execute() coverage — not routing-dependent,
 # kept unskipped (same pattern as test_tts_wraps_input_in_transcript_tags).
 # ---------------------------------------------------------------------------
-def _provider() -> GoogleVertexAIProvider:
-    client = VertexClient(
+def _provider() -> GoogleGCPProvider:
+    client = GoogleGCPClient(
         api_key="k",
         project_id="p",
         location="us-central1",
         sa_info={"type": "service_account", "project_id": "p"},
         gcs_bucket="test-bucket",
     )
-    return GoogleVertexAIProvider(client=client)
+    return GoogleGCPProvider(client=client)
 
 
 def _tts_config(**params) -> NativeCompletionConfig:
@@ -385,7 +498,7 @@ def _tts_config(**params) -> NativeCompletionConfig:
 def test_post_http_error_status_branches(status, expected_snippet):
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_err(status, "boom"),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -403,7 +516,7 @@ def test_post_http_error_uses_google_error_envelope():
         "error": {"message": "invalid field", "status": "INVALID_ARGUMENT"}
     }
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=resp_mock,
     ):
         _, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -414,7 +527,7 @@ def test_post_http_error_uses_google_error_envelope():
 def test_post_timeout_returns_clean_message():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         side_effect=requests.Timeout("too slow"),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -425,7 +538,7 @@ def test_post_timeout_returns_clean_message():
 def test_post_request_exception_returns_clean_message():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         side_effect=requests.RequestException("weird"),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -440,7 +553,7 @@ def test_post_non_json_success_response_returns_clean_message():
     resp_mock.status_code = 200
     resp_mock.json.side_effect = ValueError("no json")
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=resp_mock,
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -465,7 +578,7 @@ def test_execute_tts_rejects_empty_input():
 def test_execute_tts_missing_audio_data_returns_error():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok({"candidates": [{"content": {"parts": []}}]}),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -481,7 +594,7 @@ def test_execute_tts_invalid_base64_returns_error():
         ]
     }
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(bad),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -493,7 +606,7 @@ def test_execute_tts_empty_audio_bytes_returns_error():
     provider = _provider()
     empty = {"candidates": [{"content": {"parts": [{"inlineData": {"data": ""}}]}}]}
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(empty),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -504,10 +617,10 @@ def test_execute_tts_empty_audio_bytes_returns_error():
 def test_execute_tts_mp3_conversion_success():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ), patch(
-        "app.services.llm.providers.google_ai.convert_pcm_to_mp3",
+        "app.services.llm.providers.google_gcp.convert_pcm_to_mp3",
         return_value=(b"mp3bytes", None),
     ):
         resp, err = provider.execute(
@@ -520,10 +633,10 @@ def test_execute_tts_mp3_conversion_success():
 def test_execute_tts_mp3_conversion_failure_returns_error():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ), patch(
-        "app.services.llm.providers.google_ai.convert_pcm_to_mp3",
+        "app.services.llm.providers.google_gcp.convert_pcm_to_mp3",
         return_value=(None, "ffmpeg missing"),
     ):
         resp, err = provider.execute(
@@ -537,10 +650,10 @@ def test_execute_tts_mp3_conversion_failure_returns_error():
 def test_execute_tts_ogg_conversion_success():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ), patch(
-        "app.services.llm.providers.google_ai.convert_pcm_to_ogg",
+        "app.services.llm.providers.google_gcp.convert_pcm_to_ogg",
         return_value=(b"oggbytes", None),
     ):
         resp, err = provider.execute(
@@ -553,7 +666,7 @@ def test_execute_tts_ogg_conversion_success():
 def test_execute_tts_unsupported_response_format_falls_back_to_wav():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ):
         resp, err = provider.execute(
@@ -563,22 +676,26 @@ def test_execute_tts_unsupported_response_format_falls_back_to_wav():
     assert resp.response.output.content.mime_type == "audio/wav"
 
 
-def test_execute_rejects_unsupported_completion_type():
+def test_execute_text_happy_path():
     provider = _provider()
     config = NativeCompletionConfig(
         provider="google-native",
         type=CompletionType.TEXT,
         params={"model": "gemini-2.5-flash"},
     )
-    resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
-    assert resp is None
-    assert "Unsupported completion type" in err
+    with patch(
+        "app.services.llm.providers.google_gcp.requests.post",
+        return_value=_mock_http_ok(_stt_response("hi there")),
+    ):
+        resp, err = provider.execute(config, QueryParams(input="ignored"), "hi")
+    assert err is None
+    assert resp.response.output.content.value == "hi there"
 
 
 def test_execute_tts_language_is_forwarded():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ) as mock_post:
         provider.execute(
@@ -592,7 +709,7 @@ def test_execute_tts_director_notes_set_system_instruction():
     provider = _provider()
     config = _tts_config(provider_specific={"gemini": {"director_notes": "whisper"}})
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ) as mock_post:
         provider.execute(config, QueryParams(input="ignored"), "hi")
@@ -603,10 +720,10 @@ def test_execute_tts_director_notes_set_system_instruction():
 def test_execute_tts_ogg_conversion_failure_returns_error():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(_tts_response()),
     ), patch(
-        "app.services.llm.providers.google_ai.convert_pcm_to_ogg",
+        "app.services.llm.providers.google_gcp.convert_pcm_to_ogg",
         return_value=(None, "codec missing"),
     ):
         resp, err = provider.execute(
@@ -621,7 +738,7 @@ def test_execute_tts_raw_response_included_when_requested():
     provider = _provider()
     raw = _tts_response()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=_mock_http_ok(raw),
     ):
         resp, _ = provider.execute(
@@ -636,7 +753,7 @@ def test_execute_tts_raw_response_included_when_requested():
 def test_post_connection_error_returns_clean_message():
     provider = _provider()
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         side_effect=requests.ConnectionError("dns boom"),
     ):
         resp, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -652,7 +769,7 @@ def test_post_http_error_falls_back_to_raw_text_when_body_not_json():
     resp_mock.text = "plain text error"
     resp_mock.json.side_effect = ValueError("not json")
     with patch(
-        "app.services.llm.providers.google_ai.requests.post",
+        "app.services.llm.providers.google_gcp.requests.post",
         return_value=resp_mock,
     ):
         _, err = provider.execute(_tts_config(), QueryParams(input="ignored"), "hi")
@@ -660,9 +777,7 @@ def test_post_http_error_falls_back_to_raw_text_when_body_not_json():
 
 
 def test_execute_dispatches_stt_validation():
-    """Only the dispatch branch + input validation are exercised here — the
-    full STT network path is covered by the (currently skipped) routing
-    tests."""
+    """Only the dispatch branch + input validation are exercised here."""
     provider = _provider()
     config = NativeCompletionConfig(
         provider="google-native",
@@ -695,11 +810,11 @@ def test_execute_wraps_unexpected_exception():
 
 
 # ---------------------------------------------------------------------------
-# VertexClient.endpoint — host changes by location
+# GoogleGCPClient.endpoint — host changes by location
 # ---------------------------------------------------------------------------
-class TestVertexEndpoint:
-    def _client(self, location: str) -> VertexClient:
-        return VertexClient(
+class TestGoogleGCPEndpoint:
+    def _client(self, location: str) -> GoogleGCPClient:
+        return GoogleGCPClient(
             api_key="k",
             project_id="my-proj",
             location=location,
@@ -742,32 +857,32 @@ class TestLoadPlatformSaInfo:
             "private_key": "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
         }
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_returns_none_when_unset(self, mock_settings):
         mock_settings.GCP_SA_KEY = ""
         assert _load_platform_sa_info() is None
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_parses_raw_json_string(self, mock_settings):
         sa = self._sample_sa()
         mock_settings.GCP_SA_KEY = json.dumps(sa)
         assert _load_platform_sa_info() == sa
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_strips_surrounding_whitespace(self, mock_settings):
         """env-var injection often leaves trailing newlines — must still parse."""
         sa = self._sample_sa()
         mock_settings.GCP_SA_KEY = "\n  " + json.dumps(sa) + "  \n"
         assert _load_platform_sa_info() == sa
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_returns_none_on_malformed_json(self, mock_settings):
         """A JSON-looking but invalid value must not raise — it returns None
         and lets create_client raise the missing-fields ValueError later."""
         mock_settings.GCP_SA_KEY = "{not valid json"
         assert _load_platform_sa_info() is None
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_non_json_string_returns_none(self, mock_settings):
         """Anything not starting with '{' is treated as non-JSON and ignored —
         this guards against accidentally interpreting a path or sentinel as a key."""
@@ -779,7 +894,7 @@ class TestLoadPlatformSaInfo:
 # create_client — credential precedence (BYOK overrides platform settings)
 # ---------------------------------------------------------------------------
 class TestCreateClientFallback:
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_byok_overrides_platform_settings(self, mock_settings):
         mock_settings.GCP_VERTEX_API_KEY = "platform-key"
         mock_settings.GCP_PROJECT_ID = "platform-proj"
@@ -787,11 +902,12 @@ class TestCreateClientFallback:
         mock_settings.GCP_SA_KEY = ""
         mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
 
-        c = GoogleVertexAIProvider.create_client(
+        c = GoogleGCPProvider.create_client(
             {
                 "api_key": "byok-key",
                 "project_id": "byok-proj",
                 "location": "europe-west4",
+                "sa_key": {"type": "service_account"},
                 "gcs_bucket": "byok-bucket",
             }
         )
@@ -800,21 +916,21 @@ class TestCreateClientFallback:
         assert c.location == "europe-west4"
         assert c.gcs_bucket == "byok-bucket"
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_partial_byok_fills_from_platform(self, mock_settings):
         """When BYOK only supplies api_key, project/location come from settings."""
         mock_settings.GCP_VERTEX_API_KEY = "platform-key"
         mock_settings.GCP_PROJECT_ID = "platform-proj"
         mock_settings.GCP_VERTEX_LOCATION = "us-central1"
-        mock_settings.GCP_SA_KEY = ""
+        mock_settings.GCP_SA_KEY = json.dumps({"type": "service_account"})
         mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
 
-        c = GoogleVertexAIProvider.create_client({"api_key": "byok-key"})
+        c = GoogleGCPProvider.create_client({"api_key": "byok-key"})
         assert c.api_key == "byok-key"
         assert c.project_id == "platform-proj"
         assert c.location == "us-central1"
 
-    @patch("app.services.llm.providers.google_ai.settings")
+    @patch("app.services.llm.providers.google_gcp.settings")
     def test_missing_everything_raises_value_error(self, mock_settings):
         mock_settings.GCP_VERTEX_API_KEY = ""
         mock_settings.GCP_PROJECT_ID = ""
@@ -823,8 +939,10 @@ class TestCreateClientFallback:
         mock_settings.GCS_AUDIO_BUCKET = ""
 
         with pytest.raises(ValueError) as exc_info:
-            GoogleVertexAIProvider.create_client({})
+            GoogleGCPProvider.create_client({})
         msg = str(exc_info.value)
         assert "api_key" in msg
         assert "project_id" in msg
         assert "location" in msg
+        assert "sa_key" in msg
+        assert "gcs_bucket" in msg

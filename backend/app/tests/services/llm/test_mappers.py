@@ -939,6 +939,46 @@ class TestTransformGoogleVertexRouting:
         assert "xx-YY" in warnings[0]
 
 
+class TestTransformGoogleGCPRouting:
+    """Routing contract for the ``google-gcp`` provider."""
+
+    def test_text_completion_maps_via_google_mapper(self, db: Session):
+        """``google-gcp`` text completions reuse the Google mapper and
+        produce a ``google-gcp-native`` config."""
+        kaapi_config = build_kaapi_completion_config(
+            provider="google-gcp",
+            type="text",
+            params={"model": "gemini-2.5-pro"},
+        )
+
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.type == "text"
+        assert native_config.params["model"] == "gemini-2.5-pro"
+        assert warnings == []
+
+    def test_stt_completion_maps_via_google_mapper(self, db: Session):
+        """``google-gcp`` STT completions reuse the Google mapper and
+        produce a ``google-gcp-native`` config."""
+        kaapi_config = build_kaapi_completion_config(
+            provider="google-gcp",
+            type="stt",
+            params={"model": "gemini-2.5-pro", "input_language": "hi-IN"},
+        )
+
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.type == "stt"
+        assert native_config.params["input_language"] == "hi-IN"
+        assert warnings == []
+
+
 class TestBCP47ToElevenlabsLang:
     """Test BCP-47 language code conversion for ElevenLabs."""
 
