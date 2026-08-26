@@ -538,6 +538,12 @@ def _run_graph_step(
     thread_config = {"configurable": {"thread_id": str(iteration_run_id)}}
 
     if resume:
+        if checkpointer.get_tuple(thread_config) is None:
+            logger.warning(
+                f"[_run_graph_step] No checkpoint found for resume | "
+                f"iteration_run_id={iteration_run_id}"
+            )
+            return
         graph.invoke(Command(resume=True), config=thread_config)
         return
 

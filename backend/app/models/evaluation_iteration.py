@@ -85,6 +85,7 @@ class EvaluationIterationRun(SQLModel, table=True):
         sa_column=Column(
             _ITERATION_STATUS_PG_ENUM,
             nullable=False,
+            index=True,
             comment="Loop bookkeeping status: processing, completed, or failed",
         ),
     )

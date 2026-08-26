@@ -104,9 +104,19 @@ def upgrade():
         ["project_id"],
         unique=False,
     )
+    op.create_index(
+        op.f("ix_evaluation_iteration_run_status"),
+        "evaluation_iteration_run",
+        ["status"],
+        unique=False,
+    )
 
 
 def downgrade():
+    op.drop_index(
+        op.f("ix_evaluation_iteration_run_status"),
+        table_name="evaluation_iteration_run",
+    )
     op.drop_index(
         op.f("ix_evaluation_iteration_run_project_id"),
         table_name="evaluation_iteration_run",
