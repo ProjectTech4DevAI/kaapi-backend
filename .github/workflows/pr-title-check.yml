@@ -1,0 +1,49 @@
+name: PR Title Check
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title follows Conventional Commits
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # type(scope): summary  — scope optional, `!` marks a breaking change.
+          # Keep types in sync with what the PR formatter is allowed to emit.
+          PATTERN='^(feat|fix|chore|docs|refactor|perf|test|ci|build|style|revert)(\([a-z0-9 _/-]+\))?!?: .+'
+
+          echo "Checking PR title: $PR_TITLE"
+          if echo "$PR_TITLE" | grep -qE "$PATTERN"; then
+            echo "PR title is valid."
+            exit 0
+          fi
+
+          echo "::error title=Invalid PR title::'$PR_TITLE' is not in Conventional Commits format"
+          {
+            echo "### ❌ PR title is not in Conventional Commits format"
+            echo ""
+            echo "**Your title:** \`$PR_TITLE\`"
+            echo ""
+            echo "**Required format:** \`type(scope): short summary\`  (scope is optional)"
+            echo ""
+            echo "**Allowed types:** feat, fix, chore, docs, refactor, perf, test, ci, build, style, revert"
+            echo ""
+            echo "**Good examples:**"
+            echo "- \`feat(collection): Add new fields\`"
+            echo "- \`fix(auth): Correct token expiry check\`"
+            echo "- \`chore(ci): Add PR title check workflow\`"
+            echo ""
+            echo "Edit the PR title to match and this check re-runs automatically."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
