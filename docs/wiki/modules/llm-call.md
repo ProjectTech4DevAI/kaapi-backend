@@ -40,5 +40,6 @@ All paths relative to `backend/app/`.
 ## Gotchas
 - Saved config resolution = `config_id` + `version` pinned; ad-hoc blob never persisted.
 - `type=proxy` auto-injects `provider="proxy"` (ConfigBlob validator).
+- Missing project credentials raise, except `google-gcp`/`google-gcp-native`, which fall back to platform-shared credentials (`services/llm/providers/registry.py`).
 - Feature needs an LLM config? Spec `LLMCallConfig` whole (never a bespoke params + prompt pair), and prefer an optional per-request field over a per-project binding table — saved references already give durable versioned config via `config`/`config_version`.
 - `PromptTemplate.template` is a plain prompt string; `{{input}}` interpolation is llm-chain-only — features that assemble their own inputs don't use it.
