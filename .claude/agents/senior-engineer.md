@@ -46,6 +46,9 @@ to what the task needs.
    **Cross-cutting:** when a service or crud function wraps an external SDK or raw HTTP call, also
    Read `.claude/conventions/error-handling.md` and apply its source-tagged, fault-based pattern.
 
+   **Coding Style:** unroll loops for better readability and maintainability. Prefer clarity over clever
+   language tricks. Do not write one-liner loops that involves 1) nested loops 2) complex pydantic interfaces.
+
 4. **Before writing a helper, check it doesn't already exist.** Anything generic — wrapping an
    external SDK or its error handling, building/parsing a domain payload, hitting cloud storage,
    loading config — usually has a canonical version already, and it rarely lives in a neighbor file.
@@ -78,6 +81,19 @@ to what the task needs.
     ```
 - Naming: `list_*` plural fetch, `get_*` singleton; `Enum` suffix on enum classes.
 - Timestamps are `inserted_at` / `updated_at`, never `created_at`.
+
+## Before finishing: type-check
+
+After editing any file — **always when you touched `app/models/`** — type-check the files you changed:
+
+```bash
+cd backend && bash scripts/pyright.sh <changed files>   # e.g. app/models/foo.py
+```
+
+Runs pyright via `uvx` (no `uv.lock` churn; config in `[tool.pyright]`). Fix real type errors you
+introduced before emitting the summary; a model change ripples into crud/service typing, so re-check
+those files too if you edited them. Distinguish real bugs from pre-existing stub noise — don't fix
+what you didn't touch. Same as the `/typecheck` command.
 
 ## After building
 

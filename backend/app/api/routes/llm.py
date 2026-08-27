@@ -4,6 +4,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from opentelemetry import trace
+from pydantic import TypeAdapter
+from sqlmodel import Session
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
@@ -19,13 +21,54 @@ from app.models import (
     LLMJobPublic,
     JobStatus,
 )
-from app.models.llm.response import LLMResponse, Usage
+from app.models.llm.response import LLMOutput, LLMResponse, Usage
 from app.services.llm.jobs import start_job
 from app.utils import APIResponse, validate_callback_url, load_description
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["LLM"])
+
+_LLM_OUTPUT_ADAPTER: TypeAdapter[LLMOutput] = TypeAdapter(LLMOutput)
+
+PRESIGNED_AUDIO_URL_TTL_SECONDS = 3_600
+
+
+def _resolve_llm_output(
+    raw_content: dict[str, object],
+    project_id: int,
+    session: Session,
+    job_id: UUID,
+) -> LLMOutput:
+    """Parse the persisted `llm_call.content` dict into the typed LLMOutput,
+    presigning the audio URL in place first.
+
+    Persisted TTS content marks a not-yet-presigned S3 path with format="uri" —
+    not a valid AudioContent literal ("base64"/"url") — so that sentinel must be
+    resolved to a real "url" before the dict can validate into the typed model.
+    """
+    inner = raw_content.get("content")
+    if (
+        raw_content.get("type") == "audio"
+        and isinstance(inner, dict)
+        and inner.get("format") == "uri"
+    ):
+        s3_path = inner.get("value", "")
+        try:
+            storage = get_cloud_storage(session, project_id)
+            inner["value"] = storage.get_signed_url(
+                s3_path, expires_in=PRESIGNED_AUDIO_URL_TTL_SECONDS
+            )
+        except Exception as e:
+            logger.warning(
+                f"[_resolve_llm_output] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
+            )
+            inner["value"] = ""
+        inner["format"] = "url"
+
+    return _LLM_OUTPUT_ADAPTER.validate_python(raw_content)
+
+
 llm_callback_router = APIRouter()
 
 
@@ -155,32 +198,19 @@ def get_llm_call_status(
                 # Get the first LLM call from the list which will be the only call for the job id
                 # since we initially won't be using this endpoint for llm chains
                 llm_call = llm_calls[0]
-                output_payload = copy.deepcopy(llm_call.content)
-                if (
-                    isinstance(output_payload, dict)
-                    and output_payload.get("type") == "audio"
-                    and isinstance(output_payload.get("content"), dict)
-                    and output_payload["content"].get("format") == "uri"
-                ):
-                    s3_path = output_payload["content"].get("value", "")
-                    try:
-                        storage = get_cloud_storage(session, project_id)
-                        output_payload["content"]["value"] = storage.get_signed_url(
-                            s3_path, expires_in=3600
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"[get_llm_call_status] Failed to generate presigned URL for audio: {e} | job_id={job_id}"
-                        )
-                        output_payload["content"]["value"] = ""
-                    output_payload["content"]["format"] = "url"
+                raw_content = copy.deepcopy(llm_call.content)
+                output = (
+                    _resolve_llm_output(raw_content, project_id, session, job_id)
+                    if isinstance(raw_content, dict)
+                    else None
+                )
 
                 llm_response = LLMResponse(
                     provider_response_id=llm_call.provider_response_id or "",
                     conversation_id=llm_call.conversation_id,
                     provider=llm_call.provider,
                     model=llm_call.model,
-                    output=output_payload,
+                    output=output,
                 )
 
                 usage_payload = llm_call.usage

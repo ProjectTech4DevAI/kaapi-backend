@@ -1,7 +1,7 @@
 """Evaluation run orchestration service."""
 
 import logging
-from typing import Any
+from typing import cast
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -124,7 +124,7 @@ def create_evaluation_run_or_409(
 
 
 def _compute_category_metrics(
-    traces: list[dict[str, Any]],
+    traces: list[TraceData],
 ) -> list[CategoryMetrics]:
     """Aggregate cosine + correctness scores per category across the trace list.
 
@@ -183,17 +183,19 @@ def _compute_category_metrics(
     return metrics
 
 
-def _attach_category_metrics(score: dict[str, Any] | None) -> dict[str, Any] | None:
+def _attach_category_metrics(
+    score: EvaluationScore | None,
+) -> EvaluationScore | None:
     """Idempotently add `category_metrics` to a score dict in place.
 
     No-op when `score` is None or has no `traces`. Safe to call multiple
     times — recomputes from the current `traces` so cached scores that
     predate this feature get backfilled on read.
     """
-    if not score or not isinstance(score, dict):
+    if not score:
         return score
     traces = score.get("traces")
-    if not isinstance(traces, list):
+    if traces is None:
         return score
     score["category_metrics"] = _compute_category_metrics(traces)
     return score
@@ -277,7 +279,7 @@ def validate_and_start_batch_evaluation(
         config_version=config_version,
         project_id=project_id,
     )
-    if error:
+    if error or config is None:
         raise HTTPException(
             status_code=400,
             detail=f"Failed to resolve config from stored config: {error}",
@@ -375,7 +377,7 @@ def _load_cached_traces(
                 storage=storage, url=eval_run.score_trace_url
             )
             if traces is not None:
-                return traces, False
+                return cast(list[TraceData], traces), False
             logger.warning(
                 f"[_load_cached_traces] Cached traces URL returned no data | "
                 f"evaluation_id={eval_run.id} | url={eval_run.score_trace_url}"
@@ -453,6 +455,8 @@ def get_evaluation_with_scores(
     if not get_trace_info:
         return eval_run, None
 
+    run_overall = (eval_run.score or {}).get("overall")
+
     # Caching strategy: trace scores are fetched from Langfuse once, then cached
     # (traces in S3, summary in the DB). Normal reads serve from that cache, which is
     # much faster than hitting Langfuse. resync_score=true bypasses the cache.
@@ -484,7 +488,9 @@ def get_evaluation_with_scores(
             total_items=eval_run.total_items,
             unscoreable=eval_run.unscoreable,
         )
-        eval_run.score = _attach_category_metrics(cached_score)
+        eval_run.score = cast(dict[str, object], _attach_category_metrics(cached_score))
+        if run_overall is not None and eval_run.score is not None:
+            eval_run.score["overall"] = run_overall
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -563,11 +569,14 @@ def get_evaluation_with_scores(
     # `_attach_category_metrics` mutates in place and is idempotent.
     _attach_category_metrics(merged_score)
 
+    if run_overall is not None:
+        merged_score["overall"] = run_overall
+
     logger.info(
         f"[get_evaluation_with_scores] Merged traces step-forward | "
         f"evaluation_id={evaluation_id} | cached={len(cached_traces)} | "
         f"fetched={len(langfuse_score.get('traces', []))} | "
-        f"merged={len(merged_score['traces'])} | reused={merge_stats['reused']} | "
+        f"merged={len(merged_score.get('traces', []))} | reused={merge_stats['reused']} | "
         f"updated={merge_stats['updated']} | added={merge_stats['added']}"
     )
 
@@ -579,6 +588,6 @@ def get_evaluation_with_scores(
     )
 
     if eval_run:
-        eval_run.score = merged_score
+        eval_run.score = cast(dict[str, object], merged_score)
 
     return eval_run, None

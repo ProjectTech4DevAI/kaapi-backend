@@ -42,7 +42,9 @@ from app.services.assessment.utils.attachments import (
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
+    rewrite_gcs_attachment_urls,
 )
+from app.services.llm.mappers import kaapi_params_as_dict
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
 
@@ -381,18 +383,18 @@ def submit_assessment_batch(
         run: The AssessmentRun to process
         dataset: The dataset to read rows from
         config_blob: Resolved configuration blob
-        assessment_input: Assessment input config (prompt_template, text_columns, etc.)
+        assessment_input: Parent InputBinding (prompt, text_columns, attachments)
         organization_id: Organization ID
         project_id: Project ID
 
     Returns:
         Created BatchJob record
     """
+    # `assessment_input` is the parent InputBinding (prompt/text_columns/attachments);
+    # system_instruction / output_schema now live in the resolved config blob.
     text_columns = assessment_input.get("text_columns", [])
-    prompt_template = assessment_input.get("prompt_template")
-    system_instruction = assessment_input.get("system_instruction")
+    prompt_template = assessment_input.get("prompt")
     attachments_raw = assessment_input.get("attachments", [])
-    output_schema = assessment_input.get("output_schema")
     attachments = [AssessmentAttachment(**a) for a in attachments_raw]
 
     # Use preloaded rows (post-prefilter filtered) if provided, else load from dataset.
@@ -414,16 +416,23 @@ def submit_assessment_batch(
     completion = config_blob.completion
     provider_name = completion.provider or "openai"
 
-    params = dict(completion.params)
-    params.pop("instructions", None)
-    params.pop("system_instruction", None)
-    if isinstance(system_instruction, str) and system_instruction.strip():
-        params["instructions"] = system_instruction
-    if output_schema:
-        params["output_schema"] = output_schema
+    # Normalize params to a plain dict: for typed Kaapi params this applies the
+    # compact wire format (None fields and an unset temperature dropped), so
+    # the batch never forwards defaults the caller didn't set.
+    params = kaapi_params_as_dict(completion.params)
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")
+
+    # Resolve attachments url to provider-reachable URLs before building JSONL.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
 
     if base_provider == LLMProvider.OPENAI:
         mapped_params, warnings = map_kaapi_to_openai_params(
@@ -466,7 +475,7 @@ def submit_assessment_batch(
             config=batch_config,
         )
 
-    elif base_provider == LLMProvider.GOOGLE_AISTUDIO:
+    elif base_provider in (LLMProvider.GOOGLE, LLMProvider.GOOGLE_AISTUDIO):
         mapped_params, warnings = map_kaapi_to_google_params(params)
         if warnings:
             logger.info("[submit_assessment_batch] Mapper warnings: %s", warnings)
@@ -498,7 +507,7 @@ def submit_assessment_batch(
         batch_job = start_batch_job(
             session=session,
             provider=provider,
-            provider_name="google-aistudio",
+            provider_name=LLMProvider.GOOGLE,
             job_type=BatchJobType.ASSESSMENT,
             organization_id=organization_id,
             project_id=project_id,

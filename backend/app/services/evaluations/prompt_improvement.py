@@ -1,12 +1,8 @@
 """AI-assisted prompt improvement service.
 
-Split into a fast request-side path (validate + enqueue a Celery job) and a
-worker-side path that does the heavy Anthropic round-trip. The LLM call stays
-synchronous — blocking in a Celery worker is fine, and it holds no FastAPI
-threadpool thread.
-
-Loads the evaluation run's stored score traces from object storage, asks Claude
-to rewrite the system prompt, and persists the result as a new config_version.
+Fast request-side path validates + enqueues a Celery job; the worker-side path
+loads the run's score traces, asks Claude to rewrite the system prompt, and
+persists the result as a new config_version.
 """
 
 import copy
@@ -28,6 +24,11 @@ from app.core.db import engine
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
+from app.crud.evaluations.score import (
+    GROUND_TRUTH_SCORE_NAME,
+    KNOWLEDGE_BASE_SCORE_NAME,
+    PROMPT_SCORE_NAME,
+)
 from app.crud.jobs import JobCrud
 from app.models.config.config import ConfigTag
 from app.models.config.version import (
@@ -35,9 +36,13 @@ from app.models.config.version import (
     ConfigVersionPublic,
     ConfigVersionUpdate,
 )
-from app.models.evaluation import EvaluationRun, PromptImprovementJobPublic
+from app.models.evaluation import (
+    EvaluationRun,
+    PromptImprovementJobPublic,
+    PromptRecommendationJobPublic,
+)
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider
+from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -80,9 +85,7 @@ def _resolve_source_version(
 ) -> ConfigVersion | None:
     """Resolve the exact config_version the run evaluated.
 
-    read_one() raises 404 when the config itself is missing/soft-deleted and
-    returns None when only the version is gone — the caller treats both as the
-    run's source config no longer resolving.
+    Returns None if the config or version is missing/soft-deleted (404).
     """
     try:
         return ConfigVersionCrud(
@@ -103,12 +106,12 @@ def validate_improve_prompt(
     evaluation_id: int,
     organization_id: int,
     project_id: int,
+    require_judge_run: bool = False,
 ) -> EvaluationRun:
-    """Run the cheap DB precondition checks for prompt improvement.
+    """Cheap DB precondition checks for prompt improvement; no LLM call, no trace download.
 
-    Raises HTTPException for every domain failure so the request-side caller
-    returns a real 4xx before any job is enqueued. No LLM call, no trace
-    download. Returns the run for reuse by the worker path.
+    Raises HTTPException (4xx) on any domain failure. Returns the run for reuse
+    by the worker path. require_judge_run=True (v2) requires a judged run.
     """
     run = get_evaluation_run_by_id(
         session=session,
@@ -148,6 +151,12 @@ def validate_improve_prompt(
             detail="source_config_unavailable: the run's config or config_version is missing or soft-deleted",
         )
 
+    if require_judge_run and not run.is_judge_run:
+        raise HTTPException(
+            status_code=422,
+            detail="not_a_judge_run: v2 prompt improvement requires a judged (v2) evaluation run",
+        )
+
     return run
 
 
@@ -158,16 +167,18 @@ def start_prompt_improvement_job(
     organization_id: int,
     project_id: int,
     callback_url: str,
+    require_judge_run: bool = False,
 ) -> Job:
     """Validate preconditions, create a job row, and enqueue the worker task.
 
-    Returns the created Job immediately; the result is delivered to callback_url.
+    Returns the Job immediately; the result is delivered to callback_url.
     """
     validate_improve_prompt(
         session=session,
         evaluation_id=evaluation_id,
         organization_id=organization_id,
         project_id=project_id,
+        require_judge_run=require_judge_run,
     )
 
     trace_id = correlation_id.get() or "N/A"
@@ -220,19 +231,28 @@ def _build_improve_prompt_payload(
     job_id: UUID,
     config_version: ConfigVersionPublic | None,
     error_message: str | None,
+    is_judge_run: bool = False,
 ) -> dict:
-    """Build the callback body: PromptImprovementJobPublic inside an APIResponse.
+    """Build the callback body: the job-result model inside an APIResponse.
 
-    Pre-dump the inner model to JSON so no UUID/datetime survives into the dict
-    send_callback serialises.
+    Judge (v2) runs emit PromptRecommendationJobPublic; v1 runs emit
+    PromptImprovementJobPublic.
     """
     status = JobStatus.FAILED if error_message else JobStatus.SUCCESS
-    job_public = PromptImprovementJobPublic(
-        job_id=job_id,
-        status=status.value,
-        config_version=config_version,
-        error_message=error_message,
-    ).model_dump(mode="json")
+    if is_judge_run:
+        job_public = PromptRecommendationJobPublic(
+            job_id=job_id,
+            status=status.value,
+            config_version=config_version,
+            error_message=error_message,
+        ).model_dump(mode="json")
+    else:
+        job_public = PromptImprovementJobPublic(
+            job_id=job_id,
+            status=status.value,
+            config_version=config_version,
+            error_message=error_message,
+        ).model_dump(mode="json")
     envelope = (
         APIResponse.failure_response(error=error_message, data=job_public)
         if error_message
@@ -292,10 +312,8 @@ def execute_prompt_improvement(
 ) -> dict:
     """Worker entrypoint: run the full prompt-improvement flow and record it on the Job.
 
-    Opens its own session (the request session is long gone). On success the new
-    config_version's id/version and the rationale land on Job.meta; on failure the
-    Job is marked FAILED with a clean message and the error is re-raised so Celery
-    records the failure.
+    Opens its own session. On success, new config_version id/version + rationale
+    land on Job.meta; on failure, Job is marked FAILED and the error re-raised.
     """
     task_id = kwargs.get("task_id")
     callback_url = kwargs.get("callback_url")
@@ -319,6 +337,14 @@ def execute_prompt_improvement(
                 f"[execute_prompt_improvement] Redelivery of completed job, skipping | "
                 f"job_id={job_id}"
             )
+            # Reload the run so the redelivered callback keeps the same (v1 vs v2)
+            # shape as the original — is_judge_run decides which model is emitted.
+            redelivery_run = get_evaluation_run_by_id(
+                session=session,
+                evaluation_id=evaluation_id,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
             # At-least-once delivery: the first callback may have failed before the
             # worker died, so re-send. The client may receive a duplicate callback.
             _send_improve_prompt_callback(
@@ -333,6 +359,7 @@ def execute_prompt_improvement(
                         version_number=(existing.meta or {}).get("version"),
                     ),
                     error_message=None,
+                    is_judge_run=bool(redelivery_run and redelivery_run.is_judge_run),
                 ),
                 project_id=project_id,
                 organization_id=organization_id,
@@ -343,6 +370,10 @@ def execute_prompt_improvement(
             job_uuid, JobUpdate(status=JobStatus.PROCESSING, task_id=task_id)
         )
 
+        # Set before the try so the failure/timeout callbacks (which may fire
+        # before `run` is bound) still emit the correct v1/v2 payload shape.
+        is_judge_run = False
+
         try:
             # Re-validate defensively: the run may have changed between enqueue and pickup.
             run = validate_improve_prompt(
@@ -351,6 +382,7 @@ def execute_prompt_improvement(
                 organization_id=organization_id,
                 project_id=project_id,
             )
+            is_judge_run = bool(run.is_judge_run)
             version = _resolve_source_version(
                 session=session, run=run, project_id=project_id
             )
@@ -362,6 +394,9 @@ def execute_prompt_improvement(
             blob = version.config_blob or {}
             params = blob.get("completion", {}).get("params", {}) or {}
             current_instructions = params.get("instructions") or ""
+
+            if not run.score_trace_url:
+                raise RuntimeError("trace_download_failed: run has no score_trace_url")
 
             storage = get_cloud_storage(session=session, project_id=project_id)
             traces = load_json_from_object_store(
@@ -376,6 +411,7 @@ def execute_prompt_improvement(
                 current_instructions=current_instructions,
                 config_params=params,
                 traces=traces,
+                is_judge_run=is_judge_run,
             )
 
             # Derive the new version from the *evaluated* version's blob (not the
@@ -437,6 +473,7 @@ def execute_prompt_improvement(
                     job_id=job_uuid,
                     config_version=None,
                     error_message=error_message,
+                    is_judge_run=is_judge_run,
                 ),
                 project_id=project_id,
                 organization_id=organization_id,
@@ -461,6 +498,7 @@ def execute_prompt_improvement(
                     job_id=job_uuid,
                     config_version=None,
                     error_message=error_message,
+                    is_judge_run=is_judge_run,
                 ),
                 project_id=project_id,
                 organization_id=organization_id,
@@ -478,6 +516,7 @@ def execute_prompt_improvement(
                 job_id=job_uuid,
                 config_version=new_version_public,
                 error_message=None,
+                is_judge_run=is_judge_run,
             ),
             project_id=project_id,
             organization_id=organization_id,
@@ -485,14 +524,17 @@ def execute_prompt_improvement(
         return result
 
 
-def _draft_improved_prompt(
-    *,
-    current_instructions: str,
-    config_params: dict,
-    traces: list | dict,
-) -> tuple[str, str]:
-    """Call Claude with the current prompt + score traces and return
-    (improved_instructions, rationale).
+def _target_config_from_params(config_params: dict) -> dict:
+    """Config context shown to the model; instructions and knowledge_base_ids stripped."""
+    excluded_keys = {"instructions", "knowledge_base_ids"}
+    return {
+        key: value for key, value in config_params.items() if key not in excluded_keys
+    }
+
+
+def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
+    """Run the Anthropic structured-output call shared by both draft variants and
+    return (improved_instructions, rationale).
 
     Uses structured outputs so the first text block is guaranteed-valid JSON.
     Runs inside a Celery worker, so failures raise plain exceptions (no client
@@ -508,32 +550,6 @@ def _draft_improved_prompt(
 
     client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
 
-    # instructions is shown above already; knowledge_base_ids are opaque ids the model can't use.
-    excluded_keys = {"instructions", "knowledge_base_ids"}
-    target_config = {
-        key: value for key, value in config_params.items() if key not in excluded_keys
-    }
-
-    user_message_text = (
-        "You are a prompt engineer. Below is a JSON array of evaluation traces. "
-        "Each trace has the fields: `question`, `ground_truth_answer`, "
-        "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
-        "`name`, `value`, and `unscoreable`).\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
-        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
-        "## Target configuration (read-only — do NOT change any of these)\n"
-        f"```\n{json.dumps(target_config)}\n```\n\n"
-        "## Task\n"
-        "1. Identify the answers that performed poorly — those with low scores or "
-        "where `llm_answer` diverges significantly from `ground_truth_answer`.\n"
-        "2. Rewrite the system prompt to improve those low-performing answers while "
-        "keeping what already works well.\n"
-        "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
-        "or any other configuration.\n"
-        f"4. Return `{_LLM_KEY_RATIONALE}` as ONE concise sentence "
-        f"(≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
-    )
-
     try:
         response = client.messages.create(
             model=settings.PROMPT_IMPROVEMENT_MODEL,
@@ -545,74 +561,143 @@ def _draft_improved_prompt(
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
 
-    except anthropic.AuthenticationError:
-        logger.warning(
-            "[_draft_improved_prompt] [ANTHROPIC] Authentication failed "
-            "(code: 401): Verify the ANTHROPIC_API_KEY is "
-            "valid, not expired, and configured correctly.",
-            exc_info=True,
-        )
+    except anthropic.AuthenticationError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
             "verify the platform API key is valid and not expired"
         )
 
-    except anthropic.RateLimitError:
-        logger.warning(
-            "[_draft_improved_prompt] [ANTHROPIC] Rate limit exceeded "
-            "(code: 429): Hit Anthropic rate/quota — wait ≥1 min and retry.",
-            exc_info=True,
-        )
+    except anthropic.RateLimitError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
             "wait at least 1 minute and retry"
         )
 
-    except anthropic.APITimeoutError:
+    except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
-        logger.error(
-            "[_draft_improved_prompt] [KAAPI] Anthropic request timed out "
-            "(code: APITimeoutError): retry with a smaller payload.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
             "retry. If persistent, contact Kaapi"
         )
 
-    except anthropic.APIConnectionError:
-        logger.error(
-            "[_draft_improved_prompt] [KAAPI] Anthropic connection failed "
-            "(code: APIConnectionError): network or DNS issue reaching Anthropic.",
-            exc_info=True,
-        )
+    except anthropic.APIConnectionError as exc:
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
             "check connectivity. If persistent, contact Kaapi"
         )
 
     except anthropic.APIStatusError as exc:
-        status = exc.status_code
-        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
-        log = logger.error if status and status >= 500 else logger.warning
-        log(
-            f"[_draft_improved_prompt] [ANTHROPIC] API status error "
-            f"(code: {status}): {exc.message}.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
-            f"prompt_generation_failed: Anthropic returned HTTP {status} — "
+            f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
             "retry or contact Kaapi if persistent"
         )
 
     except Exception as exc:
-        logger.error(
-            f"[_draft_improved_prompt] [KAAPI] Unexpected error during LLM call "
-            f"(code: {type(exc).__name__}): not raised by the Anthropic SDK — "
-            f"likely a Kaapi-side failure. Contact Kaapi if persistent.",
-            exc_info=True,
-        )
+        log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
             "contact Kaapi if persistent"
         )
+
+
+def _draft_improved_prompt(
+    *,
+    current_instructions: str,
+    config_params: dict,
+    traces: list | dict,
+    is_judge_run: bool = False,
+) -> tuple[str, str]:
+    """Rewrite the prompt from a run's score traces.
+
+    v1 traces carry cosine/correctness scores. A judged (v2) run instead carries the
+    three Adherence-to-* metrics, each with the judge's reasoning in `comment`, so
+    that brief tells the model to read the reasoning and not to chase a low
+    Adherence to Knowledge Base — that is a retrieval/KB gap, not a prompt fault.
+    """
+    if is_judge_run:
+        trace_description = (
+            " from an LLM-as-judge run. Each trace has the fields: `question`, "
+            "`ground_truth_answer`, `llm_answer`, and `scores`. `scores` is a list of "
+            "metric objects; each has `name`, `value`, and `comment`, where:\n"
+            f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
+            f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
+            "- `value` is the metric's score, an integer from 0 (worst) to 5 (best). Metrics that "
+            'could not be scored appear with `value` = "N/A" and `unscoreable` = true; '
+            "ignore those.\n"
+            "- `comment` is the judge's reasoning for that score — read it, not just "
+            "the number, to understand *why* a row failed."
+        )
+        task_steps = [
+            f"1. `{GROUND_TRUTH_SCORE_NAME}` is the primary signal — it measures "
+            "whether the answer is actually correct. Focus first on rows where it is "
+            "low, using BOTH the `value` and the `comment` to see why the answer "
+            "diverged from the golden answer.\n",
+            f"2. Treat `{PROMPT_SCORE_NAME}` as secondary and diagnostic only. A row "
+            f"with high `{PROMPT_SCORE_NAME}` but low `{GROUND_TRUTH_SCORE_NAME}` is a "
+            "warning sign, not a success — it usually means the model is being scored "
+            "well for literally following a rule (e.g. a refusal or fallback "
+            "instruction) instead of answering. If that row's `comment` says the model "
+            "correctly triggered a refusal/fallback per the current prompt's own rule, "
+            "but the golden answer has real substantive content, the rule's trigger "
+            "condition is too broad — narrow it so the model only refuses/falls back "
+            "when it truly should, rather than tightening the rule further.\n",
+            "3. Rewrite the system prompt to fix the Ground-Truth failures while "
+            f"keeping what already works well. Do not make changes whose only effect "
+            f"is raising `{PROMPT_SCORE_NAME}` (tone, format, exact wording) without "
+            f"also improving `{GROUND_TRUTH_SCORE_NAME}`.\n",
+            f"4. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
+            "knowledge-base gap, NOT a prompt problem — do not try to fix grounding "
+            "by editing the prompt. You may add a light instruction to avoid "
+            "unsupported claims, but do not attempt to change the model, knowledge "
+            "base, or config.\n",
+            "5. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "6. Change ONLY the prompt text.\n",
+        ]
+    else:
+        trace_description = (
+            ". Each trace has the fields: `question`, `ground_truth_answer`, "
+            "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
+            "`name`, `value`, and `unscoreable`)."
+        )
+        task_steps = [
+            "1. Identify the answers that performed poorly — those with low scores or "
+            "where `llm_answer` diverges significantly from `ground_truth_answer`.\n",
+            "2. Rewrite the system prompt to improve those low-performing answers "
+            "while keeping what already works well.\n",
+            "3. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "4. Change ONLY the prompt text — do not alter the model, knowledge base, "
+            "or any other configuration.\n",
+        ]
+
+    task_steps.append(
+        f"{len(task_steps) + 1}. Return `{_LLM_KEY_RATIONALE}` as ONE concise "
+        f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
+    )
+    target_config = _target_config_from_params(config_params)
+
+    user_message_text = (
+        "You are a prompt engineer. Below is a JSON array of evaluation traces"
+        f"{trace_description}\n\n"
+        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
+        "## Target configuration (read-only — do NOT change any of these)\n"
+        f"```\n{json.dumps(target_config)}\n```\n\n"
+        "## Task\n" + "".join(task_steps)
+    )
+
+    return _call_prompt_drafting_llm(user_message_text=user_message_text)

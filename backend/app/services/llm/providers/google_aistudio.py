@@ -185,7 +185,7 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model,
             contents=contents,
-            # switch back default thinking configs for reasoning supported models in future
+            # TODO switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
                 thinking_config=ThinkingConfig(
                     include_thoughts=True, thinking_budget=1000
@@ -240,7 +240,11 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=response.text)),
+                output=TextOutput(
+                    content=TextContent(
+                        value=response.text, language_code=output_language
+                    )
+                ),
             ),
             usage=Usage(
                 input_tokens=input_tokens,
@@ -330,10 +334,10 @@ class GoogleAIProvider(BaseProvider):
             config_kwargs["system_instruction"] = director_notes
 
         config = GenerateContentConfig(**config_kwargs)
-
+        decorated_resolved_input = f"<transcript>{resolved_input}</transcript>"
         # Execute TTS
         response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=resolved_input, config=config
+            model=model, contents=decorated_resolved_input, config=config
         )
         if not response.response_id:
             error_message = (

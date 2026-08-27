@@ -22,18 +22,19 @@ APIKey → Organization, Project, User  # programmatic access
 | Project | project.py | Organization | nearly all tables; unit of permissioning |
 | User | user.py | — | UserProject, APIKey, Notification |
 | APIKey | api_key.py | Organization, Project, User | auth dependency on every API route (logical) |
-| Credential | credentials.py | Organization, Project | provider clients: OpenAI/Gemini/Anthropic calls (logical) |
+| Credential | credentials.py | Organization, Project | provider clients: OpenAI/Gemini/Anthropic calls (logical); bucket providers (`google-gcp` → GCS signing, logical) |
 | Config | config/config.py | Project | ConfigVersion; LLM call path; Assessment; EvaluationRun (`config_id`) |
 | ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references (logical) |
 | LlmCall | llm/request.py | Job, LlmChain, Org, Project | Langfuse traces (logical); analytics |
 | LlmChain | llm/request.py | Org, Project | LlmCall |
-| Job | job.py | Project | LlmCall; Celery job execution (logical); evaluation prompt improvement (`JobType.PROMPT_IMPROVEMENT`, logical) |
+| Job | job.py | Project | LlmCall; Assessment (RESPONSE method); Celery job execution (logical); evaluation prompt improvement (`JobType.PROMPT_IMPROVEMENT`, logical) |
 | BatchJob | batch_job.py | Org, Project | EvaluationRun, Assessment; batch polling cron (logical) |
 | EvaluationDataset | evaluation.py | Org, Project, Language | EvaluationRun, STTSample (via stt_evaluation), Assessment |
 | EvaluationRun | evaluation.py | Dataset, Config, BatchJob, Org, Project, Language | STTResult, TTSResult; Langfuse scores (logical); console UI (logical) |
+| EvaluationIterationRun | evaluation_iteration.py | Dataset, Config, Org, Project | EvaluationRun, Job (referenced only inside the LangGraph checkpoint state, not FK columns on this table, logical); callback_url caller (logical) |
 | STTSample / STTResult | stt_evaluation.py | Dataset, Run, File, Language | human annotation UI (logical) |
 | TTSResult | tts_evaluation.py | Run, Org, Project | human annotation UI (logical) |
-| Assessment / AssessmentRun | assessment.py | Config, Dataset, BatchJob, Org, Project | console UI (logical) |
+| Assessment / AssessmentRun | assessment.py | Config, Dataset, BatchJob, Job, Org, Project | console UI (logical) |
 | Document | document.py | Project, Document (parent) | DocumentCollection, DocTransformationJob, FineTuning, ModelEvaluation |
 | Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical) |
 | DocumentCollection | document_collection.py | Document, Collection | RAG lookups (logical) |
@@ -54,7 +55,7 @@ APIKey → Organization, Project, User  # programmatic access
 - **Langfuse** — every LLM call and evaluation run writes traces/scores. A change to run scoring or trace shape ripples here.
 - **kaapi-frontend console** — reads run results, annotation queues, config CRUD. A response-shape change ripples here.
 - **Provider Batch APIs** (OpenAI, Gemini, Anthropic in `core/batch/`) — eval/assessment payload shape changes ripple here.
-- **Object storage** (`core/cloud/storage.py`) — files, dataset artifacts.
+- **Object storage** (`core/cloud/storage.py` S3; `services/buckets/` GCS signed URLs) — files, dataset artifacts, gs:// attachments.
 
 ## Blast-radius procedure
 

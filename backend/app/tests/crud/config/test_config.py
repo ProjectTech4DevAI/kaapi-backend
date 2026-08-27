@@ -561,3 +561,11 @@ def test_read_by_name_deleted_config(db: Session) -> None:
     fetched_config = config_crud._read_by_name(config.name)
 
     assert fetched_config is None
+
+
+def test_config_tag_is_immutable(db: Session) -> None:
+    """`tag` is fixed at creation: mutating it on a persisted config raises."""
+    config = create_test_config(db=db, tag=ConfigTag.DEFAULT)
+
+    with pytest.raises(ValueError, match="tag is immutable"):
+        config.tag = ConfigTag.ASSESSMENT

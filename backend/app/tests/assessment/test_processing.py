@@ -17,6 +17,14 @@ from app.crud.assessment.processing import (
 from app.models.assessment import Stage, StageStatus
 
 
+@pytest.fixture(autouse=True)
+def _stub_flag_modified():
+    """Runtime state lives in the run.execution JSONB bag, flagged via
+    core._write_exec -> flag_modified; stub it so SimpleNamespace runs work."""
+    with patch("app.crud.assessment.core.flag_modified"):
+        yield
+
+
 class TestSanitizeJsonOutput:
     def test_valid_json_unchanged(self) -> None:
         raw = '{"key": "value"}'
@@ -172,7 +180,7 @@ class TestParseAssessmentOutputGoogle:
             raw = [
                 {"key": "row_0", "response": {"text": "gemini output"}, "error": None}
             ]
-            results = parse_assessment_output(raw, "google-aistudio")
+            results = parse_assessment_output(raw, "google")
 
         assert results[0]["row_id"] == "row_0"
         assert results[0]["output"] == "gemini output"
@@ -180,13 +188,13 @@ class TestParseAssessmentOutputGoogle:
 
     def test_google_error_result(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": "quota exceeded"}]
-        results = parse_assessment_output(raw, "google-aistudio")
+        results = parse_assessment_output(raw, "google")
         assert results[0]["error"] == "quota exceeded"
         assert results[0]["output"] is None
 
     def test_google_empty_response(self) -> None:
         raw = [{"key": "row_0", "response": None, "error": None}]
-        results = parse_assessment_output(raw, "google-aistudio")
+        results = parse_assessment_output(raw, "google")
         assert results[0]["error"] == "Empty response"
 
     def test_google_empty_text_from_response(self) -> None:
@@ -197,7 +205,7 @@ class TestParseAssessmentOutputGoogle:
             return_value="",
         ):
             raw = [{"key": "row_0", "response": {"candidates": []}, "error": None}]
-            results = parse_assessment_output(raw, "google-aistudio")
+            results = parse_assessment_output(raw, "google")
         assert results[0]["output"] is None
         assert results[0]["error"] == "Empty response output"
 
@@ -209,7 +217,7 @@ class TestParseAssessmentOutputGoogle:
             return_value="out",
         ):
             raw = [{"key": "row_0", "response": {"x": 1}, "error": None}]
-            results = parse_assessment_output(raw, "google-aistudio-native")
+            results = parse_assessment_output(raw, "google-native")
         assert results[0]["output"] == "out"
 
 
@@ -290,35 +298,36 @@ class TestRecordGateStats:
                 {Stage.PRE_FILTER_TOPIC_RELEVANCE: lambda _outputs: parsed},
             ),
             patch.object(processing_mod, "update_assessment_run_prefilter_stats"),
-            patch.object(processing_mod, "flag_modified"),
         ]
 
     def test_persists_accepted_indices_to_pipeline(self) -> None:
-        run = SimpleNamespace(id=1, assessment_id=2, pipeline={"stages": []})
+        run = SimpleNamespace(
+            id=1, assessment_id=2, execution={"pipeline": {"stages": []}}
+        )
         parsed = {
             0: {"verdict": True},
             1: {"verdict": False},
             2: {"verdict": True},
         }
         p = self._patches(parsed)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p[0], p[1], p[2], p[3]:
             _record_gate_stats(
                 MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
             )
-        assert run.pipeline["accepted_indices"] == [0, 2]
+        assert run.execution["pipeline"]["accepted_indices"] == [0, 2]
 
     def test_intersects_with_prior_gate(self) -> None:
         run = SimpleNamespace(
-            id=1, assessment_id=2, pipeline={"accepted_indices": [2, 3]}
+            id=1, assessment_id=2, execution={"pipeline": {"accepted_indices": [2, 3]}}
         )
         parsed = {2: {"verdict": True}, 3: {"verdict": False}, 4: {"verdict": True}}
         p = self._patches(parsed)
-        with p[0], p[1], p[2], p[3], p[4]:
+        with p[0], p[1], p[2], p[3]:
             _record_gate_stats(
                 MagicMock(), run, Stage.PRE_FILTER_TOPIC_RELEVANCE, MagicMock(), 1
             )
         # 2 passes this gate and was in the prior accepted set; 4 wasn't; 3 rejected.
-        assert run.pipeline["accepted_indices"] == [2]
+        assert run.execution["pipeline"]["accepted_indices"] == [2]
 
 
 class TestGetBatchProvider:
@@ -370,11 +379,47 @@ class TestGetBatchProvider:
             mock_cls.from_credentials.return_value = mock_gemini
             _get_batch_provider(
                 session=session,
-                provider_name="google-aistudio",
+                provider_name="google",
                 organization_id=1,
                 project_id=1,
             )
         mock_batch_cls.assert_called_once_with(client=mock_gemini.client)
+
+    @pytest.mark.parametrize("provider_name", ["google-gcp", "google-gcp-native"])
+    def test_google_gcp_builds_from_credentials(self, provider_name: str) -> None:
+        session = MagicMock()
+        cred = {"gcs_bucket": "b", "sa_key": {"project_id": "p"}}
+        with (
+            patch(
+                "app.crud.credentials.get_provider_credential", return_value=cred
+            ) as mock_get_cred,
+            patch("app.core.batch.GoogleGCPBatchProvider") as mock_cls,
+        ):
+            result = _get_batch_provider(
+                session=session,
+                provider_name=provider_name,
+                organization_id=1,
+                project_id=1,
+            )
+        mock_get_cred.assert_called_once()
+        mock_cls.from_credentials.assert_called_once_with(cred)
+        assert result is mock_cls.from_credentials.return_value
+
+    def test_google_gcp_non_dict_credential_raises(self) -> None:
+        session = MagicMock()
+        with (
+            patch("app.crud.credentials.get_provider_credential", return_value=None),
+            patch("app.core.batch.GoogleGCPBatchProvider"),
+        ):
+            with pytest.raises(
+                ValueError, match="google-gcp credentials not configured"
+            ):
+                _get_batch_provider(
+                    session=session,
+                    provider_name="google-gcp",
+                    organization_id=1,
+                    project_id=1,
+                )
 
 
 class TestProcessRunBatches:
@@ -382,13 +427,16 @@ class TestProcessRunBatches:
         return SimpleNamespace(organization_id=1, project_id=1, experiment_name="exp")
 
     def _run(self):
+        # Runtime state (stage/stage_status/stage_batches) lives in the execution bag.
         return SimpleNamespace(
             id=1,
             assessment_id=10,
-            status="processing",
-            stage=Stage.L2_ASSESSMENT,
-            stage_status=StageStatus.PROCESSING,
-            stage_batches={Stage.L2_ASSESSMENT: 5},
+            status="PROCESSING",
+            execution={
+                "stage": Stage.L2_ASSESSMENT,
+                "stage_status": StageStatus.PROCESSING,
+                "stage_batches": {Stage.L2_ASSESSMENT: 5},
+            },
         )
 
     @pytest.mark.asyncio
@@ -414,15 +462,15 @@ class TestProcessRunBatches:
 
         advance.assert_called_once()
         assert result["action"] == "processed"
-        assert run.stage_status == StageStatus.COMPLETED
+        assert run.execution["stage_status"] == StageStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_advances_and_dispatches_next_stage(self) -> None:
         session = MagicMock()
         session.get.return_value = self._parent()
         run = self._run()
-        run.stage = Stage.PRE_FILTER_TOPIC_RELEVANCE
-        run.stage_batches = {Stage.PRE_FILTER_TOPIC_RELEVANCE: 5}
+        run.execution["stage"] = Stage.PRE_FILTER_TOPIC_RELEVANCE
+        run.execution["stage_batches"] = {Stage.PRE_FILTER_TOPIC_RELEVANCE: 5}
 
         with patch(
             "app.crud.assessment.processing.get_batch_job", return_value=MagicMock()
@@ -490,8 +538,8 @@ class TestProcessRunBatches:
 
         assert result["action"] == "failed"
         # Failed stage preserved (so a resume knows where to restart); only status flips.
-        assert run.stage == Stage.L2_ASSESSMENT
-        assert run.stage_status == StageStatus.FAILED
+        assert run.execution["stage"] == Stage.L2_ASSESSMENT
+        assert run.execution["stage_status"] == StageStatus.FAILED
 
 
 class TestPollStageOutcome:

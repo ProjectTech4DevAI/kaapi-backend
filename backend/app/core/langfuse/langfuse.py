@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from functools import wraps
@@ -9,6 +10,7 @@ from asgi_correlation_id import correlation_id
 from langfuse import Langfuse, LangfuseOtelSpanAttributes
 from langfuse._client.span import LangfuseGeneration, LangfuseSpan
 from langfuse.api.core.api_error import ApiError
+from opentelemetry.sdk.trace import TracerProvider
 
 from app.models.llm import (
     AudioOutput,
@@ -19,6 +21,25 @@ from app.models.llm import (
 )
 
 logger = logging.getLogger(__name__)
+
+_LANGFUSE_TRACER_PROVIDER: TracerProvider | None = None
+_LANGFUSE_TRACER_PROVIDER_LOCK = threading.Lock()
+
+
+def get_langfuse_tracer_provider() -> TracerProvider:
+    """Isolated OTel provider for Langfuse so LLM spans never reach Sentry.
+
+    Sentry's SpanProcessor sits on the global provider and exports every span
+    with no per-project filter; sharing it surfaces each Langfuse span in Sentry
+    as a duplicate root trace. Langfuse's own processors filter by public_key, so
+    one shared isolated provider stays multi-tenant safe.
+    """
+    global _LANGFUSE_TRACER_PROVIDER
+    if _LANGFUSE_TRACER_PROVIDER is None:
+        with _LANGFUSE_TRACER_PROVIDER_LOCK:
+            if _LANGFUSE_TRACER_PROVIDER is None:
+                _LANGFUSE_TRACER_PROVIDER = TracerProvider()
+    return _LANGFUSE_TRACER_PROVIDER
 
 
 def format_langfuse_error(exc: Exception) -> str:
@@ -153,6 +174,7 @@ class LangfuseTracer:
                     secret_key=credentials["secret_key"],
                     host=credentials["host"],
                     tracing_enabled=True,  # This ensures the client is active
+                    tracer_provider=get_langfuse_tracer_provider(),
                 )
             except Exception as e:
                 logger.warning(
@@ -311,6 +333,7 @@ def observe_llm_execution(
                     public_key=credentials.get("public_key"),
                     secret_key=credentials.get("secret_key"),
                     host=credentials.get("host"),
+                    tracer_provider=get_langfuse_tracer_provider(),
                 )
                 logger.info(
                     f"[observe_llm_execution] Tracing enabled | session_id={session_id or 'auto'}"
@@ -358,7 +381,11 @@ def observe_llm_execution(
                     as_type="generation",
                     name=f"{completion_config.provider}-completion",
                     input=query.input,
-                    model=completion_config.params.get("model"),
+                    model=(
+                        completion_config.params.get("model")
+                        if isinstance(completion_config.params, dict)
+                        else getattr(completion_config.params, "model", None)
+                    ),
                 )
 
             response: LLMCallResponse | None
