@@ -116,7 +116,7 @@ async def _log_http_request(request: Request, call_next) -> Response:
 
     if raw_path not in SILENT_LOG_PATHS:
         logger.info(
-            f"{method} {raw_path} - {status} [{duration_ms:.2f}ms] "
+            f"[_log_http_request] {method} {raw_path} - {status} [{duration_ms:.2f}ms] "
             f"| request_body_size: {request_body_size}B "
             f"| correlation_id: {correlation_id.get()}"
         )
