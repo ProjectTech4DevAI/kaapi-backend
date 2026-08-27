@@ -24,7 +24,7 @@ from app.models.evaluation_iteration import (
     EvaluationIterationRun,
     EvaluationIterationStatusEnum,
 )
-from app.models.llm.request import ConfigBlob, KaapiTextCompletionConfig
+from app.models.llm.request import ConfigBlob, build_kaapi_completion_config
 from app.services.evaluations.iteration import (
     compute_round_scores,
     validate_and_start_evaluation_iteration,
@@ -100,7 +100,7 @@ def _make_dataset(*, db: Session, user_api_key: TestAuthContext) -> EvaluationDa
 
 def _make_text_config(db: Session, project_id: int) -> Config:
     blob = ConfigBlob(
-        completion=KaapiTextCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o-iteration-test", "temperature": 0.7},

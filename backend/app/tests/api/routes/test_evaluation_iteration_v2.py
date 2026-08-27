@@ -13,7 +13,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.models import Config, EvaluationDataset
 from app.models.evaluation_iteration import EvaluationIterationRun
-from app.models.llm.request import ConfigBlob, KaapiTextCompletionConfig
+from app.models.llm.request import ConfigBlob, build_kaapi_completion_config
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
@@ -34,7 +34,7 @@ def _make_dataset(*, db: Session, user_api_key: TestAuthContext) -> EvaluationDa
 
 def _make_text_config(db: Session, project_id: int) -> Config:
     blob = ConfigBlob(
-        completion=KaapiTextCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o-iter-route-test", "temperature": 0.7},

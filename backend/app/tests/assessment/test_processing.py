@@ -385,6 +385,42 @@ class TestGetBatchProvider:
             )
         mock_batch_cls.assert_called_once_with(client=mock_gemini.client)
 
+    @pytest.mark.parametrize("provider_name", ["google-gcp", "google-gcp-native"])
+    def test_google_gcp_builds_from_credentials(self, provider_name: str) -> None:
+        session = MagicMock()
+        cred = {"gcs_bucket": "b", "sa_key": {"project_id": "p"}}
+        with (
+            patch(
+                "app.crud.credentials.get_provider_credential", return_value=cred
+            ) as mock_get_cred,
+            patch("app.core.batch.GoogleGCPBatchProvider") as mock_cls,
+        ):
+            result = _get_batch_provider(
+                session=session,
+                provider_name=provider_name,
+                organization_id=1,
+                project_id=1,
+            )
+        mock_get_cred.assert_called_once()
+        mock_cls.from_credentials.assert_called_once_with(cred)
+        assert result is mock_cls.from_credentials.return_value
+
+    def test_google_gcp_non_dict_credential_raises(self) -> None:
+        session = MagicMock()
+        with (
+            patch("app.crud.credentials.get_provider_credential", return_value=None),
+            patch("app.core.batch.GoogleGCPBatchProvider"),
+        ):
+            with pytest.raises(
+                ValueError, match="google-gcp credentials not configured"
+            ):
+                _get_batch_provider(
+                    session=session,
+                    provider_name="google-gcp",
+                    organization_id=1,
+                    project_id=1,
+                )
+
 
 class TestProcessRunBatches:
     def _parent(self):
