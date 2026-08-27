@@ -21,6 +21,3 @@ ENV/
 
 #
 /backend/app/logs
-
-.agents/
-AGENTS.md
