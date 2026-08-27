@@ -4,6 +4,7 @@ from sqlmodel import Session
 from app.services.llm.providers.base import BaseProvider
 from app.services.llm.providers.open_ai import OpenAIProvider
 from app.services.llm.providers.google_aistudio import GoogleAIProvider
+from app.services.llm.providers.google_gcp import GoogleGCPProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.claude import ClaudeProvider
@@ -19,6 +20,8 @@ class LLMProvider:
     ANTHROPIC = "anthropic"
     GOOGLE_AISTUDIO = "google-aistudio"
     GOOGLE_AISTUDIO_NATIVE = "google-aistudio-native"
+    GOOGLE_GCP = "google-gcp"
+    GOOGLE_GCP_NATIVE = "google-gcp-native"
     OPENAI_NATIVE = "openai-native"
     GOOGLE_NATIVE = "google-native"
     SARVAMAI_NATIVE = "sarvamai-native"
@@ -33,6 +36,8 @@ class LLMProvider:
         ANTHROPIC: ClaudeProvider,
         GOOGLE_AISTUDIO: GoogleAIProvider,
         GOOGLE_AISTUDIO_NATIVE: GoogleAIProvider,
+        GOOGLE_GCP: GoogleGCPProvider,
+        GOOGLE_GCP_NATIVE: GoogleGCPProvider,
         OPENAI_NATIVE: OpenAIProvider,
         GOOGLE_NATIVE: GoogleAIProvider,
         SARVAMAI_NATIVE: SarvamAIProvider,

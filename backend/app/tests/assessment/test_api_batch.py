@@ -392,6 +392,23 @@ class TestParseOne:
         assert result["output"] is None
         assert result["error"] == "Empty response"
 
+    def test_google_gcp_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="vertex text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-gcp")
+        assert result["output"] == "vertex text"
+
+    def test_google_aistudio_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="aistudio text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-aistudio")
+        assert result["output"] == "aistudio text"
+        assert result["error"] is None
+
     def test_unknown_provider(self) -> None:
         result = _parse_one({"response": {}}, "cohere")
         assert result["output"] is None
@@ -876,6 +893,43 @@ class TestBuildBatchProvider:
             )
         assert provider is not None
 
+    def test_google_gcp_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        sentinel = MagicMock()
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
+                return_value=sentinel,
+            ) as vertex_from_cred,
+        ):
+            provider = _build_batch_provider(
+                session=db,
+                provider_name="google-gcp",
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert provider is sentinel
+        vertex_from_cred.assert_called_once()
+
+    def test_google_gcp_missing_credential_raises_404(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        with patch(
+            "app.services.assessment.api.batch.get_provider_credential",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                _build_batch_provider(
+                    session=db,
+                    provider_name="google-gcp",
+                    organization_id=auth.organization_id,
+                    project_id=auth.project_id,
+                )
+        assert exc.value.status_code == 404
+
     def test_anthropic(self, db) -> None:
         auth = get_user_test_auth_context(db)
         with patch(
@@ -937,6 +991,33 @@ class TestSubmitProviderBatch:
             )
         assert result.id == job.id
         assert start.call_args.kwargs["provider_name"] == "google"
+
+    def test_google_gcp_branch_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
+                return_value=MagicMock(),
+            ) as vertex_from_cred,
+            patch(
+                "app.services.assessment.api.batch.start_batch_job",
+                return_value=job,
+            ) as start,
+        ):
+            _submit_provider_batch(
+                **self._kwargs(db, auth, "google-gcp", {"model": "gemini-2.5-pro"})
+            )
+        assert start.call_args.kwargs["provider_name"] == "google-gcp"
+        vertex_from_cred.assert_called_once()
+        # Vertex config omits the "models/" prefixed model (uses bare id).
+        assert "model" not in start.call_args.kwargs["config"]
 
     def test_anthropic_branch_sets_max_tokens(self, db) -> None:
         auth = get_user_test_auth_context(db)
