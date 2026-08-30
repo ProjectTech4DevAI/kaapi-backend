@@ -105,6 +105,64 @@ class TestGetLLMProvider:
 
             assert "not configured for this project" in str(exc_info.value)
 
+    def test_get_llm_provider_google_gcp_falls_back_to_platform_credentials(
+        self, db: Session
+    ) -> None:
+        """No stored ``google-gcp`` credential row shouldn't raise — the
+        provider's create_client() falls back to platform-shared settings."""
+        from app.services.llm.providers.google_gcp import GoogleGCPProvider
+
+        project = get_project(db)
+
+        with (
+            patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
+            patch("app.services.llm.providers.google_gcp.settings") as mock_settings,
+        ):
+            mock_get_creds.return_value = None
+            mock_settings.GCP_VERTEX_API_KEY = "platform-key"
+            mock_settings.GCP_PROJECT_ID = "platform-project"
+            mock_settings.GCP_VERTEX_LOCATION = "us-central1"
+            mock_settings.GCS_AUDIO_BUCKET = "platform-bucket"
+            mock_settings.GCP_SA_KEY = '{"type": "service_account"}'
+
+            provider = get_llm_provider(
+                session=db,
+                provider_type="google-gcp",
+                project_id=project.id,
+                organization_id=project.organization_id,
+            )
+
+        assert isinstance(provider, GoogleGCPProvider)
+        assert provider.client.api_key == "platform-key"
+
+    def test_get_llm_provider_google_gcp_raises_when_platform_credentials_missing(
+        self, db: Session
+    ) -> None:
+        """Platform fallback still surfaces a ValueError if settings are
+        also unconfigured, instead of silently constructing a broken client."""
+        project = get_project(db)
+
+        with (
+            patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
+            patch("app.services.llm.providers.google_gcp.settings") as mock_settings,
+        ):
+            mock_get_creds.return_value = None
+            mock_settings.GCP_VERTEX_API_KEY = None
+            mock_settings.GCP_PROJECT_ID = None
+            mock_settings.GCP_VERTEX_LOCATION = None
+            mock_settings.GCS_AUDIO_BUCKET = None
+            mock_settings.GCP_SA_KEY = None
+
+            with pytest.raises(ValueError) as exc_info:
+                get_llm_provider(
+                    session=db,
+                    provider_type="google-gcp",
+                    project_id=project.id,
+                    organization_id=project.organization_id,
+                )
+
+        assert "missing required fields" in str(exc_info.value)
+
     def test_google_native_routes_to_aistudio(self, db: Session):
         """``google`` / ``google-native`` currently route to GoogleAIProvider
         (AI Studio). Vertex routing is temporarily disabled."""

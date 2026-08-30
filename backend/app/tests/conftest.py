@@ -5,6 +5,7 @@ import os
 os.environ["ENVIRONMENT"] = "testing"
 
 from fastapi.testclient import TestClient
+from filelock import FileLock
 from sqlmodel import Session
 from sqlalchemy import event
 from typing import Any, Generator
@@ -46,7 +47,9 @@ def db() -> Generator[Session, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def seed_baseline() -> Generator[None, None, None]:
+def seed_baseline(
+    tmp_path_factory: pytest.TempPathFactory, worker_id: str
+) -> Generator[None, None, None]:
     """
     Seeds the database with baseline test data including credentials.
 
@@ -55,10 +58,24 @@ def seed_baseline() -> Generator[None, None, None]:
     - OpenAI credentials are created for all test projects
     - Langfuse credentials are created for all test projects
     - All test fixtures can rely on credentials existing
+
+    Under pytest-xdist, seed_database wipes and re-inserts shared rows, so
+    exactly one worker may run it; the others block on the lock and skip.
     """
-    with Session(engine) as session:
-        seed_database(session)  # deterministic baseline with credentials
+    if worker_id == "master":  # not running under xdist
+        with Session(engine) as session:
+            seed_database(session)
         yield
+        return
+
+    root_tmp = tmp_path_factory.getbasetemp().parent
+    with FileLock(root_tmp / "seed.lock"):
+        seeded_flag = root_tmp / "seeded"
+        if not seeded_flag.exists():
+            with Session(engine) as session:
+                seed_database(session)
+            seeded_flag.touch()
+    yield
 
 
 @pytest.fixture(scope="function")

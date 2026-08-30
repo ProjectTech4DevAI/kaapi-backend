@@ -31,7 +31,7 @@ from app.utils import validate_callback_url
 logger = logging.getLogger(__name__)
 
 # Attachment cell values are provided as URLs (base64 is unsupported for batch).
-_URL_PREFIXES = ("http://", "https://")
+_URL_PREFIXES = ("http://", "https://", "gs://")
 _ATTACHMENT_TYPES = ("image", "pdf")
 
 
