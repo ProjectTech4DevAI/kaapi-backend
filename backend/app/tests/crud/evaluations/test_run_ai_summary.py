@@ -164,7 +164,7 @@ class TestTraceBrief:
     def test_each_trace_carries_its_qa_and_scored_rationales(self) -> None:
         payload = _payload_from(_brief_for())
 
-        assert [t["trace_id"] for t in payload] == ["item_1_1", "item_2_1"]
+        assert [t["question_id"] for t in payload] == [1, 2]
         first = payload[0]
         assert first["question"] == "How much urea per acre?"
         assert first["ground_truth_answer"] == "Roughly 45-55 kg per acre."
@@ -193,7 +193,7 @@ class TestTraceBrief:
         payload = _payload_from(brief)
 
         assert set(payload[0]) == {
-            "trace_id",
+            "question_id",
             "question",
             "ground_truth_answer",
             "llm_answer",
