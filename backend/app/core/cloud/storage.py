@@ -10,6 +10,7 @@ from dataclasses import dataclass, asdict
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from abc import ABC, abstractmethod
+from typing import Any
 import boto3
 from fastapi import UploadFile
 from botocore.exceptions import ClientError
@@ -307,7 +308,7 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
     Method to create and configure a cloud storage instance.
     """
     # Lazy import to avoid a top-level cycle: storage.py is imported from
-    # app.services.llm.providers.google_ai, which itself is wired into the
+    # app.services.llm.providers.google_gcp, which itself is wired into the
     # provider registry that app.crud transitively pulls in.
     from app.crud import get_project_by_id
 
@@ -328,6 +329,14 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
 
 
 GCS_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+
+
+def build_gcp_sa_credentials(sa_key: dict[str, Any]) -> service_account.Credentials:
+    """Build signing-capable SA credentials from a service-account key dict."""
+    return service_account.Credentials.from_service_account_info(
+        sa_key, scopes=list(GCS_SCOPES)
+    )
+
 
 MAX_AUDIO_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -400,9 +409,7 @@ def upload_audio_to_gcs(
     key = f"{key_prefix}/{uuid4().hex}{ext}"
 
     try:
-        creds = service_account.Credentials.from_service_account_info(
-            sa_info, scopes=list(GCS_SCOPES)
-        )
+        creds = build_gcp_sa_credentials(sa_info)
         client = gcs.Client(
             project=project_id or sa_info.get("project_id"), credentials=creds
         )

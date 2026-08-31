@@ -66,44 +66,42 @@ OUTPUT_SCHEMA = {
 
 # Pre-filter criteria now live in params.instructions (mandatory), no top-level prompt/content.
 TOPIC_CRITERIA = "Is this on topic?"
-DUPLICATE_CRITERIA = "Is this a duplicate?"
 
 
 def _blob_dict(
     *,
     topic_relevance: bool | None = None,
-    duplicate_detection: bool | None = None,
     provider: str = "openai",
     model: str = "gpt-4o",
     input_schema: dict | None = None,
+    submission: str = "assess {a}",
+    topic_submission: str | None = None,
 ) -> dict:
-    """Assessment config blob dict. ``topic_relevance``/``duplicate_detection`` are the
-    filter's ``stop_on_fail`` value, or None to omit the filter entirely."""
+    """Assessment config blob dict. ``topic_relevance`` is the filter's ``stop_on_fail``
+    value, or None to omit the filter entirely. ``topic_submission`` sets the pre-filter's
+    own optional prompt template."""
     pre_filters: dict = {}
     if topic_relevance is not None:
+        params: dict = {"model": "gpt-4o", "instructions": TOPIC_CRITERIA}
+        if topic_submission is not None:
+            params["submission"] = topic_submission
         pre_filters["topic_relevance"] = {
             "provider": "openai",
-            "params": {"model": "gpt-4o", "instructions": TOPIC_CRITERIA},
+            "params": params,
             "stop_on_fail": topic_relevance,
-        }
-    if duplicate_detection is not None:
-        pre_filters["duplicate_detection"] = {
-            "provider": "openai",
-            "params": {"model": "gpt-4o", "instructions": DUPLICATE_CRITERIA},
-            "stop_on_fail": duplicate_detection,
-            "knowledge_base_id": "vs_dup",
         }
     assessment_params: dict = {
         "model": model,
         "json_output_schema": OUTPUT_SCHEMA,
-        "input_schema": input_schema or {"a": {"type": "text"}},
+        "submission": submission,
     }
     blob: dict = {
+        "input_schema": input_schema or {"a": {"type": "text"}},
         "assessment": {
             "provider": provider,
             "type": "text",
             "params": assessment_params,
-        }
+        },
     }
     if pre_filters:
         blob["pre_filters"] = pre_filters
@@ -129,27 +127,27 @@ class TestBuildPipeline:
             {"stage": ApiStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value}
         ]
 
-    def test_gate_before_passthrough_before_assessment(self) -> None:
-        # topic_relevance is a GATE (stop_on_fail=True), duplicate_detection PASS_THROUGH.
-        blob = _blob(topic_relevance=True, duplicate_detection=False)
+    def test_gate_precedes_assessment(self) -> None:
+        blob = _blob(topic_relevance=True)  # stop_on_fail=True -> GATE
         pipeline = build_pipeline(blob.pre_filters)
         assert [s["stage"] for s in pipeline] == [
             ApiStage.TOPIC_RELEVANCE.value,
-            ApiStage.DUPLICATE_DETECTION.value,
             ApiStage.ASSESSMENT.value,
         ]
         assert [s["kind"] for s in pipeline] == [
             StageKind.GATE.value,
-            StageKind.PASS_THROUGH.value,
             StageKind.ASSESSMENT.value,
         ]
 
-    def test_both_gates_precede_assessment(self) -> None:
-        blob = _blob(topic_relevance=True, duplicate_detection=True)
+    def test_passthrough_precedes_assessment(self) -> None:
+        blob = _blob(topic_relevance=False)  # stop_on_fail=False -> PASS_THROUGH
         pipeline = build_pipeline(blob.pre_filters)
+        assert [s["stage"] for s in pipeline] == [
+            ApiStage.TOPIC_RELEVANCE.value,
+            ApiStage.ASSESSMENT.value,
+        ]
         assert [s["kind"] for s in pipeline] == [
-            StageKind.GATE.value,
-            StageKind.GATE.value,
+            StageKind.PASS_THROUGH.value,
             StageKind.ASSESSMENT.value,
         ]
 
@@ -175,16 +173,14 @@ class TestNextStageAndKind:
 
 class TestBuildRows:
     def test_text_only_rows(self) -> None:
-        batch_input = BatchInput(query="q {a}", data=[{"a": "1", "b": "2"}])
+        batch_input = BatchInput(data=[{"a": "1", "b": "2"}])
         rows, text_columns, attachments = build_rows(batch_input)
         assert rows == [{"a": "1", "b": "2"}]
         assert set(text_columns) == {"a", "b"}
         assert attachments == []
 
     def test_attachment_column_is_split_out(self) -> None:
-        batch_input = BatchInput(
-            query="q", data=[{"text": "hi", "img": "https://x/a.png"}]
-        )
+        batch_input = BatchInput(data=[{"text": "hi", "img": "https://x/a.png"}])
         input_columns = {"img": {"type": "image", "format": "url"}}
         rows, text_columns, attachments = build_rows(batch_input, input_columns)
         assert text_columns == ["text"]
@@ -194,32 +190,35 @@ class TestBuildRows:
         assert attachments[0].type == "image"
 
     def test_base64_attachment_rejected(self) -> None:
-        batch_input = BatchInput(query="q", data=[{"img": "data"}])
+        batch_input = BatchInput(data=[{"img": "data"}])
         input_columns = {"img": {"type": "image", "format": "base64"}}
         with pytest.raises(ValueError, match="url-format"):
             build_rows(batch_input, input_columns)
 
     def test_empty_submissions(self) -> None:
-        batch_input = BatchInput.model_construct(query="q", data=[])
+        batch_input = BatchInput.model_construct(data=[])
         rows, text_columns, attachments = build_rows(batch_input)
         assert rows == []
         assert text_columns == []
 
 
 class TestStagePrompt:
-    def test_assessment_uses_query(self) -> None:
-        batch_input = BatchInput(query="assess me", data=[{"a": "1"}])
-        assert _stage_prompt(batch_input, ApiStage.ASSESSMENT.value) == "assess me"
+    def test_assessment_uses_config_submission(self) -> None:
+        blob = _blob(submission="assess {a} now")
+        assert _stage_prompt(blob, ApiStage.ASSESSMENT.value) == "assess {a} now"
 
-    def test_prefilter_stages_have_no_prompt(self) -> None:
-        batch_input = BatchInput(query="q", data=[{"a": "1"}])
-        assert _stage_prompt(batch_input, ApiStage.TOPIC_RELEVANCE.value) is None
-        assert _stage_prompt(batch_input, ApiStage.DUPLICATE_DETECTION.value) is None
+    def test_prefilter_returns_its_own_submission(self) -> None:
+        blob = _blob(topic_relevance=True, topic_submission="rank {a}")
+        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) == "rank {a}"
+
+    def test_prefilter_without_submission_is_none(self) -> None:
+        blob = _blob(topic_relevance=True)
+        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) is None
 
 
 class TestPrefilterForStage:
     def test_returns_configured_filter(self) -> None:
-        blob = _blob(topic_relevance=True, duplicate_detection=False)
+        blob = _blob(topic_relevance=True)
         tr = _prefilter_for_stage(blob, ApiStage.TOPIC_RELEVANCE.value)
         assert tr.params["instructions"] == TOPIC_CRITERIA
 
@@ -246,10 +245,15 @@ class TestStageParams:
             == f"{TOPIC_CRITERIA}\n\n{batch_service._PREFILTER_INSTRUCTION}"
         )
 
-    def test_duplicate_detection_adds_knowledge_base_ids(self) -> None:
-        blob = _blob(duplicate_detection=False)
-        params = _stage_params(blob, ApiStage.DUPLICATE_DETECTION.value)
-        assert params["knowledge_base_ids"] == ["vs_dup"]
+    def test_submission_is_not_a_provider_param(self) -> None:
+        # submission is a prompt template, popped from both branches' provider params.
+        blob = _blob(
+            submission="assess {a}",
+            topic_relevance=True,
+            topic_submission="rank {a}",
+        )
+        assert "submission" not in _stage_params(blob, ApiStage.ASSESSMENT.value)
+        assert "submission" not in _stage_params(blob, ApiStage.TOPIC_RELEVANCE.value)
 
 
 class TestStageProviderModel:
@@ -388,6 +392,23 @@ class TestParseOne:
         assert result["output"] is None
         assert result["error"] == "Empty response"
 
+    def test_google_gcp_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="vertex text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-gcp")
+        assert result["output"] == "vertex text"
+
+    def test_google_aistudio_parses_like_google(self) -> None:
+        with patch(
+            "app.services.assessment.api.batch.extract_text_from_response_dict",
+            return_value="aistudio text",
+        ):
+            result = _parse_one({"response": {"candidates": []}}, "google-aistudio")
+        assert result["output"] == "aistudio text"
+        assert result["error"] is None
+
     def test_unknown_provider(self) -> None:
         result = _parse_one({"response": {}}, "cohere")
         assert result["output"] is None
@@ -451,12 +472,12 @@ class TestRecordStage:
         }
         _record_stage(
             bag,
-            ApiStage.DUPLICATE_DETECTION.value,
+            ApiStage.TOPIC_RELEVANCE.value,
             StageKind.PASS_THROUGH.value,
             parsed,
         )
         assert bag["gate_passed"] == [True, True]
-        assert bag["counters"][ApiStage.DUPLICATE_DETECTION.value]["rejected"] == 1
+        assert bag["counters"][ApiStage.TOPIC_RELEVANCE.value]["rejected"] == 1
 
 
 class TestRowSubset:
@@ -503,7 +524,7 @@ def _make_batch_job(db, *, org_id, project_id, **kwargs) -> BatchJob:
 
 
 def _seed_assessment(db, *, org_id, project_id, config_id, bag, data, status=None):
-    batch_input = BatchInput(query="assess {a}", data=data)
+    batch_input = BatchInput(data=data)
     assessment = api.create_assessment(
         session=db,
         method=AssessmentMethod.BATCH,
@@ -872,6 +893,43 @@ class TestBuildBatchProvider:
             )
         assert provider is not None
 
+    def test_google_gcp_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        sentinel = MagicMock()
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
+                return_value=sentinel,
+            ) as vertex_from_cred,
+        ):
+            provider = _build_batch_provider(
+                session=db,
+                provider_name="google-gcp",
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert provider is sentinel
+        vertex_from_cred.assert_called_once()
+
+    def test_google_gcp_missing_credential_raises_404(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        with patch(
+            "app.services.assessment.api.batch.get_provider_credential",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                _build_batch_provider(
+                    session=db,
+                    provider_name="google-gcp",
+                    organization_id=auth.organization_id,
+                    project_id=auth.project_id,
+                )
+        assert exc.value.status_code == 404
+
     def test_anthropic(self, db) -> None:
         auth = get_user_test_auth_context(db)
         with patch(
@@ -934,6 +992,33 @@ class TestSubmitProviderBatch:
         assert result.id == job.id
         assert start.call_args.kwargs["provider_name"] == "google"
 
+    def test_google_gcp_branch_routes_to_vertex(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        with (
+            patch(
+                "app.services.assessment.api.batch.get_provider_credential",
+                return_value={"gcs_bucket": "b", "sa_key": {}},
+            ),
+            patch(
+                "app.services.assessment.api.batch.GoogleGCPBatchProvider.from_credentials",
+                return_value=MagicMock(),
+            ) as vertex_from_cred,
+            patch(
+                "app.services.assessment.api.batch.start_batch_job",
+                return_value=job,
+            ) as start,
+        ):
+            _submit_provider_batch(
+                **self._kwargs(db, auth, "google-gcp", {"model": "gemini-2.5-pro"})
+            )
+        assert start.call_args.kwargs["provider_name"] == "google-gcp"
+        vertex_from_cred.assert_called_once()
+        # Vertex config omits the "models/" prefixed model (uses bare id).
+        assert "model" not in start.call_args.kwargs["config"]
+
     def test_anthropic_branch_sets_max_tokens(self, db) -> None:
         auth = get_user_test_auth_context(db)
         job = _make_batch_job(
@@ -984,7 +1069,7 @@ class TestSubmitStageEmptySubset:
         pipeline = build_pipeline(None)
         bag = _bag_for(pipeline, total=2)
         bag["gate_passed"] = [False, False]
-        batch_input = BatchInput(query="q {a}", data=[{"a": "1"}, {"a": "2"}])
+        batch_input = BatchInput(data=[{"a": "1"}, {"a": "2"}])
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
@@ -1663,7 +1748,7 @@ class TestBuildResult:
     The cloud-storage read is the only external seam mocked."""
 
     def _seed(self, db, auth, *, data, bag):
-        batch_input = BatchInput(query="assess {a}", data=data)
+        batch_input = BatchInput(data=data)
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,

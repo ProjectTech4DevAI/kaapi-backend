@@ -24,7 +24,8 @@ from app.models.llm import (
     AudioOutput,
     AudioContent,
     # KaapiLLMParams,
-    KaapiCompletionConfig,
+    KaapiTextCompletionConfig,
+    build_kaapi_completion_config,
 )
 from app.models.llm.request import ConfigBlob, LLMCallConfig, LLMChainRequest
 from app.models.llm.request import ChainBlock as ChainBlockModel
@@ -1086,7 +1087,7 @@ class TestExecuteJob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -1133,7 +1134,7 @@ class TestExecuteJob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -1185,7 +1186,7 @@ class TestExecuteJob:
 
         # Use a config that will generate warnings (temperature on reasoning model)
         config_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -1235,7 +1236,7 @@ class TestExecuteJob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -2477,7 +2478,7 @@ class TestResolveConfigBlob:
         project = get_project(db)
 
         config_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -2499,12 +2500,12 @@ class TestResolveConfigBlob:
 
         assert error is None
         assert resolved_blob is not None
-        assert isinstance(resolved_blob.completion, KaapiCompletionConfig)
+        assert isinstance(resolved_blob.completion, KaapiTextCompletionConfig)
         assert resolved_blob.completion.provider == "openai"
-        assert resolved_blob.completion.params["model"] == "gpt-4o"
-        assert resolved_blob.completion.params["temperature"] == 0.8
+        assert resolved_blob.completion.params.model == "gpt-4o"
+        assert resolved_blob.completion.params.temperature == 0.8
         assert (
-            resolved_blob.completion.params["instructions"]
+            resolved_blob.completion.params.instructions
             == "You are a helpful assistant"
         )
 
@@ -2526,7 +2527,7 @@ class TestResolveConfigBlob:
 
         # Create Kaapi config
         kaapi_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
+            completion=build_kaapi_completion_config(
                 provider="openai",
                 type="text",
                 params={
@@ -2561,5 +2562,5 @@ class TestResolveConfigBlob:
         resolved_kaapi, error_kaapi = resolve_config_blob(kaapi_crud, kaapi_call_config)
 
         assert error_kaapi is None
-        assert isinstance(resolved_kaapi.completion, KaapiCompletionConfig)
+        assert isinstance(resolved_kaapi.completion, KaapiTextCompletionConfig)
         assert resolved_kaapi.completion.provider == "openai"

@@ -19,7 +19,7 @@ See `Fast Evaluation SRD.md` for the full design.
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import openai
@@ -80,12 +80,14 @@ from app.crud.evaluations.response_parsing import (
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
+    DEFAULT_CATEGORY,
     JUDGE_FAILED_REASON,
     UNSCOREABLE_EMBEDDING_FAILED,
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMPTY_OUTPUT,
     EvaluationScore,
     OverallSummary,
+    SummaryScore,
     TraceData,
     TraceScore,
     compute_overall_summary,
@@ -495,7 +497,7 @@ def run_response_chunk(
     )
 
     base_params, mapper_warnings = map_kaapi_to_openai_params(
-        session=session, kaapi_params=config.model_dump(exclude_unset=True)
+        session=session, kaapi_params=config
     )
     if mapper_warnings:
         logger.info(
@@ -599,11 +601,13 @@ def _merge_response_chunks(
 
     results: list[dict[str, Any]] = []
     for chunk_index in sorted(chunk_job_by_index):
+        raw_output_url = chunk_job_by_index[chunk_index].raw_output_url
+        assert raw_output_url is not None  # guaranteed by the filter above
         results.extend(
             _load_unit_from_s3(
                 session=session,
                 project_id=eval_run.project_id,
-                url=chunk_job_by_index[chunk_index].raw_output_url,
+                url=raw_output_url,
             )
         )
 
@@ -881,7 +885,7 @@ def _attach_metric_scores(
     *,
     spec: JudgeMetricSpec,
     judge_results: dict[str, JudgeResult],
-    summary_scores: list[dict[str, Any]],
+    summary_scores: list[SummaryScore],
 ) -> None:
     """Append one metric's run-level summary score from the combined results.
 
@@ -959,8 +963,10 @@ def _stage3_score_and_trace(
     similarities: list[float] = []
     unscoreable: dict[str, str] = {}  # {ref: reason}
     write_items: list[dict[str, Any]] = []
-    summary_scores: list[dict[str, Any]] = []
+    summary_scores: list[SummaryScore] = []
     overall: OverallSummary | None = None
+    # Resolved inside the judge block below, read again after the traces are built.
+    config_prompt: str | None = None
 
     if is_judge_run:
         # v2: no cosine. A row is judgeable only with a non-empty generated AND
@@ -993,6 +999,7 @@ def _stage3_score_and_trace(
                 else:
                     unscoreable[ref] = UNSCOREABLE_EMBEDDING_FAILED
                 continue
+            assert embedding_pair is not None  # guaranteed by has_embeddings above
             cosine = calculate_cosine_similarity(
                 embedding_pair["output_embedding"],
                 embedding_pair["ground_truth_embedding"],
@@ -1117,40 +1124,6 @@ def _stage3_score_and_trace(
                 summary_scores=summary_scores,
             )
 
-        avg_by_name = {s["name"]: s["avg"] for s in summary_scores if "avg" in s}
-        metric_avgs = {
-            spec.key.value: avg_by_name[spec.score_name]
-            for spec in metrics
-            if spec.score_name in avg_by_name
-        }
-        overall = compute_overall_summary(
-            metric_avgs=metric_avgs,
-            metric_weights={spec.key.value: spec.weight for spec in metrics},
-            metric_names={spec.key.value: spec.score_name for spec in metrics},
-        )
-        if overall is not None:
-            # Falls back to 1 (no repetition) if the dataset/metadata can't be
-            # resolved, so the summary still generates.
-            dataset = get_dataset_by_id(
-                session=session,
-                dataset_id=eval_run.dataset_id,
-                organization_id=eval_run.organization_id,
-                project_id=eval_run.project_id,
-            )
-            metadata = dataset.dataset_metadata if dataset else None
-            duplication_factor = max(
-                1, int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1))
-            )
-            overall["ai_summary"] = generate_run_ai_summary(
-                session=session,
-                openai_client=openai_client,
-                model=settings.EVAL_SUMMARY_MODEL,
-                overall=overall,
-                run_name=eval_run.run_name,
-                summary_scores=summary_scores,
-                duplication_factor=duplication_factor,
-            )
-
         # One combined call grades every metric, so its tokens can't be split per
         # metric — they land in a single "judge" cost stage.
         if judge_results and judge_model:
@@ -1171,7 +1144,7 @@ def _stage3_score_and_trace(
     traces: list[TraceData] = []
     for response in response_results:
         item_id = response["item_id"]
-        ref = item_id_to_ref.get(item_id, item_id)
+        ref = item_id_to_ref[item_id] if item_id in item_id_to_ref else item_id
         trace_scores: list[TraceScore] = []
         # v2 carries no cosine score or placeholder — only the judge scores below.
         if not is_judge_run:
@@ -1253,9 +1226,47 @@ def _stage3_score_and_trace(
                 "llm_answer": response.get("generated_output", ""),
                 "ground_truth_answer": response.get("ground_truth", ""),
                 "question_id": response.get("question_id"),
+                "category": response.get("category") or DEFAULT_CATEGORY,
                 "scores": trace_scores,
             }
         )
+
+    # Run-level roll-up runs after the traces, since the AI summary diagnoses them.
+    if is_judge_run:
+        avg_by_name = {s["name"]: s["avg"] for s in summary_scores if "avg" in s}
+        metric_avgs = {
+            spec.key.value: avg_by_name[spec.score_name]
+            for spec in metrics
+            if spec.score_name in avg_by_name
+        }
+        overall = compute_overall_summary(
+            metric_avgs=metric_avgs,
+            metric_weights={spec.key.value: spec.weight for spec in metrics},
+            metric_names={spec.key.value: spec.score_name for spec in metrics},
+        )
+        if overall is not None:
+            # Falls back to 1 (no repetition) if the dataset/metadata can't be
+            # resolved, so the summary still generates.
+            dataset = get_dataset_by_id(
+                session=session,
+                dataset_id=eval_run.dataset_id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
+            )
+            metadata = dataset.dataset_metadata if dataset else None
+            duplication_factor = max(
+                1,
+                eval_run.duplication_factor
+                if eval_run.duplication_factor is not None
+                else int((metadata or {}).get(DATASET_META_DUPLICATION_FACTOR, 1)),
+            )
+            overall["ai_summary"] = generate_run_ai_summary(
+                model=settings.EVAL_SUMMARY_MODEL,
+                run_name=eval_run.run_name,
+                duplication_factor=duplication_factor,
+                config_prompt=config_prompt or "",
+                traces=traces,
+            )
 
     # Persist cost + unscoreable here; the score unit (summary + traces) is persisted
     # by the caller via save_score so it lands in S3 like the batch path.
@@ -1409,7 +1420,7 @@ def run_fast_evaluation(
     )
     if saved is not None:
         eval_run = saved
-        eval_run.score = score
+        eval_run.score = cast(dict[str, object], score)
 
     logger.info(
         f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "
