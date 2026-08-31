@@ -108,9 +108,11 @@ jobs:
           aws ecs update-service \
             --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-cluster \
             --service ${{ vars.AWS_RESOURCE_PREFIX }}-service \
+            --task-definition ${{ vars.AWS_RESOURCE_PREFIX }}-task \
             --force-new-deployment
 
           aws ecs update-service \
             --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-cluster \
             --service ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task \
+            --task-definition ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task \
             --force-new-deployment
