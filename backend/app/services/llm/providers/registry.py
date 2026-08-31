@@ -28,6 +28,8 @@ class LLMProvider:
     ELEVENLABS_NATIVE = "elevenlabs-native"
     ANTHROPIC_NATIVE = "anthropic-native"
 
+    _platform_fallback = {GOOGLE_GCP, GOOGLE_GCP_NATIVE}
+
     _registry: dict[str, type[BaseProvider]] = {
         OPENAI: OpenAIProvider,
         GOOGLE: GoogleAIProvider,
@@ -79,9 +81,15 @@ def get_llm_provider(
     )
 
     if not credentials:
-        raise ValueError(
-            f"Credentials for provider '{credential_provider}' not configured for this project."
+        if credential_provider not in LLMProvider._platform_fallback:
+            raise ValueError(
+                f"Credentials for provider '{credential_provider}' not configured for this project."
+            )
+        logger.info(
+            f"[get_llm_provider] No stored credentials for '{credential_provider}', "
+            f"falling back to platform-shared credentials."
         )
+        credentials = {}
 
     try:
         client = provider_class.create_client(credentials=credentials)
