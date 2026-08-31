@@ -1,5 +1,7 @@
 """Tests for CSV parsing in app.services.evaluations.validators."""
 
+import codecs
+
 import pytest
 from fastapi import HTTPException
 
@@ -55,3 +57,45 @@ class TestParseCsvItemsCategory:
         with pytest.raises(HTTPException) as excinfo:
             parse_csv_items(csv)
         assert excinfo.value.status_code == 422
+
+
+class TestParseCsvItemsEncoding:
+    """Tests that exercise the encodings real spreadsheet apps emit."""
+
+    HEADER = "question,answer\n"
+    ROW = 'q1,"The fee is 10 – 20 and he said “hi”"\n'
+    EXPECTED = "The fee is 10 – 20 and he said “hi”"
+
+    def test_utf8_smart_punctuation(self) -> None:
+        csv = (self.HEADER + self.ROW).encode("utf-8")
+        assert parse_csv_items(csv)[0]["answer"] == self.EXPECTED
+
+    def test_utf8_with_bom_resolves_headers(self) -> None:
+        """Excel's "CSV UTF-8" export prefixes a BOM, which used to leave the
+        `question` header as `﻿question` and fail the required-column check."""
+        csv = codecs.BOM_UTF8 + (self.HEADER + self.ROW).encode("utf-8")
+        items = parse_csv_items(csv)
+        assert items[0]["question"] == "q1"
+        assert items[0]["answer"] == self.EXPECTED
+
+    def test_cp1252_recovers_smart_punctuation(self) -> None:
+        """Windows Excel's plain "CSV" export writes cp1252, where the en dash is
+        the single byte 0x96 that UTF-8 rejects as an invalid start byte."""
+        csv = (self.HEADER + self.ROW).encode("cp1252")
+        assert b"\x96" in csv
+        assert parse_csv_items(csv)[0]["answer"] == self.EXPECTED
+
+    def test_utf16_with_bom(self) -> None:
+        csv = (self.HEADER + self.ROW).encode("utf-16")
+        assert parse_csv_items(csv)[0]["answer"] == self.EXPECTED
+
+    def test_utf32_bom_not_misread_as_utf16(self) -> None:
+        """The UTF-32-LE BOM starts with the UTF-16-LE BOM, so probe order matters."""
+        csv = (self.HEADER + self.ROW).encode("utf-32")
+        assert parse_csv_items(csv)[0]["answer"] == self.EXPECTED
+
+    def test_byte_undefined_in_cp1252_falls_through_to_latin1(self) -> None:
+        csv = (self.HEADER + "q1,weird \x81 byte\n").encode("latin-1")
+        with pytest.raises(UnicodeDecodeError):
+            csv.decode("cp1252")
+        assert parse_csv_items(csv)[0]["answer"] == "weird \x81 byte"

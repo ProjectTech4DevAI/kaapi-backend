@@ -1,5 +1,6 @@
 """Validation utilities for evaluation datasets."""
 
+import codecs
 import csv
 import io
 import logging
@@ -19,6 +20,19 @@ ALLOWED_MIME_TYPES = {
     "application/csv",
     "text/plain",
 }
+
+# Checked longest-first: the UTF-32-LE BOM starts with the UTF-16-LE BOM,
+# so probing UTF-16 first would misread a UTF-32 file.
+BOM_ENCODINGS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+# cp1252 before latin-1: it maps 0x80-0x9F to the smart quotes, apostrophes and
+# dashes Windows Excel writes there, which latin-1 would turn into C1 controls.
+FALLBACK_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
 
 
 def sanitize_dataset_name(name: str) -> str:
@@ -114,6 +128,35 @@ async def validate_csv_file(file: UploadFile) -> bytes:
     return await file.read()
 
 
+def decode_csv_bytes(csv_content: bytes) -> str:
+    """Decode uploaded CSV bytes, tolerating the encodings spreadsheet apps emit.
+
+    Handles UTF-8, UTF-8 with a BOM (Excel's "CSV UTF-8" export), UTF-16/UTF-32
+    with a BOM (Excel's "Unicode Text" export) and the cp1252 bytes Windows Excel
+    writes for its plain "CSV (Comma delimited)" export.
+
+    Raises:
+        HTTPException: If the bytes cannot be decoded by any candidate encoding.
+    """
+    for bom, encoding in BOM_ENCODINGS:
+        if csv_content.startswith(bom):
+            return csv_content.decode(encoding)
+
+    for encoding in FALLBACK_ENCODINGS:
+        try:
+            return csv_content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    # Unreachable while latin-1 (which decodes any byte sequence) closes the ladder;
+    # kept so the function stays total if FALLBACK_ENCODINGS loses its catch-all codec.
+    logger.warning("[decode_csv_bytes] Failed to decode CSV with any known encoding")
+    raise HTTPException(
+        status_code=422,
+        detail="Unable to read the CSV file. Please re-save it as UTF-8 CSV.",
+    )
+
+
 def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
     """
     Parse CSV and extract question/answer/category triples.
@@ -129,7 +172,7 @@ def parse_csv_items(csv_content: bytes) -> list[dict[str, str]]:
         HTTPException: If CSV is invalid or empty
     """
     try:
-        csv_text = csv_content.decode("utf-8")
+        csv_text = decode_csv_bytes(csv_content)
         csv_reader = csv.DictReader(io.StringIO(csv_text))
 
         if not csv_reader.fieldnames:
