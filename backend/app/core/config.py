@@ -223,7 +223,7 @@ class Settings(BaseSettings):
     # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
     EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
 
-    EVAL_JUDGE_MODEL: str = "gpt-5-mini"
+    EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
 
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
