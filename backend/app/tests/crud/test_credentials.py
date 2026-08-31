@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlmodel import Session
 
@@ -189,6 +190,69 @@ def test_update_creds_for_org(db: Session) -> None:
         project_id=project.id,
     )
     assert retrieved_cred["api_key"] == "updated-key"
+
+
+def test_update_creds_for_org_partial_update_preserves_other_fields(
+    db: Session,
+) -> None:
+    """A PATCH with only one field must not wipe the provider's other
+    required fields, and must still pass validation against all of them."""
+    _, project = create_test_credential(db)
+
+    creds_update = CredsUpdate(
+        provider="langfuse", credential={"host": "https://updated.langfuse.com"}
+    )
+
+    updated = update_creds_for_org(
+        session=db,
+        org_id=project.organization_id,
+        creds_in=creds_update,
+        project_id=project.id,
+    )
+
+    assert len(updated) == 1
+    retrieved_cred = get_provider_credential(
+        session=db,
+        org_id=project.organization_id,
+        provider="langfuse",
+        project_id=project.id,
+    )
+    assert retrieved_cred["host"] == "https://updated.langfuse.com"
+    assert retrieved_cred["secret_key"]
+    assert retrieved_cred["public_key"]
+
+
+def test_update_creds_for_org_partial_update_with_no_existing_credential_fails(
+    db: Session,
+) -> None:
+    """A partial payload has nothing to merge with when the provider has no
+    stored credential yet, so the crud-level completeness check must reject
+    it with a 400 rather than persisting an incomplete credential."""
+    project = create_test_project(db)
+
+    creds_update = CredsUpdate(
+        provider="langfuse", credential={"host": "https://new.langfuse.com"}
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            creds_in=creds_update,
+            project_id=project.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Missing required fields for langfuse" in exc_info.value.detail
+    assert (
+        get_provider_credential(
+            session=db,
+            org_id=project.organization_id,
+            provider="langfuse",
+            project_id=project.id,
+        )
+        is None
+    )
 
 
 def test_remove_provider_credential(db: Session) -> None:

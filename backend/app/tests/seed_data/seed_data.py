@@ -1,7 +1,6 @@
 import json
 import logging
 from pathlib import Path
-from passlib.context import CryptContext
 from typing import Optional, Any
 
 from pydantic import BaseModel, EmailStr
@@ -10,7 +9,7 @@ from sqlmodel import Session, delete, select
 
 from app.core.db import engine
 from app.core import settings
-from app.core.security import get_password_hash, encrypt_credentials
+from app.core.security import APIKeyManager, get_password_hash, encrypt_credentials
 from app.models import (
     APIKey,
     Organization,
@@ -192,8 +191,7 @@ def create_api_key(session: Session, api_key_data_raw: dict[str, Any]) -> APIKey
 
         key_prefix = key_portion[:12]
 
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        key_hash = pwd_context.hash(key_portion[12:])
+        key_hash = APIKeyManager.pwd_context.hash(key_portion[12:])
 
         api_key = APIKey(
             organization_id=organization.id,
