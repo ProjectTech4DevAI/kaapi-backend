@@ -63,19 +63,21 @@ def _extract_parent_context(task_instance) -> otel_context.Context:
 
 
 def _run_with_otel_parent(task_instance, fn):
-    """Attach extracted parent context and execute function.
+    """Attach the extracted parent context and execute `fn` under it.
 
-    When Celery auto-instrumentation is active, there is already a current
-    `run/...` span. Re-attaching extracted parent context here would make
-    service spans become siblings of `run/...` instead of children.
-
-    We only attach extracted context as a fallback when no active span exists.
+    opentelemetry-instrumentation-celery's own extraction (CeleryGetter)
+    reads headers via getattr(task.request, key), but propagation headers
+    live in task.request.headers — so it never finds them and its `run/...`
+    span is always an unparented root. We extract from `.headers` ourselves
+    (see _extract_parent_context) and attach that as current before running
+    the task body, so spans created inside `fn` correctly nest under the
+    enqueueing request's trace instead of starting a disconnected one.
     """
-    current_ctx = trace.get_current_span().get_span_context()
-    if current_ctx and current_ctx.is_valid:
+    parent_ctx = _extract_parent_context(task_instance)
+    parent_span_ctx = trace.get_current_span(parent_ctx).get_span_context()
+    if not (parent_span_ctx and parent_span_ctx.is_valid):
         return fn()
 
-    parent_ctx = _extract_parent_context(task_instance)
     token = otel_context.attach(parent_ctx)
     try:
         return fn()

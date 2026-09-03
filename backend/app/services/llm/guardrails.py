@@ -8,11 +8,13 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
+from opentelemetry import trace
 
 from app.core.config import settings
 from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
@@ -60,7 +62,16 @@ def proxy_guardrails_request(
     )
 
     try:
-        with httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client:
+        with (
+            tracer.start_as_current_span(
+                f"guardrails.proxy {method} {path}",
+                attributes={
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                },
+            ),
+            httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client,
+        ):
             response = client.request(
                 method, url, params=query, json=json_body, headers=headers
             )
@@ -283,7 +294,18 @@ def run_guardrails_validation(
 
     started = time.monotonic()
     try:
-        with httpx.Client(timeout=45.0) as client:
+        with (
+            tracer.start_as_current_span(
+                "guardrails.proxy.validate",
+                attributes={
+                    "kaapi.job_id": str(job_id),
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                    "kaapi.validator_count": len(validators),
+                },
+            ),
+            httpx.Client(timeout=45.0) as client,
+        ):
             response = client.post(
                 url,
                 json=payload,
@@ -363,7 +385,16 @@ def list_validators_config(
         }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with (
+            tracer.start_as_current_span(
+                "guardrails.proxy.list_validator_configs",
+                attributes={
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                },
+            ),
+            httpx.Client(timeout=10.0) as client,
+        ):
 
             def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
                 if not validator_ids:
