@@ -33,6 +33,7 @@ All paths relative to `backend/app/`.
 - OpenAI vector stores / file uploads, object storage (`core/cloud/storage.py`), Zerox/OCR for transforms.
 
 ## Gotchas
+- Document responses carry two links for the same object: `signed_url` downloads, `preview_url` renders inline. `put()` stores the upload's `Content-Type`, so a bare presigned URL for a PDF opens in a tab (CSV/XLSX datasets happen to download, which is why only KB docs looked broken). `get_signed_url(..., filename=...)` adds `ResponseContentDisposition: attachment`; `_attach_urls()` in `services/documents/helpers.py` sets both fields, and `api/routes/documents.py` plus `services/doctransform/job.py` do the same for their responses. An attachment URL will not render in an `<iframe>` — preview must use `preview_url`. Leave `filename` unset for URLs meant to play inline (TTS audio in `api/routes/llm.py`).
 - Uploads de-duplicate by provider file ID (see deep dive §7).
 - Collections are immutable-ish: deletion semantics in deep dive §10.
 - OpenAI file-batch id: the SDK's `file_batches.poll()` / `upload_and_poll()` final return deserializes a vector-store body, so its `.id` is the `vs_` id, not the `vsfb_` batch id. `crud/rag/open_ai.py` captures the batch id from `create()` before polling and uses it for `list_files`. Any failed file is a hard failure (whole vector store rolled back); partial indexing needs an add-documents endpoint first.

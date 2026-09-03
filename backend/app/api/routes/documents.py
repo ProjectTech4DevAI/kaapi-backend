@@ -179,6 +179,9 @@ async def upload_doc(
         source_document, from_attributes=True
     )
     document_schema.signed_url = storage.get_signed_url(
+        source_document.object_store_url, filename=source_document.fname
+    )
+    document_schema.preview_url = storage.get_signed_url(
         source_document.object_store_url
     )
 

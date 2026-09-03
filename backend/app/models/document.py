@@ -82,7 +82,12 @@ class Document(DocumentBase, table=True):
 class DocumentPublic(DocumentBase):
     id: UUID = Field(description="The unique identifier of the document")
     signed_url: str | None = Field(
-        default=None, description="A signed URL for accessing the document"
+        default=None,
+        description="A signed URL that downloads the document under its original name",
+    )
+    preview_url: str | None = Field(
+        default=None,
+        description="A signed URL that renders the document inline in the browser",
     )
     inserted_at: datetime = Field(
         description="The timestamp when the document was inserted"

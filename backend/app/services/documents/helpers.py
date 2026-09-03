@@ -179,6 +179,18 @@ def _to_public_schema(doc: Document) -> PublicDoc:
     return TransformedDocumentPublic.model_validate(doc, from_attributes=True)
 
 
+def _attach_urls(schema: PublicDoc, document: Document, storage: CloudStorage) -> None:
+    """
+    Two links for the same object: the download one carries a Content-Disposition
+    that forces a save under the original filename, the preview one is left bare
+    so browsers render it inline (iframe previews).
+    """
+    schema.signed_url = storage.get_signed_url(
+        document.object_store_url, filename=document.fname
+    )
+    schema.preview_url = storage.get_signed_url(document.object_store_url)
+
+
 def build_document_schema(
     *,
     document: Document,
@@ -187,7 +199,7 @@ def build_document_schema(
 ) -> PublicDoc:
     schema = _to_public_schema(document)
     if include_url and storage:
-        schema.signed_url = storage.get_signed_url(document.object_store_url)
+        _attach_urls(schema, document, storage)
     return schema
 
 
@@ -201,7 +213,7 @@ def build_document_schemas(
     for doc in documents:
         schema = _to_public_schema(doc)
         if include_url and storage:
-            schema.signed_url = storage.get_signed_url(doc.object_store_url)
+            _attach_urls(schema, doc, storage)
         out.append(schema)
     return out
 
@@ -225,7 +237,7 @@ def build_job_schema(
         object_url = doc.object_store_url
 
         if include_url and storage and object_url:
-            transformed_doc_schema.signed_url = storage.get_signed_url(object_url)
+            _attach_urls(transformed_doc_schema, doc, storage)
 
     job_schema = DocTransformationJobPublic.model_validate(job, from_attributes=True)
     return job_schema.model_copy(
