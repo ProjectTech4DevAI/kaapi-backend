@@ -395,6 +395,9 @@ def execute_prompt_improvement(
             params = blob.get("completion", {}).get("params", {}) or {}
             current_instructions = params.get("instructions") or ""
 
+            if not run.score_trace_url:
+                raise RuntimeError("trace_download_failed: run has no score_trace_url")
+
             storage = get_cloud_storage(session=session, project_id=project_id)
             traces = load_json_from_object_store(
                 storage=storage, url=run.score_trace_url
@@ -630,18 +633,35 @@ def _draft_improved_prompt(
             "the number, to understand *why* a row failed."
         )
         task_steps = [
-            f"1. Focus on rows where `{PROMPT_SCORE_NAME}` or "
-            f"`{GROUND_TRUTH_SCORE_NAME}` is low. Use BOTH the `value` and the "
-            "`comment` of each metric: the score tells you how bad it is, the "
-            "reasoning tells you what went wrong.\n",
-            "2. Rewrite the system prompt to fix those failures while keeping what "
-            "already works well.\n",
-            f"3. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
+            f"1. `{GROUND_TRUTH_SCORE_NAME}` is the primary signal — it measures "
+            "whether the answer is actually correct. Focus first on rows where it is "
+            "low, using BOTH the `value` and the `comment` to see why the answer "
+            "diverged from the golden answer.\n",
+            f"2. Treat `{PROMPT_SCORE_NAME}` as secondary and diagnostic only. A row "
+            f"with high `{PROMPT_SCORE_NAME}` but low `{GROUND_TRUTH_SCORE_NAME}` is a "
+            "warning sign, not a success — it usually means the model is being scored "
+            "well for literally following a rule (e.g. a refusal or fallback "
+            "instruction) instead of answering. If that row's `comment` says the model "
+            "correctly triggered a refusal/fallback per the current prompt's own rule, "
+            "but the golden answer has real substantive content, the rule's trigger "
+            "condition is too broad — narrow it so the model only refuses/falls back "
+            "when it truly should, rather than tightening the rule further.\n",
+            "3. Rewrite the system prompt to fix the Ground-Truth failures while "
+            f"keeping what already works well. Do not make changes whose only effect "
+            f"is raising `{PROMPT_SCORE_NAME}` (tone, format, exact wording) without "
+            f"also improving `{GROUND_TRUTH_SCORE_NAME}`.\n",
+            f"4. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
             "knowledge-base gap, NOT a prompt problem — do not try to fix grounding "
             "by editing the prompt. You may add a light instruction to avoid "
             "unsupported claims, but do not attempt to change the model, knowledge "
             "base, or config.\n",
-            "4. Change ONLY the prompt text.\n",
+            "5. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "6. Change ONLY the prompt text.\n",
         ]
     else:
         trace_description = (
@@ -654,7 +674,13 @@ def _draft_improved_prompt(
             "where `llm_answer` diverges significantly from `ground_truth_answer`.\n",
             "2. Rewrite the system prompt to improve those low-performing answers "
             "while keeping what already works well.\n",
-            "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
+            "3. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "4. Change ONLY the prompt text — do not alter the model, knowledge base, "
             "or any other configuration.\n",
         ]
 

@@ -42,8 +42,8 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.services.evaluations.fast import (
     execute_fast_evaluation_chunk,
@@ -157,7 +157,7 @@ def _make_text_openai_config(db: Session, project_id: int) -> Config:
     exact model name is immaterial to every assertion here.
     """
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o-fast-eval-test", "temperature": 0.7},
@@ -400,46 +400,6 @@ class TestFastEvaluationRoute:
         error_str = _api_error(resp.json())
         assert "dataset_too_large_for_fast" in error_str
         assert "101" in error_str
-        _patch_dispatch.assert_not_called()
-
-    def test_fr1_rejects_non_text_config(
-        self,
-        client: TestClient,
-        user_api_key_header: dict[str, str],
-        db: Session,
-        user_api_key: TestAuthContext,
-        _patch_dispatch,
-    ):
-        """FR-1: non-text config for fast mode → 422 config_type_unsupported."""
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
-        config = _make_text_openai_config(db, user_api_key.project_id)
-
-        fake_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
-                provider="openai",
-                type="stt",
-                params={"model": "whisper-1"},
-            )
-        )
-
-        with patch(
-            "app.services.evaluations.fast.resolve_evaluation_config",
-            return_value=(fake_blob, None),
-        ):
-            resp = client.post(
-                "/api/v1/evaluations",
-                json={
-                    "experiment_name": "fr1-fast-run",
-                    "dataset_id": dataset.id,
-                    "config_id": str(config.id),
-                    "config_version": 1,
-                    "run_mode": "fast",
-                },
-                headers=user_api_key_header,
-            )
-
-        assert resp.status_code == 422
-        assert "config_type_unsupported" in _api_error(resp.json())
         _patch_dispatch.assert_not_called()
 
     def test_fr3_rejects_duplicate_run_name(

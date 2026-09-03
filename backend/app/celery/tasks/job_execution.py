@@ -4,7 +4,8 @@ All tasks share one queue (`default`, declared with `x-max-priority=10`) and are
 ordered by the per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
-    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate)
+    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate,
+       run_prompt_improvement, run_evaluation_iteration_graph_step)
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
@@ -471,6 +472,52 @@ def run_evaluation_fast_aggregate(
     return _run_with_otel_parent(
         self,
         lambda: execute_fast_evaluation_aggregate(eval_run_id=eval_run_id),
+    )
+
+
+# Priority 6 (fast-eval tier): same band as run_prompt_improvement — one graph
+# step per invocation is either a cheap status re-check (re-interrupts) or the
+# same-cost work run_prompt_improvement/run_evaluation_fast_* already does.
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(
+    settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_iteration_graph_step"
+)
+def run_evaluation_iteration_graph_step(
+    self,
+    iteration_run_id: int,
+    resume: bool,
+    organization_id: int,
+    project_id: int,
+    trace_id: str = DEFAULT_TRACE_ID,
+    **kwargs,
+):
+    """Advance one step of an evaluation-iteration LangGraph loop.
+
+    `resume=False` (kickoff) invokes the graph with a fresh initial state built
+    from `kwargs` (`max_rounds`, `config_version`) + the thin tracking row;
+    `resume=True` (cron tick) sends `Command(resume=True)` to the persisted
+    checkpoint. Either call returns once the graph re-interrupts or reaches
+    `finalize_node` — see `execute_evaluation_iteration_graph_step`.
+    """
+    from app.services.evaluations.iteration_graph import (
+        execute_evaluation_iteration_graph_step,
+    )
+
+    _set_trace(trace_id)
+    logger.info(
+        f"[run_evaluation_iteration_graph_step] Starting | "
+        f"iteration_run_id={iteration_run_id} | resume={resume} | "
+        f"task_id={current_task.request.id}"
+    )
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_evaluation_iteration_graph_step(
+            iteration_run_id=iteration_run_id,
+            resume=resume,
+            organization_id=organization_id,
+            project_id=project_id,
+            **kwargs,
+        ),
     )
 
 

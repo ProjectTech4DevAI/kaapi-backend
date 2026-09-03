@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
     SENTRY_DSN: HttpUrl | None = None
+    DISCORD_STATS_WEBHOOK_URL: HttpUrl | None = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
@@ -117,6 +118,8 @@ class Settings(BaseSettings):
     # Used by the registry fallback when a project has no ``google`` row.
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
+    # A batch can run for hours; sign attachment URLs for 24h so they don't expire mid-run.
+    MAX_SIGNED_URL_EXPIRY_SECONDS: int = 86400
 
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
@@ -211,7 +214,16 @@ class Settings(BaseSettings):
     # task well under CELERY_TASK_SOFT_TIME_LIMIT.
     EVAL_FAST_CHUNK_SIZE: int = 50
 
-    EVAL_JUDGE_MODEL: str = "gpt-5-mini"
+    # Evaluation iteration loop (eval -> improve-prompt -> eval, LangGraph-orchestrated).
+    EVAL_ITERATION_MAX_ROUNDS_DEFAULT: int = 10
+    EVAL_ITERATION_MAX_ROUNDS_HARD_CAP: int = 25
+    # Absolute (0-1 scale) stop-score delta below which a round counts as "no
+    # meaningful improvement" toward the ceiling-reached stop condition.
+    EVAL_ITERATION_CEILING_DELTA_THRESHOLD: float = 0.05
+    # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
+    EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
+
+    EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
 
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"

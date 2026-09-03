@@ -51,9 +51,9 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     PromptTemplate,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
 from app.tests.utils.auth import TestAuthContext
@@ -87,7 +87,7 @@ def _make_text_config(
     if instructions is not None:
         params["instructions"] = instructions
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params=params,
@@ -200,7 +200,7 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
 DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
 
 
-def _summary_response(text: str):
+def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
     )
@@ -930,7 +930,7 @@ class TestRunOverallSummary:
 
     def test_summary_brief_carries_the_scored_traces(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
-    ):
+    ) -> None:
         # The summary must be generated AFTER the traces are built: rolled up first,
         # it would brief the model on an empty trace list.
         eval_run = self._seed_all_three_metrics_run(
@@ -952,7 +952,7 @@ class TestRunOverallSummary:
         assert BOT_INSTRUCTIONS in brief
         payload = json.loads(brief.split("## Per-question judge traces (JSON)\n", 1)[1])
 
-        assert [trace["trace_id"] for trace in payload] == ["item-1"]
+        assert [trace["question_id"] for trace in payload] == ["item-1"]
         assert payload[0]["question"] == "Q1"
         assert payload[0]["ground_truth_answer"] == "golden-1"
         assert payload[0]["llm_answer"] == "generated for Q1"
