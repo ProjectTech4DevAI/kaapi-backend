@@ -117,6 +117,33 @@ class DocumentUploadResponse(DocumentPublic):
     transformation_job: TransformationJobInfo | None = None
 
 
+class DocumentUploadURLRequest(SQLModel):
+    filename: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Original filename including its extension, e.g. report.pdf",
+    )
+
+
+class DocumentUploadURLResponse(SQLModel):
+    document_id: UUID = Field(
+        description="Identifier to register the document with once the upload completes"
+    )
+    upload_url: str = Field(description="Pre-signed URL to PUT the file contents to")
+    expires_in: int = Field(description="Lifetime of the upload URL in seconds")
+
+
+class DocumentRegisterRequest(SQLModel):
+    document_id: UUID = Field(
+        description="The document_id returned by the upload URL endpoint"
+    )
+    filename: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Original filename including its extension, e.g. report.pdf",
+    )
+
+
 class DocTransformationJobPublic(SQLModel):
     job_id: UUID
     source_document_id: UUID

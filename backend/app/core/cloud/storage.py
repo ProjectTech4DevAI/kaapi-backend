@@ -156,6 +156,16 @@ class CloudStorage(ABC):
         pass
 
     @abstractmethod
+    def get_signed_upload_url(
+        self,
+        key: str,
+        content_type: str | None = None,
+        expires_in: int = 3600,
+    ) -> str:
+        """Generate a signed URL the client can upload (PUT) to directly"""
+        pass
+
+    @abstractmethod
     def delete(self, url: str) -> None:
         """Delete a file from storage"""
         pass
@@ -284,6 +294,42 @@ class AmazonCloudStorage(CloudStorage):
                 exc_info=True,
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+
+    def get_signed_upload_url(
+        self,
+        key: str,
+        content_type: str | None = None,
+        expires_in: int = 3600,
+    ) -> str:
+        """
+        Generate a signed S3 URL the client can PUT a file to.
+        content_type, when set, is enforced: the client must send a matching header.
+        """
+        expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
+
+        name = SimpleStorageName(key)
+        params: dict[str, str] = asdict(name)
+        if content_type:
+            params["ContentType"] = content_type
+
+        try:
+            signed_url = self.aws.client.generate_presigned_url(
+                "put_object",
+                Params=params,
+                ExpiresIn=expires_in,
+            )
+            logger.info(
+                f"[AmazonCloudStorage.get_signed_upload_url] Signed upload URL generated | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'expires_in': {expires_in}}}"
+            )
+            return signed_url
+        except ClientError as err:
+            logger.error(
+                f"[AmazonCloudStorage.get_signed_upload_url] AWS presign error | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            raise CloudStorageError(f'AWS Error: "{err}" ({key})') from err
 
     def delete(self, url: str) -> None:
         name = SimpleStorageName.from_url(url)

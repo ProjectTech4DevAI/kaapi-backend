@@ -2,11 +2,13 @@ import logging
 from typing import Optional, Tuple, Iterable, Union
 from uuid import UUID
 
+from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
 from sqlmodel import Session
 
-from app.core.cloud.storage import CloudStorage
+from app.core.cloud.storage import CloudStorage, CloudStorageError
 
+from app.services.collections.helpers import MAX_DOC_SIZE_MB
 from app.services.doctransform.registry import (
     get_available_transformers,
     get_file_format,
@@ -87,6 +89,59 @@ def calculate_file_size(file: UploadFile) -> float:
     return round(size_bytes / 1024)
 
 
+def validate_filename_format(filename: str) -> str:
+    """Resolve document format from the extension; HTTPException(400) if unsupported."""
+    try:
+        return get_file_format(filename)
+    except ValueError as e:
+        logger.warning(
+            f"[validate_filename_format] Unsupported file extension | filename: {filename}"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def verify_uploaded_object(
+    *,
+    storage: CloudStorage,
+    object_store_url: str,
+    document_id: UUID,
+) -> float:
+    """Confirm the uploaded object exists and fits the size budget; return size in KB."""
+    try:
+        file_size_kb = storage.get_file_size_kb(object_store_url)
+    except CloudStorageError as e:
+        # Only a missing object is the client's fault; other S3 failures stay 500.
+        cause = e.__cause__
+        if not (
+            isinstance(cause, ClientError)
+            and cause.response.get("Error", {}).get("Code") in ("404", "NoSuchKey")
+        ):
+            raise
+        logger.warning(
+            f"[verify_uploaded_object] No object found at expected key | document_id: {document_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="No uploaded file found for this document_id. Upload the file to the "
+            "pre-signed URL before registering it.",
+        )
+
+    file_size_mb = file_size_kb / 1024
+    if file_size_mb > MAX_DOC_SIZE_MB:
+        storage.delete(object_store_url)
+        logger.warning(
+            f"[verify_uploaded_object] Document size exceeds limit | "
+            f"document_id: {document_id}, size_mb: {round(file_size_mb, 2)}, max_size_mb: {MAX_DOC_SIZE_MB}"
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Document size ({round(file_size_mb, 2)} MB) exceeds the maximum allowed size of {MAX_DOC_SIZE_MB} MB. "
+            f"Please upload a smaller file.",
+        )
+
+    return file_size_kb
+
+
 def pre_transform_validation(
     *,
     src_filename: str,
@@ -102,10 +157,7 @@ def pre_transform_validation(
     Returns: (source_format, actual_transformer_or_none)
     Raises: HTTPException(400) on client errors.
     """
-    try:
-        source_format = get_file_format(src_filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    source_format = validate_filename_format(src_filename)
 
     actual_transformer: Optional[str] = None
     if target_format:

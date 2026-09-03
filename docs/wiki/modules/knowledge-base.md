@@ -6,7 +6,8 @@ Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md` (§3 upload,
 All paths relative to `backend/app/`.
 
 ## Routes
-- `api/routes/documents.py` — upload/list
+- `api/routes/documents.py` — upload/list (v1 multipart upload, the only path that transforms)
+- `api/routes/documents_v2.py` — v2 pre-signed upload: `POST /upload-url` (issues a PUT URL) then `POST ""` (registers the uploaded object); no transformation
 - `api/routes/collections.py`, `api/routes/collection_job.py` — collection CRUD + job status
 - `api/routes/doc_transformation_job.py` — transform job status
 
@@ -34,6 +35,7 @@ All paths relative to `backend/app/`.
 
 ## Gotchas
 - Uploads de-duplicate by provider file ID (see deep dive §7).
+- v2 register trusts only the extension and the object's size — bytes never reach the backend, so `validate_document_content` sniffing (v1 only) is skipped. Register verifies the object exists at `{storage_path}/{document_id}` and deletes it when oversized.
 - Collections are immutable-ish: deletion semantics in deep dive §10.
 - OpenAI file-batch id: the SDK's `file_batches.poll()` / `upload_and_poll()` final return deserializes a vector-store body, so its `.id` is the `vs_` id, not the `vsfb_` batch id. `crud/rag/open_ai.py` captures the batch id from `create()` before polling and uses it for `list_files`. Any failed file is a hard failure (whole vector store rolled back); partial indexing needs an add-documents endpoint first.
 - The SDK's `file_batches.poll()` never times out. `_poll_file_batch` polls `retrieve` in a loop with no internal deadline — the Celery soft time limit bounds it, and its `SoftTimeLimitExceeded` aborts the task. An earlier version took a deadline from the caller via a `task_budget` `ContextVar` (and a fixed `BATCH_POLL_TIMEOUT_SECONDS`); both were deleted. Don't reintroduce caller coupling here.
