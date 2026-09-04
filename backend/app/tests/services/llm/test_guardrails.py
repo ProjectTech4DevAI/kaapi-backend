@@ -62,7 +62,7 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     assert "organization_id" not in kwargs["json"]
     assert kwargs["headers"]["X-PROJECT-ID"] == str(TEST_PROJECT_ID)
     assert kwargs["headers"]["X-ORGANIZATION-ID"] == str(TEST_ORGANIZATION_ID)
-    assert kwargs["params"]["suppress_pass_logs"] == "true"
+    assert kwargs["params"]["suppress_pass_logs"] == "false"
     assert kwargs["headers"]["Authorization"].startswith("Bearer ")
     assert kwargs["headers"]["Content-Type"] == "application/json"
 

@@ -203,7 +203,7 @@ def apply_guardrails(
         job_id,
         project_id,
         organization_id,
-        suppress_pass_logs=True,
+        suppress_pass_logs=False,
         output_text=output_text,
     )
 
@@ -246,7 +246,7 @@ def run_guardrails_validation(
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
-    suppress_pass_logs: bool = True,
+    suppress_pass_logs: bool = False,
     output_text: str | None = None,
 ) -> dict[str, Any]:
     """
