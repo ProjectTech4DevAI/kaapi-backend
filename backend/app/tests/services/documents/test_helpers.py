@@ -367,20 +367,20 @@ class FakeStorage:
 
 
 class TestDocumentUrls:
-    def test_is_downloadable_true_signs_with_filename(self) -> None:
+    def test_download_true_signs_with_filename(self) -> None:
         storage = FakeStorage()
 
         schema = build_document_schema(
             document=make_document(),
             include_url=True,
             storage=storage,
-            is_downloadable=True,
+            download=True,
         )
 
         assert schema.signed_url == "https://signed/download"
         assert [c["filename"] for c in storage.calls] == ["policy.pdf"]
 
-    def test_is_downloadable_defaults_to_false_and_signs_without_filename(self) -> None:
+    def test_download_defaults_to_false_and_signs_without_filename(self) -> None:
         storage = FakeStorage()
 
         schema = build_document_schema(
@@ -397,13 +397,13 @@ class TestDocumentUrls:
             document=make_document(),
             include_url=False,
             storage=storage,
-            is_downloadable=True,
+            download=True,
         )
 
         assert schema.signed_url is None
         assert storage.calls == []
 
-    def test_list_applies_is_downloadable_to_every_document(self) -> None:
+    def test_list_applies_download_flag_to_every_document(self) -> None:
         storage = FakeStorage()
         documents = [make_document("a.pdf"), make_document("b.pdf")]
 
@@ -411,7 +411,7 @@ class TestDocumentUrls:
             documents=documents,
             include_url=True,
             storage=storage,
-            is_downloadable=True,
+            download=True,
         )
 
         assert all(s.signed_url == "https://signed/download" for s in schemas)

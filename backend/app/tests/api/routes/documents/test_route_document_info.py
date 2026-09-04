@@ -56,7 +56,7 @@ class TestDocumentRouteInfo:
 
 
 class TestDocumentRouteInfoSignedUrl:
-    """The `is_downloadable` flag decides whether the signed URL forces a save."""
+    """The `download` flag decides whether the signed URL forces a save."""
 
     @staticmethod
     def _sign_and_capture(
@@ -74,16 +74,16 @@ class TestDocumentRouteInfoSignedUrl:
             ]
         return document, filenames
 
-    def test_is_downloadable_true_signs_with_filename(
+    def test_download_true_signs_with_filename(
         self, db: Session, crawler: WebCrawler
     ) -> None:
-        route = Route("", include_url="true", is_downloadable="true")
+        route = Route("", include_url="true", download="true")
 
         document, filenames = self._sign_and_capture(db, route, crawler)
 
         assert filenames == [document.fname]
 
-    def test_is_downloadable_omitted_signs_without_filename(
+    def test_download_omitted_signs_without_filename(
         self, db: Session, crawler: WebCrawler
     ) -> None:
         route = Route("", include_url="true")

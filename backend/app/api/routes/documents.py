@@ -82,7 +82,7 @@ def list_docs(
     include_url: bool = Query(
         False, description="Include a signed URL to access each document"
     ),
-    is_downloadable: bool = Query(
+    download: bool = Query(
         False,
         description=(
             "When true the signed URL forces a download under the document's "
@@ -103,7 +103,7 @@ def list_docs(
         documents=documents,
         include_url=include_url,
         storage=storage,
-        is_downloadable=is_downloadable,
+        download=download,
     )
     return APIResponse[
         list[Union[DocumentPublic, TransformedDocumentPublic]]
@@ -276,7 +276,7 @@ def doc_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
-    is_downloadable: bool = Query(
+    download: bool = Query(
         False,
         description=(
             "When true the signed URL forces a download under the document's "
@@ -297,7 +297,7 @@ def doc_info(
         document=document,
         include_url=include_url,
         storage=storage,
-        is_downloadable=is_downloadable,
+        download=download,
     )
 
     return APIResponse[
