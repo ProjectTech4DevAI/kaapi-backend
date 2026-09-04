@@ -6,11 +6,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider, validate_provider_credentials
+from app.core.providers import parse_provider_credentials, validate_provider
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
-
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +26,7 @@ def set_creds_for_org(
         )
         raise HTTPException(400, "No credentials provided")
 
-    for provider, credentials in creds_add.credential.items():
-        try:
-            validate_provider_credentials(provider, credentials)
-        except ValueError as e:
-            logger.warning(
-                f"[set_creds_for_org] Validation error | project_id: {project_id}, provider: {provider}, error: {str(e)}"
-            )
-            raise HTTPException(status_code=400, detail=str(e))
-
+    for provider, credentials in creds_add.credential_payloads().items():
         # Encrypt entire credentials object
         encrypted_credentials = encrypt_credentials(credentials)
 
@@ -97,6 +88,12 @@ def get_key_by_org(
         return creds.credential["api_key"]
 
     return None
+
+
+def list_all_credentials(*, session: Session) -> list[Credential]:
+    """Fetch every credential row across all orgs/projects. Admin-only use
+    (re-encryption backfill); never expose through a tenant-scoped route."""
+    return list(session.exec(select(Credential)).all())
 
 
 def get_creds_by_org(
@@ -184,41 +181,47 @@ def update_creds_for_org(
     if not creds_in.provider or not creds_in.credential:
         raise ValueError("Provider and credential must be provided")
 
-    # Auto-unwrap nested format: {"google": {"api_key": "..."}} -> {"api_key": "..."}
-    # so the same payload shape works for both create and update.
-    credential_data = creds_in.credential
-    if (
-        isinstance(credential_data, dict)
-        and creds_in.provider in credential_data
-        and isinstance(credential_data[creds_in.provider], dict)
-    ):
-        credential_data = credential_data[creds_in.provider]
-
-    try:
-        validate_provider_credentials(creds_in.provider, credential_data)
-    except ValueError as e:
-        logger.warning(
-            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {creds_in.provider}, error: {str(e)}"
-        )
-        raise HTTPException(status_code=400, detail=str(e))
+    provider = creds_in.provider.value
+    credential_data = creds_in.credential_payload()
 
     # Encrypt the entire credentials object
     encrypted_credentials = encrypt_credentials(credential_data)
 
     statement = select(Credential).where(
         Credential.organization_id == org_id,
-        Credential.provider == creds_in.provider,
+        Credential.provider == provider,
         Credential.is_active.is_(True),
         Credential.project_id == project_id,
     )
     creds = session.exec(statement).one_or_none()
+
+    # Merge onto the existing credentials so a partial payload (PATCH) only
+    # overwrites the fields it supplies instead of dropping the rest.
+    merged_credential_data = credential_data
+    if creds and creds.credential:
+        merged_credential_data = {
+            **decrypt_credentials(creds.credential),
+            **credential_data,
+        }
+
+    try:
+        parse_provider_credentials(provider, merged_credential_data)
+    except ValueError as e:
+        logger.warning(
+            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Encrypt the entire credentials object
+    encrypted_credentials = encrypt_credentials(merged_credential_data)
+
     if creds is None:
         # Create new credential if it doesn't exist
         creds = Credential(
             organization_id=org_id,
             project_id=project_id,
             is_active=creds_in.is_active if creds_in.is_active is not None else True,
-            provider=creds_in.provider,
+            provider=provider,
             credential=encrypted_credentials,
             inserted_at=now(),
             updated_at=now(),
@@ -226,9 +229,6 @@ def update_creds_for_org(
         session.add(creds)
         session.commit()
         session.refresh(creds)
-        logger.info(
-            f"[update_creds_for_org] Created new credentials | organization_id {org_id}, provider {creds_in.provider}, project_id {project_id}"
-        )
         return [creds]
 
     creds.credential = encrypted_credentials
@@ -236,9 +236,6 @@ def update_creds_for_org(
     session.add(creds)
     session.commit()
     session.refresh(creds)
-    logger.info(
-        f"[update_creds_for_org] Successfully updated credentials | organization_id {org_id}, provider {creds_in.provider}, project_id {project_id}"
-    )
     return [creds]
 
 
@@ -323,6 +320,3 @@ def remove_creds_for_org(*, session: Session, org_id: int, project_id: int) -> N
             detail="Failed to delete all credentials",
         )
     session.commit()
-    logger.info(
-        f"[remove_creds_for_org] Successfully deleted {rows_deleted} credential(s) | organization_id {org_id}, project_id {project_id}"
-    )

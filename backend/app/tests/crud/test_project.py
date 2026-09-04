@@ -7,6 +7,8 @@ from app.crud.project import (
     get_project_by_id,
     get_project_by_name,
     get_projects_by_organization,
+    is_tracing_enabled,
+    update_project_settings,
     validate_project,
 )
 from app.models import Project, ProjectCreate
@@ -154,6 +156,69 @@ def test_validate_project_not_found(db: Session) -> None:
     non_existent_project_id = get_non_existent_id(db, Project)
     with pytest.raises(HTTPException, match="Project not found"):
         validate_project(session=db, project_id=non_existent_project_id)
+
+
+def test_update_project_settings_merges_and_preserves_existing(db: Session) -> None:
+    """A patched key is overwritten while untouched keys survive the merge."""
+    project = create_test_project(db)
+    project.settings = {"existing_key": "keep", "tracing": False}
+    db.add(project)
+    db.commit()
+
+    updated = update_project_settings(
+        session=db, project_id=project.id, settings_patch={"tracing": True}
+    )
+
+    assert updated.settings == {"existing_key": "keep", "tracing": True}
+
+
+def test_update_project_settings_not_found(db: Session) -> None:
+    non_existent_project_id = get_non_existent_id(db, Project)
+    with pytest.raises(HTTPException, match="Project not found"):
+        update_project_settings(
+            session=db,
+            project_id=non_existent_project_id,
+            settings_patch={"tracing": True},
+        )
+
+
+def test_is_tracing_enabled_true_when_opted_in(db: Session) -> None:
+    project = create_test_project(db)
+    project.settings = {"tracing": True}
+    db.add(project)
+    db.commit()
+
+    assert is_tracing_enabled(session=db, project_id=project.id) is True
+
+
+def test_is_tracing_enabled_false_when_disabled(db: Session) -> None:
+    project = create_test_project(db)
+    project.settings = {"tracing": False}
+    db.add(project)
+    db.commit()
+
+    assert is_tracing_enabled(session=db, project_id=project.id) is False
+
+
+def test_is_tracing_enabled_false_by_default(db: Session) -> None:
+    """No 'tracing' key => off by default."""
+    project = create_test_project(db)
+    project.settings = {}
+    db.add(project)
+    db.commit()
+
+    assert is_tracing_enabled(session=db, project_id=project.id) is False
+
+
+def test_is_tracing_enabled_false_when_project_missing(db: Session) -> None:
+    assert (
+        is_tracing_enabled(session=db, project_id=get_non_existent_id(db, Project))
+        is False
+    )
+
+
+def test_is_tracing_enabled_false_on_invalid_project_id(db: Session) -> None:
+    assert is_tracing_enabled(session=db, project_id="not-an-int") is False
 
 
 def test_validate_project_inactive(db: Session) -> None:

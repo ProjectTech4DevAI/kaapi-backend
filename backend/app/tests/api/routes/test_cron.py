@@ -1,7 +1,9 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.routes import cron
 from app.core.config import settings
 from app.tests.utils.auth import TestAuthContext
 
@@ -272,6 +274,58 @@ def test_pending_jobs_cron_job_requires_superuser(
     assert "superuser" in response_data["error"].lower()
 
 
+def test_daily_stats_cron_job_success(
+    client: TestClient,
+    superuser_api_key: TestAuthContext,
+) -> None:
+    """Returns the collected stats and posts them to Discord."""
+    stats = {
+        "LLM Calls": [
+            {"organization": "Acme", "project": "Alpha", "calls_24h": 1, "calls_7d": 2}
+        ],
+    }
+    with (
+        patch("app.api.routes.cron.get_daily_stats", return_value=stats),
+        patch("app.api.routes.cron.post_to_discord") as post,
+    ):
+        response = client.get(
+            f"{settings.API_V1_STR}/cron/daily-stats",
+            headers={"X-API-KEY": superuser_api_key.key},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == stats
+    post.assert_called_once()
+
+
+def test_daily_stats_cron_job_requires_superuser(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Non-superuser cannot access the daily stats cron endpoint."""
+    response = client.get(
+        f"{settings.API_V1_STR}/cron/daily-stats",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 403
+
+
+def test_daily_stats_cron_job_captures_and_reraises_on_error() -> None:
+    """On failure the job reports to Sentry and re-raises."""
+    with (
+        patch(
+            "app.api.routes.cron.get_daily_stats",
+            side_effect=RuntimeError("boom"),
+        ),
+        patch("app.api.routes.cron.sentry_sdk") as sentry,
+    ):
+        with pytest.raises(RuntimeError):
+            cron.daily_stats_cron_job(session=MagicMock())
+
+    sentry.capture_exception.assert_called_once()
+
+
 def test_evaluation_cron_job_not_in_schema(
     client: TestClient,
 ) -> None:
@@ -285,6 +339,7 @@ def test_evaluation_cron_job_not_in_schema(
     # Endpoint should not be in the schema due to include_in_schema=False
     assert f"{settings.API_V1_STR}/cron/evaluations" not in paths
     assert f"{settings.API_V1_STR}/cron/pending-jobs" not in paths
+    assert f"{settings.API_V1_STR}/cron/daily-stats" not in paths
 
 
 def test_cron_intervals_match_to_prevent_sentry_monitor_drift() -> None:

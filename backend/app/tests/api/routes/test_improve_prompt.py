@@ -1,62 +1,72 @@
-"""Tests for POST /evaluations/{evaluation_id}/improve-prompt.
+"""Tests for the async prompt-improvement feature (callback-URL / webhook flow).
 
-Covers the redesigned prompt-improvement behavior: no request body, traces
-loaded from object storage via load_json_from_object_store, a single
-client.messages.create call with structured outputs, and a ConfigVersionPublic
-response.
+The endpoint is:
+  - POST /evaluations/{id}/improve-prompt → 202 + a job handle
+    (LLMJobImmediatePublic). Requires a JSON body {"callback_url": "https://..."}.
+    The result is delivered to callback_url once the worker finishes — there is
+    no GET poll route anymore.
+  - execute_prompt_improvement → the Celery worker entrypoint that does the
+    Anthropic round-trip, mints the new config_version, and fires send_callback
+    on every exit (SUCCESS, timeout, generic failure, redelivery no-op).
 
 HTTP boundaries mocked (patched as bound in the service module):
-- app.services.evaluations.prompt_improvement.ClaudeProvider.create_client
-  (returns a fake Anthropic client whose messages.create is stubbed)
-- app.services.evaluations.prompt_improvement.get_cloud_storage
-- app.services.evaluations.prompt_improvement.load_json_from_object_store
-  (returns already-parsed trace data, or None for the download-failed path)
+- ClaudeProvider.create_client (fake Anthropic client) OR _draft_improved_prompt
+- get_cloud_storage / load_json_from_object_store (traces)
+- start_prompt_improvement (the Celery enqueue helper) — never touch a broker
+- send_callback + get_webhook_secret — never make real outbound HTTP
+- validate_callback_url at the route call site — real DNS is avoided for the
+  happy/domain paths; the SSRF-rejection tests use the real validator with
+  literal hosts that resolve without network.
+- Session (the worker opens its own Session(engine); we redirect it at the
+  transactional db fixture, matching the doctransformer worker tests)
 
 DB is real (transactional db fixture; rolls back after each test).
 """
 
 import contextlib
 import json
+from contextlib import ExitStack
+from dataclasses import dataclass
 from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
-import anthropic
 import pytest
-from fastapi.testclient import TestClient
+from celery.exceptions import SoftTimeLimitExceeded
+from fastapi import HTTPException
+from gevent import Timeout
 from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.config.version import ConfigVersionCrud
-from app.models import ConfigVersion, EvaluationDataset, EvaluationRun
+from app.crud.jobs import JobCrud
+from app.models import EvaluationDataset, EvaluationRun
 from app.models.config.config import ConfigTag
+from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
     COMMIT_MESSAGE_MAX_LENGTH,
+    execute_prompt_improvement,
+    start_prompt_improvement_job,
+    validate_improve_prompt,
 )
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
 
 
-IMPROVE_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt"
+_SERVICE = "app.services.evaluations.prompt_improvement"
+_ROUTE_VALIDATE = "app.api.routes.evaluations.evaluation.validate_callback_url"
+POST_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt"
+# The deleted GET poll route — any method here must now miss all routes.
+OLD_POLL_URL = "/api/v1/evaluations/{evaluation_id}/improve-prompt/{job_id}"
+
+_CALLBACK_URL = "https://example.com/callback"
 
 _IMPROVED_INSTRUCTIONS = "You are an improved assistant. Answer precisely."
 _RATIONALE = "Tightened answer scoping to address weak categories."
 
-
-def _llm_json(
-    improved_instructions: str = _IMPROVED_INSTRUCTIONS,
-    rationale: str = _RATIONALE,
-) -> str:
-    return json.dumps(
-        {
-            "improved_instructions": improved_instructions,
-            "rationale": rationale,
-        }
-    )
-
-
-# Already-parsed trace data — the new service path returns parsed JSON, not bytes.
+# Already-parsed trace data — the service loads parsed JSON, not bytes.
 _TRACES: list[dict] = [
     {
         "trace_id": "t1",
@@ -68,12 +78,19 @@ _TRACES: list[dict] = [
     }
 ]
 
-# Sentinel: "generate a default score_trace_url from the run id after commit"
-_AUTO_URL = object()
+_AUTO_URL = object()  # "generate a valid score_trace_url from the run id after commit"
+
+
+def _llm_json(
+    improved_instructions: str = _IMPROVED_INSTRUCTIONS,
+    rationale: str = _RATIONALE,
+) -> str:
+    return json.dumps(
+        {"improved_instructions": improved_instructions, "rationale": rationale}
+    )
 
 
 def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
-    """Return a fake Anthropic client whose messages.create yields a text block."""
     if text_content is None:
         text_content = _llm_json()
 
@@ -90,35 +107,62 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     return client
 
 
+@dataclass
+class WorkerEnv:
+    """Handles yielded by ``_worker_env``: the LLM boundary and the callback sink."""
+
+    llm: MagicMock
+    callback: MagicMock
+
+
 @contextlib.contextmanager
-def _patched_boundaries(
+def _worker_env(
+    db: Session,
     *,
+    draft: MagicMock | None = None,
     claude_client: MagicMock | None = None,
     traces: Any = _TRACES,
-) -> Iterator[MagicMock]:
-    """Patch the three HTTP boundaries and yield the fake Claude client.
+) -> Iterator[WorkerEnv]:
+    """Redirect the worker's Session(engine) at the test db and mock its boundaries.
 
-    - ClaudeProvider.create_client → returns ``claude_client``
-    - get_cloud_storage → returns a harmless MagicMock (load_json is patched, so
-      the storage object is never really exercised)
-    - load_json_from_object_store → returns ``traces`` (use None to exercise the
-      trace_download_failed path)
+    ``env.llm`` is the draft mock when ``draft`` is given (LLM step stubbed
+    wholesale), otherwise the fake Claude client (real _draft_improved_prompt
+    exercised). ``env.callback`` is the patched send_callback — no real HTTP ever.
     """
-    if claude_client is None:
-        claude_client = _make_fake_claude_client()
+    session_cm = MagicMock()
+    session_cm.__enter__.return_value = db
+    session_cm.__exit__.return_value = None
 
-    base = "app.services.evaluations.prompt_improvement"
-    with patch(
-        f"{base}.ClaudeProvider.create_client",
-        return_value=claude_client,
-    ), patch(
-        f"{base}.get_cloud_storage",
-        return_value=MagicMock(),
-    ), patch(
-        f"{base}.load_json_from_object_store",
-        return_value=traces,
-    ):
-        yield claude_client
+    with ExitStack() as stack:
+        stack.enter_context(patch(f"{_SERVICE}.Session", return_value=session_cm))
+        stack.enter_context(
+            patch(f"{_SERVICE}.get_cloud_storage", return_value=MagicMock())
+        )
+        stack.enter_context(
+            patch(f"{_SERVICE}.load_json_from_object_store", return_value=traces)
+        )
+        stack.enter_context(patch(f"{_SERVICE}.get_webhook_secret", return_value=None))
+        callback = stack.enter_context(patch(f"{_SERVICE}.send_callback"))
+
+        if draft is not None:
+            stack.enter_context(patch(f"{_SERVICE}._draft_improved_prompt", draft))
+            yield WorkerEnv(llm=draft, callback=callback)
+        else:
+            if claude_client is None:
+                claude_client = _make_fake_claude_client()
+            stack.enter_context(
+                patch(
+                    f"{_SERVICE}.ClaudeProvider.create_client",
+                    return_value=claude_client,
+                )
+            )
+            yield WorkerEnv(llm=claude_client, callback=callback)
+
+
+def _callback_payload(callback: MagicMock) -> dict:
+    """Single send_callback invocation → the APIResponse envelope it POSTed."""
+    assert callback.call_count == 1
+    return callback.call_args.args[1]
 
 
 def _make_config_with_instructions(
@@ -126,14 +170,13 @@ def _make_config_with_instructions(
     project_id: int,
     instructions: str = "You are a helpful assistant.",
 ) -> Any:
-    """Create a config whose config_blob has completion.params.instructions set."""
     from app.crud.config import ConfigCrud
     from app.models.config.config import ConfigCreate
-    from app.models.llm import KaapiCompletionConfig
+    from app.models.llm import build_kaapi_completion_config
     from app.models.llm.request import ConfigBlob
 
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={
@@ -151,15 +194,16 @@ def _make_config_with_instructions(
         commit_message="Initial version",
         tag=ConfigTag.DEFAULT,
     )
-    config_crud = ConfigCrud(session=db, project_id=project_id)
-    config, _ = config_crud.create_or_raise(config_create)
+    config, _ = ConfigCrud(session=db, project_id=project_id).create_or_raise(
+        config_create
+    )
     return config
 
 
 def _make_completed_run(
     db: Session,
     config_id: Any,
-    config_version: int,
+    config_version: int | None,
     organization_id: int,
     project_id: int,
     dataset_id: int,
@@ -167,14 +211,6 @@ def _make_completed_run(
     run_name: str | None = None,
     score_trace_url: Any = _AUTO_URL,
 ) -> EvaluationRun:
-    """Create and persist an EvaluationRun.
-
-    score_trace_url behaviour:
-      - omitted (default _AUTO_URL): a valid S3 URL is generated after commit so the
-        run id is known. Use for all tests that mock the storage layer.
-      - None or "": stored verbatim (use to exercise the traces_not_available path).
-      - any str: stored verbatim.
-    """
     if run_name is None:
         run_name = f"run-{random_lower_string()}"
 
@@ -238,11 +274,8 @@ def config_with_instructions(db: Session, auth: TestAuthContext) -> Any:
 
 @pytest.fixture
 def anthropic_creds(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure the platform-owned Anthropic key the service reads from settings."""
     monkeypatch.setattr(
-        settings,
-        "ANTHROPIC_API_KEY",
-        "sk-ant-test-" + random_lower_string(),
+        settings, "ANTHROPIC_API_KEY", "sk-ant-test-" + random_lower_string()
     )
 
 
@@ -264,202 +297,28 @@ def completed_run(
     )
 
 
-class TestHappyPath:
-    """Completed run with traces → 201 with correct ConfigVersionPublic."""
+class TestValidateImprovePrompt:
+    """Fast DB precondition checks — no LLM, no trace download."""
 
-    def test_returns_201_with_new_config_version(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        config_with_instructions: Any,
-        completed_run: EvaluationRun,
-    ) -> None:
-        """POST with no body → 201; response contains new config version at latest+1."""
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
+    def test_missing_run_raises_404(self, db: Session, auth: TestAuthContext) -> None:
+        with pytest.raises(HTTPException) as exc:
+            validate_improve_prompt(
+                session=db,
+                evaluation_id=9999999,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
             )
-
-        assert resp.status_code == 201, resp.text
-        body = resp.json()["data"]
-        assert body["version"] == 2  # initial version was 1
-        assert body["config_id"] == str(config_with_instructions.id)
-
-    def test_new_version_has_improved_instructions_in_db(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        completed_run: EvaluationRun,
-    ) -> None:
-        """The new config version persisted in DB carries the improved instructions."""
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-        new_version_id = resp.json()["data"]["id"]
-        stmt = select(ConfigVersion).where(ConfigVersion.id == new_version_id)
-        new_version = db.exec(stmt).one()
-        assert (
-            new_version.config_blob["completion"]["params"]["instructions"]
-            == _IMPROVED_INSTRUCTIONS
-        )
-
-    def test_commit_message_marker_and_rationale(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-    ) -> None:
-        """commit_message starts with the AI marker and carries run name + rationale."""
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-        commit_message = resp.json()["data"]["commit_message"]
-        assert commit_message.startswith(AI_GENERATED_MARKER)
-        assert f"(Evaluation: {completed_run.run_name})" in commit_message
-        assert _RATIONALE in commit_message
-        assert len(commit_message) <= COMMIT_MESSAGE_MAX_LENGTH
-
-    def test_long_rationale_truncated_to_max_length(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-    ) -> None:
-        """A rationale longer than the cap forces real truncation at the boundary."""
-        long_rationale = "x" * (COMMIT_MESSAGE_MAX_LENGTH + 200)
-        fake_client = _make_fake_claude_client(_llm_json(rationale=long_rationale))
-
-        with _patched_boundaries(claude_client=fake_client):
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-        commit_message = resp.json()["data"]["commit_message"]
-        assert len(commit_message) == COMMIT_MESSAGE_MAX_LENGTH
-        assert commit_message.startswith(AI_GENERATED_MARKER)
-
-    def test_messages_create_uses_json_schema_output_config(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-    ) -> None:
-        """The single messages.create call requests structured json_schema output."""
-        with _patched_boundaries() as fake_client:
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-
-        fake_client.messages.create.assert_called_once()
-        # The legacy Files API must be gone — no beta.* surface is touched.
-        fake_client.beta.files.upload.assert_not_called()
-
-        output_config = fake_client.messages.create.call_args.kwargs["output_config"]
-        assert output_config["format"]["type"] == "json_schema"
-        assert "schema" in output_config["format"]
-
-    def test_commit_message_has_no_metric_or_threshold(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-    ) -> None:
-        """The new design's provenance string must not carry metric=/threshold=."""
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-        commit_message = resp.json()["data"]["commit_message"]
-        assert "metric=" not in commit_message
-        assert "threshold=" not in commit_message
-
-
-class TestRunNotFound:
-    """404 when the evaluation run doesn't exist or is non-TEXT type."""
-
-    def test_nonexistent_run_returns_404(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        anthropic_creds: None,
-    ) -> None:
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=9999999),
-            headers=headers,
-        )
-
-        assert resp.status_code == 404, resp.text
-        assert "evaluation_not_found" in resp.json()["error"], resp.text
-
-    def test_non_text_run_returns_404(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        dataset: EvaluationDataset,
-        config_with_instructions: Any,
-        anthropic_creds: None,
-    ) -> None:
-        """get_evaluation_run_by_id filters type=='text'; a non-text run is invisible."""
-        run = EvaluationRun(
-            run_name=f"run-stt-{random_lower_string()}",
-            dataset_name=f"ds-{random_lower_string()}",
-            dataset_id=dataset.id,
-            config_id=config_with_instructions.id,
-            config_version=1,
-            status="completed",
-            total_items=1,
-            type="stt",
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            score_trace_url="s3://test-bucket/traces.json",
-        )
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=run.id),
-            headers=headers,
-        )
-
-        assert resp.status_code == 404, resp.text
-        assert "evaluation_not_found" in resp.json()["error"], resp.text
-
-
-class TestNonCompletedStatus:
-    """409 when evaluation run is not in 'completed' status."""
+        assert exc.value.status_code == 404
+        assert "evaluation_not_found" in exc.value.detail
 
     @pytest.mark.parametrize("status", ["pending", "processing", "failed"])
-    def test_non_completed_returns_409(
+    def test_non_completed_raises_409(
         self,
         status: str,
-        client: TestClient,
-        headers: dict[str, str],
         db: Session,
         auth: TestAuthContext,
         dataset: EvaluationDataset,
         config_with_instructions: Any,
-        anthropic_creds: None,
     ) -> None:
         run = _make_completed_run(
             db=db,
@@ -470,30 +329,24 @@ class TestNonCompletedStatus:
             dataset_id=dataset.id,
             status=status,
         )
-
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=run.id),
-            headers=headers,
-        )
-
-        assert resp.status_code == 409, resp.text
-        assert "evaluation_not_completed" in resp.json()["error"], resp.text
-
-
-class TestTracesNotAvailable:
-    """422 when score_trace_url is empty/None (precondition unmet)."""
+        with pytest.raises(HTTPException) as exc:
+            validate_improve_prompt(
+                session=db,
+                evaluation_id=run.id,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 409
+        assert "evaluation_not_completed" in exc.value.detail
 
     @pytest.mark.parametrize("trace_url", [None, ""])
-    def test_missing_trace_url_returns_422(
+    def test_missing_trace_url_raises_422(
         self,
         trace_url: str | None,
-        client: TestClient,
-        headers: dict[str, str],
         db: Session,
         auth: TestAuthContext,
         dataset: EvaluationDataset,
         config_with_instructions: Any,
-        anthropic_creds: None,
     ) -> None:
         run = _make_completed_run(
             db=db,
@@ -504,356 +357,485 @@ class TestTracesNotAvailable:
             dataset_id=dataset.id,
             score_trace_url=trace_url,
         )
+        with pytest.raises(HTTPException) as exc:
+            validate_improve_prompt(
+                session=db,
+                evaluation_id=run.id,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 422
+        assert "traces_not_available" in exc.value.detail
 
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=run.id),
-            headers=headers,
+    def test_missing_config_reference_raises_422(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        dataset: EvaluationDataset,
+    ) -> None:
+        run = _make_completed_run(
+            db=db,
+            config_id=None,
+            config_version=None,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset.id,
         )
+        with pytest.raises(HTTPException) as exc:
+            validate_improve_prompt(
+                session=db,
+                evaluation_id=run.id,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 422
+        assert "source_config_unavailable" in exc.value.detail
 
+    def test_unresolvable_config_version_raises_409(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        dataset: EvaluationDataset,
+        config_with_instructions: Any,
+    ) -> None:
+        run = _make_completed_run(
+            db=db,
+            config_id=config_with_instructions.id,
+            config_version=99,  # version does not exist
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+            dataset_id=dataset.id,
+        )
+        with pytest.raises(HTTPException) as exc:
+            validate_improve_prompt(
+                session=db,
+                evaluation_id=run.id,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+        assert exc.value.status_code == 409
+        assert "source_config_unavailable" in exc.value.detail
+
+
+class TestStartJobRoute:
+    """POST → 202 + job handle; enqueue behavior and fast-fail without enqueue."""
+
+    def test_returns_202_with_job_handle_and_persists_job(
+        self,
+        client: Any,
+        headers: dict[str, str],
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        with patch(_ROUTE_VALIDATE), patch(
+            f"{_SERVICE}.start_prompt_improvement", return_value="task-1"
+        ) as enqueue:
+            resp = client.post(
+                POST_URL.format(evaluation_id=completed_run.id),
+                headers=headers,
+                json={"callback_url": _CALLBACK_URL},
+            )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()["data"]
+        assert body["status"] == JobStatus.PENDING.value
+        job_id = body["job_id"]
+
+        job = JobCrud(session=db).get(job_id=job_id, project_id=auth.project_id)
+        assert job is not None
+        assert job.job_type == JobType.PROMPT_IMPROVEMENT
+
+        enqueue.assert_called_once()
+        kwargs = enqueue.call_args.kwargs
+        assert kwargs["project_id"] == auth.project_id
+        assert kwargs["job_id"] == job_id
+        assert kwargs["organization_id"] == auth.organization_id
+        assert kwargs["evaluation_id"] == completed_run.id
+        assert kwargs["callback_url"] == _CALLBACK_URL
+
+    def test_missing_callback_url_returns_422(
+        self,
+        client: Any,
+        headers: dict[str, str],
+        completed_run: EvaluationRun,
+    ) -> None:
+        with patch(f"{_SERVICE}.start_prompt_improvement") as enqueue:
+            resp = client.post(
+                POST_URL.format(evaluation_id=completed_run.id),
+                headers=headers,
+                json={},
+            )
         assert resp.status_code == 422, resp.text
-        assert "traces_not_available" in resp.json()["error"], resp.text
-
-
-class TestSourceConfigUnavailable:
-    """409 when the source config or config_version is missing/soft-deleted."""
-
-    def test_soft_deleted_config_returns_409(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        dataset: EvaluationDataset,
-        anthropic_creds: None,
-    ) -> None:
-        from app.core.util import now
-        from app.models.config.config import Config
-
-        config = _make_config_with_instructions(db=db, project_id=auth.project_id)
-        run = _make_completed_run(
-            db=db,
-            config_id=config.id,
-            config_version=1,
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            dataset_id=dataset.id,
-        )
-
-        stmt = select(Config).where(Config.id == config.id)
-        cfg = db.exec(stmt).one()
-        cfg.deleted_at = now()
-        db.add(cfg)
-        db.commit()
-
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=run.id),
-            headers=headers,
-        )
-
-        assert resp.status_code == 409, resp.text
-        assert "source_config_unavailable" in resp.json()["error"], resp.text
-
-    def test_missing_config_version_returns_409(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        dataset: EvaluationDataset,
-        anthropic_creds: None,
-    ) -> None:
-        config = _make_config_with_instructions(db=db, project_id=auth.project_id)
-        run = _make_completed_run(
-            db=db,
-            config_id=config.id,
-            config_version=99,  # does not exist
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            dataset_id=dataset.id,
-        )
-
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=run.id),
-            headers=headers,
-        )
-
-        assert resp.status_code == 409, resp.text
-        assert "source_config_unavailable" in resp.json()["error"], resp.text
-
-
-class TestMissingAnthropicKey:
-    """500 when the platform ANTHROPIC_API_KEY is not configured (server misconfig)."""
-
-    def test_empty_api_key_returns_500(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Storage succeeds but the key check inside the LLM step fails with 500."""
-        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
-
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 500, resp.text
-        assert "prompt_generation_failed" in resp.json()["error"], resp.text
-
-
-class TestTraceDownloadFailed:
-    """502 when the trace file cannot be loaded from object storage."""
-
-    def test_load_json_returns_none_returns_502(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        completed_run: EvaluationRun,
-    ) -> None:
-        with _patched_boundaries(traces=None):
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 502, resp.text
-        assert "trace_download_failed" in resp.json()["error"], resp.text
-
-
-def _anthropic_exceptions() -> list[tuple[str, Exception, int]]:
-    """Build one instance of each SDK error plus the HTTP status the service maps it to.
-
-    The mapping reflects who's at fault: rate limit -> 503 (upstream unavailable),
-    timeout -> 504 (upstream timeout), bad upstream response/network -> 502, and an
-    unexpected non-SDK error -> 500 (Kaapi-side bug).
-    """
-    return [
-        (
-            "authentication",
-            anthropic.AuthenticationError(
-                message="auth failed",
-                response=MagicMock(status_code=401, headers={}),
-                body={},
-            ),
-            502,
-        ),
-        (
-            "rate_limit",
-            anthropic.RateLimitError(
-                message="rate limited",
-                response=MagicMock(status_code=429, headers={}),
-                body={},
-            ),
-            503,
-        ),
-        ("timeout", anthropic.APITimeoutError(request=MagicMock()), 504),
-        (
-            "connection",
-            anthropic.APIConnectionError(message="conn failed", request=MagicMock()),
-            502,
-        ),
-        (
-            "status",
-            anthropic.APIStatusError(
-                message="server error",
-                response=MagicMock(status_code=500, headers={}),
-                body={},
-            ),
-            502,
-        ),
-        ("generic", RuntimeError("something unexpected"), 500),
-    ]
-
-
-class TestLLMFailureMapping:
-    """Each Anthropic/SDK failure from messages.create maps to its matching HTTP status."""
+        enqueue.assert_not_called()
 
     @pytest.mark.parametrize(
-        "name,exc,expected_status",
-        _anthropic_exceptions(),
-        ids=[name for name, _, _ in _anthropic_exceptions()],
+        "callback_url",
+        [
+            "http://example.com/callback",  # non-HTTPS scheme
+            "https://10.0.0.1/callback",  # RFC 1918 private IP
+            "https://127.0.0.1/callback",  # loopback
+        ],
     )
-    def test_llm_error_maps_to_status(
+    def test_invalid_callback_url_rejected_by_ssrf_guard(
         self,
-        name: str,
-        exc: Exception,
-        expected_status: int,
-        client: TestClient,
+        callback_url: str,
+        client: Any,
         headers: dict[str, str],
         completed_run: EvaluationRun,
     ) -> None:
-        fake_client = _make_fake_claude_client()
-        fake_client.messages.create.side_effect = exc
-
-        with _patched_boundaries(claude_client=fake_client):
+        # Real validate_callback_url runs; literal hosts resolve without DNS.
+        with patch(f"{_SERVICE}.start_prompt_improvement") as enqueue:
             resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
+                POST_URL.format(evaluation_id=completed_run.id),
                 headers=headers,
+                json={"callback_url": callback_url},
+            )
+        assert resp.status_code == 422, resp.text
+        assert "invalid_callback_url" in resp.json()["error"], resp.text
+        enqueue.assert_not_called()
+
+    def test_enqueue_failure_marks_job_failed_and_raises_500(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        with patch(
+            f"{_SERVICE}.start_prompt_improvement",
+            side_effect=RuntimeError("broker down"),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                start_prompt_improvement_job(
+                    session=db,
+                    evaluation_id=completed_run.id,
+                    organization_id=auth.organization_id,
+                    project_id=auth.project_id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        assert exc.value.status_code == 500
+
+        job = db.exec(
+            select(Job)
+            .where(Job.project_id == auth.project_id)
+            .where(Job.job_type == JobType.PROMPT_IMPROVEMENT)
+        ).one()
+        assert job.status == JobStatus.FAILED
+        assert job.error_message is not None
+
+    @pytest.mark.parametrize(
+        "make_run_kwargs,expected_status,error_token",
+        [
+            (None, 404, "evaluation_not_found"),
+            ({"status": "pending"}, 409, "evaluation_not_completed"),
+            ({"score_trace_url": None}, 422, "traces_not_available"),
+        ],
+    )
+    def test_fast_validation_error_does_not_enqueue(
+        self,
+        make_run_kwargs: dict | None,
+        expected_status: int,
+        error_token: str,
+        client: Any,
+        headers: dict[str, str],
+        db: Session,
+        auth: TestAuthContext,
+        dataset: EvaluationDataset,
+        config_with_instructions: Any,
+        anthropic_creds: None,
+    ) -> None:
+        if make_run_kwargs is None:
+            evaluation_id = 9999999
+        else:
+            run = _make_completed_run(
+                db=db,
+                config_id=config_with_instructions.id,
+                config_version=1,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+                dataset_id=dataset.id,
+                **make_run_kwargs,
+            )
+            evaluation_id = run.id
+
+        with patch(_ROUTE_VALIDATE), patch(
+            f"{_SERVICE}.start_prompt_improvement"
+        ) as enqueue:
+            resp = client.post(
+                POST_URL.format(evaluation_id=evaluation_id),
+                headers=headers,
+                json={"callback_url": _CALLBACK_URL},
             )
 
         assert resp.status_code == expected_status, resp.text
-        assert "prompt_generation_failed" in resp.json()["error"], resp.text
+        assert error_token in resp.json()["error"], resp.text
+        enqueue.assert_not_called()
 
-    def test_malformed_json_response_returns_500(
+        no_job = db.exec(
+            select(Job)
+            .where(Job.project_id == auth.project_id)
+            .where(Job.job_type == JobType.PROMPT_IMPROVEMENT)
+        ).first()
+        assert no_job is None
+
+
+class TestExecuteWorker:
+    """Worker entrypoint: PROCESSING → SUCCESS/FAILED, callback delivery, redelivery."""
+
+    def _pending_job(self, db: Session, project_id: int) -> Job:
+        return JobCrud(session=db).create(
+            job_type=JobType.PROMPT_IMPROVEMENT,
+            trace_id="N/A",
+            project_id=project_id,
+        )
+
+    def test_happy_path_mints_new_version_and_records_meta(
         self,
-        client: TestClient,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db) as env:
+            result = execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                task_id="celery-task-1",
+                callback_url=_CALLBACK_URL,
+            )
+
+        assert result["success"] is True
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.SUCCESS
+        assert refreshed.task_id == "celery-task-1"
+        assert refreshed.meta["version"] == 2
+        assert refreshed.meta["rationale"] == _RATIONALE
+
+        crud = ConfigVersionCrud(
+            session=db, config_id=completed_run.config_id, project_id=auth.project_id
+        )
+        v2 = crud.read_one(version_number=2)
+        assert v2 is not None
+        assert (
+            v2.config_blob["completion"]["params"]["instructions"]
+            == _IMPROVED_INSTRUCTIONS
+        )
+        assert v2.commit_message.startswith(AI_GENERATED_MARKER)
+        assert completed_run.run_name in v2.commit_message
+        assert _RATIONALE in v2.commit_message
+
+        # structured-output request shape is what makes the JSON parse reliable
+        output_config = env.llm.messages.create.call_args.kwargs["output_config"]
+        assert output_config["format"]["type"] == "json_schema"
+
+    def test_success_fires_callback_with_config_version(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db) as env:
+            execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+
+        assert env.callback.call_args.args[0] == _CALLBACK_URL
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is True
+        assert payload["data"]["status"] == JobStatus.SUCCESS.value
+        assert payload["data"]["error_message"] is None
+        assert payload["data"]["config_version"] is not None
+        assert payload["data"]["config_version"]["version"] == 2
+
+    def test_long_rationale_truncated_in_commit_message(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+        long_rationale = "x" * (COMMIT_MESSAGE_MAX_LENGTH + 200)
+        draft = MagicMock(return_value=(_IMPROVED_INSTRUCTIONS, long_rationale))
+
+        with _worker_env(db, draft=draft):
+            execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+
+        v2 = ConfigVersionCrud(
+            session=db, config_id=completed_run.config_id, project_id=auth.project_id
+        ).read_one(version_number=2)
+        assert len(v2.commit_message) == COMMIT_MESSAGE_MAX_LENGTH
+        assert v2.commit_message.startswith(AI_GENERATED_MARKER)
+
+    def test_llm_runtime_error_marks_failed_and_fires_failure_callback(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+        draft = MagicMock(side_effect=RuntimeError("prompt_generation_failed: boom"))
+
+        with _worker_env(db, draft=draft) as env:
+            with pytest.raises(RuntimeError):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+        assert "prompt_generation_failed" in refreshed.error_message
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert payload["data"]["config_version"] is None
+        assert payload["data"]["error_message"]
+        assert "prompt_generation_failed" in payload["data"]["error_message"]
+
+        # no version minted on failure
+        v2 = ConfigVersionCrud(
+            session=db, config_id=completed_run.config_id, project_id=auth.project_id
+        ).read_one(version_number=2)
+        assert v2 is None
+
+    def test_trace_download_failure_fires_failure_callback(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db, traces=None) as env:
+            with pytest.raises(RuntimeError):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert "trace_download_failed" in payload["data"]["error_message"]
+
+    @pytest.mark.parametrize(
+        "exc", [Timeout(1), SoftTimeLimitExceeded()], ids=["gevent", "celery"]
+    )
+    def test_timeout_marks_failed_and_fires_failure_callback(
+        self,
+        exc: Exception,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+        draft = MagicMock(side_effect=exc)
+
+        with _worker_env(db, draft=draft) as env:
+            with pytest.raises(type(exc)):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+        assert refreshed.error_message == "Task exceeded soft time limit"
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert payload["data"]["status"] == JobStatus.FAILED.value
+        assert payload["data"]["error_message"] == "Task exceeded soft time limit"
+
+    def test_redelivery_of_success_job_is_noop_and_resends_callback(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        job = self._pending_job(db, auth.project_id)
+
+        # First run mints v2 and lands SUCCESS.
+        with _worker_env(db) as env:
+            execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+        assert env.llm.messages.create.call_count == 1
+
+        crud = ConfigVersionCrud(
+            session=db, config_id=completed_run.config_id, project_id=auth.project_id
+        )
+        assert crud.read_one(version_number=3) is None
+        first_meta = db.get(Job, job.id).meta
+
+        # Redelivery: SUCCESS job must not re-call the LLM or mint a duplicate,
+        # but at-least-once delivery re-sends the success callback.
+        draft = MagicMock(side_effect=AssertionError("LLM must not be re-called"))
+        with _worker_env(db, draft=draft) as env:
+            result = execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=completed_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+
+        draft.assert_not_called()
+        assert result["success"] is True
+        assert result["version"] == first_meta["version"]
+        assert crud.read_one(version_number=3) is None
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is True
+        assert payload["data"]["status"] == JobStatus.SUCCESS.value
+        assert payload["data"]["config_version"]["version"] == first_meta["version"]
+
+
+class TestPollRouteRemoved:
+    """The GET poll endpoint was removed with the switch to callbacks."""
+
+    def test_old_poll_path_no_longer_routed(
+        self,
+        client: Any,
         headers: dict[str, str],
         completed_run: EvaluationRun,
     ) -> None:
-        """Non-JSON text from the model falls through to the generic 500 branch."""
-        fake_client = _make_fake_claude_client("this is not json")
-
-        with _patched_boundaries(claude_client=fake_client):
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=completed_run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 500, resp.text
-        assert "prompt_generation_failed" in resp.json()["error"], resp.text
-
-
-class TestTenantIsolation:
-    """404 when a run belongs to a different org/project."""
-
-    def test_run_from_different_project_returns_404(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        superuser_api_key: TestAuthContext,
-        anthropic_creds: None,
-    ) -> None:
-        su_dataset = create_test_evaluation_dataset(
-            db=db,
-            organization_id=superuser_api_key.organization_id,
-            project_id=superuser_api_key.project_id,
+        resp = client.get(
+            OLD_POLL_URL.format(evaluation_id=completed_run.id, job_id=uuid4()),
+            headers=headers,
         )
-        su_config = _make_config_with_instructions(
-            db=db,
-            project_id=superuser_api_key.project_id,
-        )
-        su_run = _make_completed_run(
-            db=db,
-            config_id=su_config.id,
-            config_version=1,
-            organization_id=superuser_api_key.organization_id,
-            project_id=superuser_api_key.project_id,
-            dataset_id=su_dataset.id,
-        )
-
-        resp = client.post(
-            IMPROVE_URL.format(evaluation_id=su_run.id),
-            headers=headers,  # normal user headers, not superuser
-        )
-
         assert resp.status_code == 404, resp.text
-        assert "evaluation_not_found" in resp.json()["error"], resp.text
-
-
-class TestRepeatableIteration:
-    """Running improvement twice creates a version at latest+1 each time."""
-
-    def test_second_improvement_creates_next_version(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        dataset: EvaluationDataset,
-        config_with_instructions: Any,
-        anthropic_creds: None,
-    ) -> None:
-        config_id = config_with_instructions.id
-
-        run1 = _make_completed_run(
-            db=db,
-            config_id=config_id,
-            config_version=1,
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            dataset_id=dataset.id,
-        )
-
-        with _patched_boundaries():
-            resp1 = client.post(
-                IMPROVE_URL.format(evaluation_id=run1.id),
-                headers=headers,
-            )
-        assert resp1.status_code == 201, resp1.text
-        assert resp1.json()["data"]["version"] == 2
-
-        run2 = _make_completed_run(
-            db=db,
-            config_id=config_id,
-            config_version=2,
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            dataset_id=dataset.id,
-        )
-
-        with _patched_boundaries():
-            resp2 = client.post(
-                IMPROVE_URL.format(evaluation_id=run2.id),
-                headers=headers,
-            )
-        assert resp2.status_code == 201, resp2.text
-        assert resp2.json()["data"]["version"] == 3
-
-
-class TestPriorVersionsPreserved:
-    """Pre-existing config_version rows are unchanged after a new improvement."""
-
-    def test_prior_versions_still_retrievable(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        db: Session,
-        auth: TestAuthContext,
-        dataset: EvaluationDataset,
-        config_with_instructions: Any,
-        anthropic_creds: None,
-    ) -> None:
-        config_id = config_with_instructions.id
-        crud = ConfigVersionCrud(
-            session=db, config_id=config_id, project_id=auth.project_id
-        )
-
-        original_version = crud.read_one(version_number=1)
-        assert original_version is not None
-        original_instructions = original_version.config_blob["completion"]["params"][
-            "instructions"
-        ]
-
-        run = _make_completed_run(
-            db=db,
-            config_id=config_id,
-            config_version=1,
-            organization_id=auth.organization_id,
-            project_id=auth.project_id,
-            dataset_id=dataset.id,
-        )
-
-        with _patched_boundaries():
-            resp = client.post(
-                IMPROVE_URL.format(evaluation_id=run.id),
-                headers=headers,
-            )
-
-        assert resp.status_code == 201, resp.text
-
-        db.expire_all()
-        still_v1 = crud.read_one(version_number=1)
-        assert still_v1 is not None
-        assert (
-            still_v1.config_blob["completion"]["params"]["instructions"]
-            == original_instructions
-        )
-
-        v2 = crud.read_one(version_number=2)
-        assert v2 is not None
-        assert v2.commit_message is not None
-        assert v2.commit_message.startswith(AI_GENERATED_MARKER)

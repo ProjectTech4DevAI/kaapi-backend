@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import Integer, cast
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import CloudStorage
 from app.core.config import settings
@@ -27,6 +27,16 @@ from app.models import EvaluationDataset, EvaluationRun
 from app.models.stt_evaluation import EvaluationType
 
 logger = logging.getLogger(__name__)
+
+
+# dataset_metadata keys, shared by the upload services and the run-time loader so
+DATASET_META_ORIGINAL_ITEMS = "original_items_count"
+DATASET_META_TOTAL_ITEMS = "total_items_count"
+DATASET_META_DUPLICATION_FACTOR = "duplication_factor"
+# v2 marker: the stored CSV holds only the original rows and duplication is applied
+# at run time. Absent/false means the S3 data is already physically duplicated (v1),
+# so the run reads it as-is and must not multiply again.
+DATASET_META_DUPLICATE_AT_RUNTIME = "duplicate_at_runtime"
 
 
 def create_evaluation_dataset(
@@ -218,7 +228,7 @@ def list_datasets(
         )
 
     statement = (
-        statement.order_by(EvaluationDataset.inserted_at.desc())
+        statement.order_by(col(EvaluationDataset.inserted_at).desc())
         .limit(limit)
         .offset(offset)
     )

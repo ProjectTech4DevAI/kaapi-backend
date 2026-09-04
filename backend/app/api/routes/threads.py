@@ -9,7 +9,7 @@ from typing import Optional
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.core import logging, settings
+from app.core import logging
 from app.models import OpenAIThreadCreate
 from app.crud import upsert_thread_result, get_thread_result
 from app.utils import APIResponse, mask_string

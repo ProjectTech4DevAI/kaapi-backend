@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import select
 
-from app.api.deps import SessionDep
+from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.crud.organization import get_organization_by_id, validate_organization
 from app.crud.project import (
@@ -14,6 +14,7 @@ from app.crud.project import (
     get_projects_by_organization,
     hard_delete_project,
     soft_delete_project,
+    update_project_settings,
 )
 from app.crud.user_project import (
     deactivate_users_without_projects,
@@ -25,6 +26,7 @@ from app.models import (
     Project,
     ProjectCreate,
     ProjectPublic,
+    ProjectSettingsUpdate,
     ProjectUpdate,
 )
 from app.utils import APIResponse, load_description
@@ -33,7 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
-# Retrieve projects
 @router.get(
     "",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
@@ -52,7 +53,7 @@ def read_projects(
         True,
         description="Filter by active status. Pass false to list soft-deleted projects.",
     ),
-):
+) -> APIResponse[list[ProjectPublic]]:
     filters = [Project.is_active.is_(is_active)]
     if search and search.strip():
         filters.append(Project.name.ilike(f"%{search.strip()}%"))
@@ -74,8 +75,34 @@ def read_projects(
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/create.md"),
 )
-def create_new_project(*, session: SessionDep, project_in: ProjectCreate):
+def create_new_project(
+    *, session: SessionDep, project_in: ProjectCreate
+) -> APIResponse[ProjectPublic]:
     project = create_project(session=session, project_create=project_in)
+    return APIResponse.success_response(project)
+
+
+@router.patch(
+    "/settings",
+    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    response_model=APIResponse[ProjectPublic],
+    description=load_description("projects/update_settings.md"),
+)
+def update_project_settings_route(
+    *,
+    session: SessionDep,
+    auth_context: AuthContextDep,
+    settings_in: ProjectSettingsUpdate,
+) -> APIResponse[ProjectPublic]:
+    settings_patch = settings_in.model_dump(exclude_unset=True)
+    if not settings_patch:
+        raise HTTPException(status_code=400, detail="No settings provided")
+
+    project = update_project_settings(
+        session=session,
+        project_id=auth_context.project.id,
+        settings_patch=settings_patch,
+    )
     return APIResponse.success_response(project)
 
 
@@ -85,7 +112,7 @@ def create_new_project(*, session: SessionDep, project_in: ProjectCreate):
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/get.md"),
 )
-def read_project(*, session: SessionDep, project_id: int):
+def read_project(*, session: SessionDep, project_id: int) -> APIResponse[ProjectPublic]:
     """
     Retrieve a project by ID.
     """
@@ -102,7 +129,9 @@ def read_project(*, session: SessionDep, project_id: int):
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/update.md"),
 )
-def update_project(*, session: SessionDep, project_id: int, project_in: ProjectUpdate):
+def update_project(
+    *, session: SessionDep, project_id: int, project_in: ProjectUpdate
+) -> APIResponse[ProjectPublic]:
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -167,7 +196,7 @@ def delete_project_endpoint(
     session: SessionDep,
     project_id: int,
     body: DeleteRequest | None = None,
-):
+) -> APIResponse[None]:
     project = get_project_by_id(session=session, project_id=project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")

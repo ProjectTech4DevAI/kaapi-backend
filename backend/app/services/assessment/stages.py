@@ -1,4 +1,4 @@
-"""Stage registry, pipeline ordering, and Batch API executor."""
+"""Stage registry, pipeline ordering, and Batch API executor (LEGACY RUN pipeline)."""
 
 import logging
 from collections.abc import Callable
@@ -16,7 +16,8 @@ from app.core.batch import (
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
 from app.core.cloud import get_cloud_storage
-from app.models.assessment import AssessmentRun, Stage, StageStatus
+from app.crud.assessment.core import _read_exec, _write_exec
+from app.models.assessment import AssessmentRun, AssessmentStatus, Stage, StageStatus
 from app.models.batch_job import BatchJob, BatchJobType
 from app.services.assessment.prefilter import constants, resolve_prefilter_settings
 from app.services.assessment.prefilter.duplicate_detection import (
@@ -28,7 +29,10 @@ from app.services.assessment.prefilter.topic_relevance import (
     parse_topic_relevance_results,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +148,8 @@ def _get_batch_provider(
             )
         )
     if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_NATIVE,
         LLMProvider.GOOGLE_AISTUDIO,
         LLMProvider.GOOGLE_AISTUDIO_NATIVE,
     ):
@@ -151,6 +157,20 @@ def _get_batch_provider(
             session=session, org_id=organization_id, project_id=project_id
         )
         return GeminiBatchProvider(client=gemini_client.client)
+    if provider_name in (LLMProvider.GOOGLE_GCP, LLMProvider.GOOGLE_GCP_NATIVE):
+        # Lazy to avoid a crud<->stages cycle.
+        from app.core.batch import GoogleGCPBatchProvider
+        from app.crud.credentials import get_provider_credential
+
+        cred = get_provider_credential(
+            session=session,
+            provider=LLMProvider.GOOGLE_GCP,
+            project_id=project_id,
+            org_id=organization_id,
+        )
+        if not isinstance(cred, dict):
+            raise ValueError("google-gcp credentials not configured for this project")
+        return GoogleGCPBatchProvider.from_credentials(cred)
     if provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
         return AnthropicBatchProvider(
             client=get_anthropic_client(
@@ -193,12 +213,11 @@ def load_raw_batch_results(
 
 def advance_or_finalize(run: AssessmentRun) -> str | None:
     """Advance the run to the next stage (returned) or finalize it (returns None)."""
-    nxt = next_stage(run.pipeline, run.stage)
+    exec_bag = _read_exec(run)
+    nxt = next_stage(exec_bag.get("pipeline"), exec_bag.get("stage"))
     if nxt:
-        run.stage = nxt
-        run.stage_status = StageStatus.PENDING
+        _write_exec(run, stage=nxt, stage_status=StageStatus.PENDING)
         return nxt
-    run.stage = Stage.COMPLETED
-    run.stage_status = StageStatus.COMPLETED
-    run.status = "completed"
+    _write_exec(run, stage=Stage.COMPLETED, stage_status=StageStatus.COMPLETED)
+    run.status = AssessmentStatus.COMPLETED
     return None

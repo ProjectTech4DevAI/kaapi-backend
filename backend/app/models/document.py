@@ -43,7 +43,7 @@ class Document(DocumentBase, table=True):
         description="The size of the document in kilobytes",
         sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
     )
-    file_id: dict | None = Field(
+    file_id: dict[str, str] | None = Field(
         default=None,
         sa_column=Column(
             JSONB,
@@ -110,7 +110,10 @@ class TransformationJobInfo(SQLModel):
 
 
 class DocumentUploadResponse(DocumentPublic):
-    signed_url: str = Field(description="A signed URL for accessing the document")
+    # Intentionally narrows the optional parent field: an upload always returns a URL.
+    signed_url: str = Field(
+        description="A signed URL for accessing the document"
+    )  # pyright: ignore[reportIncompatibleVariableOverride, reportGeneralTypeIssues]
     transformation_job: TransformationJobInfo | None = None
 
 

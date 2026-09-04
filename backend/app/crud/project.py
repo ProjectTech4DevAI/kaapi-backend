@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -44,6 +45,56 @@ def create_project(*, session: Session, project_create: ProjectCreate) -> Projec
 
 def get_project_by_id(*, session: Session, project_id: int) -> Project | None:
     return session.get(Project, project_id)
+
+
+TRACING_SETTINGS_KEY = "tracing"
+
+
+def is_tracing_enabled(*, session: Session, project_id: int | str) -> bool:
+    """
+    True when the project opted into Langfuse tracing (settings['tracing']).
+    """
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
+        logger.info(
+            f"[is_tracing_enabled] Invalid project_id; tracing off | "
+            f"project_id={project_id}"
+        )
+        return False
+
+    project = get_project_by_id(session=session, project_id=pid)
+    return bool(project and (project.settings or {}).get(TRACING_SETTINGS_KEY, False))
+
+
+def update_project_settings(
+    *, session: Session, project_id: int, settings_patch: dict[str, Any]
+) -> Project:
+    """Merge `settings_patch` into the project's `settings` JSONB column.
+
+    Only keys present in `settings_patch` are changed; existing keys are kept.
+    Reassigns a new dict so SQLAlchemy detects the JSONB mutation.
+    """
+    # Lock the row so concurrent patches merge serially, not lost-update.
+    project = session.exec(
+        select(Project).where(Project.id == project_id).with_for_update()
+    ).first()
+    if not project:
+        logger.warning(
+            f"[update_project_settings] Project not found | project_id={project_id}"
+        )
+        raise HTTPException(404, "Project not found")
+
+    project.settings = {**(project.settings or {}), **settings_patch}
+    project.updated_at = now()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    logger.info(
+        f"[update_project_settings] Settings updated | project_id={project_id}, "
+        f"keys={list(settings_patch.keys())}"
+    )
+    return project
 
 
 def get_project_by_name(

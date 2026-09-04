@@ -1,7 +1,7 @@
-"""Assessment run orchestration service."""
+"""Assessment run orchestration service (LEGACY RUN pipeline)."""
 
 import logging
-from uuid import UUID
+from typing import Any
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
@@ -14,16 +14,19 @@ from app.crud.assessment import (
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
 )
+from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.config import ConfigCrud
 from app.crud.evaluations.core import resolve_evaluation_config
 from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentConfigRef,
-    AssessmentCreate,
-    AssessmentResponse,
     AssessmentRun,
+    AssessmentRunCreate,
+    AssessmentRunResponse,
     AssessmentRunSummary,
+    AssessmentStatus,
+    InputBinding,
     StageStatus,
 )
 from app.models.config.config import ConfigTag
@@ -34,8 +37,12 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_BATCH_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.OPENAI_NATIVE,
+    LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_NATIVE,
     LLMProvider.GOOGLE_AISTUDIO,
     LLMProvider.GOOGLE_AISTUDIO_NATIVE,
+    LLMProvider.GOOGLE_GCP,
+    LLMProvider.GOOGLE_GCP_NATIVE,
     LLMProvider.ANTHROPIC,
     LLMProvider.ANTHROPIC_NATIVE,
 }
@@ -45,20 +52,28 @@ def _build_retry_request(
     *,
     experiment_name: str,
     dataset_id: int,
+    input_binding: dict[str, Any] | None,
     runs: list[AssessmentRun],
-) -> AssessmentCreate:
+) -> AssessmentRunCreate:
     if not runs:
         raise HTTPException(status_code=400, detail="No assessment runs found to retry")
 
-    first_run = runs[0]
-    assessment_input = first_run.input
-    if not isinstance(assessment_input, dict):
+    # The RUN binding now lives on the parent assessment.input, not the child run.
+    if not isinstance(input_binding, dict):
         raise HTTPException(
             status_code=400,
             detail="Assessment input configuration is missing for retry",
         )
 
-    attachments = assessment_input.get("attachments") or []
+    binding = InputBinding(
+        prompt=input_binding.get("prompt", ""),
+        text_columns=list(input_binding.get("text_columns") or []),
+        attachments=[
+            AssessmentAttachment.model_validate(item)
+            for item in (input_binding.get("attachments") or [])
+        ],
+    )
+
     configs: list[AssessmentConfigRef] = []
     for run in runs:
         if not run.config_id or run.config_version is None:
@@ -67,32 +82,24 @@ def _build_retry_request(
                 detail=f"Config reference is missing for run {run.id}",
             )
         configs.append(
-            AssessmentConfigRef(
-                config_id=UUID(str(run.config_id)),
-                config_version=run.config_version,
-            )
+            AssessmentConfigRef(id=run.config_id, version=run.config_version)
         )
 
-    return AssessmentCreate(
+    return AssessmentRunCreate(
         experiment_name=experiment_name,
         dataset_id=dataset_id,
-        prompt_template=assessment_input.get("prompt_template"),
-        system_instruction=assessment_input.get("system_instruction"),
-        text_columns=list(assessment_input.get("text_columns") or []),
-        attachments=[AssessmentAttachment.model_validate(item) for item in attachments],
-        output_schema=assessment_input.get("output_schema"),
+        input_binding=binding,
         configs=configs,
-        prefilter_config=assessment_input.get("prefilter_config"),
-        post_processing_config=assessment_input.get("post_processing_config"),
+        post_processing_config=input_binding.get("post_processing_config"),
     )
 
 
 def start_assessment(
     session: Session,
-    request: AssessmentCreate,
+    request: AssessmentRunCreate,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Validate, create Assessment + AssessmentRun records, dispatch Celery tasks.
 
     Each run is created with status='pending' and handed off to a Celery worker
@@ -115,16 +122,9 @@ def start_assessment(
         project_id=project_id,
     )
 
-    assessment_input: dict = {
-        "prompt_template": request.prompt_template,
-        "system_instruction": request.system_instruction,
-        "text_columns": request.text_columns,
-        "attachments": [att.model_dump() for att in request.attachments],
-    }
-    if request.output_schema:
-        assessment_input["output_schema"] = request.output_schema
-    if request.prefilter_config:
-        assessment_input["prefilter_config"] = request.prefilter_config
+    # InputBinding (prompt/text_columns/attachments) is stored on the parent
+    # assessment.input; post_processing_config rides alongside so retry can rebuild it.
+    assessment_input: dict[str, Any] = request.input_binding.model_dump()
     if request.post_processing_config:
         assessment_input["post_processing_config"] = request.post_processing_config
 
@@ -132,7 +132,7 @@ def start_assessment(
 
     resolved_configs = []
     for cfg in request.configs:
-        parent_config = config_crud.read_one(cfg.config_id)
+        parent_config = config_crud.read_one(cfg.id)
         if parent_config is not None and parent_config.tag != ConfigTag.ASSESSMENT:
             tag_value = (
                 parent_config.tag.value
@@ -142,7 +142,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} has tag '{tag_value}' "
+                    f"Config {cfg.id} has tag '{tag_value}' "
                     f"and cannot be used for assessment. "
                     f"Only configs tagged 'ASSESSMENT' are allowed."
                 ),
@@ -150,8 +150,8 @@ def start_assessment(
 
         config_blob, error = resolve_evaluation_config(
             session=session,
-            config_id=cfg.config_id,
-            config_version=cfg.config_version,
+            config_id=cfg.id,
+            config_version=cfg.version,
             project_id=project_id,
             tag=ConfigTag.ASSESSMENT,
         )
@@ -159,8 +159,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Failed to resolve config {cfg.config_id} "
-                    f"v{cfg.config_version}: {error}"
+                    f"Failed to resolve config {cfg.id} " f"v{cfg.version}: {error}"
                 ),
             )
         provider = config_blob.completion.provider or LLMProvider.OPENAI
@@ -168,7 +167,7 @@ def start_assessment(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"Config {cfg.config_id} v{cfg.config_version} uses provider "
+                    f"Config {cfg.id} v{cfg.version} uses provider "
                     f"'{provider}', which is not supported for batch assessment. "
                     f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
                 ),
@@ -181,6 +180,7 @@ def start_assessment(
         dataset_id=request.dataset_id,
         organization_id=organization_id,
         project_id=project_id,
+        input_binding=assessment_input,
     )
 
     runs: list[AssessmentRun] = []
@@ -190,9 +190,8 @@ def start_assessment(
         run = create_assessment_run(
             session=session,
             assessment_id=assessment.id,
-            config_id=cfg.config_id,
-            config_version=cfg.config_version,
-            assessment_input=assessment_input,
+            config_id=cfg.id,
+            config_version=cfg.version,
         )
         runs.append(run)
 
@@ -206,7 +205,7 @@ def start_assessment(
         logger.info(
             "[start_assessment] Dispatched Celery task | run_id=%s | config_id=%s",
             run.id,
-            cfg.config_id,
+            cfg.id,
         )
 
     recompute_assessment_status(session=session, assessment_id=assessment.id)
@@ -218,7 +217,7 @@ def start_assessment(
         [run.id for run in runs],
     )
 
-    return AssessmentResponse(
+    return AssessmentRunResponse(
         assessment_id=assessment.id,
         experiment_name=request.experiment_name,
         dataset_id=request.dataset_id,
@@ -228,7 +227,7 @@ def start_assessment(
             AssessmentRunSummary(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
-                config_id=str(run.config_id),
+                config_id=run.config_id,
                 config_version=run.config_version,
                 status=run.status,
             )
@@ -242,7 +241,7 @@ def retry_assessment(
     assessment: Assessment,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Create a new assessment using the same parent assessment inputs."""
     runs = get_assessment_runs_for_assessment(
         session=session, assessment_id=assessment.id
@@ -250,6 +249,7 @@ def retry_assessment(
     request = _build_retry_request(
         experiment_name=assessment.experiment_name,
         dataset_id=assessment.dataset_id,
+        input_binding=assessment.input,
         runs=runs,
     )
     return start_assessment(
@@ -265,7 +265,7 @@ def retry_assessment_run(
     run: AssessmentRun,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Create a new assessment using the same inputs as a single child run."""
     parent = getattr(run, "assessment", None) or session.get(
         Assessment, run.assessment_id
@@ -278,6 +278,7 @@ def retry_assessment_run(
     request = _build_retry_request(
         experiment_name=parent.experiment_name,
         dataset_id=parent.dataset_id,
+        input_binding=parent.input,
         runs=[run],
     )
     return start_assessment(
@@ -293,17 +294,18 @@ def resume_assessment_run(
     run: AssessmentRun,
     organization_id: int,
     project_id: int,
-) -> AssessmentResponse:
+) -> AssessmentRunResponse:
     """Re-run a failed run from its failed stage, reusing completed upstream batches."""
     from app.celery.tasks.job_execution import run_assessment_pipeline
     from app.services.assessment.stages import ordered_stages
 
-    if run.stage_status != StageStatus.FAILED:
+    exec_bag = _read_exec(run)
+    if exec_bag.get("stage_status") != StageStatus.FAILED:
         raise HTTPException(
             status_code=400,
             detail=f"Run {run.id} is not in a failed state and cannot be resumed",
         )
-    if run.stage not in ordered_stages(run.pipeline):
+    if exec_bag.get("stage") not in ordered_stages(exec_bag.get("pipeline")):
         raise HTTPException(
             status_code=400,
             detail=f"Run {run.id} has no resumable failed stage",
@@ -324,8 +326,8 @@ def resume_assessment_run(
         project_id=project_id,
     )
 
-    run.stage_status = StageStatus.PENDING
-    run.status = "processing"
+    _write_exec(run, stage_status=StageStatus.PENDING)
+    run.status = AssessmentStatus.PROCESSING
     run.error_message = None
     session.add(run)
     session.commit()
@@ -335,7 +337,7 @@ def resume_assessment_run(
     logger.info(
         "[resume_assessment_run] Resuming run_id=%s from stage=%s",
         run.id,
-        run.stage,
+        _read_exec(run).get("stage"),
     )
     run_assessment_pipeline.delay(
         run_id=run.id,
@@ -344,7 +346,7 @@ def resume_assessment_run(
         trace_id=correlation_id.get() or "",
     )
 
-    return AssessmentResponse(
+    return AssessmentRunResponse(
         assessment_id=parent.id,
         experiment_name=parent.experiment_name,
         dataset_id=parent.dataset_id,
@@ -354,7 +356,7 @@ def resume_assessment_run(
             AssessmentRunSummary(
                 run_id=run.id,
                 assessment_id=run.assessment_id,
-                config_id=str(run.config_id),
+                config_id=run.config_id,
                 config_version=run.config_version,
                 status=run.status,
             )

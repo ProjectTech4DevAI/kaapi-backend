@@ -1,9 +1,10 @@
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 from uuid import UUID
 
 from langfuse import Langfuse
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
@@ -11,7 +12,7 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore
+from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, TraceData
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
 from app.models.config.config import ConfigTag
@@ -119,7 +120,8 @@ def list_evaluation_runs(
     project_id: int,
     limit: int = 50,
     offset: int = 0,
-) -> list[EvaluationRun]:
+    dataset_id: int | None = None,
+) -> Sequence[EvaluationRun]:
     """
     List all evaluation runs for an organization and project.
 
@@ -129,6 +131,7 @@ def list_evaluation_runs(
         project_id: Project ID to filter by
         limit: Maximum number of runs to return (default 50)
         offset: Number of runs to skip (for pagination)
+        dataset_id: Optional evaluation dataset ID to filter by
 
     Returns:
         List of EvaluationRun objects, ordered by most recent first
@@ -138,17 +141,18 @@ def list_evaluation_runs(
         .where(EvaluationRun.organization_id == organization_id)
         .where(EvaluationRun.project_id == project_id)
         .where(EvaluationRun.type == EvaluationType.TEXT.value)
-        .order_by(EvaluationRun.inserted_at.desc())
+    )
+
+    if dataset_id is not None:
+        statement = statement.where(EvaluationRun.dataset_id == dataset_id)
+
+    statement = (
+        statement.order_by(col(EvaluationRun.inserted_at).desc())
         .limit(limit)
         .offset(offset)
     )
 
     runs = session.exec(statement).all()
-
-    logger.info(
-        f"Found {len(runs)} evaluation runs for org_id={organization_id}, "
-        f"project_id={project_id}"
-    )
 
     return runs
 
@@ -241,6 +245,8 @@ def update_evaluation_run(
 
     if should_notify:
         _enqueue_eval_completion_notification(eval_run)
+        if eval_run.callback_url:
+            _enqueue_eval_completion_callback(eval_run)
 
     return eval_run
 
@@ -263,6 +269,19 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     except Exception as e:
         logger.error(
             f"[update_evaluation_run] Failed to enqueue completion notification | "
+            f"evaluation_id={eval_run.id} | error={e}",
+            exc_info=True,
+        )
+
+
+def _enqueue_eval_completion_callback(eval_run: EvaluationRun) -> None:
+    try:
+        from app.celery.tasks.job_execution import send_eval_completion_callback
+
+        send_eval_completion_callback.delay(eval_run.id)
+    except Exception as e:
+        logger.error(
+            f"[update_evaluation_run] Failed to enqueue completion callback | "
             f"evaluation_id={eval_run.id} | error={e}",
             exc_info=True,
         )
@@ -301,7 +320,7 @@ def get_or_fetch_score(
         logger.info(
             f"[get_or_fetch_score] Returning existing score | evaluation_id={eval_run.id}"
         )
-        return eval_run.score
+        return cast(EvaluationScore, eval_run.score)
 
     logger.info(
         f"[get_or_fetch_score] Fetching score from Langfuse | "
@@ -335,11 +354,12 @@ def get_or_fetch_score(
         "traces": langfuse_score.get("traces", []),
     }
 
-    # Update score column using existing helper
+    # Update score column using existing helper.
+    # TypedDict -> dict is invariant, so a cast is needed for the JSONB column.
     update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(score=score),
+        update=EvaluationRunUpdate(score=cast(dict[str, object], score)),
     )
 
     total_traces = len(score.get("traces", []))
@@ -356,7 +376,7 @@ def _upload_score_traces(
     session: Session,
     eval_run_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[TraceData],
 ) -> str | None:
     """Upload per-trace records to S3 for an evaluation run.
 
@@ -399,7 +419,7 @@ def persist_score_traces(
     eval_run_id: int,
     organization_id: int,
     project_id: int,
-    traces: list[dict[str, Any]],
+    traces: Sequence[TraceData],
 ) -> EvaluationRun | None:
     """Persist the Q&A trace skeleton to S3 and record the ``score_trace_url``
     pointer, WITHOUT touching the ``score`` column (keeps the run score-less
@@ -484,7 +504,10 @@ def save_score(
         # IF TRACES DATA IS STORED IN S3 URL THEN HERE WE ARE JUST STORING THE SUMMARY SCORE
         # TODO: Evaluate whether this behaviour is needed or completely discard the storing data in db
         if score_trace_url:
-            db_score = {"summary_scores": summary_score}
+            db_score: EvaluationScore = {"summary_scores": summary_score}
+            overall = score.get("overall")
+            if overall is not None:
+                db_score["overall"] = overall
         else:
             # fallback to store data in db if failed to store in s3
             db_score = score
@@ -493,7 +516,7 @@ def save_score(
             session=session,
             eval_run=eval_run,
             update=EvaluationRunUpdate(
-                score=db_score,
+                score=cast(dict[str, object], db_score),
                 score_trace_url=score_trace_url or None,
             ),
         )
@@ -537,6 +560,8 @@ def group_traces_by_question_id(
 
     for trace in traces:
         question_id = trace.get("question_id")
+        if question_id is None:
+            continue
         if question_id not in groups:
             groups[question_id] = []
         groups[question_id].append(trace)
@@ -597,8 +622,13 @@ def resolve_model_from_config(
             f"(config_id={eval_run.config_id}, version={eval_run.config_version}): {error}"
         )
 
-    # params is a dict, not a Pydantic model, so use dict access
-    model = config.completion.params.get("model")
+    # Native params are a plain dict; Kaapi params are now a typed submodel.
+    completion_params = config.completion.params
+    model = (
+        completion_params.get("model")
+        if isinstance(completion_params, dict)
+        else getattr(completion_params, "model", None)
+    )
     if not model:
         raise ValueError(
             f"Config for evaluation {eval_run.id} does not contain a 'model' parameter"

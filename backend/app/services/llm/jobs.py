@@ -30,6 +30,7 @@ from app.core.telemetry import (
 )
 from app.crud.config import ConfigVersionCrud
 from app.crud.credentials import get_provider_credential
+from app.crud.project import is_tracing_enabled
 from app.crud.model_config import validate_blob_model_or_raise
 from app.crud.jobs import JobCrud
 from app.crud.llm import (
@@ -46,7 +47,9 @@ from app.models.llm.request import (
     ChainStatus,
     ConfigBlob,
     ImageInput,
-    KaapiCompletionConfig,
+    KaapiSTTCompletionConfig,
+    KaapiTextCompletionConfig,
+    KaapiTTSCompletionConfig,
     LLMCallConfig,
     NativeCompletionConfig,
     PDFInput,
@@ -65,7 +68,10 @@ from app.models.llm.response import (
 )
 from app.services.llm.chain.types import BlockResult
 from app.services.llm.guardrails import apply_guardrails
-from app.services.llm.mappers import transform_kaapi_config_to_native
+from app.services.llm.mappers import (
+    resolve_default_audio_provider,
+    transform_kaapi_config_to_native,
+)
 from app.services.llm.providers.registry import get_llm_provider
 from app.utils import (
     APIResponse,
@@ -542,6 +548,20 @@ def execute_llm_call(
                         )
                         return BlockResult(error=e.detail)
 
+            completion_config = config_blob.completion
+            if (
+                isinstance(
+                    completion_config,
+                    (KaapiSTTCompletionConfig, KaapiTTSCompletionConfig),
+                )
+                and completion_config.provider is None
+            ):
+                completion_config.provider = resolve_default_audio_provider(
+                    session=session,
+                    project_id=project_id,
+                    organization_id=organization_id,
+                )
+
             original_input_value = (
                 query.input.content.value
                 if isinstance(query.input, TextInput)
@@ -570,6 +590,14 @@ def execute_llm_call(
                     organization_id=organization_id,
                 )
                 if guardrail_direct_response is not None:
+                    # Runs before the Kaapi->native transform, so params may be
+                    # a typed model (Kaapi/proxy variants) rather than a dict.
+                    completion_params = config_blob.completion.params
+                    guardrail_model = (
+                        completion_params.get("model")
+                        if isinstance(completion_params, dict)
+                        else getattr(completion_params, "model", None)
+                    )
                     guardrail_usage = Usage(
                         input_tokens=0,
                         output_tokens=0,
@@ -579,7 +607,7 @@ def execute_llm_call(
                         response=LLMResponse(
                             provider_response_id=str(job_id),
                             provider=str(config_blob.completion.provider),
-                            model=str(config_blob.completion.params.get("model") or ""),
+                            model=str(guardrail_model or ""),
                             output=TextOutput(
                                 content=TextContent(value=guardrail_direct_response)
                             ),
@@ -617,8 +645,7 @@ def execute_llm_call(
                     return BlockResult(
                         error="Proxy completion only supports text input"
                     )
-                proxy_params = config_blob.completion.params or {}
-                client_llm_url = proxy_params.get("client_llm_url")
+                client_llm_url = str(config_blob.completion.params.client_llm_url)
                 if not client_llm_url:
                     return BlockResult(error="Proxy config missing client_llm_url")
                 try:
@@ -832,7 +859,14 @@ def execute_llm_call(
             completion_config = config_blob.completion
             original_provider = completion_config.provider
 
-            if isinstance(completion_config, KaapiCompletionConfig):
+            if isinstance(
+                completion_config,
+                (
+                    KaapiTextCompletionConfig,
+                    KaapiSTTCompletionConfig,
+                    KaapiTTSCompletionConfig,
+                ),
+            ):
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session, kaapi_config=completion_config
                 )
@@ -1218,6 +1252,12 @@ def execute_llm_call(
 
     except (Timeout, SoftTimeLimitExceeded):
         raise
+    except HTTPException as e:
+        logger.error(
+            f"[execute_llm_call] HTTP error: {e.detail} | job_id={job_id}",
+            exc_info=True,
+        )
+        return BlockResult(error=str(e.detail), llm_call_id=llm_call_id)
     except Exception as e:
         logger.error(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",
@@ -1273,12 +1313,14 @@ def execute_job(
                     job_id=job_uuid, job_update=JobUpdate(status=JobStatus.PROCESSING)
                 )
 
-                langfuse_credentials = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="langfuse",
-                )
+                langfuse_credentials = None
+                if is_tracing_enabled(session=session, project_id=project_id):
+                    langfuse_credentials = get_provider_credential(
+                        session=session,
+                        org_id=organization_id,
+                        provider="langfuse",
+                        project_id=project_id,
+                    )
 
             result = execute_llm_call(
                 config=request.config,
@@ -1459,12 +1501,14 @@ def execute_chain_job(
                     f"chain_id={chain_uuid}, job_id={job_uuid}"
                 )
 
-                langfuse_credentials = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider="langfuse",
-                )
+                langfuse_credentials = None
+                if is_tracing_enabled(session=session, project_id=project_id):
+                    langfuse_credentials = get_provider_credential(
+                        session=session,
+                        org_id=organization_id,
+                        provider="langfuse",
+                        project_id=project_id,
+                    )
 
             context = ChainContext(
                 job_id=job_uuid,

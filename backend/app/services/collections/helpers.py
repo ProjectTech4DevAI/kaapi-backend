@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.crud import CollectionCrud
 from app.api.deps import SessionDep
-from app.models import Collection, CollectionPublic, Document
+from app.models import Collection, CollectionPublic, Document, ProviderType
 
 
 logger = logging.getLogger(__name__)
@@ -21,43 +21,35 @@ MAX_BATCH_SIZE_KB = (MAX_DOC_SIZE_MB + 5) * 1024  # 30 MB in KB (25 + 5 MB buffe
 MAX_BATCH_COUNT = 200  # Maximum documents per batch
 
 
-def get_service_name(provider: str) -> str:
+def get_service_name(provider: ProviderType) -> str:
     """Get the collection service name for a provider."""
-    names = {
-        "openai": "openai vector store",
-        #   "bedrock": "bedrock knowledge base",
-        #  "gemini": "gemini file search store",
+    names: dict[str, str] = {
+        ProviderType.openai.value: "openai vector store",
+        ProviderType.google_aistudio.value: "gemini file search store",
+        # ProviderType.bedrock.value: "bedrock knowledge base",
     }
     return names.get(provider.lower(), "")
 
 
-def extract_error_message(err: Exception) -> str:
+def extract_error_message(err: Exception | str) -> str:
     """Extract a concise, user-facing message from an exception, preferring `error.message`
     in JSON/dict bodies after stripping prefixes.Falls back to cleaned text and truncates to
     1000 characters."""
     err_str = str(err).strip()
-
     body = re.sub(r"^Error code:\s*\d+\s*-\s*", "", err_str)
-    message = None
-    try:
-        payload = json.loads(body)
-        if isinstance(payload, dict):
-            message = payload.get("error", {}).get("message")
-    except Exception:
-        pass
 
-    if message is None:
+    message: str | None = None
+    for parse in (json.loads, ast.literal_eval):
         try:
-            payload = ast.literal_eval(body)
-            if isinstance(payload, dict):
-                message = payload.get("error", {}).get("message")
+            payload = parse(body)
+            candidate = payload["error"]["message"]
         except Exception:
-            pass
+            continue
+        if isinstance(candidate, str):
+            message = candidate
+            break
 
-    if not message:
-        message = body
-
-    return message.strip()[:1000]
+    return (message or body).strip()[:1000]
 
 
 def batch_documents(documents: list[Document]) -> list[list[Document]]:
@@ -75,12 +67,14 @@ def batch_documents(documents: list[Document]) -> list[list[Document]]:
         List of document batches
     """
 
-    docs_batches = []
-    current_batch = []
-    current_batch_size_kb = 0
+    docs_batches: list[list[Document]] = []
+    current_batch: list[Document] = []
+    current_batch_size_kb = 0.0
 
     for doc in documents:
         doc_size_kb = doc.file_size_kb
+        if doc_size_kb is None:
+            raise TypeError(f"[batch_documents] Document {doc.id} missing file_size_kb")
 
         would_exceed_size = (current_batch_size_kb + doc_size_kb) > MAX_BATCH_SIZE_KB
         would_exceed_count = len(current_batch) >= MAX_BATCH_COUNT

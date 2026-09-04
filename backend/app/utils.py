@@ -25,7 +25,7 @@ from langfuse import Langfuse
 import openai
 from anthropic import Anthropic
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from sqlmodel import Session
 
 from app.core import security
@@ -46,6 +46,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# JSON object carried across Celery boundaries and out through send_callback.
+# pydantic.JsonValue recurses through nested lists/dicts, so nested values stay checked.
+JsonObject = dict[str, JsonValue]
 
 MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -74,7 +78,7 @@ class APIResponse(BaseModel, Generic[T]):
         error: str | list,
         data: Optional[T] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> "APIResponse[None]":
+    ) -> "APIResponse[T]":
         if isinstance(error, list):  # to handle cases when error is a list of errors
             structured_errors = []
             for err in error:
@@ -347,6 +351,18 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
         )
 
 
+def _build_langfuse_client(credentials: dict[str, Any]) -> Langfuse:
+    from app.core.langfuse.langfuse import get_langfuse_tracer_provider
+
+    return Langfuse(
+        public_key=credentials["public_key"],
+        secret_key=credentials["secret_key"],
+        host=credentials["host"],
+        timeout=60,
+        tracer_provider=get_langfuse_tracer_provider(),
+    )
+
+
 def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langfuse:
     """
     Fetch Langfuse credentials for the current org/project and return a configured client.
@@ -370,12 +386,7 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
         )
 
     try:
-        return Langfuse(
-            public_key=credentials["public_key"],
-            secret_key=credentials["secret_key"],
-            host=credentials["host"],
-            timeout=60,
-        )
+        return _build_langfuse_client(credentials)
     except Exception as e:
         logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",

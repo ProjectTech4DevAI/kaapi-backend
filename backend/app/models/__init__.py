@@ -101,6 +101,15 @@ from .evaluation import (
     EvaluationRunUpdate,
     RunModeEnum,
 )
+from .evaluation_iteration import (
+    EvaluationIterationCreateRequest,
+    EvaluationIterationReportPublic,
+    EvaluationIterationRoundPublic,
+    EvaluationIterationRun,
+    EvaluationIterationRunImmediatePublic,
+    EvaluationIterationRunUpdate,
+    EvaluationIterationStatusEnum,
+)
 from .feature_flag import (
     FeatureFlag,
     FeatureFlagCreate,
@@ -180,6 +189,7 @@ from .project import (
     ProjectCreate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectSettingsUpdate,
     ProjectUpdate,
 )
 from .response import (

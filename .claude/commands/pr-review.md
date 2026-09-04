@@ -1,22 +1,23 @@
 ---
-description: Review a PR (or current branch's diff against main) against kaapi-backend conventions and personal review checklist.
-argument-hint: [PR number | "branch"]
+description: Review the current branch's diff against main using kaapi-backend conventions and a personal review checklist.
 ---
 
-You are reviewing a pull request (or the current branch's diff against `main`) in this FastAPI + PostgreSQL + SQLModel + Alembic + Celery service.
-
-Argument from the user: `$ARGUMENTS`
+You are reviewing the current branch's local diff against `main` in this FastAPI + PostgreSQL + SQLModel + Alembic + Celery service.
 
 ## Gather the diff
 
-1. Argument is a PR number → `gh pr view <n>` + `gh pr diff <n>`.
-2. Argument is empty → `gh pr list` and ask which one. Exception: argument is "branch" / "this branch" / "my changes" → `git diff main...HEAD` + `git log main..HEAD --oneline`.
-3. `Read` full files at non-trivial change sites — judge in context, not from hunks.
-4. `Grep` for duplication, reused literals, unused symbols.
+Refresh the remote baseline, then pin the base so every run reviews the same file set against the latest `main` — an ambiguous or stale base is why the same branch yields 13 files one run and 39 the next.
+
+1. **Pull this branch** — `git pull origin $(git rev-parse --abbrev-ref HEAD)` — fast-forward local to the latest pushed commits so the review runs on current work, not a stale HEAD. If the pull fails (no upstream, diverged, conflicts), stop and report — don't review stale code silently.
+2. **Fetch the latest remote `main`** — `git fetch origin main`. The baseline is `origin/main` (true GitHub main), not the stale local `main` ref. No checkout, no rebase — the tree stays on your branch.
+3. `BASE=$(git merge-base origin/main HEAD)` — pin the merge-base SHA once; use it for every command below so the scope can't drift between runs.
+4. `git diff $BASE...HEAD --stat` for the file/line counts, `git diff $BASE...HEAD` for the review, `git log $BASE..HEAD --oneline` for the commits.
+5. **Separate this branch's own work from merged-in commits.** A branch that merged another open PR (e.g. #956) carries that PR's files into the diff and inflates scope. Scan `git log $BASE..HEAD --oneline` for merge commits / unrelated PR numbers; if found, review only this branch's commits and note at the top: "Excluded N files from merged-in #<pr> — review under its own PR." Never silently review two features as one.
+6. State the resolved base SHA + file count at the top of the review so a second run is comparable to the first.
+7. `Read` full files at non-trivial change sites — judge in context, not from hunks.
+8. `Grep` for duplication, reused literals, unused symbols.
 
 ## What to check
-
-Skip any section in the output that has nothing notable.
 
 ### Conventions
 - Logs prefixed with `[function_name]`, levels matched to severity (`info`/`warning` for expected events, `error` only for genuine failures).
@@ -28,7 +29,8 @@ Skip any section in the output that has nothing notable.
 ### Layering & duplication
 - `HTTPException` belongs in routes, not `crud/`. CRUD returns data / `None` / raises domain errors. Third-party network calls also don't belong in `crud/` — that's DB-only.
 - Routes thin, business logic in `services/`, DB access in `crud/`.
-- Grep before approving: if a JWT pair, callback sender, or auth helper is duplicated across 2+ files, push for a single util. Before suggesting "extract a helper", confirm one doesn't already exist.
+- Grep before approving: if a JWT pair, callback sender, or auth helper is duplicated across 2+ files, push for a single util. Before suggesting "extract a helper", confirm one doesn't already exist — the touched domain's `docs/wiki/modules/*.md` page lists its existing services/crud/utils, use it as the grep starting point.
+- New table in the diff → check `docs/wiki/domain-map.md`: does an existing entity/flow already cover it? Ask for the justification if the page suggests reuse.
 - Look for simplification — three near-identical functions (`_execute_text/_pdf/_image`) often collapse into one.
 
 ### Magic values & config
@@ -94,6 +96,9 @@ Skip any section in the output that has nothing notable.
 - `downgrade()` implemented and reversible — empty downgrade is a blocker.
 - Backfills live in `upgrade()` SQL, not a separate manual script.
 
+### Wiki freshness
+- Diff adds/removes a route, table, model, service, crud file, or Celery task but the matching `docs/wiki/modules/*.md` page (or `docs/wiki/domain-map.md` for entity/edge changes) is not updated in the same diff → flag it. Stale wiki misleads every future session.
+
 ### Cleanup
 - Unused imports / functions / params / dead paths.
 - Empty `__init__.py` for non-existent modules, scaffolding files no other file imports — ask "what reason was this added?"
@@ -118,7 +123,7 @@ Skip any section in the output that has nothing notable.
 ## Output format
 
 ```
-**PR**: #<number> (<head> → <base>) · <file count> files (<additions>+ / <deletions>-)
+**Branch**: <head> → main @ <short base SHA> · <file count> files (<additions>+ / <deletions>-)
 
 ## Summary
 <1–3 sentences: what the PR does + verdict (approve / approve with nits / request changes). Caveats on approval are fine.>
@@ -133,13 +138,9 @@ Skip any section in the output that has nothing notable.
 - <style, naming, tiny cleanups — prefix `nit:`>
 
 ## What's done well
-- <genuine positives only — a correct race fix, a well-placed constraint, a tricky edge handled. Omit the whole section if there's nothing real to say; never pad.>
+- <genuine positives only — a correct race fix, a well-placed constraint, a tricky edge handled. Omit the whole section if there's nothing real to say.>
 ```
 
-The metadata line comes from `gh pr view`. For a local-branch review (`branch` argument), drop the `#<number>` and derive counts from `git diff main...HEAD --stat`.
+**One bullet per item, one section per item; drop any empty section; don't pad.** Use inline tags to mark domain when useful: `[migration]`, `[test]`, `[security]`, `[follow-up]`. Severity drives the section; the tag adds the domain colour. Use `[follow-up]` for cross-cutting work the author should track separately rather than fix in this PR; place it in `Suggestions`.
 
-Each item gets exactly one bullet — no item appears in more than one section. Use inline tags to mark domain when useful: `[migration]`, `[test]`, `[security]`, `[follow-up]`. Severity drives the section; the tag adds the domain colour.
-
-Use `[follow-up]` for cross-cutting work the author should track separately rather than fix in this PR; place it in `Suggestions`.
-
-Drop empty sections. Don't pad. Do not modify files during the review — read-only.
+Do not modify files during the review — read-only.

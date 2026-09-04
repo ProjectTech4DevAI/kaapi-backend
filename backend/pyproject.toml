@@ -34,7 +34,7 @@ dependencies = [
     "openai>=1.100.1",
     "pre-commit>=3.8.0",
     "openai_responses",
-    "langfuse==2.60.3",
+    "langfuse==4.7.1",
     "asgi-correlation-id>=4.3.4",
     "py-zerox>=0.0.7,<1.0.0",
     "pandas>=2.3.2",
@@ -57,6 +57,8 @@ dependencies = [
     "anthropic>=0.104.1",
     "google-cloud-storage>=3.10.1",
     "filetype>=1.2.0",
+    "langgraph>=1.2.10",
+    "langgraph-checkpoint-postgres>=3.1.1",
 ]
 
 [tool.uv]
@@ -74,6 +76,9 @@ dev-dependencies = [
     "types-passlib<2.0.0.0,>=1.7.7.20240106",
     "coverage<8.0.0,>=7.4.3",
     "pytest-asyncio>=1.0.0",
+    "pytest-xdist>=3.8.0",
+    "filelock>=3.25.2",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -83,9 +88,23 @@ build-backend = "hatchling.build"
 [project.scripts]
 ai-cli = "app.cli.main:cli"
 
+# Keeps coverage.xml paths as "app/..." (relative to backend/) so Codecov
+# can map them to repo files for the per-file view.
+[tool.coverage.run]
+relative_files = true
+
 [tool.mypy]
 strict = true
 exclude = ["venv", ".venv", "alembic"]
+
+[tool.pyright]
+include = ["app"]
+exclude = ["**/__pycache__", ".venv", "venv", "app/alembic"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+# Resolve project deps from the local venv (pyright runs in an isolated uvx env).
+venvPath = "."
+venv = ".venv"
 
 [tool.ruff]
 target-version = "py312"

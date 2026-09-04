@@ -26,9 +26,68 @@ from app.services.assessment.utils.attachments import (
     build_gemini_attachment_parts,
     resolve_attachment_values,
     resolve_item_type,
+    rewrite_gcs_attachment_urls,
     split_attachment_urls,
     to_direct_attachment_url,
 )
+
+_REWRITE_RESOLVER = "app.services.assessment.utils.attachments.resolve_attachments"
+
+
+class TestRewriteGcsAttachmentUrls:
+    def test_rewrites_gcs_leaves_https_untouched(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": "gs://b/1.png, https://x/2.png"}, {"img": "gs://b/3.png"}]
+        with patch(
+            _REWRITE_RESOLVER,
+            return_value={"gs://b/1.png": "https://s1", "gs://b/3.png": "https://s3"},
+        ) as mock_resolve:
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="openai",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out[0]["img"] == "https://s1, https://x/2.png"
+        assert out[1]["img"] == "https://s3"
+        # single bulk resolve for both gs:// URIs across all rows
+        mock_resolve.assert_called_once()
+        _, kwargs = mock_resolve.call_args
+        assert set(kwargs["source"]) == {"gs://b/1.png", "gs://b/3.png"}
+        assert kwargs["llm_provider"] == "openai"
+
+    def test_no_gcs_returns_rows_unchanged_without_resolving(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": "https://x/1.png"}]
+        with patch(_REWRITE_RESOLVER) as mock_resolve:
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="anthropic",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out is rows
+        mock_resolve.assert_not_called()
+
+    def test_empty_cell_skipped_and_unresolved_gcs_left_as_is(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": ""}, {"img": "gs://b/missing.png"}]
+        with patch(_REWRITE_RESOLVER, return_value={}):
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="openai",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out[0]["img"] == ""
+        # unresolved gs:// URI stays put rather than becoming a broken/empty value
+        assert out[1]["img"] == "gs://b/missing.png"
 
 
 def _make_run() -> MagicMock:
@@ -108,12 +167,14 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         assert result.id == 1
         assert map_params.call_args.kwargs["session"] is session
+        # Instruction now comes from the resolved config blob; the request has no
+        # system_instruction override anymore.
         assert map_params.call_args.kwargs["kaapi_params"]["instructions"] == (
-            "request system"
+            "config system"
         )
         assert start_batch.call_args.kwargs["provider_name"] == "openai"
 
-    def test_config_instruction_is_not_used_without_request_instruction(self) -> None:
+    def test_config_instruction_is_used(self) -> None:
         session = MagicMock()
         run = _make_run()
         dataset = _make_dataset()
@@ -165,7 +226,10 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert map_params.call_args.kwargs["session"] is session
-        assert "instructions" not in map_params.call_args.kwargs["kaapi_params"]
+        assert (
+            map_params.call_args.kwargs["kaapi_params"]["instructions"]
+            == "config system"
+        )
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()
@@ -173,7 +237,7 @@ class TestSubmitAssessmentBatchProviderRouting:
         dataset = _make_dataset()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
-                provider="google-aistudio-native",
+                provider="google-native",
                 params={"instructions": "config system"},
             )
         )
@@ -223,8 +287,8 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 2
-        assert map_params.call_args.args[0]["instructions"] == "request system"
-        assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
+        assert start_batch.call_args.kwargs["provider_name"] == "google"
 
     def test_anthropic_native_routes_to_anthropic_batch(self) -> None:
         session = MagicMock()
@@ -282,7 +346,7 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 4
-        assert map_params.call_args.args[0]["instructions"] == "request system"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
         assert start_batch.call_args.kwargs["provider_name"] == "anthropic"
         assert start_batch.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
         assert start_batch.call_args.kwargs["config"]["max_tokens"] == (
