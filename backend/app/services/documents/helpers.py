@@ -179,16 +179,14 @@ def _to_public_schema(doc: Document) -> PublicDoc:
     return TransformedDocumentPublic.model_validate(doc, from_attributes=True)
 
 
-def _attach_urls(schema: PublicDoc, document: Document, storage: CloudStorage) -> None:
+def _signed_url(document: Document, storage: CloudStorage, download: bool) -> str:
     """
-    Two links for the same object: the download one carries a Content-Disposition
-    that forces a save under the original filename, the preview one is left bare
-    so browsers render it inline (iframe previews).
+    One URL, two behaviours: with ``download`` the link carries a
+    Content-Disposition that forces a save under the original filename, without
+    it the link is bare so browsers render it inline (iframe previews).
     """
-    schema.signed_url = storage.get_signed_url(
-        document.object_store_url, filename=document.fname
-    )
-    schema.preview_url = storage.get_signed_url(document.object_store_url)
+    filename = document.fname if download else None
+    return storage.get_signed_url(document.object_store_url, filename=filename)
 
 
 def build_document_schema(
@@ -196,10 +194,11 @@ def build_document_schema(
     document: Document,
     include_url: bool,
     storage: CloudStorage | None,
+    download: bool = False,
 ) -> PublicDoc:
     schema = _to_public_schema(document)
     if include_url and storage:
-        _attach_urls(schema, document, storage)
+        schema.signed_url = _signed_url(document, storage, download)
     return schema
 
 
@@ -208,12 +207,13 @@ def build_document_schemas(
     documents: Iterable[Document],
     include_url: bool,
     storage: CloudStorage | None,
+    download: bool = False,
 ) -> list[PublicDoc]:
     out: list[PublicDoc] = []
     for doc in documents:
         schema = _to_public_schema(doc)
         if include_url and storage:
-            _attach_urls(schema, doc, storage)
+            schema.signed_url = _signed_url(doc, storage, download)
         out.append(schema)
     return out
 
@@ -224,6 +224,7 @@ def build_job_schema(
     doc_crud: DocumentCrud,
     include_url: bool,
     storage: CloudStorage | None,
+    download: bool = False,
 ) -> DocTransformationJobPublic:
     """Build a single job schema, optionally attaching a signed URL."""
     transformed_doc_schema: TransformedDocumentPublic | None = None
@@ -237,7 +238,7 @@ def build_job_schema(
         object_url = doc.object_store_url
 
         if include_url and storage and object_url:
-            _attach_urls(transformed_doc_schema, doc, storage)
+            transformed_doc_schema.signed_url = _signed_url(doc, storage, download)
 
     job_schema = DocTransformationJobPublic.model_validate(job, from_attributes=True)
     return job_schema.model_copy(
@@ -251,6 +252,7 @@ def build_job_schemas(
     doc_crud: DocumentCrud,
     include_url: bool,
     storage: CloudStorage | None,
+    download: bool = False,
 ) -> list[DocTransformationJobPublic]:
     """Build many job schemas efficiently."""
     out: list[DocTransformationJobPublic] = []
@@ -261,6 +263,7 @@ def build_job_schemas(
                 doc_crud=doc_crud,
                 include_url=include_url,
                 storage=storage,
+                download=download,
             )
         )
     return out

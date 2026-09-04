@@ -82,6 +82,13 @@ def list_docs(
     include_url: bool = Query(
         False, description="Include a signed URL to access each document"
     ),
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
 ) -> APIResponse[list[Union[DocumentPublic, TransformedDocumentPublic]]]:
     crud = DocumentCrud(session, current_user.project_.id)
     documents, has_more = crud.read_many(skip, limit)
@@ -96,6 +103,7 @@ def list_docs(
         documents=documents,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
     return APIResponse[
         list[Union[DocumentPublic, TransformedDocumentPublic]]
@@ -179,9 +187,6 @@ async def upload_doc(
         source_document, from_attributes=True
     )
     document_schema.signed_url = storage.get_signed_url(
-        source_document.object_store_url, filename=source_document.fname
-    )
-    document_schema.preview_url = storage.get_signed_url(
         source_document.object_store_url
     )
 
@@ -271,6 +276,13 @@ def doc_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
 ) -> APIResponse[Union[DocumentPublic, TransformedDocumentPublic]]:
     crud = DocumentCrud(session, current_user.project_.id)
     document = crud.read_one(doc_id)
@@ -285,6 +297,7 @@ def doc_info(
         document=document,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
 
     return APIResponse[

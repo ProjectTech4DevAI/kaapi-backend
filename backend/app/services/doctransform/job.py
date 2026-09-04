@@ -245,14 +245,11 @@ def execute_job(
                 ),
             )
 
-            url_update: dict[str, str] = {}
+            signed_url = None
             try:
                 get_signed_url = getattr(storage, "get_signed_url", None)
                 if callable(get_signed_url):
-                    url_update["signed_url"] = get_signed_url(
-                        created.object_store_url, filename=created.fname
-                    )
-                    url_update["preview_url"] = get_signed_url(created.object_store_url)
+                    signed_url = get_signed_url(created.object_store_url)
             except Exception as e:
                 logger.warning(
                     "[doc_transform] failed to generate signed URL for doc %s: %s",
@@ -262,7 +259,7 @@ def execute_job(
 
             transformed_public = TransformedDocumentPublic.model_validate(
                 created,
-                update=url_update or None,
+                update={"signed_url": signed_url} if signed_url else None,
             )
 
             success_payload = build_success_payload(job_for_payload, transformed_public)
