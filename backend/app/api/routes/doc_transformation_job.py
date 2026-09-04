@@ -32,7 +32,7 @@ def get_transformation_job(
     include_url: bool = Query(
         False, description="Include a signed URL for the transformed document"
     ),
-    download: bool = Query(
+    is_downloadable: bool = Query(
         False,
         description=(
             "When true the signed URL forces a download under the document's "
@@ -55,7 +55,7 @@ def get_transformation_job(
         doc_crud=doc_crud,
         include_url=include_url,
         storage=storage,
-        download=download,
+        is_downloadable=is_downloadable,
     )
     return APIResponse.success_response(job_schema)
 
@@ -78,7 +78,7 @@ def get_multiple_transformation_jobs(
     include_url: bool = Query(
         False, description="Include a signed URL for each transformed document"
     ),
-    download: bool = Query(
+    is_downloadable: bool = Query(
         False,
         description=(
             "When true the signed URL forces a download under the document's "
@@ -104,7 +104,7 @@ def get_multiple_transformation_jobs(
         doc_crud=doc_crud,
         include_url=include_url,
         storage=storage,
-        download=download,
+        is_downloadable=is_downloadable,
     )
 
     return APIResponse.success_response(

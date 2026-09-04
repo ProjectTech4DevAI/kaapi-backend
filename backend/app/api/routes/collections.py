@@ -249,7 +249,7 @@ def collection_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
-    download: bool = Query(
+    is_downloadable: bool = Query(
         False,
         description=(
             "When true the signed URL forces a download under the document's "
@@ -285,7 +285,7 @@ def collection_info(
             documents=documents,
             storage=storage,
             include_url=include_url,
-            download=download,
+            is_downloadable=is_downloadable,
         )
 
     return APIResponse[CollectionWithDocsPublic].success_response(collection_with_docs)
