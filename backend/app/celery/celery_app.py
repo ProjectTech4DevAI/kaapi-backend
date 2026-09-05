@@ -44,6 +44,9 @@ def _initialize_worker_observability() -> None:
             release=settings.API_VERSION,
             instrumenter="otel",
             traces_sample_rate=1.0,
+            # LLM input/output is end-user text; never attach request/response
+            # bodies to error events or trace transactions.
+            max_request_body_size="never",
             enable_logs=True,
             before_send_transaction=before_send_transaction_filter,
             integrations=[

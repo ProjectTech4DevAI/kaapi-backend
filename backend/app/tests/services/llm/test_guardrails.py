@@ -58,9 +58,11 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     assert kwargs["json"]["input"] == TEST_TEXT
     assert kwargs["json"]["validators"] == TEST_CONFIG
     assert kwargs["json"]["request_id"] == str(TEST_JOB_ID)
-    assert kwargs["json"]["project_id"] == TEST_PROJECT_ID
-    assert kwargs["json"]["organization_id"] == TEST_ORGANIZATION_ID
-    assert kwargs["params"]["suppress_pass_logs"] == "true"
+    assert "project_id" not in kwargs["json"]
+    assert "organization_id" not in kwargs["json"]
+    assert kwargs["headers"]["X-PROJECT-ID"] == str(TEST_PROJECT_ID)
+    assert kwargs["headers"]["X-ORGANIZATION-ID"] == str(TEST_ORGANIZATION_ID)
+    assert kwargs["params"]["suppress_pass_logs"] == "false"
     assert kwargs["headers"]["Authorization"].startswith("Bearer ")
     assert kwargs["headers"]["Content-Type"] == "application/json"
 
@@ -68,8 +70,9 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     mock_response = MagicMock()
+    mock_response.status_code = 500
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "bad", request=None, response=None
+        "bad", request=MagicMock(), response=mock_response
     )
 
     mock_client = MagicMock()
@@ -87,6 +90,55 @@ def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     assert result["success"] is False
     assert result["bypassed"] is True
     assert result["data"]["safe_text"] == TEST_TEXT
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 422])
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_auth_error_fails_closed(
+    mock_client_cls, status_code
+) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "unauthorized", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    result = run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
+
+    assert result["success"] is False
+    assert result.get("bypassed") is False
+    assert "rejected the request" in result["error"]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_list_validators_config_auth_error_raises(mock_client_cls) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "forbidden", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    with pytest.raises(ValueError, match=r"rejected \(HTTP 403\)"):
+        list_validators_config(
+            input_validator_configs=[Validator(validator_config_id=uuid.uuid4())],
+            output_validator_configs=[],
+            organization_id=1,
+            project_id=1,
+        )
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -254,6 +306,8 @@ def test_list_validators_config_fetches_input_and_output_by_refs(
     assert second_call_kwargs["params"]["ids"] == [
         str(v.validator_config_id) for v in output_validator_configs
     ]
+    assert first_call_kwargs["headers"]["X-ORGANIZATION-ID"] == "1"
+    assert first_call_kwargs["headers"]["X-PROJECT-ID"] == "1"
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -273,7 +327,7 @@ def test_list_validators_config_empty_short_circuits_without_http(
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None:
+def test_list_validators_config_omits_none_tenant(mock_client_cls) -> None:
     input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
     mock_response = MagicMock()
@@ -297,6 +351,8 @@ def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None
     ]
     assert "organization_id" not in kwargs["params"]
     assert "project_id" not in kwargs["params"]
+    assert "X-ORGANIZATION-ID" not in kwargs["headers"]
+    assert "X-PROJECT-ID" not in kwargs["headers"]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")

@@ -412,6 +412,20 @@ def apply_input_guardrails(
 
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
+        if not outcome.safe_text.strip():
+            # A fix-mode validator that supplies no fix_value (e.g. topic_relevance
+            # with no built-in fix) falls back to "" — forwarding that to the LLM
+            # provider fails with a confusing provider-side error instead of a
+            # clear guardrails-blocked one.
+            logger.warning(
+                f"[apply_input_guardrails] Guardrails reduced input to empty text; "
+                f"blocking request | job_id={job_id}"
+            )
+            return (
+                query,
+                "Input guardrails rejected the request and left no usable content.",
+                None,
+            )
         query.input.content.value = outcome.safe_text
     return query, None, None
 
@@ -456,6 +470,15 @@ def apply_output_guardrails(
         return result, outcome.error
 
     if outcome.applied and outcome.safe_text is not None:
+        if not outcome.safe_text.strip():
+            logger.warning(
+                f"[apply_output_guardrails] Guardrails reduced output to empty text; "
+                f"blocking response | job_id={job_id}"
+            )
+            return (
+                result,
+                "Output guardrails rejected the response and left no usable content.",
+            )
         result.response.response.output.content.value = outcome.safe_text
     return result, None
 

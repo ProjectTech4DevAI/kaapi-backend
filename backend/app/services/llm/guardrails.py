@@ -1,16 +1,124 @@
 import json
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard
 from uuid import UUID
 
 import httpx
+from fastapi import HTTPException
+from opentelemetry import trace
 
 from app.core.config import settings
 from app.models.llm.request import Validator
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+
+GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
+
+
+def _guardrails_headers(
+    organization_id: int | None, project_id: int | None
+) -> dict[str, str]:
+    """Guardrails is internal-only: tenant travels in headers set from the
+    auth context, never from caller-supplied body/query fields."""
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
+        "Content-Type": "application/json",
+    }
+    if organization_id is not None:
+        headers["X-ORGANIZATION-ID"] = str(organization_id)
+    if project_id is not None:
+        headers["X-PROJECT-ID"] = str(project_id)
+    return headers
+
+
+def proxy_guardrails_request(
+    method: str,
+    path: str,
+    *,
+    organization_id: int,
+    project_id: int,
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> tuple[int, Any]:
+    """Forward a management-API call to the guardrails service verbatim.
+
+    No fail-open: these are synchronous CRUD calls, so upstream status codes and
+    bodies (including its 422s) are handed back to the caller unchanged.
+    """
+    url = f"{settings.KAAPI_GUARDRAILS_URL}{path}"
+    headers = _guardrails_headers(organization_id, project_id)
+    # Unset query params must be omitted, not sent as empty values.
+    query = {k: v for k, v in (params or {}).items() if v is not None}
+
+    logger.info(
+        f"[proxy_guardrails_request] Forwarding to guardrails | method: {method}, "
+        f"url: {url}, organization_id: {organization_id}, project_id: {project_id}"
+    )
+
+    try:
+        with (
+            tracer.start_as_current_span(
+                f"guardrails.proxy {method} {path}",
+                attributes={
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                },
+            ),
+            httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client,
+        ):
+            response = client.request(
+                method, url, params=query, json=json_body, headers=headers
+            )
+    except httpx.RequestError as e:
+        logger.error(
+            f"[proxy_guardrails_request] [KAAPI] Could not reach the guardrails service — "
+            f"retry shortly, and contact Kaapi if it persists (code: {type(e).__name__}) | "
+            f"method: {method}, url: {url}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502, detail="Guardrails service unavailable"
+        ) from e
+
+    if response.status_code >= 500:
+        logger.error(
+            f"[proxy_guardrails_request] [GUARDRAILS] Upstream error "
+            f"(code: {response.status_code}) | method: {method}, url: {url}"
+        )
+    elif response.status_code >= 400:
+        logger.warning(
+            f"[proxy_guardrails_request] [GUARDRAILS] Request rejected "
+            f"(code: {response.status_code}) | method: {method}, url: {url}"
+        )
+
+    if not response.content:
+        return response.status_code, None
+    try:
+        return response.status_code, response.json()
+    except ValueError:
+        logger.error(
+            f"[proxy_guardrails_request] [GUARDRAILS] Non-JSON response body "
+            f"(code: {response.status_code}) | method: {method}, url: {url}"
+        )
+        raise HTTPException(
+            status_code=502, detail="Guardrails service returned an invalid response"
+        ) from None
+
+
+def _is_auth_error(e: Exception) -> TypeGuard[httpx.HTTPStatusError]:
+    # 422 included: a missing/invalid tenant header is a backend bug, not a
+    # transient outage, so it must not fall open like one.
+    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (
+        401,
+        403,
+        422,
+    )
 
 
 @dataclass
@@ -95,7 +203,7 @@ def apply_guardrails(
         job_id,
         project_id,
         organization_id,
-        suppress_pass_logs=True,
+        suppress_pass_logs=False,
         output_text=output_text,
     )
 
@@ -134,11 +242,11 @@ def apply_guardrails(
 
 def run_guardrails_validation(
     input_text: str,
-    guardrail_config: list[Validator | dict[str, Any]],
+    guardrail_config: Sequence[Validator | dict[str, Any]],
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
-    suppress_pass_logs: bool = True,
+    suppress_pass_logs: bool = False,
     output_text: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -166,8 +274,6 @@ def run_guardrails_validation(
 
     payload = {
         "request_id": str(job_id),
-        "project_id": project_id,
-        "organization_id": organization_id,
         "input": input_text,
         "validators": validators,
     }
@@ -175,11 +281,7 @@ def run_guardrails_validation(
     if output_text is not None:
         payload["output"] = output_text
 
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
-        "Content-Type": "application/json",
-    }
+    headers = _guardrails_headers(organization_id, project_id)
 
     url = f"{settings.KAAPI_GUARDRAILS_URL}/"
     payload_bytes = json.dumps(payload).encode()
@@ -192,7 +294,18 @@ def run_guardrails_validation(
 
     started = time.monotonic()
     try:
-        with httpx.Client(timeout=45.0) as client:
+        with (
+            tracer.start_as_current_span(
+                "guardrails.proxy.validate",
+                attributes={
+                    "kaapi.job_id": str(job_id),
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                    "kaapi.validator_count": len(validators),
+                },
+            ),
+            httpx.Client(timeout=45.0) as client,
+        ):
             response = client.post(
                 url,
                 json=payload,
@@ -208,6 +321,21 @@ def run_guardrails_validation(
             return response.json()
     except Exception as e:
         elapsed_ms = int((time.monotonic() - started) * 1000)
+        if _is_auth_error(e):
+            # Auth failure means a broken deploy (token/IP mismatch), not a
+            # transient outage — fail the job instead of silently bypassing.
+            logger.error(
+                f"[run_guardrails_validation] Guardrails auth failed. "
+                f"job_id={job_id}, elapsed_ms={elapsed_ms}, error={e}"
+            )
+            status_code = e.response.status_code
+            return {
+                "success": False,
+                "bypassed": False,
+                # Status only — str(e) embeds the internal service URL and this
+                # string is client-visible via job.error_message.
+                "error": f"Guardrails service rejected the request (HTTP {status_code})",
+            }
         logger.warning(
             f"[run_guardrails_validation] Service unavailable. Bypassing guardrails. "
             f"job_id={job_id}, elapsed_ms={elapsed_ms}, error={e}"
@@ -247,24 +375,26 @@ def list_validators_config(
     if not input_validator_config_ids and not output_validator_config_ids:
         return [], []
 
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.KAAPI_GUARDRAILS_AUTH}",
-        "Content-Type": "application/json",
-    }
+    headers = _guardrails_headers(organization_id, project_id)
 
     endpoint = f"{settings.KAAPI_GUARDRAILS_URL}/validators/configs/"
 
     def _build_params(validator_ids: list[UUID]) -> dict[str, Any]:
-        params = {
-            "organization_id": organization_id,
-            "project_id": project_id,
+        return {
             "ids": [str(validator_config_id) for validator_config_id in validator_ids],
         }
-        return {key: value for key, value in params.items() if value is not None}
 
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with (
+            tracer.start_as_current_span(
+                "guardrails.proxy.list_validator_configs",
+                attributes={
+                    "kaapi.organization_id": str(organization_id),
+                    "kaapi.project_id": str(project_id),
+                },
+            ),
+            httpx.Client(timeout=10.0) as client,
+        ):
 
             def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
                 if not validator_ids:
@@ -300,6 +430,19 @@ def list_validators_config(
             return input_guardrails, output_guardrails
 
     except Exception as e:
+        if _is_auth_error(e):
+            # Propagate so job executors fail the job instead of running
+            # without guardrails on a misconfigured token/IP. Sanitized:
+            # str(e) embeds the internal service URL and the executors put
+            # this message into the client-visible job error.
+            logger.error(
+                f"[list_validators_config] Guardrails auth failed | "
+                f"organization_id={organization_id}, project_id={project_id}, "
+                f"endpoint={endpoint}, error={e}"
+            )
+            raise ValueError(
+                f"Guardrails config fetch rejected (HTTP {e.response.status_code})"
+            ) from e
         logger.warning(
             "[list_validators_config] Guardrails service unavailable or invalid response. "
             "Proceeding without input/output guardrails. "

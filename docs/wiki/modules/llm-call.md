@@ -10,7 +10,12 @@ All paths relative to `backend/app/`.
 - `api/routes/llm_chain.py` — chains
 - `api/routes/llm_sts.py` — speech-to-speech
 - `api/routes/config/config.py`, `api/routes/config/version.py` — saved config CRUD + versions
-- `api/routes/guardrails.py` — guardrail validators
+- `api/routes/guardrails.py` — `POST /guardrails` (async job) + `GET /guardrails/{job_id}` (poll), plus thin proxies over the internal kaapi-guardrails management API:
+  - `GET /guardrails` — validator catalogue
+  - `/guardrails/ban_lists` — POST, GET (`offset`, `limit`); `/{id}` GET/PATCH/DELETE
+  - `/guardrails/llm_prompt_configs` — POST, GET (`validator_name`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
+  - `/guardrails/validators/configs` — POST, GET (`ids`, `stage`, `type`); `/{id}` GET/PATCH/DELETE
+  - Gotcha: the fixed `/guardrails/*` paths must stay declared above `GET /guardrails/{job_id}` — FastAPI matches in declaration order and won't fall through on a UUID parse failure.
 
 ## Tables (SQLModel)
 | Table | Model |
