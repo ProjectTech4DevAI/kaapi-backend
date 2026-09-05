@@ -101,11 +101,6 @@ def _upstream_response(status_code: int, payload: Any) -> Response:
     return JSONResponse(status_code=status_code, content=payload)
 
 
-BAN_LISTS_PATH = "/ban_lists"
-LLM_PROMPT_CONFIGS_PATH = "/llm_prompt_configs"
-VALIDATOR_CONFIGS_PATH = "/validators/configs"
-
-
 # ROUTE ORDERING: every fixed single-segment path below collides with the
 # GET /guardrails/{job_id} route declared after this section. FastAPI matches in
 # declaration order and does not fall through when {job_id} fails UUID parsing,
@@ -136,7 +131,7 @@ def create_guardrails_ban_list(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
-        f"{BAN_LISTS_PATH}/",
+        "/ban_lists/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -150,15 +145,16 @@ def create_guardrails_ban_list(
 )
 def list_guardrails_ban_lists(
     _current_user: AuthContextDep,
+    domain: str | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{BAN_LISTS_PATH}/",
+        "/ban_lists/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        params={"offset": offset, "limit": limit},
+        params={"domain": domain, "offset": offset, "limit": limit},
     )
     return _upstream_response(status_code, payload)
 
@@ -172,7 +168,7 @@ def create_guardrails_llm_prompt_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
-        f"{LLM_PROMPT_CONFIGS_PATH}/",
+        "/llm_prompt_configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -192,7 +188,7 @@ def list_guardrails_llm_prompt_configs(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{LLM_PROMPT_CONFIGS_PATH}/",
+        "/llm_prompt_configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         params={"validator_name": validator_name, "offset": offset, "limit": limit},
@@ -209,7 +205,7 @@ def create_guardrails_validator_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
-        f"{VALIDATOR_CONFIGS_PATH}/",
+        "/validators/configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -229,7 +225,7 @@ def list_guardrails_validator_configs(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{VALIDATOR_CONFIGS_PATH}/",
+        "/validators/configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         params={
@@ -250,7 +246,7 @@ def get_guardrails_validator_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{VALIDATOR_CONFIGS_PATH}/{config_id}",
+        f"/validators/configs/{config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
@@ -266,7 +262,7 @@ def update_guardrails_validator_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
-        f"{VALIDATOR_CONFIGS_PATH}/{config_id}",
+        f"/validators/configs/{config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -283,7 +279,7 @@ def delete_guardrails_validator_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "DELETE",
-        f"{VALIDATOR_CONFIGS_PATH}/{config_id}",
+        f"/validators/configs/{config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
@@ -299,7 +295,7 @@ def get_guardrails_ban_list(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{BAN_LISTS_PATH}/{ban_list_id}",
+        f"/ban_lists/{ban_list_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
@@ -315,7 +311,7 @@ def update_guardrails_ban_list(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
-        f"{BAN_LISTS_PATH}/{ban_list_id}",
+        f"/ban_lists/{ban_list_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -332,7 +328,7 @@ def delete_guardrails_ban_list(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "DELETE",
-        f"{BAN_LISTS_PATH}/{ban_list_id}",
+        f"/ban_lists/{ban_list_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
@@ -348,7 +344,7 @@ def get_guardrails_llm_prompt_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "GET",
-        f"{LLM_PROMPT_CONFIGS_PATH}/{prompt_config_id}",
+        f"/llm_prompt_configs/{prompt_config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
@@ -364,7 +360,7 @@ def update_guardrails_llm_prompt_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
-        f"{LLM_PROMPT_CONFIGS_PATH}/{prompt_config_id}",
+        f"/llm_prompt_configs/{prompt_config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         json_body=body,
@@ -381,7 +377,7 @@ def delete_guardrails_llm_prompt_config(
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "DELETE",
-        f"{LLM_PROMPT_CONFIGS_PATH}/{prompt_config_id}",
+        f"/llm_prompt_configs/{prompt_config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
