@@ -10,7 +10,7 @@ from dataclasses import dataclass, asdict
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, NamedTuple
 import boto3
 from fastapi import UploadFile
 from botocore.exceptions import ClientError
@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 
 class CloudStorageError(Exception):
     pass
+
+
+class ObjectNotFoundError(CloudStorageError):
+    pass
+
+
+MISSING_OBJECT_CODES = ("404", "NoSuchKey")
+
+
+def _to_storage_error(err: ClientError, url: str) -> CloudStorageError:
+    """Map a botocore ClientError onto the storage exception hierarchy."""
+    message = f'AWS Error: "{err}" ({url})'
+    code = err.response.get("Error", {}).get("Code")
+    if code in MISSING_OBJECT_CODES:
+        return ObjectNotFoundError(message)
+    return CloudStorageError(message)
+
+
+class SignedUpload(NamedTuple):
+    url: str
+    # Effective expiry after capping, which may be shorter than what the caller asked for.
+    expires_in: int
 
 
 class AmazonCloudStorageClient:
@@ -125,10 +147,33 @@ class SimpleStorageName:
         return cls(Bucket=url.netloc, Key=str(path))
 
 
+# Leads the key rather than following storage_path: S3 lifecycle filters are literal
+# prefixes with no wildcard, so a per-project segment in front makes abandoned uploads
+# unreapable by a single rule.
+# WARNING: a live S3 lifecycle rule deletes everything under this prefix after 1 day
+# (staging + production buckets). Never write anything here that must outlive a day.
+STAGING_PREFIX = "pending"
+
+
 class CloudStorage(ABC):
     def __init__(self, project_id: int, storage_path: UUID):
         self.project_id = project_id
         self.storage_path = str(storage_path)
+
+    def url_for(self, file_path: Path) -> SimpleStorageName:
+        """Resolve a project-relative path into a fully qualified storage name.
+
+        The single place storage_path is joined — callers never build keys themselves.
+        """
+        if file_path.is_absolute():
+            raise ValueError("file_path must be relative to the project's storage root")
+        key = Path(self.storage_path) / file_path
+        return SimpleStorageName(key.as_posix())
+
+    def staging_url_for(self, file_path: Path) -> SimpleStorageName:
+        """Resolve a pre-registration staging key, under the bucket-wide staging prefix."""
+        name = self.url_for(file_path)
+        return SimpleStorageName(f"{STAGING_PREFIX}/{name.Key}", name.Bucket)
 
     @abstractmethod
     def put(self, source: UploadFile, filepath: Path) -> SimpleStorageName:
@@ -157,12 +202,18 @@ class CloudStorage(ABC):
 
     @abstractmethod
     def get_signed_upload_url(
-        self,
-        key: str,
-        content_type: str | None = None,
-        expires_in: int = 3600,
-    ) -> str:
-        """Generate a signed URL the client can upload (PUT) to directly"""
+        self, file_path: Path, expires_in: int = 3600
+    ) -> SignedUpload:
+        """Generate a signed URL the client can upload (PUT) to directly.
+
+        Always resolves through the staging prefix: nothing is ever presigned to a
+        final key, or an abandoned upload would be indistinguishable from a document.
+        """
+        pass
+
+    @abstractmethod
+    def copy(self, source_url: str, destination: Path) -> SimpleStorageName:
+        """Server-side copy of an existing object to a project-relative path"""
         pass
 
     @abstractmethod
@@ -177,10 +228,7 @@ class AmazonCloudStorage(CloudStorage):
         self.aws = AmazonCloudStorageClient()
 
     def put(self, source: UploadFile, file_path: Path) -> SimpleStorageName:
-        if file_path.is_absolute():
-            raise ValueError("file_path must be relative to the project's storage root")
-        key = Path(self.storage_path) / file_path
-        destination = SimpleStorageName(key.as_posix())
+        destination = self.url_for(file_path)
         kwargs = asdict(destination)
 
         try:
@@ -221,7 +269,7 @@ class AmazonCloudStorage(CloudStorage):
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
-            raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+            raise _to_storage_error(err, url) from err
 
     def get(self, url: str) -> bytes:
         name = SimpleStorageName.from_url(url)
@@ -240,7 +288,7 @@ class AmazonCloudStorage(CloudStorage):
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
-            raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+            raise _to_storage_error(err, url) from err
 
     def get_file_size_kb(self, url: str) -> float:
         name = SimpleStorageName.from_url(url)
@@ -260,7 +308,7 @@ class AmazonCloudStorage(CloudStorage):
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
-            raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+            raise _to_storage_error(err, url) from err
 
     # Maximum allowed expiry for signed URLs (24 hours)
     MAX_SIGNED_URL_EXPIRY = 86400
@@ -296,40 +344,47 @@ class AmazonCloudStorage(CloudStorage):
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
 
     def get_signed_upload_url(
-        self,
-        key: str,
-        content_type: str | None = None,
-        expires_in: int = 3600,
-    ) -> str:
+        self, file_path: Path, expires_in: int = 3600
+    ) -> SignedUpload:
         """
-        Generate a signed S3 URL the client can PUT a file to.
-        content_type, when set, is enforced: the client must send a matching header.
+        Generate a signed S3 URL the client can PUT raw bytes to, under the staging prefix.
+        No content type is signed, so the client sends no headers beyond the body.
         """
         expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
 
-        name = SimpleStorageName(key)
-        params: dict[str, str] = asdict(name)
-        if content_type:
-            params["ContentType"] = content_type
-
+        name = self.staging_url_for(file_path)
         try:
             signed_url = self.aws.client.generate_presigned_url(
                 "put_object",
-                Params=params,
+                Params=asdict(name),
                 ExpiresIn=expires_in,
             )
-            logger.info(
-                f"[AmazonCloudStorage.get_signed_upload_url] Signed upload URL generated | "
-                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'expires_in': {expires_in}}}"
-            )
-            return signed_url
+            return SignedUpload(url=signed_url, expires_in=expires_in)
         except ClientError as err:
             logger.error(
                 f"[AmazonCloudStorage.get_signed_upload_url] AWS presign error | "
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
-            raise CloudStorageError(f'AWS Error: "{err}" ({key})') from err
+            raise _to_storage_error(err, str(name)) from err
+
+    def copy(self, source_url: str, destination: Path) -> SimpleStorageName:
+        source = SimpleStorageName.from_url(source_url)
+        target = self.url_for(destination)
+        try:
+            self.aws.client.copy_object(
+                Bucket=target.Bucket,
+                Key=target.Key,
+                CopySource={"Bucket": source.Bucket, "Key": source.Key},
+            )
+            return target
+        except ClientError as err:
+            logger.error(
+                f"[AmazonCloudStorage.copy] AWS copy error | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(target.Bucket)}', 'source_key': '{_mask(source.Key)}', 'key': '{_mask(target.Key)}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            raise _to_storage_error(err, source_url) from err
 
     def delete(self, url: str) -> None:
         name = SimpleStorageName.from_url(url)
@@ -346,7 +401,7 @@ class AmazonCloudStorage(CloudStorage):
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )
-            raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
+            raise _to_storage_error(err, url) from err
 
 
 def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
