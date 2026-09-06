@@ -6,7 +6,8 @@ Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md` (§3 upload,
 All paths relative to `backend/app/`.
 
 ## Routes
-- `api/routes/documents.py` — upload/list
+- `api/routes/documents.py` — upload/list (v1 multipart upload, the only path that transforms)
+- `api/routes/documents_v2.py` — v2 pre-signed upload: `POST /documents/uploads` → 200 (issues a PUT URL to a pending key; nothing persisted) then `PUT /documents/{document_id}` → 201 (registers the pending object); no transformation
 - `api/routes/collections.py`, `api/routes/collection_job.py` — collection CRUD + job status
 - `api/routes/doc_transformation_job.py` — transform job status
 
@@ -22,7 +23,7 @@ All paths relative to `backend/app/`.
 
 ## Services / CRUD
 - `services/collections/` — `create_collection.py`, `delete_collection.py`, `providers/`, `helpers.py`
-- `services/documents/` — upload path
+- `services/documents/` — `helpers.py` (v1 upload path), `registration.py` (v2 upload policy), `validator.py`
 - `services/doctransform/` — `job.py`, `registry.py`, `transformer.py`, `zerox_transformer.py`
 - `crud/collection/`, `crud/document/`, `crud/document_collection.py`, `crud/rag/`, `crud/file.py`
 
@@ -34,6 +35,14 @@ All paths relative to `backend/app/`.
 
 ## Gotchas
 - Uploads de-duplicate by provider file ID (see deep dive §7).
+- v2 registration trusts only the extension and the object's size — bytes never reach the backend, so `validate_document_content` sniffing (v1 only) is skipped. Uploads land at `pending/{storage_path}/{document_id}{ext}`; registration verifies that key, copies to the final `{storage_path}/{document_id}` (same shape as v1), deletes the pending copy, and deletes it instead when oversized. Because the extension is baked into the pending key, a filename mismatch between the two calls needs no explicit check — the key simply misses and the normal 400 fires.
+- The pending prefix leads the key (`pending/{storage_path}/…`, not `{storage_path}/pending/…`) because **S3 lifecycle filters are literal prefixes with no wildcard support**. With the per-project `storage_path` in front, no single rule could match every project. `CloudStorage.url_for(path, is_pending=True)` owns this layout and `get_signed_upload_url` always routes through it — never presign to a final key. Note `PENDING_PREFIX` has nothing to do with the staging *environment*; it means "uploaded but not registered".
+- **`pending/` has a 1-day TTL. Do not write anything else under it.** An S3 lifecycle rule (`expire-pending-uploads`, `Prefix: pending/`, `Expiration: 1 day`) is live on `ai-platform-documents-staging` and `-production`, and reaps abandoned v2 uploads — nothing in application code does. Consequences to know before touching this prefix:
+  - Any object written under `pending/`, by any code path, is **deleted within ~24-48h** (lifecycle sweeps run about once a day, so expiry is not exact). Never park anything there you expect to keep.
+  - If you do add a new writer under `pending/`, say so in this gotcha and in the PR — a reviewer cannot see the bucket config from the diff.
+  - Anything that must outlive a day belongs at a different prefix, with its own lifecycle rule.
+  - The rule is **not** applied to `ai-platform-documents-development`, so local/dev orphans accumulate until someone clears them by hand.
+  - The rule lives only in the bucket config, not in this repo or in Terraform. Re-creating a bucket does not re-create it.
 - Collections are immutable-ish: deletion semantics in deep dive §10.
 - OpenAI file-batch id: the SDK's `file_batches.poll()` / `upload_and_poll()` final return deserializes a vector-store body, so its `.id` is the `vs_` id, not the `vsfb_` batch id. `crud/rag/open_ai.py` captures the batch id from `create()` before polling and uses it for `list_files`. Any failed file is a hard failure (whole vector store rolled back); partial indexing needs an add-documents endpoint first.
 - The SDK's `file_batches.poll()` never times out. `_poll_file_batch` polls `retrieve` in a loop with no internal deadline — the Celery soft time limit bounds it, and its `SoftTimeLimitExceeded` aborts the task. An earlier version took a deadline from the caller via a `task_budget` `ContextVar` (and a fixed `BATCH_POLL_TIMEOUT_SECONDS`); both were deleted. Don't reintroduce caller coupling here.

@@ -117,6 +117,26 @@ class DocumentUploadResponse(DocumentPublic):
     transformation_job: TransformationJobInfo | None = None
 
 
+class DocumentUploadRequest(SQLModel):
+    filename: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Original filename including its extension, e.g. report.pdf",
+    )
+
+
+class DocumentUploadInitiateResponse(SQLModel):
+    document_id: UUID = Field(
+        description="Identifier to register the document under; the registration endpoint takes it as a path parameter"
+    )
+    upload_signed_url: str = Field(
+        description="Pre-signed URL to PUT the raw file bytes to, with no auth header and no form encoding"
+    )
+    expires_in: int = Field(
+        description="Effective lifetime of the upload URL in seconds, after server-side capping"
+    )
+
+
 class DocTransformationJobPublic(SQLModel):
     job_id: UUID
     source_document_id: UUID
