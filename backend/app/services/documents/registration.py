@@ -83,7 +83,6 @@ def register_uploaded_document(
     )
 
     object_store_url = storage.copy(pending_url, Path(str(document_id)))
-    storage.delete(pending_url)
 
     try:
         document = document_crud.update(
@@ -100,4 +99,7 @@ def register_uploaded_document(
         session.rollback()
         raise HTTPException(status_code=409, detail=DUPLICATE_DOCUMENT_DETAIL)
 
+    # Only once the row is committed: a failed insert leaves the upload retryable,
+    # and an abandoned pending object expires on its own.
+    storage.delete(pending_url)
     return document
