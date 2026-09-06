@@ -1,4 +1,4 @@
-"""v2 document upload: pre-signed PUT to a staging key, then registration."""
+"""v2 document upload: pre-signed PUT to a pending key, then registration."""
 
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -14,8 +14,10 @@ from app.models import (
     DocumentUploadInitiateResponse,
     DocumentUploadRequest,
 )
-from app.services.documents.helpers import validate_filename_format
-from app.services.documents.registration import register_uploaded_document
+from app.services.documents.registration import (
+    register_uploaded_document,
+    validate_filename_format,
+)
 from app.utils import APIResponse, load_description
 
 router = APIRouter(prefix="/documents", tags=["Documents v2"])
@@ -39,7 +41,6 @@ def create_upload_url(
     storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
     document_id = uuid4()
     extension = Path(request.filename).suffix.lower()
-    # Extension baked into the staging key: a changed filename at registration simply misses it.
     signed = storage.get_signed_upload_url(
         Path(f"{document_id}{extension}"),
         expires_in=UPLOAD_URL_EXPIRY_SECONDS,
@@ -48,7 +49,7 @@ def create_upload_url(
     return APIResponse[DocumentUploadInitiateResponse].success_response(
         DocumentUploadInitiateResponse(
             document_id=document_id,
-            upload_url=signed.url,
+            upload_signed_url=signed.url,
             expires_in=signed.expires_in,
         )
     )

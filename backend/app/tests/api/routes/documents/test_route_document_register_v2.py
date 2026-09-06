@@ -24,8 +24,8 @@ DOCUMENTS_ROUTE = f"{settings.API_V2_STR}/documents"
 UPLOADS_ROUTE = f"{DOCUMENTS_ROUTE}/uploads"
 
 
-def staged_key(auth: TestAuthContext, document_id: UUID, extension: str) -> str:
-    # The staging prefix leads the key so one S3 lifecycle rule covers every project.
+def pending_key(auth: TestAuthContext, document_id: UUID, extension: str) -> str:
+    # The pending prefix leads the key so one S3 lifecycle rule covers every project.
     return f"pending/{auth.project.storage_path}/{document_id}{extension}"
 
 
@@ -60,7 +60,7 @@ def register(
 @mock_aws
 @pytest.mark.usefixtures("aws_credentials")
 class TestDocumentRegisterV2:
-    def test_registers_staged_object_under_its_final_key(
+    def test_registers_pending_object_under_its_final_key(
         self,
         db: Session,
         client: TestClient,
@@ -68,8 +68,8 @@ class TestDocumentRegisterV2:
     ) -> None:
         AmazonCloudStorageClient().create()
         document_id = uuid4()
-        staged = staged_key(user_api_key, document_id, ".pdf")
-        put_object(staged, b"x" * 2048)
+        pending = pending_key(user_api_key, document_id, ".pdf")
+        put_object(pending, b"x" * 2048)
 
         response = register(client, user_api_key, document_id, "report.pdf")
 
@@ -88,7 +88,7 @@ class TestDocumentRegisterV2:
         )
         assert document.project_id == user_api_key.project_id
 
-        assert_absent(staged)
+        assert_absent(pending)
 
     def test_extension_other_than_the_presigned_one_is_rejected(
         self,
@@ -98,18 +98,18 @@ class TestDocumentRegisterV2:
     ) -> None:
         AmazonCloudStorageClient().create()
         document_id = uuid4()
-        staged = staged_key(user_api_key, document_id, ".pdf")
-        put_object(staged, b"x" * 1024)
+        pending = pending_key(user_api_key, document_id, ".pdf")
+        put_object(pending, b"x" * 1024)
 
         response = register(client, user_api_key, document_id, "report.txt")
 
         assert response.status_code == 400
         assert "No uploaded file found" in response.json()["error"]
         assert db.get(Document, document_id) is None
-        # The bytes the client actually staged are untouched, so a retry with the
+        # The bytes the client actually uploaded are untouched, so a retry with the
         # right filename still works.
         assert AmazonCloudStorageClient().client.head_object(
-            Bucket=settings.AWS_S3_BUCKET, Key=staged
+            Bucket=settings.AWS_S3_BUCKET, Key=pending
         )
 
     def test_missing_object_is_rejected(
@@ -135,8 +135,8 @@ class TestDocumentRegisterV2:
     ) -> None:
         AmazonCloudStorageClient().create()
         document_id = uuid4()
-        staged = staged_key(user_api_key, document_id, ".pdf")
-        put_object(staged, b"x" * 1024)
+        pending = pending_key(user_api_key, document_id, ".pdf")
+        put_object(pending, b"x" * 1024)
 
         # Faking the reported size keeps a >25 MB body out of the test.
         oversized_kb = (MAX_DOC_SIZE_MB + 1) * 1024
@@ -148,7 +148,7 @@ class TestDocumentRegisterV2:
         assert response.status_code == 413
         assert "exceeds the maximum allowed size" in response.json()["error"]
         assert db.get(Document, document_id) is None
-        assert_absent(staged)
+        assert_absent(pending)
         assert_absent(final_key(user_api_key, document_id))
 
     def test_duplicate_document_id_is_rejected(
@@ -161,7 +161,7 @@ class TestDocumentRegisterV2:
         existing = next(DocumentMaker(project_id=user_api_key.project_id, session=db))
         db.add(existing)
         db.commit()
-        put_object(staged_key(user_api_key, existing.id, ".pdf"), b"x" * 1024)
+        put_object(pending_key(user_api_key, existing.id, ".pdf"), b"x" * 1024)
 
         response = register(client, user_api_key, existing.id, "report.pdf")
 
@@ -185,7 +185,7 @@ class TestDocumentRegisterV2:
         with Session(engine) as outside:
             outside.add(winner)
             outside.commit()
-        put_object(staged_key(user_api_key, document_id, ".pdf"), b"x" * 1024)
+        put_object(pending_key(user_api_key, document_id, ".pdf"), b"x" * 1024)
 
         try:
             # exists() returning False simulates the racing request that also saw no row.
@@ -230,7 +230,7 @@ class TestDocumentRegisterV2:
     ) -> None:
         AmazonCloudStorageClient().create()
         document_id = uuid4()
-        put_object(staged_key(user_api_key, document_id, ".xyz"), b"x" * 1024)
+        put_object(pending_key(user_api_key, document_id, ".xyz"), b"x" * 1024)
 
         response = register(client, user_api_key, document_id, "report.xyz")
 
@@ -264,7 +264,7 @@ class TestDocumentUploadRoundTripV2:
             json={"filename": "handbook.pdf"},
         )
         assert url_response.status_code == 200
-        upload_url = url_response.json()["data"]["upload_url"]
+        upload_url = url_response.json()["data"]["upload_signed_url"]
         document_id = UUID(url_response.json()["data"]["document_id"])
 
         put_response = requests.put(upload_url, data=b"y" * 3072)
@@ -281,4 +281,4 @@ class TestDocumentUploadRoundTripV2:
         assert document.object_store_url == (
             f"s3://{settings.AWS_S3_BUCKET}/{final_key(user_api_key, document_id)}"
         )
-        assert_absent(staged_key(user_api_key, document_id, ".pdf"))
+        assert_absent(pending_key(user_api_key, document_id, ".pdf"))

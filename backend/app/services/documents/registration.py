@@ -12,22 +12,30 @@ from app.core.cloud.storage import CloudStorage, ObjectNotFoundError
 from app.crud import DocumentCrud
 from app.models import Document
 from app.services.collections.helpers import MAX_DOC_SIZE_MB
-from app.services.documents.helpers import validate_filename_format
+from app.services.doctransform.registry import get_file_format
 
 DUPLICATE_DOCUMENT_DETAIL = (
     "This document_id is already registered. Request a new upload URL."
 )
 
 
-def verify_staged_object(
+def validate_filename_format(filename: str) -> str:
+    """Resolve the document format from the extension; HTTPException(400) if unsupported."""
+    try:
+        return get_file_format(filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def verify_pending_object(
     *,
     storage: CloudStorage,
-    staged_url: str,
+    pending_url: str,
     document_id: UUID,
 ) -> float:
-    """Confirm the staged object exists and fits the size budget; return size in KB."""
+    """Confirm the pending object exists and fits the size budget; return size in KB."""
     try:
-        file_size_kb = storage.get_file_size_kb(staged_url)
+        file_size_kb = storage.get_file_size_kb(pending_url)
     except ObjectNotFoundError:
         raise HTTPException(
             status_code=400,
@@ -38,7 +46,7 @@ def verify_staged_object(
 
     file_size_mb = file_size_kb / 1024
     if file_size_mb > MAX_DOC_SIZE_MB:
-        storage.delete(staged_url)
+        storage.delete(pending_url)
         raise HTTPException(
             status_code=413,
             detail=f"Document size ({round(file_size_mb, 2)} MB) exceeds the maximum allowed size of {MAX_DOC_SIZE_MB} MB. "
@@ -64,16 +72,18 @@ def register_uploaded_document(
 
     storage = get_cloud_storage(session=session, project_id=project_id)
     extension = Path(filename).suffix.lower()
-    staged_url = str(storage.staging_url_for(Path(f"{document_id}{extension}")))
+    pending_url = str(
+        storage.url_for(Path(f"{document_id}{extension}"), is_pending=True)
+    )
 
-    file_size_kb = verify_staged_object(
+    file_size_kb = verify_pending_object(
         storage=storage,
-        staged_url=staged_url,
+        pending_url=pending_url,
         document_id=document_id,
     )
 
-    object_store_url = storage.copy(staged_url, Path(str(document_id)))
-    storage.delete(staged_url)
+    object_store_url = storage.copy(pending_url, Path(str(document_id)))
+    storage.delete(pending_url)
 
     try:
         document = document_crud.update(

@@ -41,10 +41,18 @@ class TestUrlFor:
     def test_joins_the_projects_storage_path(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
 
-        name = storage.url_for(Path("pending") / "report.pdf")
+        name = storage.url_for(Path("report.pdf"))
 
-        assert name.Key == f"{storage.storage_path}/pending/report.pdf"
+        assert name.Key == f"{storage.storage_path}/report.pdf"
         assert name.Bucket == settings.AWS_S3_BUCKET
+
+    def test_pending_prefix_leads_the_key(self) -> None:
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+
+        name = storage.url_for(Path("report.pdf"), is_pending=True)
+
+        # Ahead of storage_path, not after it: one literal-prefix rule must match every project.
+        assert name.Key == f"pending/{storage.storage_path}/report.pdf"
 
     def test_absolute_path_is_rejected(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
@@ -131,9 +139,9 @@ class TestCopy:
         aws = AmazonCloudStorageClient()
         aws.create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        source = storage.url_for(Path("pending") / "staged.pdf")
+        source = storage.url_for(Path("waiting.pdf"), is_pending=True)
         aws.client.put_object(
-            Bucket=source.Bucket, Key=source.Key, Body=b"staged bytes"
+            Bucket=source.Bucket, Key=source.Key, Body=b"pending bytes"
         )
         destination = Path("final.pdf")
 
@@ -143,12 +151,12 @@ class TestCopy:
             Key=f"{storage.storage_path}/final.pdf", Bucket=settings.AWS_S3_BUCKET
         )
         copied = aws.client.get_object(Bucket=target.Bucket, Key=target.Key)
-        assert copied["Body"].read() == b"staged bytes"
+        assert copied["Body"].read() == b"pending bytes"
 
     def test_missing_source_raises_object_not_found(self) -> None:
         AmazonCloudStorageClient().create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        source = str(storage.url_for(Path("pending") / "absent.pdf"))
+        source = str(storage.url_for(Path("absent.pdf"), is_pending=True))
 
         with pytest.raises(ObjectNotFoundError):
             storage.copy(source, Path("final.pdf"))

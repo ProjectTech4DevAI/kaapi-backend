@@ -87,14 +87,6 @@ def calculate_file_size(file: UploadFile) -> float:
     return round(size_bytes / 1024)
 
 
-def validate_filename_format(filename: str) -> str:
-    """Resolve document format from the extension; HTTPException(400) if unsupported."""
-    try:
-        return get_file_format(filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 def pre_transform_validation(
     *,
     src_filename: str,
@@ -110,7 +102,10 @@ def pre_transform_validation(
     Returns: (source_format, actual_transformer_or_none)
     Raises: HTTPException(400) on client errors.
     """
-    source_format = validate_filename_format(src_filename)
+    try:
+        source_format = get_file_format(src_filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     actual_transformer: Optional[str] = None
     if target_format:

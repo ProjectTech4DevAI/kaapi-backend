@@ -20,15 +20,15 @@ def signed_key(upload_url: str) -> str:
     return path.removeprefix(f"{settings.AWS_S3_BUCKET}/")
 
 
-def staged_key(auth: TestAuthContext, document_id: str, extension: str) -> str:
-    # The staging prefix leads the key so one S3 lifecycle rule covers every project.
+def pending_key(auth: TestAuthContext, document_id: str, extension: str) -> str:
+    # The pending prefix leads the key so one S3 lifecycle rule covers every project.
     return f"pending/{auth.project.storage_path}/{document_id}{extension}"
 
 
 @mock_aws
 @pytest.mark.usefixtures("aws_credentials")
 class TestDocumentUploadsV2:
-    def test_returns_presigned_put_url_for_staging_key(
+    def test_returns_presigned_put_url_for_pending_key(
         self,
         db: Session,
         client: TestClient,
@@ -47,9 +47,11 @@ class TestDocumentUploadsV2:
         assert data["expires_in"] == 3600
 
         document_id = UUID(data["document_id"])
-        staging_key = f"pending/{user_api_key.project.storage_path}/{document_id}.pdf"
-        assert staging_key in data["upload_url"]
-        assert "X-Amz-Signature" in data["upload_url"]
+        assert (
+            pending_key(user_api_key, str(document_id), ".pdf")
+            in data["upload_signed_url"]
+        )
+        assert "X-Amz-Signature" in data["upload_signed_url"]
 
     def test_upload_url_does_not_target_the_final_key(
         self,
@@ -66,12 +68,12 @@ class TestDocumentUploadsV2:
         )
 
         data = response.json()["data"]
-        # Compared whole: the final key is a substring of the staged one, so `not in` never holds.
-        key = signed_key(data["upload_url"])
-        assert key == staged_key(user_api_key, data["document_id"], ".pdf")
+        # Compared whole: the final key is a substring of the pending one, so `not in` never holds.
+        key = signed_key(data["upload_signed_url"])
+        assert key == pending_key(user_api_key, data["document_id"], ".pdf")
         assert key != f"{user_api_key.project.storage_path}/{data['document_id']}"
 
-    def test_extension_is_lowercased_in_the_staging_key(
+    def test_extension_is_lowercased_in_the_pending_key(
         self,
         db: Session,
         client: TestClient,
@@ -86,10 +88,10 @@ class TestDocumentUploadsV2:
         )
 
         data = response.json()["data"]
-        staging_key = (
-            f"pending/{user_api_key.project.storage_path}/{data['document_id']}.pdf"
+        assert (
+            pending_key(user_api_key, data["document_id"], ".pdf")
+            in data["upload_signed_url"]
         )
-        assert staging_key in data["upload_url"]
 
     def test_does_not_create_document_row(
         self,

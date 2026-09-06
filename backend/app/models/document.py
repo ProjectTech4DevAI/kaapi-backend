@@ -127,9 +127,9 @@ class DocumentUploadRequest(SQLModel):
 
 class DocumentUploadInitiateResponse(SQLModel):
     document_id: UUID = Field(
-        description="Identifier of the document to be; the completion endpoint takes it as a path parameter"
+        description="Identifier to register the document under; the registration endpoint takes it as a path parameter"
     )
-    upload_url: str = Field(
+    upload_signed_url: str = Field(
         description="Pre-signed URL to PUT the raw file bytes to, with no auth header and no form encoding"
     )
     expires_in: int = Field(

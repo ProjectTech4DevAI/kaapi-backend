@@ -147,12 +147,10 @@ class SimpleStorageName:
         return cls(Bucket=url.netloc, Key=str(path))
 
 
-# Leads the key rather than following storage_path: S3 lifecycle filters are literal
-# prefixes with no wildcard, so a per-project segment in front makes abandoned uploads
-# unreapable by a single rule.
-# WARNING: a live S3 lifecycle rule deletes everything under this prefix after 1 day
-# (staging + production buckets). Never write anything here that must outlive a day.
-STAGING_PREFIX = "pending"
+# Unregistered uploads. Unrelated to the staging *environment*: this is a holding
+# area, and one literal-prefix lifecycle rule reaps it for every project.
+PENDING_PREFIX = "pending"
+PENDING_TTL_DAYS = 1
 
 
 class CloudStorage(ABC):
@@ -160,20 +158,25 @@ class CloudStorage(ABC):
         self.project_id = project_id
         self.storage_path = str(storage_path)
 
-    def url_for(self, file_path: Path) -> SimpleStorageName:
+    def url_for(self, file_path: Path, is_pending: bool = False) -> SimpleStorageName:
         """Resolve a project-relative path into a fully qualified storage name.
 
-        The single place storage_path is joined — callers never build keys themselves.
+        The single place a key is built — callers never join storage_path themselves.
+
+        Args:
+            file_path: Path relative to the project's storage root.
+            is_pending: Place the key under ``PENDING_PREFIX`` — the holding area for
+                uploads that have not been registered yet. An S3 lifecycle rule deletes
+                everything there after ``PENDING_TTL_DAYS`` (1 day), so pass True only
+                for objects that are meant to disappear if registration never happens.
+                Registered documents use the default (False) and are never expired.
         """
         if file_path.is_absolute():
             raise ValueError("file_path must be relative to the project's storage root")
-        key = Path(self.storage_path) / file_path
-        return SimpleStorageName(key.as_posix())
-
-    def staging_url_for(self, file_path: Path) -> SimpleStorageName:
-        """Resolve a pre-registration staging key, under the bucket-wide staging prefix."""
-        name = self.url_for(file_path)
-        return SimpleStorageName(f"{STAGING_PREFIX}/{name.Key}", name.Bucket)
+        roots = (
+            (PENDING_PREFIX, self.storage_path) if is_pending else (self.storage_path,)
+        )
+        return SimpleStorageName(Path(*roots, file_path).as_posix())
 
     @abstractmethod
     def put(self, source: UploadFile, filepath: Path) -> SimpleStorageName:
@@ -206,8 +209,8 @@ class CloudStorage(ABC):
     ) -> SignedUpload:
         """Generate a signed URL the client can upload (PUT) to directly.
 
-        Always resolves through the staging prefix: nothing is ever presigned to a
-        final key, or an abandoned upload would be indistinguishable from a document.
+        Always resolves under PENDING_PREFIX: nothing is ever presigned to a final
+        key, or an abandoned upload would be indistinguishable from a document.
         """
         pass
 
@@ -347,12 +350,12 @@ class AmazonCloudStorage(CloudStorage):
         self, file_path: Path, expires_in: int = 3600
     ) -> SignedUpload:
         """
-        Generate a signed S3 URL the client can PUT raw bytes to, under the staging prefix.
+        Generate a signed S3 URL the client can PUT raw bytes to, under PENDING_PREFIX.
         No content type is signed, so the client sends no headers beyond the body.
         """
         expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
 
-        name = self.staging_url_for(file_path)
+        name = self.url_for(file_path, is_pending=True)
         try:
             signed_url = self.aws.client.generate_presigned_url(
                 "put_object",
