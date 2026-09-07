@@ -1,5 +1,4 @@
-from urllib.parse import urlparse
-from uuid import UUID
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,21 +13,15 @@ from app.tests.utils.auth import TestAuthContext
 UPLOADS_ROUTE = f"{settings.API_V2_STR}/documents/uploads"
 
 
-def signed_key(upload_url: str) -> str:
-    """The object key a pre-signed URL points at, with host and bucket stripped."""
-    path = urlparse(upload_url).path.lstrip("/")
-    return path.removeprefix(f"{settings.AWS_S3_BUCKET}/")
-
-
-def pending_key(auth: TestAuthContext, document_id: str, extension: str) -> str:
-    # The pending prefix leads the key so one S3 lifecycle rule covers every project.
-    return f"pending/{auth.project.storage_path}/{document_id}{extension}"
+def pending_key(auth: TestAuthContext, document_id: str) -> str:
+    # No extension: the filename lives in signed metadata, not in the key.
+    return f"pending/{auth.project.storage_path}/{document_id}"
 
 
 @mock_aws
 @pytest.mark.usefixtures("aws_credentials")
 class TestDocumentUploadsV2:
-    def test_returns_presigned_put_url_for_pending_key(
+    def test_returns_presigned_post_for_pending_key(
         self,
         db: Session,
         client: TestClient,
@@ -46,14 +39,11 @@ class TestDocumentUploadsV2:
         data = response.json()["data"]
         assert data["expires_in"] == 3600
 
-        document_id = UUID(data["document_id"])
-        assert (
-            pending_key(user_api_key, str(document_id), ".pdf")
-            in data["upload_signed_url"]
-        )
-        assert "X-Amz-Signature" in data["upload_signed_url"]
+        fields = data["upload_fields"]
+        assert fields["key"] == pending_key(user_api_key, data["document_id"])
+        assert "x-amz-signature" in fields
 
-    def test_upload_url_does_not_target_the_final_key(
+    def test_upload_target_is_the_pending_key_not_the_final_one(
         self,
         db: Session,
         client: TestClient,
@@ -68,12 +58,11 @@ class TestDocumentUploadsV2:
         )
 
         data = response.json()["data"]
-        # Compared whole: the final key is a substring of the pending one, so `not in` never holds.
-        key = signed_key(data["upload_signed_url"])
-        assert key == pending_key(user_api_key, data["document_id"], ".pdf")
+        key = data["upload_fields"]["key"]
+        assert key == pending_key(user_api_key, data["document_id"])
         assert key != f"{user_api_key.project.storage_path}/{data['document_id']}"
 
-    def test_extension_is_lowercased_in_the_pending_key(
+    def test_filename_is_pinned_in_signed_metadata(
         self,
         db: Session,
         client: TestClient,
@@ -84,14 +73,12 @@ class TestDocumentUploadsV2:
         response = client.post(
             UPLOADS_ROUTE,
             headers={"X-API-KEY": user_api_key.key},
-            json={"filename": "Quarterly-Report.PDF"},
+            json={"filename": "Quarterly Report.pdf"},
         )
 
-        data = response.json()["data"]
-        assert (
-            pending_key(user_api_key, data["document_id"], ".pdf")
-            in data["upload_signed_url"]
-        )
+        # Signed as a field so the client cannot change it; URL-encoded for the header.
+        fields = response.json()["data"]["upload_fields"]
+        assert fields["x-amz-meta-filename"] == quote("Quarterly Report.pdf")
 
     def test_does_not_create_document_row(
         self,
@@ -106,6 +93,8 @@ class TestDocumentUploadsV2:
             headers={"X-API-KEY": user_api_key.key},
             json={"filename": "notes.txt"},
         )
+
+        from uuid import UUID
 
         document_id = UUID(response.json()["data"]["document_id"])
         assert db.get(Document, document_id) is None

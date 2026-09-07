@@ -7,7 +7,7 @@ import logging
 import functools as ft
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, quote, unquote, urlparse, urlunparse
 
 from abc import ABC, abstractmethod
 from typing import Any, NamedTuple
@@ -52,10 +52,23 @@ def _to_storage_error(err: ClientError, url: str) -> CloudStorageError:
     return CloudStorageError(message)
 
 
-class SignedUpload(NamedTuple):
+# S3 user-metadata key that carries the client's filename, signed into the upload
+# ticket so the client cannot change it and registration can read it back.
+FILENAME_METADATA_KEY = "filename"
+
+
+class UploadTicket(NamedTuple):
     url: str
+    # Form fields the client must POST alongside the file, the file part last.
+    fields: dict[str, str]
     # Effective expiry after capping, which may be shorter than what the caller asked for.
     expires_in: int
+
+
+class StoredObject(NamedTuple):
+    size_kb: float
+    # The client filename recovered from object metadata, None if the object carries none.
+    filename: str | None
 
 
 class AmazonCloudStorageClient:
@@ -199,16 +212,28 @@ class CloudStorage(ABC):
         pass
 
     @abstractmethod
+    def head(self, url: str) -> StoredObject:
+        """Return the object's size and the filename recorded in its metadata."""
+        pass
+
+    @abstractmethod
     def get_signed_url(self, url: str, expires_in: int = 3600) -> str:
         """Generate a signed URL with an optional expiry"""
         pass
 
     @abstractmethod
-    def get_signed_upload_url(
-        self, file_path: Path, expires_in: int = 3600
-    ) -> SignedUpload:
-        """Generate a signed URL the client can upload (PUT) to directly.
+    def create_upload_ticket(
+        self,
+        file_path: Path,
+        *,
+        filename: str,
+        max_bytes: int,
+        expires_in: int = 3600,
+    ) -> UploadTicket:
+        """Create a pre-signed POST the client uploads a file directly to.
 
+        The ticket caps the body at max_bytes (S3 rejects anything larger at the
+        edge) and pins filename into signed metadata so the client cannot change it.
         Always resolves under PENDING_PREFIX: nothing is ever presigned to a final
         key, or an abandoned upload would be indistinguishable from a document.
         """
@@ -313,6 +338,24 @@ class AmazonCloudStorage(CloudStorage):
             )
             raise _to_storage_error(err, url) from err
 
+    def head(self, url: str) -> StoredObject:
+        name = SimpleStorageName.from_url(url)
+        try:
+            response = self.aws.client.head_object(**asdict(name))
+        except ClientError as err:
+            logger.error(
+                f"[AmazonCloudStorage.head] AWS head object error | "
+                f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
+                exc_info=True,
+            )
+            raise _to_storage_error(err, url) from err
+
+        encoded = response.get("Metadata", {}).get(FILENAME_METADATA_KEY)
+        return StoredObject(
+            size_kb=round(response["ContentLength"] / 1024, 2),
+            filename=unquote(encoded) if encoded else None,
+        )
+
     # Maximum allowed expiry for signed URLs (24 hours)
     MAX_SIGNED_URL_EXPIRY = 86400
 
@@ -346,26 +389,41 @@ class AmazonCloudStorage(CloudStorage):
             )
             raise CloudStorageError(f'AWS Error: "{err}" ({url})') from err
 
-    def get_signed_upload_url(
-        self, file_path: Path, expires_in: int = 3600
-    ) -> SignedUpload:
+    def create_upload_ticket(
+        self,
+        file_path: Path,
+        *,
+        filename: str,
+        max_bytes: int,
+        expires_in: int = 3600,
+    ) -> UploadTicket:
         """
-        Generate a signed S3 URL the client can PUT raw bytes to, under PENDING_PREFIX.
-        No content type is signed, so the client sends no headers beyond the body.
+        Pre-signed POST the client uploads to, under PENDING_PREFIX. The size cap is
+        enforced by S3 at the edge, and the filename is signed into metadata so it
+        cannot be swapped between issuing the ticket and registration.
         """
         expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
 
         name = self.url_for(file_path, is_pending=True)
+        encoded = quote(filename)
+        meta_field = f"x-amz-meta-{FILENAME_METADATA_KEY}"
         try:
-            signed_url = self.aws.client.generate_presigned_url(
-                "put_object",
-                Params=asdict(name),
+            post = self.aws.client.generate_presigned_post(
+                name.Bucket,
+                name.Key,
+                Fields={meta_field: encoded},
+                Conditions=[
+                    ["content-length-range", 1, max_bytes],
+                    {meta_field: encoded},
+                ],
                 ExpiresIn=expires_in,
             )
-            return SignedUpload(url=signed_url, expires_in=expires_in)
+            return UploadTicket(
+                url=post["url"], fields=post["fields"], expires_in=expires_in
+            )
         except ClientError as err:
             logger.error(
-                f"[AmazonCloudStorage.get_signed_upload_url] AWS presign error | "
+                f"[AmazonCloudStorage.create_upload_ticket] AWS presign error | "
                 f"{{'project_id': '{self.project_id}', 'bucket': '{_mask(name.Bucket)}', 'key': '{_mask(name.Key)}', 'error': '{str(err)}'}}",
                 exc_info=True,
             )

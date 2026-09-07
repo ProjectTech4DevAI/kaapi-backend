@@ -129,8 +129,9 @@ class DocumentUploadInitiateResponse(SQLModel):
     document_id: UUID = Field(
         description="Identifier to register the document under; the registration endpoint takes it as a path parameter"
     )
-    upload_signed_url: str = Field(
-        description="Pre-signed URL to PUT the raw file bytes to, with no auth header and no form encoding"
+    upload_url: str = Field(description="URL to POST the file to")
+    upload_fields: dict[str, str] = Field(
+        description="Form fields to send with the file in the multipart POST, the file part last"
     )
     expires_in: int = Field(
         description="Effective lifetime of the upload URL in seconds, after server-side capping"

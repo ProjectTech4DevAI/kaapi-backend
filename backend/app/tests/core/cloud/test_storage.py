@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import quote
 from uuid import uuid4
 
 import pytest
@@ -78,58 +78,98 @@ class TestToStorageError:
 
 @mock_aws
 @pytest.mark.usefixtures("aws_credentials")
-class TestGetSignedUploadURL:
-    def test_url_targets_the_requested_key(self) -> None:
+class TestCreateUploadTicket:
+    def test_targets_the_pending_key(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        file_path = Path("pending") / f"{uuid4()}.pdf"
+        document_id = uuid4()
 
-        signed = storage.get_signed_upload_url(file_path)
+        ticket = storage.create_upload_ticket(
+            Path(str(document_id)), filename="report.pdf", max_bytes=25 * 1024 * 1024
+        )
 
-        parsed = urlparse(signed.url)
-        assert parsed.path.endswith(f"{storage.storage_path}/{file_path}")
-        assert settings.AWS_S3_BUCKET in f"{parsed.netloc}{parsed.path}"
-        assert "X-Amz-Signature" in parse_qs(parsed.query)
+        assert ticket.fields["key"] == f"pending/{storage.storage_path}/{document_id}"
+        assert "x-amz-signature" in ticket.fields
+
+    def test_filename_is_pinned_url_encoded(self) -> None:
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+
+        ticket = storage.create_upload_ticket(
+            Path(str(uuid4())), filename="my report.pdf", max_bytes=1024
+        )
+
+        assert ticket.fields["x-amz-meta-filename"] == quote("my report.pdf")
 
     def test_expiry_is_capped_at_one_day(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
 
-        signed = storage.get_signed_upload_url(
-            Path("key.pdf"), expires_in=7 * 24 * 3600
+        ticket = storage.create_upload_ticket(
+            Path("f"), filename="a.pdf", max_bytes=1024, expires_in=7 * 24 * 3600
         )
 
-        assert signed.expires_in == 86400
-        assert parse_qs(urlparse(signed.url).query)["X-Amz-Expires"] == ["86400"]
+        assert ticket.expires_in == 86400
 
     def test_shorter_expiry_is_preserved(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
 
-        signed = storage.get_signed_upload_url(Path("key.pdf"), expires_in=600)
+        ticket = storage.create_upload_ticket(
+            Path("f"), filename="a.pdf", max_bytes=1024, expires_in=600
+        )
 
-        assert signed.expires_in == 600
-        assert parse_qs(urlparse(signed.url).query)["X-Amz-Expires"] == ["600"]
+        assert ticket.expires_in == 600
 
     def test_aws_error_is_wrapped(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
 
         with patch.object(
             storage.aws.client,
-            "generate_presigned_url",
+            "generate_presigned_post",
             side_effect=client_error("AccessDenied", "PutObject"),
         ):
             with pytest.raises(CloudStorageError, match="AccessDenied"):
-                storage.get_signed_upload_url(Path("key.pdf"))
+                storage.create_upload_ticket(
+                    Path("f"), filename="a.pdf", max_bytes=1024
+                )
 
 
 @mock_aws
 @pytest.mark.usefixtures("aws_credentials")
-class TestGetFileSizeKB:
+class TestHead:
+    def test_returns_size_and_decoded_filename(self) -> None:
+        aws = AmazonCloudStorageClient()
+        aws.create()
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+        name = storage.url_for(Path(str(uuid4())), is_pending=True)
+        aws.client.put_object(
+            Bucket=name.Bucket,
+            Key=name.Key,
+            Body=b"x" * 2048,
+            Metadata={"filename": quote("my report.pdf")},
+        )
+
+        stored = storage.head(str(name))
+
+        assert stored.size_kb == 2.0
+        assert stored.filename == "my report.pdf"
+
+    def test_filename_is_none_without_metadata(self) -> None:
+        aws = AmazonCloudStorageClient()
+        aws.create()
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+        name = storage.url_for(Path(str(uuid4())))
+        aws.client.put_object(Bucket=name.Bucket, Key=name.Key, Body=b"x" * 1024)
+
+        stored = storage.head(str(name))
+
+        assert stored.size_kb == 1.0
+        assert stored.filename is None
+
     def test_missing_key_raises_object_not_found(self) -> None:
         AmazonCloudStorageClient().create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        url = str(storage.url_for(Path(f"{uuid4()}.pdf")))
+        url = str(storage.url_for(Path(str(uuid4()))))
 
         with pytest.raises(ObjectNotFoundError):
-            storage.get_file_size_kb(url)
+            storage.head(url)
 
 
 @mock_aws
