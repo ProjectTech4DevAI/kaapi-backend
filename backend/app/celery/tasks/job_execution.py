@@ -13,7 +13,8 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # Sentinel correlation id used when no trace id is propagated from the
 # enqueueing request. Matches the codebase-wide "N/A" default (see
 # app/core/logger.py and app/celery/utils.py).
@@ -43,7 +46,7 @@ def _set_trace(trace_id: str) -> None:
     logger.info(f"[_set_trace] Set correlation ID: {trace_id}")
 
 
-def _extract_parent_context(task_instance) -> otel_context.Context:
+def _extract_parent_context(task_instance: Task) -> otel_context.Context:
     """Extract OTel parent context from Celery headers if available."""
     headers = getattr(task_instance.request, "headers", None) or {}
     carrier: dict[str, str] = {}
@@ -62,7 +65,9 @@ def _extract_parent_context(task_instance) -> otel_context.Context:
     return extract(carrier)
 
 
-def _run_with_otel_parent(task_instance, fn):
+def _run_with_otel_parent(
+    task_instance: Task, fn: Callable[[], T]
+) -> T:  # noqa: UP047 (black doesn't support PEP 695 generics yet)
     """Attach the extracted parent context and execute `fn` under it.
 
     opentelemetry-instrumentation-celery's own extraction (CeleryGetter)

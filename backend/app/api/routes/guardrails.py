@@ -95,10 +95,15 @@ def apply_guardrails_endpoint(
 
 
 def _upstream_response(status_code: int, payload: Any) -> Response:
-    """An empty upstream body must stay empty (204s cannot carry one)."""
+    """An empty upstream body must stay empty (204s cannot carry one).
+
+    Tenant-scoped data must never be cached by a shared/intermediary cache
+    (CWE-525); `no-store` is stronger than `private` for that guarantee.
+    """
+    headers = {"Cache-Control": "no-store"}
     if payload is None:
-        return Response(status_code=status_code)
-    return JSONResponse(status_code=status_code, content=payload)
+        return Response(status_code=status_code, headers=headers)
+    return JSONResponse(status_code=status_code, content=payload, headers=headers)
 
 
 # ROUTE ORDERING: every fixed single-segment path below collides with the

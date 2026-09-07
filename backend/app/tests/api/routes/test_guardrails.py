@@ -8,12 +8,76 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.crud import JobCrud
 from app.models import Job, JobStatus, JobType, JobUpdate
 from app.tests.utils.auth import TestAuthContext
 
 
 VALIDATOR_ID = str(uuid4())
+
+# (client method, kaapi path, request body, upstream path) — "{id}" is filled
+# with a freshly generated UUID by the tests that consume this table.
+PROXY_ROUTES = [
+    ("GET", "/guardrails", None, "/"),
+    ("POST", "/guardrails/ban_lists", {"name": "slurs"}, "/ban_lists/"),
+    ("GET", "/guardrails/ban_lists", None, "/ban_lists/"),
+    ("GET", "/guardrails/ban_lists/{id}", None, "/ban_lists/{id}"),
+    ("PATCH", "/guardrails/ban_lists/{id}", {"name": "renamed"}, "/ban_lists/{id}"),
+    ("DELETE", "/guardrails/ban_lists/{id}", None, "/ban_lists/{id}"),
+    (
+        "POST",
+        "/guardrails/llm_prompt_configs",
+        {"validator_name": "toxicity", "prompt": "be nice"},
+        "/llm_prompt_configs/",
+    ),
+    ("GET", "/guardrails/llm_prompt_configs", None, "/llm_prompt_configs/"),
+    (
+        "GET",
+        "/guardrails/llm_prompt_configs/{id}",
+        None,
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "PATCH",
+        "/guardrails/llm_prompt_configs/{id}",
+        {"prompt": "be nicer"},
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "DELETE",
+        "/guardrails/llm_prompt_configs/{id}",
+        None,
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "POST",
+        "/guardrails/validators/configs",
+        {"type": "pii", "stage": "input"},
+        "/validators/configs/",
+    ),
+    ("GET", "/guardrails/validators/configs", None, "/validators/configs/"),
+    (
+        "GET",
+        "/guardrails/validators/configs/{id}",
+        None,
+        "/validators/configs/{id}",
+    ),
+    (
+        "PATCH",
+        "/guardrails/validators/configs/{id}",
+        {"stage": "output"},
+        "/validators/configs/{id}",
+    ),
+    (
+        "DELETE",
+        "/guardrails/validators/configs/{id}",
+        None,
+        "/validators/configs/{id}",
+    ),
+]
+
+PROXY_ROUTE_IDS = [f"{method} {path}" for method, path, _, _ in PROXY_ROUTES]
 
 
 def _payload(**overrides):
@@ -297,6 +361,40 @@ class TestProxyPassthrough:
 
 
 class TestProxyForwardedRequest:
+    @pytest.mark.parametrize(
+        "method, kaapi_path, body, upstream_path", PROXY_ROUTES, ids=PROXY_ROUTE_IDS
+    )
+    def test_route_forwards_method_path_body_and_tenant(
+        self,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+        method: str,
+        kaapi_path: str,
+        body: dict[str, Any] | None,
+        upstream_path: str,
+    ) -> None:
+        resource_id = uuid4()
+        upstream_body = {"ok": True}
+        with _mock_upstream(json_body=upstream_body) as calls:
+            resp = client.request(
+                method,
+                f"api/v1{kaapi_path.format(id=resource_id)}",
+                json=body,
+                headers=user_api_key_header,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == upstream_body
+        assert calls[0]["args"] == (
+            method,
+            f"{settings.KAAPI_GUARDRAILS_URL}{upstream_path.format(id=resource_id)}",
+        )
+        assert calls[0]["kwargs"]["json"] == body
+        headers = calls[0]["kwargs"]["headers"]
+        assert headers["X-ORGANIZATION-ID"] == str(user_api_key.organization_id)
+        assert headers["X-PROJECT-ID"] == str(user_api_key.project_id)
+
     def test_unset_limit_is_dropped_from_forwarded_params(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
@@ -321,6 +419,74 @@ class TestProxyForwardedRequest:
             "ids": [first, second],
             "stage": "input",
         }
+
+    def test_ban_list_filters_forwarded(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/ban_lists?domain=email&offset=5&limit=10",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "domain": "email",
+            "offset": 5,
+            "limit": 10,
+        }
+
+    def test_llm_prompt_config_filters_forwarded(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/llm_prompt_configs?validator_name=toxicity&limit=50",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "validator_name": "toxicity",
+            "offset": 0,
+            "limit": 50,
+        }
+
+    def test_validator_config_filters_forwarded_without_ids(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/validators/configs?stage=output&type=pii",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {"stage": "output", "type": "pii"}
+
+    def test_ids_are_normalised_to_canonical_uuid_strings(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        """Upstream expects strings; UUID parsing also canonicalises the casing."""
+        config_id = uuid4()
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                f"api/v1/guardrails/validators/configs?ids={str(config_id).upper()}",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {"ids": [str(config_id)]}
+
+    @pytest.mark.parametrize(
+        "kaapi_path", ["/guardrails/ban_lists", "/guardrails/llm_prompt_configs"]
+    )
+    @pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1"])
+    def test_out_of_range_pagination_rejected(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        kaapi_path: str,
+        query: str,
+    ) -> None:
+        resp = client.get(f"api/v1{kaapi_path}?{query}", headers=user_api_key_header)
+        assert resp.status_code == 422
 
     def test_tenant_headers_come_from_auth_context_not_request(
         self,
@@ -368,10 +534,56 @@ class TestProxyRouteOrdering:
         assert resp.status_code == 200
         assert calls[0]["args"][1].endswith("/ban_lists/")
 
+    def test_validator_configs_list_and_detail_routes_do_not_collide(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        config_id = uuid4()
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/validators/configs", headers=user_api_key_header
+            )
+            client.get(
+                f"api/v1/guardrails/validators/configs/{config_id}",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["args"][1].endswith("/validators/configs/")
+        assert calls[1]["args"][1].endswith(f"/validators/configs/{config_id}")
+
+    def test_llm_prompt_configs_list_route_wins_over_job_status_route(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            resp = client.get(
+                "api/v1/guardrails/llm_prompt_configs", headers=user_api_key_header
+            )
+
+        assert resp.status_code == 200
+        assert calls[0]["args"][1].endswith("/llm_prompt_configs/")
+
 
 def test_list_ban_lists_requires_auth(client: TestClient) -> None:
     resp = client.get("api/v1/guardrails/ban_lists")
     assert resp.status_code in (401, 403)
+
+
+@pytest.mark.parametrize(
+    "method, kaapi_path, body, _upstream_path", PROXY_ROUTES, ids=PROXY_ROUTE_IDS
+)
+def test_proxy_routes_require_auth(
+    client: TestClient,
+    method: str,
+    kaapi_path: str,
+    body: dict[str, Any] | None,
+    _upstream_path: str,
+) -> None:
+    with _mock_upstream(json_body={"data": []}) as calls:
+        resp = client.request(
+            method, f"api/v1{kaapi_path.format(id=uuid4())}", json=body
+        )
+
+    assert resp.status_code in (401, 403)
+    assert calls == []
 
 
 # ---------- helpers ----------
