@@ -42,6 +42,7 @@ class TestDocumentUploadsV2:
         fields = data["upload_fields"]
         assert fields["key"] == pending_key(user_api_key, data["document_id"])
         assert "x-amz-signature" in fields
+        assert "register" in response.json()["metadata"]["next_step"]
 
     def test_upload_target_is_the_pending_key_not_the_final_one(
         self,

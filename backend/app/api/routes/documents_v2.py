@@ -55,7 +55,13 @@ def create_upload_url(
             upload_url=ticket.url,
             upload_fields=ticket.fields,
             expires_in=ticket.expires_in,
-        )
+        ),
+        metadata={
+            "next_step": (
+                f"Upload the file to the pre-signed S3 URL with the provided fields "
+                f"(file part last), then PUT /api/v2/documents/{document_id} to register the document."
+            )
+        },
     )
 
 
@@ -83,4 +89,9 @@ def register_document(
     document_schema = DocumentPublic.model_validate(document, from_attributes=True)
     document_schema.signed_url = storage.get_signed_url(document.object_store_url)
 
-    return APIResponse[DocumentPublic].success_response(document_schema)
+    return APIResponse[DocumentPublic].success_response(
+        document_schema,
+        metadata={
+            "note": "Document registered. The upload URL is spent and cannot be reused."
+        },
+    )

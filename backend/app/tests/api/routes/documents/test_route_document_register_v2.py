@@ -79,6 +79,7 @@ class TestDocumentRegisterV2:
         assert data["id"] == str(document_id)
         assert data["fname"] == "report.pdf"
         assert data["signed_url"]
+        assert "cannot be reused" in response.json()["metadata"]["note"]
 
         document = db.get(Document, document_id)
         assert document is not None
