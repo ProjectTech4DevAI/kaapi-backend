@@ -127,6 +127,10 @@ def _convert_json_schema_to_google(schema: dict[str, Any]) -> dict[str, Any]:
         else normalized_schema
     )
 
+    # The SDK's model_dump emits snake_case `property_ordering`; Vertex merges it
+    # with our camelCase key into a duplicated ordering and rejects the request,
+    # so keep exactly one ordering key.
+    google_schema.pop("property_ordering", None)
     if "properties" in google_schema and "propertyOrdering" not in google_schema:
         google_schema["propertyOrdering"] = list(
             normalized_schema.get("required", [])
