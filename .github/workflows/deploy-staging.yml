@@ -151,8 +151,6 @@ jobs:
             --desired-count 0 >/dev/null
           echo "[$SERVICE] scaled back to 0"
 
-  # Green "healthy" on a clean deploy + rehearsal, red "failed" otherwise.
-  # Skipped (not sent) when the deploy itself was skipped on a red CI.
   notify:
     needs: [deploy, ecs-rehearsal]
     if: ${{ always() && needs.deploy.result != 'skipped' }}
