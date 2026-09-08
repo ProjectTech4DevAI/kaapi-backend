@@ -317,6 +317,27 @@ def test_upload_files_file_name_matches_doc_fname() -> None:
     assert fname == "report.pdf"
 
 
+def test_upload_files_lowercases_extension() -> None:
+    """Only the extension is lowercased; the stem keeps its case."""
+    client = MagicMock()
+    client.files.create.return_value = MagicMock(id="file-abc")
+    provider = OpenAIProvider(client=client)
+
+    storage = _make_storage(b"data")
+    doc = _make_doc(file_size_kb=1.0)
+    doc.fname = "Report.PDF"
+
+    session_p, crud_p = _patch_session_and_crud()
+    with session_p as MockSession, crud_p:
+        MockSession.return_value.__enter__.return_value = MagicMock()
+        MockSession.return_value.__exit__.return_value = False
+        provider.upload_files(storage, [doc], project_id=1)
+
+    _, kwargs = client.files.create.call_args
+    fname, _ = kwargs["file"]
+    assert fname == "Report.pdf"
+
+
 def test_upload_files_raises_on_db_update_failure() -> None:
     client = MagicMock()
     client.files.create.return_value = MagicMock(id="file-ok")
