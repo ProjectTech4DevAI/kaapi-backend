@@ -56,6 +56,7 @@ from app.models.llm.request import (
     build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
@@ -203,7 +204,7 @@ DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground
 def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=text)],
-        stop_reason="end_turn",
+        stop_reason=STOP_REASON_COMPLETE,
     )
 
 

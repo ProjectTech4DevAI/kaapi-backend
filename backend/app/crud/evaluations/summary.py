@@ -6,15 +6,16 @@ import logging
 
 from app.core.config import settings
 from app.crud.evaluations.score import TraceData
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 
 logger = logging.getLogger(__name__)
 
 # Headroom for the overall read + up to 3 flagged items + closing line.
 _SUMMARY_MAX_TOKENS: int = 3000
-
-# Anything else (max_tokens, refusal) means the text is partial.
-_STOP_REASON_COMPLETE: str = "end_turn"
 
 _NO_CONFIG_PROMPT: str = "(no instructions configured)"
 
@@ -167,7 +168,7 @@ def generate_run_ai_summary(
         ).strip()
         stop_reason: str | None = response.stop_reason
 
-    # Deliberately broad: a summary failure must never fail the run.
+    # A summary failure must never fail the run.
     except Exception as exc:
         log_anthropic_error(
             exc,
@@ -183,8 +184,7 @@ def generate_run_ai_summary(
         )
         return None
 
-    # A partial summary still reads usefully; operators just need to know.
-    if stop_reason != _STOP_REASON_COMPLETE:
+    if stop_reason != STOP_REASON_COMPLETE:
         logger.warning(
             f"[generate_run_ai_summary] Summary may be truncated | "
             f"stop_reason={stop_reason} | model={model} | run_name={run_name}"

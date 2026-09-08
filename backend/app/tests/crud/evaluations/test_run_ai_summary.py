@@ -21,6 +21,7 @@ import pytest
 from app.core.config import settings
 from app.crud.evaluations.score import TraceData
 from app.crud.evaluations.summary import generate_run_ai_summary
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 
 _MODEL = "claude-sonnet-4-6"
 _RUN_NAME = "run-x"
@@ -74,7 +75,9 @@ def _traces() -> list[TraceData]:
     ]
 
 
-def _message(summary: str, *, stop_reason: str = "end_turn") -> SimpleNamespace:
+def _message(
+    summary: str, *, stop_reason: str = STOP_REASON_COMPLETE
+) -> SimpleNamespace:
     return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=summary)],
         stop_reason=stop_reason,
@@ -289,7 +292,7 @@ class TestFailureIsNonFatal:
         client = MagicMock()
         client.messages.create.return_value = SimpleNamespace(
             content=[SimpleNamespace(type="tool_use", text=None)],
-            stop_reason="end_turn",
+            stop_reason=STOP_REASON_COMPLETE,
         )
         assert _call(client) is None
 

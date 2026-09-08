@@ -42,7 +42,11 @@ from app.models.evaluation import (
     PromptRecommendationJobPublic,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -67,8 +71,6 @@ _OUTPUT_SCHEMA = {
     "required": [_LLM_KEY_INSTRUCTIONS, _LLM_KEY_RATIONALE],
     "additionalProperties": False,
 }
-
-_STOP_REASON_COMPLETE = "end_turn"
 
 COMMIT_MESSAGE_MAX_LENGTH = 512
 
@@ -580,7 +582,7 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         )
         # A max_tokens cut-off still parses under the schema, so stop_reason is
         # the only signal — never persist a half-written prompt as a version.
-        if response.stop_reason != _STOP_REASON_COMPLETE:
+        if response.stop_reason != STOP_REASON_COMPLETE:
             raise RuntimeError(
                 "prompt_generation_failed: the model stopped before finishing "
                 f"the draft (stop_reason={response.stop_reason}) — retry"
@@ -630,7 +632,8 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             f"anthropic_response: {_anthropic_error_detail(exc)}"
         ) from exc
 
-    # The guard's message is precise; the generic handler would flatten it.
+    # The truncation guard above already raised a precise message; without this
+    # re-raise the generic handler below flattens it.
     except RuntimeError:
         raise
 

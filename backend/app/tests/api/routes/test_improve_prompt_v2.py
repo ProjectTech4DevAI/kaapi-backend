@@ -44,6 +44,7 @@ from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
     execute_prompt_improvement,
 )
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
@@ -120,7 +121,7 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     response = MagicMock()
     response.content = [content_block]
     response.id = "msg_test_id"
-    response.stop_reason = "end_turn"
+    response.stop_reason = STOP_REASON_COMPLETE
 
     client = MagicMock()
     client.messages.create.return_value = response

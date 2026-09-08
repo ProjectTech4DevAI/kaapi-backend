@@ -56,6 +56,7 @@ from app.services.evaluations.prompt_improvement import (
     start_prompt_improvement_job,
     validate_improve_prompt,
 )
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
@@ -106,7 +107,7 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     response = MagicMock()
     response.content = [content_block]
     response.id = "msg_test_id"
-    response.stop_reason = "end_turn"
+    response.stop_reason = STOP_REASON_COMPLETE
 
     client = MagicMock()
     client.messages.create.return_value = response
@@ -926,7 +927,7 @@ class TestDraftingLlmTruncation:
         assert "max_tokens" in str(exc.value)
 
 
-def _anthropic_response(status_code: int, body: dict) -> httpx.Response:
+def _anthropic_response(status_code: int, body: dict[str, object]) -> httpx.Response:
     return httpx.Response(
         status_code,
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
