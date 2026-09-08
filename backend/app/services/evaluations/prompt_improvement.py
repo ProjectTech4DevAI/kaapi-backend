@@ -25,6 +25,7 @@ from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.crud.evaluations.score import (
+    COSINE_SCORE_NAME,
     GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
@@ -49,6 +50,18 @@ logger = logging.getLogger(__name__)
 
 # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
 _LLM_MAX_TOKENS = 16384
+
+# Trace-payload budget, in characters rather than tokens: there is no tokenizer
+# in-tree, and Indic-script Q&A tokenizes several times worse than English, so any
+# chars-per-token divisor is a tuning knob, not a fact. Deliberately far below the
+# provider's 1M-token input ceiling — a rewrite brief does not read better with more
+# rows, and a near-ceiling Opus call per run is not worth paying for.
+_TRACE_PAYLOAD_MAX_CHARS = 400_000
+_TRACE_FIELD_MAX_CHARS = 2_000
+_TRUNCATION_MARKER = " …[truncated]"
+
+# Sorts unscoreable rows (value = "N/A") last, behind every real score.
+_UNSCOREABLE_SORT_VALUE = float("inf")
 
 # JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
@@ -630,6 +643,87 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         ) from exc
 
 
+def _truncate(text: object) -> str:
+    """Clamp one trace field; long judge rationales are the main source of bloat."""
+    value = "" if text is None else str(text)
+    if len(value) <= _TRACE_FIELD_MAX_CHARS:
+        return value
+    return value[:_TRACE_FIELD_MAX_CHARS] + _TRUNCATION_MARKER
+
+
+def _project_trace(trace: dict, *, is_judge_run: bool) -> dict:
+    """Keep only the fields the brief tells the model to read.
+
+    `trace_id` / `question_id` are referenced nowhere in the prompt, and the v1
+    brief never mentions the judge `comment`, so both are dropped.
+    """
+    projected: dict = {
+        "question": _truncate(trace.get("question")),
+        "ground_truth_answer": _truncate(trace.get("ground_truth_answer")),
+        "llm_answer": _truncate(trace.get("llm_answer")),
+        "scores": [
+            {
+                "name": score.get("name"),
+                "value": score.get("value"),
+                **({"unscoreable": True} if score.get("unscoreable") else {}),
+                **(
+                    {"comment": _truncate(score.get("comment"))} if is_judge_run else {}
+                ),
+            }
+            for score in trace.get("scores") or []
+        ],
+    }
+    if not is_judge_run and trace.get("category"):
+        projected["category"] = trace["category"]
+    return projected
+
+
+def _primary_score(trace: dict, *, score_name: str) -> float:
+    """The metric the brief calls the primary signal; +inf when it is unusable."""
+    for score in trace.get("scores") or []:
+        if score.get("name") != score_name or score.get("unscoreable"):
+            continue
+        value = score.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return float(value)
+    return _UNSCOREABLE_SORT_VALUE
+
+
+def _select_traces(
+    traces: list | dict, *, is_judge_run: bool
+) -> tuple[list[dict], int]:
+    """Project, truncate, and cap the traces to a char budget, worst-scoring first.
+
+    Returns (kept, total). Worst-first both selects and orders: the brief tells the
+    model to focus on the low-scoring rows, so those are the ones a cap must keep.
+    """
+    rows = traces if isinstance(traces, list) else traces.get("traces") or []
+    score_name = GROUND_TRUTH_SCORE_NAME if is_judge_run else COSINE_SCORE_NAME
+    ranked = sorted(
+        (row for row in rows if isinstance(row, dict)),
+        key=lambda row: _primary_score(row, score_name=score_name),
+    )
+
+    kept: list[dict] = []
+    used = 0
+    for row in ranked:
+        projected = _project_trace(row, is_judge_run=is_judge_run)
+        size = len(json.dumps(projected, ensure_ascii=False))
+        if kept and used + size > _TRACE_PAYLOAD_MAX_CHARS:
+            break
+        kept.append(projected)
+        used += size
+
+    if len(kept) < len(rows):
+        logger.warning(
+            f"[_select_traces] Trimmed traces to fit the prompt budget | "
+            f"kept={len(kept)} total={len(rows)} chars={used} "
+            f"is_judge_run={is_judge_run}"
+        )
+    return kept, len(rows)
+
+
 def _draft_improved_prompt(
     *,
     current_instructions: str,
@@ -714,11 +808,21 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
+    selected_traces, total_traces = _select_traces(traces, is_judge_run=is_judge_run)
+    trace_scope = (
+        ""
+        if len(selected_traces) == total_traces
+        else (
+            f" You are seeing the {len(selected_traces)} lowest-scoring traces of "
+            f"{total_traces}; the rest scored higher and are omitted."
+        )
+    )
 
     user_message_text = (
         "You are a prompt engineer. Below is a JSON array of evaluation traces"
-        f"{trace_description}\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"{trace_description}{trace_scope}\n\n"
+        "## Evaluation traces\n```\n"
+        f"{json.dumps(selected_traces, ensure_ascii=False)}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
         f"```\n{json.dumps(target_config)}\n```\n\n"
