@@ -102,7 +102,7 @@ class ModelEvaluator:
             file_obj.close()
 
     def normalize_prediction(self, text: str) -> str:
-        logger.debug(f"[normalize_prediction] Normalizing prediction: {text}")
+        logger.debug(f"[normalize_prediction] Prediction length: {len(text or '')}")
         t = (text or "").strip().lower()
 
         if t in self.allowed_labels:

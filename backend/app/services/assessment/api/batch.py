@@ -557,8 +557,8 @@ def _parse_verdict(output: str | None) -> Verdict:
         }
     except (json.JSONDecodeError, TypeError, AttributeError):
         logger.warning(
-            "[_parse_verdict] Unparseable verdict, failing open | output=%s",
-            output[:200],
+            "[_parse_verdict] Unparseable verdict, failing open | output_len=%s",
+            len(output),
         )
         return {"verdict": True, "reasoning": ""}
 

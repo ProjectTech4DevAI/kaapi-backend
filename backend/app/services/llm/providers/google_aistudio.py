@@ -170,7 +170,7 @@ class GoogleAIProvider(BaseProvider):
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
         logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
+            f"[GoogleAIProvider._execute_stt] Built instruction | instruction_len={len(merged_instruction)} and output language is {output_language} and input language is {input_language}"
         )
 
         # Materialize the AudioRef to a temp file so the genai SDK can upload it.

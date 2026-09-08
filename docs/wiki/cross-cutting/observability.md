@@ -12,6 +12,8 @@ All paths relative to `backend/app/`.
 ## Sentry
 OTel-first, Sentry as sole in-process sink (`instrumenter="otel"`). Init at `main.py` (web) and `celery/celery_app.py` (worker), kept in sync.
 - `core/sentry_filters.py` — `before_send_transaction_filter` (drops probe/low-signal spans) and `before_send_error_filter` (drops probe events, scrubs request PII when `SENTRY_SEND_DEFAULT_PII` off).
+- GenAI content never reaches Sentry, in either PII mode. Four locks in `core/sentry_filters.py` + both init sites: `scrub_genai_content` strips `_GENAI_CONTENT_KEYS` (prompt/completion span+log attributes) from every event, `before_send_log_filter` does the same for logs, `genai_privacy_integrations()` pins Sentry's auto-enabled AI integrations to `include_prompts=False`, and `include_local_variables=False` / `max_request_body_size="never"` keep prompts out of stack frames and request bodies. Langfuse (isolated tracer provider, `core/langfuse/langfuse.py`) stays the only sink for message bodies.
+- Corollary for log lines on LLM paths: log lengths/ids/types, never prompt or response text — `enable_logs=True` ships every INFO record to Sentry.
 - Release: `resolve_sentry_release()` in `core/telemetry.py` (`SENTRY_RELEASE` else `<service>@<API_VERSION>`).
 - Sampling/profiling/PII: `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_PROFILE_SESSION_SAMPLE_RATE`, `SENTRY_PROFILE_LIFECYCLE`, `SENTRY_SEND_DEFAULT_PII`, `SENTRY_ERROR_SAMPLE_RATE` (config.py; defaults preserve current behavior).
 - Trace propagation: `CeleryIntegration(propagate_traces=True)` links API to worker as one trace; poll-loop re-enqueues pass `SENTRY_NO_PROPAGATE_HEADERS` (`celery/tasks/job_execution.py`) to start a fresh trace.

@@ -15,7 +15,9 @@ from app.core.config import settings
 from app.core.logger import configure_logging
 from app.core.sentry_filters import (
     before_send_error_filter,
+    before_send_log_filter,
     before_send_transaction_filter,
+    genai_privacy_integrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,9 +60,14 @@ def _initialize_worker_observability() -> None:
             profile_lifecycle=SENTRY_PROFILE_LIFECYCLE,
             send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
             enable_logs=True,
+            # Frame locals and task payloads hold prompts and completions verbatim.
+            include_local_variables=False,
+            max_request_body_size="never",
             before_send=before_send_error_filter,
             before_send_transaction=before_send_transaction_filter,
+            before_send_log=before_send_log_filter,
             integrations=[
+                *genai_privacy_integrations(),
                 LoggingIntegration(
                     level=logging.INFO,
                     sentry_logs_level=logging.INFO,
