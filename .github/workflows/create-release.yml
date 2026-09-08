@@ -46,9 +46,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6 # More information on this action can be found below in the 'AWS Credentials' section
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::024209611402:role/github-action-role
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
 
       - name: Login to Amazon ECR
@@ -111,12 +111,6 @@ jobs:
           CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
           POLL_INTERVAL: "15"
         run: |
-          # A plain update-service returns before the new tasks are healthy, and
-          # the old task can keep answering 200 while the new one crash-loops.
-          # So roll each service to its family's latest revision, then poll the
-          # PRIMARY deployment's rolloutState. With the deployment circuit
-          # breaker enabled on the service (one-time prep), a bad rollout flips
-          # to FAILED and auto-rolls-back — which we surface here as a failure.
           deploy_and_wait() {
             SERVICE="$1"
             FAMILY="$2"
@@ -148,8 +142,6 @@ jobs:
           deploy_and_wait "${{ vars.AWS_RESOURCE_PREFIX }}-service" "${{ vars.AWS_RESOURCE_PREFIX }}-task"
           deploy_and_wait "${{ vars.AWS_RESOURCE_PREFIX }}-celery-task" "${{ vars.AWS_RESOURCE_PREFIX }}-celery-task"
 
-  # Green "healthy" on a clean release, red "failed" otherwise (including a
-  # release aborted because CI never passed on the tagged commit).
   notify:
     needs: [verify-ci, build]
     if: always()
