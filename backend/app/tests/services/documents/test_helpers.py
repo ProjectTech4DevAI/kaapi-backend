@@ -1,10 +1,14 @@
 import csv
 from io import BytesIO
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException, UploadFile
 
+from app.models import Document
 from app.services.documents.helpers import (
+    build_document_schema,
+    build_document_schemas,
     calculate_file_size,
     validate_upload,
 )
@@ -338,3 +342,77 @@ class TestValidateUpload:
             validate_upload(src=src, target_format=None, transformer=None)
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == "Uploaded file has no filename"
+
+
+def make_document(fname: str = "policy.pdf") -> Document:
+    return Document(
+        id=uuid4(),
+        fname=fname,
+        object_store_url="s3://bucket/key",
+        project_id=1,
+    )
+
+
+class FakeStorage:
+    """Records how each signed URL was requested."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def get_signed_url(
+        self, url: str, expires_in: int = 3600, filename: str | None = None
+    ) -> str:
+        self.calls.append({"url": url, "filename": filename})
+        return f"https://signed/{'download' if filename else 'preview'}"
+
+
+class TestDocumentUrls:
+    def test_download_true_signs_with_filename(self) -> None:
+        storage = FakeStorage()
+
+        schema = build_document_schema(
+            document=make_document(),
+            include_url=True,
+            storage=storage,
+            download=True,
+        )
+
+        assert schema.signed_url == "https://signed/download"
+        assert [c["filename"] for c in storage.calls] == ["policy.pdf"]
+
+    def test_download_defaults_to_false_and_signs_without_filename(self) -> None:
+        storage = FakeStorage()
+
+        schema = build_document_schema(
+            document=make_document(), include_url=True, storage=storage
+        )
+
+        assert schema.signed_url == "https://signed/preview"
+        assert [c["filename"] for c in storage.calls] == [None]
+
+    def test_no_url_when_include_url_is_false(self) -> None:
+        storage = FakeStorage()
+
+        schema = build_document_schema(
+            document=make_document(),
+            include_url=False,
+            storage=storage,
+            download=True,
+        )
+
+        assert schema.signed_url is None
+        assert storage.calls == []
+
+    def test_list_applies_download_flag_to_every_document(self) -> None:
+        storage = FakeStorage()
+        documents = [make_document("a.pdf"), make_document("b.pdf")]
+
+        schemas = build_document_schemas(
+            documents=documents,
+            include_url=True,
+            storage=storage,
+            download=True,
+        )
+
+        assert all(s.signed_url == "https://signed/download" for s in schemas)
+        assert [c["filename"] for c in storage.calls] == ["a.pdf", "b.pdf"]
