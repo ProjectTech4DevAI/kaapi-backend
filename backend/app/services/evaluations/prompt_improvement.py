@@ -68,6 +68,8 @@ _OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+_STOP_REASON_COMPLETE = "end_turn"
+
 COMMIT_MESSAGE_MAX_LENGTH = 512
 
 # Prefix that marks a commit_message as AI-generated; used as a search token for
@@ -557,6 +559,13 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             messages=[{"role": "user", "content": user_message_text}],
             output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
+        # A max_tokens cut-off still parses under the schema, so stop_reason is
+        # the only signal — never persist a half-written prompt as a version.
+        if response.stop_reason != _STOP_REASON_COMPLETE:
+            raise RuntimeError(
+                "prompt_generation_failed: the model stopped before finishing "
+                f"the draft (stop_reason={response.stop_reason}) — retry"
+            )
         text = next(b.text for b in response.content if b.type == "text")
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
@@ -596,6 +605,10 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
             "retry or contact Kaapi if persistent"
         )
+
+    # The guard's message is precise; the generic handler would flatten it.
+    except RuntimeError:
+        raise
 
     except Exception as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")

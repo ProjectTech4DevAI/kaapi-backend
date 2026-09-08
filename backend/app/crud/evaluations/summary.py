@@ -3,7 +3,6 @@
 
 import json
 import logging
-from typing import Any
 
 from app.core.config import settings
 from app.crud.evaluations.score import TraceData
@@ -11,17 +10,11 @@ from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_erro
 
 logger = logging.getLogger(__name__)
 
-# Headroom for the overall read + up to 3 flagged items + closing line; too low
-# truncates into invalid JSON.
+# Headroom for the overall read + up to 3 flagged items + closing line.
 _SUMMARY_MAX_TOKENS: int = 3000
 
-_LLM_KEY_SUMMARY: str = "summary"
-_OUTPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {_LLM_KEY_SUMMARY: {"type": "string"}},
-    "required": [_LLM_KEY_SUMMARY],
-    "additionalProperties": False,
-}
+# Anything else (max_tokens, refusal) means the text is partial.
+_STOP_REASON_COMPLETE: str = "end_turn"
 
 _NO_CONFIG_PROMPT: str = "(no instructions configured)"
 
@@ -166,15 +159,15 @@ def generate_run_ai_summary(
             max_tokens=_SUMMARY_MAX_TOKENS,
             system=_SUMMARY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
-            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
-        text = next(b.text for b in response.content if b.type == "text")
-        data: dict[str, str] = json.loads(text)
-        summary: str = data[_LLM_KEY_SUMMARY].strip()
+        # No json_schema: a quote in the prose reads as the JSON string
+        # terminator and silently amputates the rest.
+        summary: str = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        stop_reason: str | None = response.stop_reason
 
-    # Deliberately broad: a summary failure (typed Anthropic error, bad JSON,
-    # unexpected shape) must never fail the run, so it degrades to a None
-    # result regardless of cause.
+    # Deliberately broad: a summary failure must never fail the run.
     except Exception as exc:
         log_anthropic_error(
             exc,
@@ -189,5 +182,12 @@ def generate_run_ai_summary(
             f"run_name={run_name}"
         )
         return None
+
+    # A partial summary still reads usefully; operators just need to know.
+    if stop_reason != _STOP_REASON_COMPLETE:
+        logger.warning(
+            f"[generate_run_ai_summary] Summary may be truncated | "
+            f"stop_reason={stop_reason} | model={model} | run_name={run_name}"
+        )
 
     return summary

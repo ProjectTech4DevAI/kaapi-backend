@@ -46,6 +46,7 @@ from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
     COMMIT_MESSAGE_MAX_LENGTH,
+    _call_prompt_drafting_llm,
     execute_prompt_improvement,
     start_prompt_improvement_job,
     validate_improve_prompt,
@@ -53,7 +54,6 @@ from app.services.evaluations.prompt_improvement import (
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
-
 
 _SERVICE = "app.services.evaluations.prompt_improvement"
 _ROUTE_VALIDATE = "app.api.routes.evaluations.evaluation.validate_callback_url"
@@ -101,6 +101,7 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     response = MagicMock()
     response.content = [content_block]
     response.id = "msg_test_id"
+    response.stop_reason = "end_turn"
 
     client = MagicMock()
     client.messages.create.return_value = response
@@ -839,3 +840,35 @@ class TestPollRouteRemoved:
             headers=headers,
         )
         assert resp.status_code == 404, resp.text
+
+
+class TestDraftingLlmTruncation:
+    """A max_tokens cut-off still parses under the schema; stop_reason is the guard."""
+
+    def _run(self, client: MagicMock) -> tuple[str, str]:
+        with (
+            patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+            patch(
+                "app.services.evaluations.prompt_improvement."
+                "ClaudeProvider.create_client",
+                return_value=client,
+            ),
+        ):
+            return _call_prompt_drafting_llm(user_message_text="brief")
+
+    def test_complete_response_returns_instructions_and_rationale(self) -> None:
+        instructions, rationale = self._run(_make_fake_claude_client())
+        assert instructions == _IMPROVED_INSTRUCTIONS
+        assert rationale == _RATIONALE
+
+    def test_truncated_response_raises_instead_of_returning_a_partial_prompt(
+        self,
+    ) -> None:
+        client = _make_fake_claude_client()
+        client.messages.create.return_value.stop_reason = "max_tokens"
+
+        with pytest.raises(RuntimeError) as exc:
+            self._run(client)
+
+        assert "prompt_generation_failed" in str(exc.value)
+        assert "max_tokens" in str(exc.value)

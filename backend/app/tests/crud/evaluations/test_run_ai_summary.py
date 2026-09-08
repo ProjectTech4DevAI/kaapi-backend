@@ -6,8 +6,8 @@ mocked here). The user message is a diagnostic brief: run name, duplication
 factor, the evaluated AI config, and the per-question judge traces as JSON —
 question, golden answer, generated answer, and each judge score with its
 rationale. Trace bookkeeping (`data_type`, `verdict`, `unscoreable`) stays out of
-the payload. Every failure mode (provider error, generic error, unparseable
-payload, empty output) must resolve to None WITHOUT raising, leaving the
+the payload. Every failure mode (provider error, generic error, no text
+block, empty output) must resolve to None WITHOUT raising, leaving the
 deterministic overall to persist.
 """
 
@@ -74,11 +74,10 @@ def _traces() -> list[TraceData]:
     ]
 
 
-def _message(summary: str) -> SimpleNamespace:
+def _message(summary: str, *, stop_reason: str = "end_turn") -> SimpleNamespace:
     return SimpleNamespace(
-        content=[
-            SimpleNamespace(type="text", text=json.dumps({"summary": summary})),
-        ]
+        content=[SimpleNamespace(type="text", text=summary)],
+        stop_reason=stop_reason,
     )
 
 
@@ -134,7 +133,7 @@ class TestHappyPath:
         )
         assert _call(client) == "Consistently grounded and on-tone across the set."
 
-    def test_call_params_carry_the_model_token_cap_and_json_schema(self) -> None:
+    def test_call_params_carry_the_model_and_token_cap(self) -> None:
         client = MagicMock()
         client.messages.create.return_value = _message("A note.")
         _call(client)
@@ -143,7 +142,8 @@ class TestHappyPath:
         assert params["model"] == _MODEL
         assert params["max_tokens"] == 3000
         assert params["messages"][0]["role"] == "user"
-        assert params["output_config"]["format"]["type"] == "json_schema"
+        # A quote in the prose would close a schema-constrained string early.
+        assert "output_config" not in params
 
 
 class TestTraceBrief:
@@ -285,16 +285,23 @@ class TestFailureIsNonFatal:
         client.messages.create.return_value = _message(summary)
         assert _call(client) is None
 
-    def test_non_json_text_block_returns_none_without_raising(self) -> None:
-        client = MagicMock()
-        client.messages.create.return_value = SimpleNamespace(
-            content=[SimpleNamespace(type="text", text="not json at all")]
-        )
-        assert _call(client) is None
-
     def test_response_without_a_text_block_returns_none_without_raising(self) -> None:
         client = MagicMock()
         client.messages.create.return_value = SimpleNamespace(
-            content=[SimpleNamespace(type="tool_use", text=None)]
+            content=[SimpleNamespace(type="tool_use", text=None)],
+            stop_reason="end_turn",
         )
         assert _call(client) is None
+
+    def test_quotes_in_the_prose_survive_intact(self) -> None:
+        client = MagicMock()
+        prose = 'Question 3 omits the required "wellness message" line.'
+        client.messages.create.return_value = _message(prose)
+        assert _call(client) == prose
+
+    def test_truncated_response_is_still_returned(self) -> None:
+        client = MagicMock()
+        client.messages.create.return_value = _message(
+            "Question 10 omits the required", stop_reason="max_tokens"
+        )
+        assert _call(client) == "Question 10 omits the required"

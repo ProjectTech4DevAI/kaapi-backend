@@ -202,7 +202,8 @@ DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground
 
 def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
-        content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
+        content=[SimpleNamespace(type="text", text=text)],
+        stop_reason="end_turn",
     )
 
 

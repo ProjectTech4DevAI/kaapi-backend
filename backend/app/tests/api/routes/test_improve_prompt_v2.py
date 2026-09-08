@@ -120,6 +120,7 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     response = MagicMock()
     response.content = [content_block]
     response.id = "msg_test_id"
+    response.stop_reason = "end_turn"
 
     client = MagicMock()
     client.messages.create.return_value = response
