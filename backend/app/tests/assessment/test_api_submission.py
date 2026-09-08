@@ -104,6 +104,24 @@ class TestSubmit:
         assert bag["stage_status"] == AssessmentStatus.PENDING.value
         assert bag["callback_url"].startswith("https://hook.example")
 
+    def test_immediate_dispatch_keeps_trace_propagation(self, db) -> None:
+        # The first-tick .delay() must NOT carry the no-propagate header — only the
+        # poll-cycle re-enqueue starts a fresh trace.
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        request = _request(config, [{"a": "one"}])
+
+        with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
+            submission.submit(
+                session=db,
+                request=request,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+
+        task.delay.assert_called_once()
+        assert "headers" not in task.delay.call_args.kwargs
+
     def test_row_missing_declared_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(
