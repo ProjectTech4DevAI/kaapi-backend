@@ -14,7 +14,6 @@ from app.services.llm.providers.claude import (
 
 logger = logging.getLogger(__name__)
 
-# Headroom for the overall read + up to 3 flagged items + closing line.
 _SUMMARY_MAX_TOKENS: int = 3000
 
 _NO_CONFIG_PROMPT: str = "(no instructions configured)"
@@ -161,8 +160,6 @@ def generate_run_ai_summary(
             system=_SUMMARY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
-        # No json_schema: a quote in the prose reads as the JSON string
-        # terminator and silently amputates the rest.
         summary: str = "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
