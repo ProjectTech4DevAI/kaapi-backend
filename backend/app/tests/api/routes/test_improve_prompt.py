@@ -25,12 +25,15 @@ DB is real (transactional db fixture; rolls back after each test).
 
 import contextlib
 import json
+from collections.abc import Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import anthropic
+import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
 from fastapi import HTTPException
@@ -44,8 +47,10 @@ from app.models import EvaluationDataset, EvaluationRun
 from app.models.config.config import ConfigTag
 from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
+    _UPSTREAM_ERROR_DETAIL_MAX_LENGTH,
     AI_GENERATED_MARKER,
     COMMIT_MESSAGE_MAX_LENGTH,
+    _anthropic_error_detail,
     _call_prompt_drafting_llm,
     execute_prompt_improvement,
     start_prompt_improvement_job,
@@ -720,6 +725,53 @@ class TestExecuteWorker:
         ).read_one(version_number=2)
         assert v2 is None
 
+    def test_anthropic_error_body_reaches_job_error_message(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        """The provider's own response body must survive to Job.error_message and
+        the callback — that string is all an operator gets to triage the failure."""
+        job = self._pending_job(db, auth.project_id)
+        upstream_body = {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "max_tokens: 16384 > 8192, which is the maximum for this model",
+            },
+        }
+        claude_client = MagicMock()
+        claude_client.messages.create.side_effect = anthropic.BadRequestError(
+            "Error code: 400",
+            response=httpx.Response(
+                400,
+                request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+                json=upstream_body,
+            ),
+            body=upstream_body,
+        )
+
+        with _worker_env(db, claude_client=claude_client) as env:
+            with pytest.raises(RuntimeError):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+        assert "prompt_generation_failed" in refreshed.error_message
+        assert "Anthropic returned HTTP 400" in refreshed.error_message
+        assert "which is the maximum for this model" in refreshed.error_message
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert "which is the maximum for this model" in payload["data"]["error_message"]
+
     def test_trace_download_failure_fires_failure_callback(
         self,
         db: Session,
@@ -872,3 +924,151 @@ class TestDraftingLlmTruncation:
 
         assert "prompt_generation_failed" in str(exc.value)
         assert "max_tokens" in str(exc.value)
+
+
+def _anthropic_response(status_code: int, body: dict) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json=body,
+    )
+
+
+class TestAnthropicErrorDetail:
+    """`_anthropic_error_detail` is what puts the provider's own reason into
+    Job.error_message, so each fallback rung has to hold on its own."""
+
+    def test_prefers_raw_response_body(self) -> None:
+        body = {"type": "error", "error": {"message": "overloaded"}}
+        exc = anthropic.APIStatusError(
+            "Error code: 529", response=_anthropic_response(529, body), body=body
+        )
+
+        assert "overloaded" in _anthropic_error_detail(exc)
+
+    def test_falls_back_to_str_when_there_is_no_response(self) -> None:
+        """Connection and timeout faults never reach a response."""
+        exc = anthropic.APIConnectionError(
+            message="Connection refused",
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        )
+
+        assert _anthropic_error_detail(exc) == "Connection refused"
+
+    def test_falls_back_to_str_when_the_body_cannot_be_read(self) -> None:
+        """httpx raises on `.text` if the body was never read off the wire."""
+
+        class _UnreadableResponse:
+            @property
+            def text(self) -> str:
+                raise RuntimeError("Attempted to access streaming response content")
+
+        class _StreamingError(Exception):
+            response = _UnreadableResponse()
+
+        assert (
+            _anthropic_error_detail(_StreamingError("stream broke")) == "stream broke"
+        )
+
+    def test_truncates_an_oversized_body(self) -> None:
+        body = {"type": "error", "error": {"message": "x" * 2000}}
+        exc = anthropic.APIStatusError(
+            "Error code: 400", response=_anthropic_response(400, body), body=body
+        )
+
+        detail = _anthropic_error_detail(exc)
+
+        assert len(detail) == _UPSTREAM_ERROR_DETAIL_MAX_LENGTH + len("...")
+        assert detail.endswith("...")
+
+    def test_falls_back_to_the_exception_type_when_nothing_is_readable(self) -> None:
+        class _SilentError(Exception):
+            pass
+
+        assert _anthropic_error_detail(_SilentError()) == "_SilentError"
+
+
+class TestPromptDraftingErrorLadder:
+    """Every rung of the `_call_prompt_drafting_llm` except-ladder must tag the
+    failure and carry the upstream detail into the raised message."""
+
+    @pytest.mark.parametrize(
+        "exc, expected_hint, expected_detail",
+        [
+            (
+                anthropic.AuthenticationError(
+                    "Error code: 401",
+                    response=_anthropic_response(
+                        401, {"error": {"message": "bad key"}}
+                    ),
+                    body=None,
+                ),
+                "authentication failed",
+                "bad key",
+            ),
+            (
+                anthropic.RateLimitError(
+                    "Error code: 429",
+                    response=_anthropic_response(
+                        429, {"error": {"message": "slow down"}}
+                    ),
+                    body=None,
+                ),
+                "rate limit exceeded",
+                "slow down",
+            ),
+            (
+                anthropic.APITimeoutError(
+                    httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+                ),
+                "timed out",
+                "timed out",
+            ),
+            (
+                anthropic.APIConnectionError(
+                    message="Name resolution failed",
+                    request=httpx.Request(
+                        "POST", "https://api.anthropic.com/v1/messages"
+                    ),
+                ),
+                "network error reaching Anthropic",
+                "Name resolution failed",
+            ),
+            (ValueError("something unmodelled"), "unexpected error", "unmodelled"),
+        ],
+        ids=["auth", "rate_limit", "timeout", "connection", "unexpected"],
+    )
+    def test_each_failure_carries_the_upstream_detail(
+        self,
+        anthropic_creds: None,
+        exc: Exception,
+        expected_hint: str,
+        expected_detail: str,
+    ) -> None:
+        claude_client = MagicMock()
+        claude_client.messages.create.side_effect = exc
+
+        with patch(
+            f"{_SERVICE}.ClaudeProvider.create_client", return_value=claude_client
+        ):
+            with pytest.raises(RuntimeError) as raised:
+                _call_prompt_drafting_llm(user_message_text="rewrite this")
+
+        message = str(raised.value)
+        assert message.startswith("prompt_generation_failed:")
+        assert expected_hint in message
+        assert "anthropic_response: " in message
+        assert expected_detail in message
+        assert raised.value.__cause__ is exc
+
+    def test_missing_platform_key_is_flagged_as_misconfiguration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing key never reaches Anthropic, so it carries no upstream detail."""
+        monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+
+        with pytest.raises(RuntimeError) as raised:
+            _call_prompt_drafting_llm(user_message_text="rewrite this")
+
+        assert "ANTHROPIC_API_KEY" in str(raised.value)
+        assert "anthropic_response" not in str(raised.value)

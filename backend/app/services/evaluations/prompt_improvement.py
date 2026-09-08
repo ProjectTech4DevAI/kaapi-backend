@@ -534,6 +534,25 @@ def _target_config_from_params(config_params: dict) -> dict:
     }
 
 
+_UPSTREAM_ERROR_DETAIL_MAX_LENGTH = 500
+
+
+def _anthropic_error_detail(exc: Exception) -> str:
+    """Return what Anthropic actually sent back, for the operator-facing message."""
+    detail = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            detail = (response.text or "").strip()
+        except Exception:  # httpx raises if the body was never read
+            detail = ""
+    if not detail:
+        detail = str(exc).strip()
+    if len(detail) > _UPSTREAM_ERROR_DETAIL_MAX_LENGTH:
+        detail = detail[:_UPSTREAM_ERROR_DETAIL_MAX_LENGTH] + "..."
+    return detail or type(exc).__name__
+
+
 def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
     """Run the Anthropic structured-output call shared by both draft variants and
     return (improved_instructions, rationale).
@@ -574,37 +593,42 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
-            "verify the platform API key is valid and not expired"
-        )
+            "verify the platform API key is valid and not expired | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.RateLimitError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
-            "wait at least 1 minute and retry"
-        )
+            "wait at least 1 minute and retry | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
-            "retry. If persistent, contact Kaapi"
-        )
+            "retry. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIConnectionError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
-            "check connectivity. If persistent, contact Kaapi"
-        )
+            "check connectivity. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIStatusError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
-            "retry or contact Kaapi if persistent"
-        )
+            "retry or contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     # The guard's message is precise; the generic handler would flatten it.
     except RuntimeError:
@@ -614,8 +638,9 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
-            "contact Kaapi if persistent"
-        )
+            "contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
 
 def _draft_improved_prompt(
