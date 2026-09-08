@@ -85,3 +85,108 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
             --output json
+
+  ecs-rehearsal:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: AWS_ENV_VARS
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push staging image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            -t $REGISTRY/$REPOSITORY:latest \
+            ./backend
+          docker push $REGISTRY/$REPOSITORY:latest
+
+      - name: Scale staging ECS up and verify rollout
+        timeout-minutes: 15
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
+          POLL_INTERVAL: "15"
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --desired-count 1 --force-new-deployment >/dev/null
+          echo "[$SERVICE] scaled to 1; waiting for rollout"
+          while true; do
+            STATE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+              --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" \
+              --output text)
+            case "$STATE" in
+              COMPLETED) echo "[$SERVICE] rehearsal rollout COMPLETED"; break ;;
+              FAILED)
+                echo "::error::[$SERVICE] rehearsal FAILED — the production ECS deploy path is broken"
+                exit 1 ;;
+              *) echo "[$SERVICE] rollout $STATE — waiting ${POLL_INTERVAL}s"; sleep "$POLL_INTERVAL" ;;
+            esac
+          done
+
+      - name: Scale staging ECS back to 0
+        if: always()
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --desired-count 0 >/dev/null
+          echo "[$SERVICE] scaled back to 0"
+
+  # Green "healthy" on a clean deploy + rehearsal, red "failed" otherwise.
+  # Skipped (not sent) when the deploy itself was skipped on a red CI.
+  notify:
+    needs: [deploy, ecs-rehearsal]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NAME: kaapi-staging
+          RELEASE: "#${{ github.run_number }}"
+          # true only when every deploy job succeeded.
+          OK: ${{ needs.deploy.result == 'success' && needs.ecs-rehearsal.result == 'success' }}
+        run: |
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "No webhook configured, skipping"; exit 0; }
+          if [ "$OK" = "true" ]; then
+            TITLE="🟢 $NAME deployment healthy"; COLOR=3066993   # green
+          else
+            TITLE="🔴 $NAME deployment failed";  COLOR=15158332  # red
+          fi
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          payload=$(jq -n \
+            --arg title "$TITLE" \
+            --argjson color "$COLOR" \
+            --arg release "$RELEASE" \
+            --arg sha "$SHA_SHORT" \
+            --arg url "$RUN_URL" \
+            '{embeds: [{
+              title: $title, url: $url, color: $color,
+              fields: [
+                {name: "Release", value: $release, inline: true},
+                {name: "SHA", value: $sha, inline: true}
+              ],
+              timestamp: (now | todate)
+            }]}')
+          curl -sf -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL" \
+            || echo "Discord notification failed to send"

@@ -44,6 +44,9 @@ COPY scripts /app/scripts
 COPY app /app/app
 COPY alembic.ini /app/alembic.ini
 
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 # Expose port 80
 EXPOSE 80
 

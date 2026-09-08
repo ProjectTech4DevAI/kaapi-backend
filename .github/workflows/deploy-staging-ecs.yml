@@ -36,7 +36,7 @@ jobs:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
         run: |
-          docker build -t $REGISTRY/$REPOSITORY:latest ./backend
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t $REGISTRY/$REPOSITORY:latest ./backend
           docker push $REGISTRY/$REPOSITORY:latest
 
       - name: Run database migrations

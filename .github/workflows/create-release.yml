@@ -62,6 +62,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
             -t $REGISTRY/$REPOSITORY:latest \
             -t $REGISTRY/$REPOSITORY:$TAG \
             ./backend
@@ -103,16 +104,86 @@ jobs:
           fi
           echo "Migration completed successfully"
 
-      - name: Deploy to ECS
+      - name: Deploy to ECS and verify rollout
+        # Bound the wait; the circuit breaker itself trips well before this.
+        timeout-minutes: 15
+        env:
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
+          POLL_INTERVAL: "15"
         run: |
-          aws ecs update-service \
-            --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-cluster \
-            --service ${{ vars.AWS_RESOURCE_PREFIX }}-service \
-            --task-definition ${{ vars.AWS_RESOURCE_PREFIX }}-task \
-            --force-new-deployment
+          # A plain update-service returns before the new tasks are healthy, and
+          # the old task can keep answering 200 while the new one crash-loops.
+          # So roll each service to its family's latest revision, then poll the
+          # PRIMARY deployment's rolloutState. With the deployment circuit
+          # breaker enabled on the service (one-time prep), a bad rollout flips
+          # to FAILED and auto-rolls-back — which we surface here as a failure.
+          deploy_and_wait() {
+            SERVICE="$1"
+            FAMILY="$2"
+            echo "[$SERVICE] forcing new deployment on family $FAMILY"
+            aws ecs update-service \
+              --cluster "$CLUSTER" \
+              --service "$SERVICE" \
+              --task-definition "$FAMILY" \
+              --force-new-deployment >/dev/null
 
-          aws ecs update-service \
-            --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-cluster \
-            --service ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task \
-            --task-definition ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task \
-            --force-new-deployment
+            while true; do
+              STATE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+                --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" \
+                --output text)
+              case "$STATE" in
+                COMPLETED)
+                  echo "[$SERVICE] rollout COMPLETED"
+                  return 0 ;;
+                FAILED)
+                  echo "::error::[$SERVICE] rollout FAILED — new tasks never became healthy (rolled back by circuit breaker)"
+                  return 1 ;;
+                *)
+                  echo "[$SERVICE] rollout $STATE — waiting ${POLL_INTERVAL}s"
+                  sleep "$POLL_INTERVAL" ;;
+              esac
+            done
+          }
+
+          deploy_and_wait "${{ vars.AWS_RESOURCE_PREFIX }}-service" "${{ vars.AWS_RESOURCE_PREFIX }}-task"
+          deploy_and_wait "${{ vars.AWS_RESOURCE_PREFIX }}-celery-task" "${{ vars.AWS_RESOURCE_PREFIX }}-celery-task"
+
+  # Green "healthy" on a clean release, red "failed" otherwise (including a
+  # release aborted because CI never passed on the tagged commit).
+  notify:
+    needs: [verify-ci, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NAME: kaapi-production
+          RELEASE: ${{ github.ref_name }}
+          # true only when the build+deploy job succeeded.
+          OK: ${{ needs.build.result == 'success' }}
+        run: |
+          [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "No webhook configured, skipping"; exit 0; }
+          if [ "$OK" = "true" ]; then
+            TITLE="🟢 $NAME deployment healthy"; COLOR=3066993   # green
+          else
+            TITLE="🔴 $NAME deployment failed";  COLOR=15158332  # red
+          fi
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          payload=$(jq -n \
+            --arg title "$TITLE" \
+            --argjson color "$COLOR" \
+            --arg release "$RELEASE" \
+            --arg sha "$SHA_SHORT" \
+            --arg url "$RUN_URL" \
+            '{embeds: [{
+              title: $title, url: $url, color: $color,
+              fields: [
+                {name: "Release", value: $release, inline: true},
+                {name: "SHA", value: $sha, inline: true}
+              ],
+              timestamp: (now | todate)
+            }]}')
+          curl -sf -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL" \
+            || echo "Discord notification failed to send"
