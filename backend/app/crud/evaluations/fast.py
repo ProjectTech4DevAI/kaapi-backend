@@ -7,12 +7,17 @@ on retry if its `batch_job` row already exists.
     Stage 1 — Responses unit:   evaluation_run.batch_job_id
     Stage 2 — Embeddings unit:  evaluation_run.embedding_batch_job_id
     Stage 3 — Score + trace + cost (no marker; each step is idempotent)
-    Stage 4 — Mark completed
-    Stage 5 — Persist score unit (summary + per-trace) via the shared
-              save_score helper, so the cached trace unit (score_trace_url)
-              exists immediately and the read path (trace view / resync /
-              grouped export) mirrors the batch path without racing Langfuse
-              ingestion.
+    Stage 4 — Persist score unit (summary + per-trace) via the shared save_score
+              helper, so the cached trace unit (score_trace_url) exists before
+              the run is advertised as complete and the read path (trace view /
+              resync / grouped export) mirrors the batch path.
+    Stage 5 — Mark completed
+    Stage 6 — Best-effort tail: drop the chunk artifacts, sync Langfuse scores.
+
+Stage 4 precedes stage 5 deliberately: for a judged (v2) run the score unit is
+the *only* copy of the per-row judge scores — nothing is written to Langfuse to
+fall back on — so a crash between the two must leave the run `processing`, never
+`completed` with its scores gone.
 
 This module owns orchestration and IO. The per-item shapes live in
 `fast_results`, the `batch_job` bookkeeping in `fast_chunks`, trace records in
@@ -305,10 +310,10 @@ def _load_completed_stage(
 def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> None:
     """Drop the per-chunk S3 files + batch_job rows once a run completes.
 
-    Best-effort end to end: this runs after the completed transition but before
-    save_score, so anything raising here would both flip a completed run to
-    failed and cost it its score unit. Resolving storage is guarded for the same
-    reason the deletes are.
+    Best-effort end to end: this runs after the completed transition, so anything
+    raising here would flip an already-completed run to failed over orphaned
+    chunk files nobody reads. Resolving storage is guarded for the same reason
+    the deletes are.
     """
     try:
         storage = get_cloud_storage(session=session, project_id=eval_run.project_id)
@@ -841,7 +846,9 @@ def _stage3_score_and_trace(
     )
 
     # Persist cost + unscoreable here; the score unit (summary + traces) is persisted
-    # by the caller via save_score so it lands in S3 like the batch path.
+    # by the caller via save_score, before the completed transition, so it lands in
+    # S3 like the batch path. This write must stay committed: save_score opens a
+    # second session on the same row.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
@@ -960,27 +967,37 @@ def run_fast_evaluation(
         log_prefix=log_prefix,
     )
 
-    # Stage 4 — mark completed WITH the summary score so there's never a
-    # completed + NULL-score window. Cost was persisted in Stage 3.
+    # Stage 4 — persist the score unit (traces to S3, summary + overall to the DB)
+    # BEFORE the run is advertised as complete. On v2 this unit is the only copy
+    # of the per-row judge scores, so it has to be durable first: a crash here
+    # leaves the run `processing` and visibly unfinished, never `completed` with
+    # its scores gone. save_score opens its own Session on this row, so Stage 3's
+    # write above must stay committed before this point or the two sessions
+    # deadlock on the row lock.
+    saved = save_score(
+        eval_run_id=eval_run.id,
+        organization_id=eval_run.organization_id,
+        project_id=eval_run.project_id,
+        score=score,
+    )
+    if saved is None:
+        raise RuntimeError(
+            f"Score unit not persisted; run row is gone | eval_run_id={eval_run.id}"
+        )
+
+    # Stage 5 — mark completed. Cost was persisted in Stage 3, score in Stage 4,
+    # so there's never a completed + NULL-score window.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
-        update=EvaluationRunUpdate(
-            status="completed",
-            # Persist the overall alongside the summary so GET run status shows the
-            # run-level score/verdict/breakdown without loading the S3 trace unit.
-            score={
-                "summary_scores": score["summary_scores"],
-                "overall": score.get("overall"),
-            },
-            cost=eval_run.cost,
-        ),
+        update=EvaluationRunUpdate(status="completed", cost=eval_run.cost),
     )
 
+    # Stage 6 — best-effort tail, nothing here may fail a completed run.
     _cleanup_response_chunks(session=session, eval_run=eval_run)
 
-    # Stage 5a — write cosine scores to Langfuse after completion (mirrors the
-    # batch path). is_score_updated tracks the outcome so a cron can retry the gap.
+    # Cosine scores go to Langfuse after completion (mirrors the batch path);
+    # is_score_updated tracks the outcome so a cron can retry the gap.
     eval_run = update_evaluation_run(
         session=session,
         eval_run=eval_run,
@@ -990,18 +1007,9 @@ def run_fast_evaluation(
             )
         ),
     )
-
-    # Stage 5b — persist the score unit (traces to S3, summary to DB) so the read
-    # path serves the cached unit instead of racing Langfuse ingestion.
-    saved = save_score(
-        eval_run_id=eval_run.id,
-        organization_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-        score=score,
-    )
-    if saved is not None:
-        eval_run = saved
-        eval_run.score = cast(dict[str, object], score)
+    # The full unit (summary + traces) for the caller; the DB keeps summary +
+    # overall, with the traces in S3 behind score_trace_url.
+    eval_run.score = cast(dict[str, object], score)
 
     logger.info(
         f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "

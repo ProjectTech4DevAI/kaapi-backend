@@ -372,10 +372,14 @@ def _build_initial_state(
         )
 
 
-def _mark_iteration_run_failed(
+def mark_iteration_run_failed(
     *, iteration_run_id: int, organization_id: int, project_id: int, error_message: str
 ) -> None:
-    """Fail a loop from a fresh session so a killed task leaves no dangling row."""
+    """Fail a loop from a fresh session so a killed task leaves no dangling row.
+
+    Public because the cron zombie reaper calls it too — a loop the graph never
+    got to fail itself still owes its caller the failure callback.
+    """
     try:
         with Session(engine) as session:
             iteration_run = get_evaluation_iteration_run_by_id(
@@ -406,11 +410,11 @@ def _mark_iteration_run_failed(
         )
 
         logger.info(
-            f"[_mark_iteration_run_failed] iteration_run_id={iteration_run_id} marked failed"
+            f"[mark_iteration_run_failed] iteration_run_id={iteration_run_id} marked failed"
         )
     except Exception:
         logger.error(
-            f"[_mark_iteration_run_failed] Could not mark iteration_run_id="
+            f"[mark_iteration_run_failed] Could not mark iteration_run_id="
             f"{iteration_run_id} failed",
             exc_info=True,
         )
@@ -482,7 +486,7 @@ def execute_evaluation_iteration_graph_step(
             f"[execute_evaluation_iteration_graph_step] Soft time limit | "
             f"iteration_run_id={iteration_run_id}"
         )
-        _mark_iteration_run_failed(
+        mark_iteration_run_failed(
             iteration_run_id=iteration_run_id,
             organization_id=organization_id,
             project_id=project_id,
@@ -495,7 +499,7 @@ def execute_evaluation_iteration_graph_step(
             f"iteration_run_id={iteration_run_id}",
             exc_info=True,
         )
-        _mark_iteration_run_failed(
+        mark_iteration_run_failed(
             iteration_run_id=iteration_run_id,
             organization_id=organization_id,
             project_id=project_id,

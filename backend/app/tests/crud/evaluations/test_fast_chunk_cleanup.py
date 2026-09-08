@@ -1,8 +1,9 @@
 """Chunk-artifact cleanup (`fast_chunks.delete_response_chunk_artifacts`).
 
-Cleanup runs after the completed transition but before `save_score`, so it must
+Cleanup runs in the best-effort tail, after the completed transition, so it must
 swallow everything — including a failure resolving cloud storage. A raise here
-would flip a completed run to failed *and* cost it its score unit.
+would flip an already-completed run to failed over orphaned chunk files nobody
+reads.
 """
 
 from types import SimpleNamespace

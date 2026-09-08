@@ -118,6 +118,12 @@ class EvaluationIterationRun(SQLModel, table=True):
         ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the project"},
     )
+    last_dispatched_at: datetime | None = Field(
+        default=None,
+        sa_column_kwargs={
+            "comment": "When the cron last dispatched a resume; NULL until the first tick"
+        },
+    )
     inserted_at: datetime = Field(
         default_factory=now,
         nullable=False,
@@ -138,6 +144,7 @@ class EvaluationIterationRunUpdate(SQLModel):
     status: EvaluationIterationStatusEnum | None = None
     stop_reason: str | None = None
     error_message: str | None = None
+    last_dispatched_at: datetime | None = None
 
 
 class EvaluationIterationCreateRequest(SQLModel):

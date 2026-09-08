@@ -17,10 +17,17 @@ from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.fast import CHUNK_CONFIG_INDEX, list_response_chunk_jobs
-from app.crud.evaluations.iteration import list_processing_evaluation_iteration_runs
+from app.crud.evaluations.iteration import (
+    list_processing_evaluation_iteration_runs,
+    update_evaluation_iteration_run,
+)
 from app.crud.evaluations.processing import poll_all_pending_evaluations
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
+from app.models.evaluation_iteration import (
+    EvaluationIterationRun,
+    EvaluationIterationRunUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +108,34 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
     }
 
 
+def _reap_zombie_iteration_run(run: EvaluationIterationRun) -> None:
+    """Fail a loop that has been PROCESSING far longer than it could legitimately run.
+
+    The genuinely unbounded case is a loop interrupted on a sub-job that never
+    reaches a terminal status — an eval run wedged in `processing`. A crashed graph
+    step doesn't need this: the step's own handler fails the loop, and a SIGKILLed
+    one resumes from its checkpoint on the next tick.
+
+    Reaping fires the failure callback, so the threshold is deliberately generous;
+    a false positive kills a live loop and tells the customer it failed.
+    """
+    from app.services.evaluations.iteration_graph import mark_iteration_run_failed
+
+    logger.warning(
+        f"[_reap_zombie_iteration_run] Reaping stalled loop | "
+        f"iteration_run_id={run.id} | inserted_at={run.inserted_at}"
+    )
+    mark_iteration_run_failed(
+        iteration_run_id=run.id,
+        organization_id=run.organization_id,
+        project_id=run.project_id,
+        error_message=(
+            f"Evaluation iteration loop stalled: still processing more than "
+            f"{settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS}h after it started."
+        ),
+    )
+
+
 def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str, Any]:
     """Resume trigger for the eval-iterate-improve LangGraph loop.
 
@@ -108,23 +143,63 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
     `resume=True` graph-step task. Cheap even when the loop is still waiting on
     the same sub-job as last tick: the task just re-checks status and interrupts
     again immediately if not ready — same cost profile as a plain polling barrier.
+
+    Two guards keep that from running away:
+      * a loop whose last dispatch is still inside the cooldown is skipped, so a
+        step slower than the tick never gets a second one racing it on the same
+        checkpoint thread (and never double-charges an eval or improvement job),
+      * a loop still PROCESSING past the stall threshold is reaped, so a row whose
+        sub-job wedged doesn't collect resumes forever.
+
+    ponytail: the cooldown is a timestamp heuristic, not a lock — a step outliving
+    CELERY_TASK_TIME_LIMIT could still be double-dispatched. A real lock (row-level
+    SELECT FOR UPDATE, or a Redis key) is the upgrade if that ever shows up.
     """
     from app.celery.utils import start_evaluation_iteration_round
 
     runs = list_processing_evaluation_iteration_runs(session=session)
+    now_ = now()
+    stall_cutoff = now_ - timedelta(hours=settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS)
+    cooldown_cutoff = now_ - timedelta(
+        minutes=settings.EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES
+    )
+
+    dispatched = 0
+    reaped = 0
+    in_flight = 0
+
     for run in runs:
+        if run.inserted_at < stall_cutoff:
+            _reap_zombie_iteration_run(run)
+            reaped += 1
+            continue
+
+        if (
+            run.last_dispatched_at is not None
+            and run.last_dispatched_at > cooldown_cutoff
+        ):
+            in_flight += 1
+            continue
+
         start_evaluation_iteration_round(
             iteration_run_id=run.id,
             resume=True,
             organization_id=run.organization_id,
             project_id=run.project_id,
         )
+        # Stamped only after the enqueue lands, so a failed dispatch retries next tick.
+        update_evaluation_iteration_run(
+            session=session,
+            iteration_run=run,
+            update=EvaluationIterationRunUpdate(last_dispatched_at=now_),
+        )
+        dispatched += 1
 
     logger.info(
         f"[dispatch_pending_evaluation_iteration_resumes] Dispatched resumes | "
-        f"count={len(runs)}"
+        f"count={dispatched} | in_flight_skipped={in_flight} | reaped={reaped}"
     )
-    return {"total": len(runs), "resumes_dispatched": len(runs)}
+    return {"total": len(runs), "resumes_dispatched": dispatched}
 
 
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
