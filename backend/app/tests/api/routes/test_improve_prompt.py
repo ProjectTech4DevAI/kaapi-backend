@@ -55,6 +55,7 @@ from app.services.evaluations.prompt_improvement import (
     COMMIT_MESSAGE_MAX_LENGTH,
     _anthropic_error_detail,
     _call_prompt_drafting_llm,
+    _count_input_tokens,
     _draft_improved_prompt,
     _primary_score,
     execute_prompt_improvement,
@@ -1163,6 +1164,30 @@ class TestTraceBudget:
         kept = sum(text.count(f"Q{question_id} ") for question_id in range(questions))
         assert 0 < kept < questions * _MIN_REPEATS_PER_QUESTION
         assert f"of {len(traces)} traces" in text
+
+    def test_a_small_brief_is_never_sent_for_counting(
+        self, anthropic_creds: None
+    ) -> None:
+        """No round trip for a brief that cannot breach the budget."""
+        with patch(f"{_SERVICE}.ClaudeProvider.create_client") as create_client:
+            assert _count_input_tokens(user_message_text="rewrite this") is None
+        create_client.assert_not_called()
+
+    def test_traces_without_question_ids_still_get_trimmed(self) -> None:
+        """v1 traces from older datasets can carry no `question_id`.
+
+        Those must never be grouped as repeats of one another, so the repeat ladder
+        is a no-op for them and the rescaled character budget is the only thing that
+        can bring an oversized brief down.
+        """
+        traces = [self._judge_trace(i, 2.0) for i in range(20)]
+        for trace in traces:
+            del trace["question_id"]
+
+        text = self._capture_brief(traces, token_counts=[2_800_000])
+
+        kept = sum(text.count(f"Q{i} ") for i in range(20))
+        assert 0 < kept < 20
 
     def test_unscoreable_score_sorts_behind_every_real_score(self) -> None:
         """`value` is the string "N/A" on unscoreable rows; mixed str/float must not

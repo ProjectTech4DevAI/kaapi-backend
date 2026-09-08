@@ -63,9 +63,14 @@ _INPUT_TOKEN_BUDGET = 900_000
 _TOKEN_BUDGET_SAFETY = 0.9
 
 # Coarse character budget, applied on every attempt. It is what bounds the payload
-# when `count_tokens` is unavailable, and it keeps a near-ceiling Opus call from
-# being the normal case — a rewrite brief does not read better with more rows.
+# when `count_tokens` is unavailable or skipped, and it is what keeps the ordinary
+# run cheap — the token budget above is only the hard never-400 ceiling, not a
+# spend target.
 _TRACE_PAYLOAD_MAX_CHARS = 400_000
+# Below this the brief cannot breach the token budget even at a pessimistic three
+# tokens per character, so counting it would just be a wasted round trip inside a
+# worker with a soft time limit. Most runs land here.
+_COUNT_TOKENS_ABOVE_CHARS = 200_000
 _TRACE_FIELD_MAX_CHARS = 2_000
 _TRUNCATION_MARKER = " …[truncated]"
 
@@ -795,10 +800,13 @@ def _count_input_tokens(*, user_message_text: str) -> int | None:
     """Exact input-token count for the drafting request, or None when unavailable.
 
     Counted against the same model and output schema the real call uses, since both
-    are billed as input. A failure here must not fail the job — callers fall back to
-    the character budget, which bounds the payload on its own.
+    are billed as input. Returns None — meaning "treat as fitting" — for a brief too
+    small to be at risk, and for any failure: this is a network call from a Celery
+    worker, and the character budget bounds the payload on its own.
     """
     if not settings.ANTHROPIC_API_KEY:
+        return None
+    if len(user_message_text) <= _COUNT_TOKENS_ABOVE_CHARS:
         return None
     try:
         client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
