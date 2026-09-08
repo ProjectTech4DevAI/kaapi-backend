@@ -56,6 +56,7 @@ from app.services.evaluations.prompt_improvement import (
     start_prompt_improvement_job,
     validate_improve_prompt,
 )
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_evaluation_dataset
 from app.tests.utils.utils import random_lower_string
@@ -106,6 +107,7 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
     response = MagicMock()
     response.content = [content_block]
     response.id = "msg_test_id"
+    response.stop_reason = STOP_REASON_COMPLETE
 
     client = MagicMock()
     client.messages.create.return_value = response
@@ -893,7 +895,39 @@ class TestPollRouteRemoved:
         assert resp.status_code == 404, resp.text
 
 
-def _anthropic_response(status_code: int, body: dict) -> httpx.Response:
+class TestDraftingLlmTruncation:
+    """A max_tokens cut-off still parses under the schema; stop_reason is the guard."""
+
+    def _run(self, client: MagicMock) -> tuple[str, str]:
+        with (
+            patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+            patch(
+                "app.services.evaluations.prompt_improvement."
+                "ClaudeProvider.create_client",
+                return_value=client,
+            ),
+        ):
+            return _call_prompt_drafting_llm(user_message_text="brief")
+
+    def test_complete_response_returns_instructions_and_rationale(self) -> None:
+        instructions, rationale = self._run(_make_fake_claude_client())
+        assert instructions == _IMPROVED_INSTRUCTIONS
+        assert rationale == _RATIONALE
+
+    def test_truncated_response_raises_instead_of_returning_a_partial_prompt(
+        self,
+    ) -> None:
+        client = _make_fake_claude_client()
+        client.messages.create.return_value.stop_reason = "max_tokens"
+
+        with pytest.raises(RuntimeError) as exc:
+            self._run(client)
+
+        assert "prompt_generation_failed" in str(exc.value)
+        assert "max_tokens" in str(exc.value)
+
+
+def _anthropic_response(status_code: int, body: dict[str, object]) -> httpx.Response:
     return httpx.Response(
         status_code,
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),

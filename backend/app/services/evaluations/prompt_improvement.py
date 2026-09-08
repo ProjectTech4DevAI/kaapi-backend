@@ -42,7 +42,11 @@ from app.models.evaluation import (
     PromptRecommendationJobPublic,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -576,6 +580,13 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             messages=[{"role": "user", "content": user_message_text}],
             output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
+        # A max_tokens cut-off still parses under the schema, so stop_reason is
+        # the only signal — never persist a half-written prompt as a version.
+        if response.stop_reason != STOP_REASON_COMPLETE:
+            raise RuntimeError(
+                "prompt_generation_failed: the model stopped before finishing "
+                f"the draft (stop_reason={response.stop_reason}) — retry"
+            )
         text = next(b.text for b in response.content if b.type == "text")
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
@@ -620,6 +631,11 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             "retry or contact Kaapi if persistent | "
             f"anthropic_response: {_anthropic_error_detail(exc)}"
         ) from exc
+
+    # The truncation guard above already raised a precise message; without this
+    # re-raise the generic handler below flattens it.
+    except RuntimeError:
+        raise
 
     except Exception as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
