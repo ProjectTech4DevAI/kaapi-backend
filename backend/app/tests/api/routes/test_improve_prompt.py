@@ -31,6 +31,8 @@ from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import anthropic
+import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
 from fastapi import HTTPException
@@ -718,6 +720,53 @@ class TestExecuteWorker:
             session=db, config_id=completed_run.config_id, project_id=auth.project_id
         ).read_one(version_number=2)
         assert v2 is None
+
+    def test_anthropic_error_body_reaches_job_error_message(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        completed_run: EvaluationRun,
+    ) -> None:
+        """The provider's own response body must survive to Job.error_message and
+        the callback — that string is all an operator gets to triage the failure."""
+        job = self._pending_job(db, auth.project_id)
+        upstream_body = {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "max_tokens: 16384 > 8192, which is the maximum for this model",
+            },
+        }
+        claude_client = MagicMock()
+        claude_client.messages.create.side_effect = anthropic.BadRequestError(
+            "Error code: 400",
+            response=httpx.Response(
+                400,
+                request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+                json=upstream_body,
+            ),
+            body=upstream_body,
+        )
+
+        with _worker_env(db, claude_client=claude_client) as env:
+            with pytest.raises(RuntimeError):
+                execute_prompt_improvement(
+                    project_id=auth.project_id,
+                    job_id=str(job.id),
+                    organization_id=auth.organization_id,
+                    evaluation_id=completed_run.id,
+                    callback_url=_CALLBACK_URL,
+                )
+
+        refreshed = db.get(Job, job.id)
+        assert refreshed.status == JobStatus.FAILED
+        assert "prompt_generation_failed" in refreshed.error_message
+        assert "Anthropic returned HTTP 400" in refreshed.error_message
+        assert "which is the maximum for this model" in refreshed.error_message
+
+        payload = _callback_payload(env.callback)
+        assert payload["success"] is False
+        assert "which is the maximum for this model" in payload["data"]["error_message"]
 
     def test_trace_download_failure_fires_failure_callback(
         self,
