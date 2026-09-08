@@ -48,6 +48,7 @@ from app.models import EvaluationDataset, EvaluationRun
 from app.models.config.config import ConfigTag
 from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
+    _MIN_REPEATS_PER_QUESTION,
     _UNSCOREABLE_SORT_VALUE,
     _UPSTREAM_ERROR_DETAIL_MAX_LENGTH,
     AI_GENERATED_MARKER,
@@ -113,6 +114,9 @@ def _make_fake_claude_client(text_content: str | None = None) -> MagicMock:
 
     client = MagicMock()
     client.messages.create.return_value = response
+    # The drafting path counts input tokens before it calls; a real int keeps the
+    # repeat-degradation ladder on its first rung for these fixtures.
+    client.messages.count_tokens.return_value = MagicMock(input_tokens=1_000)
     return client
 
 
@@ -1070,14 +1074,30 @@ class TestTraceBudget:
         }
 
     @staticmethod
-    def _capture_brief(traces: list) -> str:
+    def _capture_brief(traces: list, *, token_counts: list[int] | None = None) -> str:
+        """Return the brief the drafting call would have received.
+
+        ``token_counts`` feeds one measured input-token count per ladder rung; the
+        last value repeats once the list is exhausted. Under the budget on the first
+        rung by default, so the ladder stays put unless a test says otherwise.
+        """
+        counts = list(token_counts or [1_000])
         captured: dict[str, str] = {}
+
+        def fake_count(*, user_message_text: str) -> int:
+            return counts.pop(0) if len(counts) > 1 else counts[0]
 
         def fake_call(*, user_message_text: str) -> tuple[str, str]:
             captured["text"] = user_message_text
             return "improved", "why"
 
-        with patch(f"{_SERVICE}._call_prompt_drafting_llm", side_effect=fake_call):
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch(f"{_SERVICE}._count_input_tokens", side_effect=fake_count)
+            )
+            stack.enter_context(
+                patch(f"{_SERVICE}._call_prompt_drafting_llm", side_effect=fake_call)
+            )
             assert _draft_improved_prompt(
                 current_instructions="be helpful",
                 config_params={"model": "gpt-4o"},
@@ -1104,12 +1124,45 @@ class TestTraceBudget:
         assert "Q1000 " not in text
         # Fields the brief never names are not shipped.
         assert "trace_id" not in text
-        assert f"lowest-scoring traces of {len(traces)}" in text
+        assert f"of {len(traces)} traces" in text
 
     def test_small_run_is_sent_whole_without_a_scope_note(self) -> None:
         text = self._capture_brief([self._judge_trace(1, 5.0)])
 
-        assert "lowest-scoring traces of" not in text
+        assert " traces —" not in text
+
+    @staticmethod
+    def _repeated_run(questions: int, repeats: int) -> list[dict]:
+        """A judged run of `questions` questions scored `repeats` times each."""
+        return [
+            TestTraceBudget._judge_trace(question_id, 2.0)
+            for question_id in range(questions)
+            for _ in range(repeats)
+        ]
+
+    def test_repeats_are_dropped_one_at_a_time_until_the_brief_fits(self) -> None:
+        traces = self._repeated_run(questions=4, repeats=5)
+
+        # Over budget at 5 and 4 repeats per question, under it at 3.
+        text = self._capture_brief(traces, token_counts=[1_100_000, 950_000, 800_000])
+
+        # Every question is still represented, three times each — no question was
+        # dropped to make room.
+        for question_id in range(4):
+            assert text.count(f"Q{question_id} ") == 3
+
+    def test_row_dropping_takes_over_at_the_repeat_floor(self) -> None:
+        # Sized so the flat character budget alone would keep every row: only the
+        # floor's rescaled budget can drop any, which is what this asserts.
+        questions = 9
+        traces = self._repeated_run(questions=questions, repeats=5)
+
+        # Still far over budget after the ladder bottoms out at 3 repeats.
+        text = self._capture_brief(traces, token_counts=[2_800_000])
+
+        kept = sum(text.count(f"Q{question_id} ") for question_id in range(questions))
+        assert 0 < kept < questions * _MIN_REPEATS_PER_QUESTION
+        assert f"of {len(traces)} traces" in text
 
     def test_unscoreable_score_sorts_behind_every_real_score(self) -> None:
         """`value` is the string "N/A" on unscoreable rows; mixed str/float must not

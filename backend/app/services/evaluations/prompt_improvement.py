@@ -8,6 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
+from collections import Counter
 from uuid import UUID
 
 import anthropic
@@ -51,14 +52,28 @@ logger = logging.getLogger(__name__)
 # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
 _LLM_MAX_TOKENS = 16384
 
-# Trace-payload budget, in characters rather than tokens: there is no tokenizer
-# in-tree, and Indic-script Q&A tokenizes several times worse than English, so any
-# chars-per-token divisor is a tuning knob, not a fact. Deliberately far below the
-# provider's 1M-token input ceiling — a rewrite brief does not read better with more
-# rows, and a near-ceiling Opus call per run is not worth paying for.
+# Input-token ceiling for the drafting request, measured with `count_tokens`
+# rather than estimated: the model's window is 1M and Indic-script Q&A tokenizes
+# several times worse than English, so any chars-per-token divisor guesses wrong
+# in the direction that fails the job. The gap to 1M leaves room for the schema
+# and the rewrite itself.
+_INPUT_TOKEN_BUDGET = 900_000
+# Shrink factor applied when the measured count has to be converted back into a
+# character budget; the relationship is only approximately linear.
+_TOKEN_BUDGET_SAFETY = 0.9
+
+# Coarse character budget, applied on every attempt. It is what bounds the payload
+# when `count_tokens` is unavailable, and it keeps a near-ceiling Opus call from
+# being the normal case — a rewrite brief does not read better with more rows.
 _TRACE_PAYLOAD_MAX_CHARS = 400_000
 _TRACE_FIELD_MAX_CHARS = 2_000
 _TRUNCATION_MARKER = " …[truncated]"
+
+# Repeats of the same question are the first thing dropped when the brief is too
+# large: cutting the 5th, then the 4th, keeps every question represented, whereas
+# dropping rows loses questions outright. Below this floor the repeats no longer
+# show whether the judge is stable, so row-dropping takes over instead.
+_MIN_REPEATS_PER_QUESTION = 3
 
 # Sorts unscoreable rows (value = "N/A") last, behind every real score.
 _UNSCOREABLE_SORT_VALUE = float("inf")
@@ -678,6 +693,50 @@ def _project_trace(trace: dict, *, is_judge_run: bool) -> dict:
     return projected
 
 
+def _group_key(index: int, trace: dict) -> object:
+    """Repeats of one question share its `question_id`.
+
+    A trace without one is keyed uniquely so it is never treated as a repeat —
+    older datasets uploaded without question ids would otherwise collapse into a
+    single group and be cut down to a handful of rows.
+    """
+    question_id = trace.get("question_id")
+    if question_id or question_id == 0:
+        return question_id
+    return f"__row_{index}"
+
+
+def _max_repeats_observed(rows: list[dict]) -> int:
+    counts = Counter(_group_key(index, row) for index, row in enumerate(rows))
+    return max(counts.values(), default=0)
+
+
+def _repeat_ladder(rows: list[dict]) -> list[int]:
+    """Repeat limits to try, from the run's own duplication factor down to the floor."""
+    observed = _max_repeats_observed(rows)
+    if observed <= _MIN_REPEATS_PER_QUESTION:
+        return [observed]
+    return list(range(observed, _MIN_REPEATS_PER_QUESTION - 1, -1))
+
+
+def _limit_repeats(rows: list[dict], *, max_repeats: int) -> list[dict]:
+    """Keep at most `max_repeats` traces per question, in file order.
+
+    Order, not score, decides which repeats survive: repeats exist to show how
+    stable the judge is on one question, so dropping the worst of them would erase
+    the very spread the judge brief is told to read.
+    """
+    kept: list[dict] = []
+    seen: dict[object, int] = {}
+    for index, row in enumerate(rows):
+        key = _group_key(index, row)
+        if seen.get(key, 0) >= max_repeats:
+            continue
+        seen[key] = seen.get(key, 0) + 1
+        kept.append(row)
+    return kept
+
+
 def _primary_score(trace: dict, *, score_name: str) -> float:
     """The metric the brief calls the primary signal; +inf when it is unusable."""
     for score in trace.get("scores") or []:
@@ -691,18 +750,25 @@ def _primary_score(trace: dict, *, score_name: str) -> float:
 
 
 def _select_traces(
-    traces: list | dict, *, is_judge_run: bool
+    rows: list[dict],
+    *,
+    is_judge_run: bool,
+    max_repeats: int | None = None,
+    max_chars: int = _TRACE_PAYLOAD_MAX_CHARS,
 ) -> tuple[list[dict], int]:
-    """Project, truncate, and cap the traces to a char budget, worst-scoring first.
+    """Project, truncate, and cap the traces, worst-scoring first.
 
-    Returns (kept, total). Worst-first both selects and orders: the brief tells the
-    model to focus on the low-scoring rows, so those are the ones a cap must keep.
+    Returns (kept, total) where total counts the whole run, so the brief can say
+    how much it is not seeing. Worst-first both selects and orders: the brief tells
+    the model to focus on the low-scoring rows, so those are the ones a cap must
+    keep.
     """
-    rows = traces if isinstance(traces, list) else traces.get("traces") or []
     score_name = GROUND_TRUTH_SCORE_NAME if is_judge_run else COSINE_SCORE_NAME
+    candidates = (
+        rows if max_repeats is None else _limit_repeats(rows, max_repeats=max_repeats)
+    )
     ranked = sorted(
-        (row for row in rows if isinstance(row, dict)),
-        key=lambda row: _primary_score(row, score_name=score_name),
+        candidates, key=lambda row: _primary_score(row, score_name=score_name)
     )
 
     kept: list[dict] = []
@@ -710,7 +776,7 @@ def _select_traces(
     for row in ranked:
         projected = _project_trace(row, is_judge_run=is_judge_run)
         size = len(json.dumps(projected, ensure_ascii=False))
-        if kept and used + size > _TRACE_PAYLOAD_MAX_CHARS:
+        if kept and used + size > max_chars:
             break
         kept.append(projected)
         used += size
@@ -719,9 +785,68 @@ def _select_traces(
         logger.warning(
             f"[_select_traces] Trimmed traces to fit the prompt budget | "
             f"kept={len(kept)} total={len(rows)} chars={used} "
+            f"max_repeats={max_repeats} max_chars={max_chars} "
             f"is_judge_run={is_judge_run}"
         )
     return kept, len(rows)
+
+
+def _count_input_tokens(*, user_message_text: str) -> int | None:
+    """Exact input-token count for the drafting request, or None when unavailable.
+
+    Counted against the same model and output schema the real call uses, since both
+    are billed as input. A failure here must not fail the job — callers fall back to
+    the character budget, which bounds the payload on its own.
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        return None
+    try:
+        client = ClaudeProvider.create_client({"api_key": settings.ANTHROPIC_API_KEY})
+        counted = client.messages.count_tokens(
+            model=settings.PROMPT_IMPROVEMENT_MODEL,
+            messages=[{"role": "user", "content": user_message_text}],
+            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
+        )
+        # A malformed / stubbed response must not crash the worker; the character
+        # budget already bounds the payload without a count.
+        return counted.input_tokens if isinstance(counted.input_tokens, int) else None
+    except Exception as exc:
+        logger.warning(
+            f"[_count_input_tokens] Count unavailable, falling back to the "
+            f"character budget | {exc}"
+        )
+        return None
+
+
+def _build_user_message(
+    *,
+    trace_description: str,
+    task_steps: list[str],
+    current_instructions: str,
+    target_config: dict,
+    selected_traces: list[dict],
+    total_traces: int,
+) -> str:
+    """Assemble the drafting brief; rebuilt once per attempt as the payload shrinks."""
+    trace_scope = (
+        ""
+        if len(selected_traces) == total_traces
+        else (
+            f" You are seeing {len(selected_traces)} of {total_traces} traces — "
+            "the lowest-scoring rows, and at most a few repeats per question; the "
+            "rest are omitted."
+        )
+    )
+    return (
+        "You are a prompt engineer. Below is a JSON array of evaluation traces"
+        f"{trace_description}{trace_scope}\n\n"
+        "## Evaluation traces\n```\n"
+        f"{json.dumps(selected_traces, ensure_ascii=False)}\n```\n\n"
+        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
+        "## Target configuration (read-only — do NOT change any of these)\n"
+        f"```\n{json.dumps(target_config)}\n```\n\n"
+        "## Task\n" + "".join(task_steps)
+    )
 
 
 def _draft_improved_prompt(
@@ -808,25 +933,61 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
-    selected_traces, total_traces = _select_traces(traces, is_judge_run=is_judge_run)
-    trace_scope = (
-        ""
-        if len(selected_traces) == total_traces
-        else (
-            f" You are seeing the {len(selected_traces)} lowest-scoring traces of "
-            f"{total_traces}; the rest scored higher and are omitted."
-        )
-    )
+    raw_rows = traces if isinstance(traces, list) else traces.get("traces") or []
+    rows = [row for row in raw_rows if isinstance(row, dict)]
 
-    user_message_text = (
-        "You are a prompt engineer. Below is a JSON array of evaluation traces"
-        f"{trace_description}{trace_scope}\n\n"
-        "## Evaluation traces\n```\n"
-        f"{json.dumps(selected_traces, ensure_ascii=False)}\n```\n\n"
-        f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
-        "## Target configuration (read-only — do NOT change any of these)\n"
-        f"```\n{json.dumps(target_config)}\n```\n\n"
-        "## Task\n" + "".join(task_steps)
-    )
+    def brief(selected: list[dict], total: int) -> str:
+        return _build_user_message(
+            trace_description=trace_description,
+            task_steps=task_steps,
+            current_instructions=current_instructions,
+            target_config=target_config,
+            selected_traces=selected,
+            total_traces=total,
+        )
+
+    # Degrade repeats before rows: the 5th repeat of a question carries far less
+    # signal than a question the model never sees at all.
+    user_message_text = ""
+    counted: int | None = None
+    for max_repeats in _repeat_ladder(rows):
+        selected_traces, total_traces = _select_traces(
+            rows, is_judge_run=is_judge_run, max_repeats=max_repeats
+        )
+        user_message_text = brief(selected_traces, total_traces)
+        counted = _count_input_tokens(user_message_text=user_message_text)
+        if counted is None or counted <= _INPUT_TOKEN_BUDGET:
+            return _call_prompt_drafting_llm(user_message_text=user_message_text)
+        logger.warning(
+            f"[_draft_improved_prompt] Over the input budget, dropping a repeat | "
+            f"max_repeats={max_repeats} tokens={counted} "
+            f"budget={_INPUT_TOKEN_BUDGET}"
+        )
+
+    # The repeat floor is not a get-out: at 3 repeats a long enough run is still
+    # over, so stop cutting repeats and cut rows instead, converting the measured
+    # count back into a character budget.
+    if counted:
+        scaled_chars = max(
+            _TRACE_FIELD_MAX_CHARS,
+            int(
+                _TRACE_PAYLOAD_MAX_CHARS
+                * _TOKEN_BUDGET_SAFETY
+                * _INPUT_TOKEN_BUDGET
+                / counted
+            ),
+        )
+        logger.warning(
+            f"[_draft_improved_prompt] Repeat floor reached, dropping rows | "
+            f"max_repeats={_MIN_REPEATS_PER_QUESTION} tokens={counted} "
+            f"scaled_chars={scaled_chars}"
+        )
+        selected_traces, total_traces = _select_traces(
+            rows,
+            is_judge_run=is_judge_run,
+            max_repeats=_MIN_REPEATS_PER_QUESTION,
+            max_chars=scaled_chars,
+        )
+        user_message_text = brief(selected_traces, total_traces)
 
     return _call_prompt_drafting_llm(user_message_text=user_message_text)
