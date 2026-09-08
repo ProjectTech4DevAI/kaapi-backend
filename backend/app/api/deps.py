@@ -15,7 +15,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.db import engine
 from app.core.security import api_key_manager
-from app.core.telemetry import set_request_log_context
+from app.core.telemetry import bind_sentry_user, set_request_log_context
 from app.crud.organization import validate_organization
 from app.crud.project import validate_project
 from app.models import (
@@ -45,12 +45,12 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 
 def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
-    """Tag the active OTel span and log context with tenant info after auth.
+    """Tag the active OTel span, log context and Sentry scope with tenant info after auth.
 
     Sets org/project on:
     - OTel span   → Sentry traces filterable by tenant
     - log context → every log record in this request carries org_id/project_id
-    - Sentry scope → tags on all events for this request
+    - Sentry scope → tenant tags, plus the user binding that drives users-affected
     """
     span = trace.get_current_span()
     if span.is_recording():
@@ -60,11 +60,10 @@ def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
         if auth_context.project:
             span.set_attribute("tenant.project_id", auth_context.project.id)
 
-    set_request_log_context(
-        org_id=auth_context.organization.id if auth_context.organization else None,
-        project_id=auth_context.project.id if auth_context.project else None,
-        user_id=auth_context.user.id,
-    )
+    org_id = auth_context.organization.id if auth_context.organization else None
+    project_id = auth_context.project.id if auth_context.project else None
+    set_request_log_context(org_id=org_id, project_id=project_id)
+    bind_sentry_user(user_id=auth_context.user.id, org_id=org_id, project_id=project_id)
 
 
 def _authenticate_with_jwt(session: Session, token: str) -> AuthContext:

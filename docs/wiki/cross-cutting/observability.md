@@ -16,7 +16,7 @@ OTel-first, Sentry as sole in-process sink (`instrumenter="otel"`). Init at `mai
 - Sampling/profiling/PII: `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_PROFILE_SESSION_SAMPLE_RATE`, `SENTRY_PROFILE_LIFECYCLE`, `SENTRY_SEND_DEFAULT_PII`, `SENTRY_ERROR_SAMPLE_RATE` (config.py; defaults preserve current behavior).
 - Trace propagation: `CeleryIntegration(propagate_traces=True)` links API to worker as one trace; poll-loop re-enqueues pass `SENTRY_NO_PROPAGATE_HEADERS` (`celery/tasks/job_execution.py`) to start a fresh trace.
 - Error capture: generic handler in `core/exception_handlers.py` calls `capture_exception`.
-- Tenant impact: `set_request_log_context` (`core/telemetry.py`, called from `api/deps.py`) sets `sentry_sdk.set_user` (user/org/project) so issues report users/orgs affected.
+- Tenant impact (both in `core/telemetry.py`, called from `api/deps.py`): `set_request_log_context` puts org/project in the log context + Sentry tags; `bind_sentry_user` binds user/org/project via `sentry_sdk.set_user` so issues report users/orgs affected. The user binding is scope-only — ids in the log context would stamp per-user cardinality on every INFO record `enable_logs` ships. Per-request identity is the `correlation_id` tag (`core/middleware.py`), not the user binding.
 - Crons: `@sentry_sdk.monitor` on `/cron/*` endpoints (`api/routes/cron.py`).
 - Runbook (alerts/dashboards/debugging): `features/sentry-utilization/SENTRY-RUNBOOK.md`.
 

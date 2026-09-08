@@ -134,16 +134,11 @@ def _emit_sentry_metric(
 def set_request_log_context(
     org_id: int | None = None,
     project_id: int | None = None,
-    user_id: int | None = None,
 ) -> None:
-    """Attach org/project to the current request's log context and Sentry scope.
+    """Attach org/project to the current request's log context and Sentry tags.
 
-    Call once per authenticated request (from the auth dependency). All subsequent
-    log records in this request will carry org_id and project_id automatically
-    via LogContextFilter — no need to add them to individual log statements.
-
-    user_id, when provided, is bound to the Sentry scope so issues report the
-    users/orgs affected; it is not added to the log context.
+    Call once per authenticated request (from the auth dependency); LogContextFilter
+    then stamps org_id/project_id on every later log record in the request.
     """
     current = _log_context_var.get() or {}
     payload = dict(current)
@@ -159,15 +154,32 @@ def set_request_log_context(
                 sentry_sdk.set_tag("tenant.org_id", str(org_id))
             if project_id is not None:
                 sentry_sdk.set_tag("tenant.project_id", str(project_id))
-            sentry_user: dict[str, str] = {}
-            if user_id is not None:
-                sentry_user["id"] = str(user_id)
-            if org_id is not None:
-                sentry_user["org_id"] = str(org_id)
-            if project_id is not None:
-                sentry_user["project_id"] = str(project_id)
-            if sentry_user:
-                sentry_sdk.set_user(sentry_user)
+    except Exception:
+        pass
+
+
+def bind_sentry_user(
+    user_id: int | None = None,
+    org_id: int | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Bind the caller's ids to the Sentry scope so issues report users/orgs affected.
+
+    Scope-only by design: these never enter the log context, which would stamp
+    per-user cardinality on every INFO record `enable_logs` ships.
+    """
+    try:
+        if not sentry_sdk.get_client().is_active():
+            return
+        sentry_user: dict[str, str] = {}
+        if user_id is not None:
+            sentry_user["id"] = str(user_id)
+        if org_id is not None:
+            sentry_user["org_id"] = str(org_id)
+        if project_id is not None:
+            sentry_user["project_id"] = str(project_id)
+        if sentry_user:
+            sentry_sdk.set_user(sentry_user)
     except Exception:
         pass
 
