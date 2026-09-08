@@ -29,7 +29,10 @@ from app.services.assessment.prefilter.topic_relevance import (
     parse_topic_relevance_results,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +150,27 @@ def _get_batch_provider(
     if provider_name in (
         LLMProvider.GOOGLE,
         LLMProvider.GOOGLE_NATIVE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
     ):
         gemini_client = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
         return GeminiBatchProvider(client=gemini_client.client)
+    if provider_name in (LLMProvider.GOOGLE_GCP, LLMProvider.GOOGLE_GCP_NATIVE):
+        # Lazy to avoid a crud<->stages cycle.
+        from app.core.batch import GoogleGCPBatchProvider
+        from app.crud.credentials import get_provider_credential
+
+        cred = get_provider_credential(
+            session=session,
+            provider=LLMProvider.GOOGLE_GCP,
+            project_id=project_id,
+            org_id=organization_id,
+        )
+        if not isinstance(cred, dict):
+            raise ValueError("google-gcp credentials not configured for this project")
+        return GoogleGCPBatchProvider.from_credentials(cred)
     if provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
         return AnthropicBatchProvider(
             client=get_anthropic_client(

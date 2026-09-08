@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.exception_handlers import HTTPException
-from app.core.providers import validate_provider
+from app.core.providers import parse_provider_credentials, validate_provider
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
 from app.models import Credential, CredsCreate, CredsUpdate
@@ -194,6 +194,27 @@ def update_creds_for_org(
         Credential.project_id == project_id,
     )
     creds = session.exec(statement).one_or_none()
+
+    # Merge onto the existing credentials so a partial payload (PATCH) only
+    # overwrites the fields it supplies instead of dropping the rest.
+    merged_credential_data = credential_data
+    if creds and creds.credential:
+        merged_credential_data = {
+            **decrypt_credentials(creds.credential),
+            **credential_data,
+        }
+
+    try:
+        parse_provider_credentials(provider, merged_credential_data)
+    except ValueError as e:
+        logger.warning(
+            f"[update_creds_for_org] Validation error | organization_id: {org_id}, project_id: {project_id}, provider: {provider}, error: {str(e)}"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Encrypt the entire credentials object
+    encrypted_credentials = encrypt_credentials(merged_credential_data)
+
     if creds is None:
         # Create new credential if it doesn't exist
         creds = Credential(

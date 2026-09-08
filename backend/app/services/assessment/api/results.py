@@ -107,7 +107,6 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
 
     tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
-    dd_verdicts = verdicts.get(ApiStage.DUPLICATE_DETECTION.value, {})
 
     items: list[AssessmentResult] = []
     counts = AssessmentCounts()
@@ -125,14 +124,8 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
                 error = load_error
 
         topic_relevance = _verdict_obj(tr_verdicts.get(str(idx)))
-        duplicate_detection = _verdict_obj(dd_verdicts.get(str(idx)))
         pre_filter = (
-            PreFilter(
-                topic_relevance=topic_relevance,
-                duplicate_detection=duplicate_detection,
-            )
-            if (topic_relevance or duplicate_detection)
-            else None
+            PreFilter(topic_relevance=topic_relevance) if topic_relevance else None
         )
         items.append(
             AssessmentResult(

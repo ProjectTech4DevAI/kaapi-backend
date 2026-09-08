@@ -146,54 +146,32 @@ def _load_items_from_object_store(
     return items
 
 
-def validate_and_start_fast_evaluation(
+def validate_fast_evaluation_inputs(
     *,
     session: Session,
     dataset_id: int,
-    run_name: str,
     config_id: UUID,
     config_version: int,
     organization_id: int,
     project_id: int,
-    trace_id: str = "N/A",
     is_judge_run: bool = False,
-    callback_url: str | None = None,
     duplication_factor: int | None = None,
-) -> EvaluationRun:
-    """Validate + create + dispatch a fast evaluation run.
+) -> EvaluationDataset:
+    """Run the dataset/config precondition checks shared by
+    `validate_and_start_fast_evaluation` and the eval-iteration graph's
+    `start_eval_node`. Raises HTTPException on the first failing check; returns
+    the validated dataset on success. No DB writes.
 
-    Validation (in order):
+    Checks (in order):
     1. Dataset exists; v1 runs also require a Langfuse id, v2 judged runs don't
        (they load items from S3).
     2. Config resolves to a text-type OpenAI config.
     3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
-    4. (organization_id, project_id, run_name) is unique — enforced by the DB
-       constraint; a collision is translated to 409 by the shared helper.
-
-    On success the function creates the EvaluationRun row with
-    `run_mode="fast"`, `status="processing"`, and enqueues the orchestrator
-    task. The caller (route) returns the row immediately.
-
-    `is_judge_run` is the v2 native-judge marker, persisted on the run before
-    dispatch so the aggregate (which only knows eval_run_id) reads it at judge
-    time. It defaults to the v1 behavior — no judging, Langfuse sync as today —
-    so the v1 call path is unchanged. Judging is system-config only: the judge
-    always uses the fallback model + built-in prompt, so there is no per-run config.
-
-    `callback_url` is an optional HTTPS webhook (v2 only) persisted on the run so
-    the terminal-transition hook can POST the result. v1 callers pass nothing, so
-    it stays NULL and no webhook fires.
 
     `duplication_factor`, when provided, overrides the dataset's stored factor for
     this run only and is supported for runtime-duplicated (v2) datasets exclusively
     (rejected with 422 otherwise).
     """
-    logger.info(
-        f"[validate_and_start_fast_evaluation] Starting fast eval | "
-        f"run_name={run_name} | dataset_id={dataset_id} | "
-        f"org_id={organization_id} | project_id={project_id}"
-    )
-
     # 1. Dataset must exist (Langfuse id required for v1 runs only; see below).
     dataset = get_dataset_by_id(
         session=session,
@@ -275,7 +253,65 @@ def validate_and_start_fast_evaluation(
             ),
         )
 
-    # 4. Create the run; the shared helper translates a duplicate run_name into 409.
+    return dataset
+
+
+def validate_and_start_fast_evaluation(
+    *,
+    session: Session,
+    dataset_id: int,
+    run_name: str,
+    config_id: UUID,
+    config_version: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str = "N/A",
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+) -> EvaluationRun:
+    """Validate + create + dispatch a fast evaluation run.
+
+    Validation is `validate_fast_evaluation_inputs` (dataset/config checks); on
+    top of that, (organization_id, project_id, run_name) must be unique — enforced
+    by the DB constraint, a collision is translated to 409 by the shared helper.
+
+    On success the function creates the EvaluationRun row with
+    `run_mode="fast"`, `status="processing"`, and enqueues the orchestrator
+    task. The caller (route) returns the row immediately.
+
+    `is_judge_run` is the v2 native-judge marker, persisted on the run before
+    dispatch so the aggregate (which only knows eval_run_id) reads it at judge
+    time. It defaults to the v1 behavior — no judging, Langfuse sync as today —
+    so the v1 call path is unchanged. Judging is system-config only: the judge
+    always uses the fallback model + built-in prompt, so there is no per-run config.
+
+    `callback_url` is an optional HTTPS webhook (v2 only) persisted on the run so
+    the terminal-transition hook can POST the result. v1 callers pass nothing, so
+    it stays NULL and no webhook fires.
+
+    `duplication_factor`, when provided, overrides the dataset's stored factor for
+    this run only and is supported for runtime-duplicated (v2) datasets exclusively
+    (rejected with 422 otherwise).
+    """
+    logger.info(
+        f"[validate_and_start_fast_evaluation] Starting fast eval | "
+        f"run_name={run_name} | dataset_id={dataset_id} | "
+        f"org_id={organization_id} | project_id={project_id}"
+    )
+
+    dataset = validate_fast_evaluation_inputs(
+        session=session,
+        dataset_id=dataset_id,
+        config_id=config_id,
+        config_version=config_version,
+        organization_id=organization_id,
+        project_id=project_id,
+        is_judge_run=is_judge_run,
+        duplication_factor=duplication_factor,
+    )
+
+    # Create the run; the shared helper translates a duplicate run_name into 409.
     eval_run = create_evaluation_run_or_409(
         session=session,
         run_name=run_name,

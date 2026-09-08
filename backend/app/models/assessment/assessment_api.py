@@ -22,11 +22,10 @@ Attachment = Annotated[ImageInput | PDFInput, Field(discriminator="type")]
 
 
 class ResponseInput(SQLModel):
-    """RESPONSE input — a single `query` + optional attachments (no columns)."""
+    """RESPONSE input — optional attachments (no columns). The prompt lives in the config."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(..., min_length=1, description="User query")
     attachments: list[Attachment] = Field(default_factory=list)
 
 
@@ -36,13 +35,10 @@ Submission = dict[str, str]
 
 
 class BatchInput(SQLModel):
-    """BATCH input — a `query` template + a list of submission rows."""
+    """BATCH input — a list of submission rows. The prompt template lives in the config."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(
-        ..., min_length=1, description="Query template with {column} placeholders"
-    )
     data: list[Submission] = Field(
         ..., min_length=1, description="Submission rows; one assessed item each"
     )
@@ -91,8 +87,8 @@ class BatchRunState(TypedDict):
 
 
 # Strict, tagless discrimination via extra=forbid: an input carrying `data` is a
-# BatchInput, one carrying `attachments` (or query-only) is a ResponseInput. The two
-# cannot be confused — neither accepts the other's distinguishing field.
+# BatchInput, one carrying only `attachments` is a ResponseInput. The two cannot be
+# confused — neither accepts the other's distinguishing field.
 AssessmentInput = ResponseInput | BatchInput
 
 
@@ -144,7 +140,6 @@ class PreFilter(BaseModel):
     """Grouped pre-filter verdicts for one item; each is null if not configured."""
 
     topic_relevance: PreFilterVerdict | None = None
-    duplicate_detection: PreFilterVerdict | None = None
 
 
 class AssessmentOutput(BaseModel):

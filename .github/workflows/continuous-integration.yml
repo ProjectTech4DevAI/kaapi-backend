@@ -75,10 +75,35 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage.xml
+          disable_search: true
           fail_ci_if_error: true
+          verbose: true
 
       - name: Check coverage percentage
         run: |
           source .venv/bin/activate
           coverage report --fail-under=70
         working-directory: backend
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build backend image
+        run: docker build -t kaapi-backend:ci ./backend
+
+      - name: Prepare env for compose validation
+        run: cp .env.test.example .env
+
+      - name: Validate compose files
+        env:
+          RABBITMQ_USER: ci
+          RABBITMQ_PASSWORD: ci
+          RABBITMQ_VHOST: ci
+        run: |
+          for f in docker-compose.yml docker-compose.dev.yml docker-compose.staging.yml; do
+            echo "Validating $f"
+            docker compose -f "$f" config -q
+          done

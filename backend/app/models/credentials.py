@@ -84,8 +84,12 @@ class CredsUpdate(SQLModel):
     provider: Provider = Field(
         description="Name of the provider to update/add credentials for"
     )
-    credential: ProviderCredentials = Field(
-        description="Credentials for the specified provider",
+    credential: CredentialPayload = Field(
+        description=(
+            "Credentials for the specified provider. May be a partial payload "
+            "(PATCH semantics) — completeness is validated after merging with "
+            "any existing stored credentials, not on this raw payload."
+        ),
     )
     is_active: bool | None = Field(
         default=None, description="Whether the credentials are active"
@@ -107,15 +111,21 @@ class CredsUpdate(SQLModel):
         if isinstance(nested, dict):
             credential = nested
 
+        # An empty payload has nothing to merge with an existing stored
+        # credential, so it is rejected here rather than deferred to the
+        # crud-level merge check.
+        if isinstance(credential, dict) and not credential:
+            parse_provider_credentials(provider_key, credential)
+
         return {
             **data,
             "provider": provider_key,
-            "credential": parse_provider_credentials(provider_key, credential),
+            "credential": credential,
         }
 
     def credential_payload(self) -> CredentialPayload:
         """Credential dict for `provider`, exactly as submitted."""
-        return self.credential.model_dump(exclude_unset=True)
+        return self.credential
 
 
 class Credential(CredsBase, table=True):

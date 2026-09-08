@@ -952,7 +952,7 @@ class TestRunOverallSummary:
         assert BOT_INSTRUCTIONS in brief
         payload = json.loads(brief.split("## Per-question judge traces (JSON)\n", 1)[1])
 
-        assert [trace["trace_id"] for trace in payload] == ["item-1"]
+        assert [trace["question_id"] for trace in payload] == ["item-1"]
         assert payload[0]["question"] == "Q1"
         assert payload[0]["ground_truth_answer"] == "golden-1"
         assert payload[0]["llm_answer"] == "generated for Q1"

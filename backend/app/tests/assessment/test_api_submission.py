@@ -34,10 +34,13 @@ def _assessment_config(
             "type": "object",
             "properties": {"s": {"type": "integer"}},
         },
-        "input_schema": input_schema or {"a": {"type": "text"}},
+        "submission": "Assess this submission.",
     }
     blob = AssessmentConfigBlob.model_validate(
-        {"assessment": {"provider": provider, "type": "text", "params": params}}
+        {
+            "input_schema": input_schema or {"a": {"type": "text"}},
+            "assessment": {"provider": provider, "type": "text", "params": params},
+        }
     )
     return create_test_config(
         db,
@@ -52,7 +55,7 @@ def _request(config, data):
     return AssessmentCreate.model_validate(
         {
             "config": {"id": str(config.id), "version": 1},
-            "input": {"query": "assess {a}", "data": data},
+            "input": {"data": data},
             "callback_url": "https://hook.example/cb",
             "request_metadata": {"ref": "abc"},
         }
@@ -177,6 +180,13 @@ class TestSubmit:
         assert "input.data[0]" in exc.value.detail
         assert "must be a URL" in exc.value.detail
 
+    def test_gs_uri_attachment_value_passes_validation(self) -> None:
+        # gs:// is allowed at submit-time; it is resolved before batch build.
+        submission._validate_rows_against_schema(
+            [{"img": "gs://bucket/key.png"}],
+            {"img": {"type": "image", "format": "url"}},
+        )
+
     def test_unsupported_provider_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         # Build a config whose stored blob names an unsupported batch provider.
@@ -201,7 +211,7 @@ class TestSubmit:
         request = AssessmentCreate.model_validate(
             {
                 "config": {"id": str(uuid4()), "version": 1},
-                "input": {"query": "assess {a}", "data": [{"a": "1"}]},
+                "input": {"data": [{"a": "1"}]},
                 "callback_url": "https://hook.example/cb",
             }
         )
@@ -220,7 +230,7 @@ class TestSubmit:
         request = AssessmentCreate.model_validate(
             {
                 "config": {"id": str(config.id), "version": 1},
-                "input": {"query": "single query"},
+                "input": {"attachments": []},
                 "callback_url": "https://hook.example/cb",
             }
         )
@@ -285,7 +295,7 @@ class TestCallbackUrlValidation:
         request = AssessmentCreate.model_validate(
             {
                 "config": {"id": str(config.id), "version": 1},
-                "input": {"query": "assess {a}", "data": [{"a": "one"}]},
+                "input": {"data": [{"a": "one"}]},
                 "callback_url": callback_url,
             }
         )
@@ -346,7 +356,7 @@ class TestCreateAssessmentRoute:
         config = _assessment_config(db, superuser_api_key.project_id)
         body = {
             "config": {"id": str(config.id), "version": 1},
-            "input": {"query": "assess {a}", "data": [{"a": "one"}]},
+            "input": {"data": [{"a": "one"}]},
             "callback_url": "https://hook.example/cb",
         }
         with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
@@ -366,7 +376,7 @@ class TestCreateAssessmentRoute:
     ) -> None:
         body = {
             "config": {"id": "00000000-0000-0000-0000-000000000001", "version": 1},
-            "input": {"query": "single query"},
+            "input": {"attachments": []},
             "callback_url": "https://hook.example/cb",
         }
         resp = client.post(

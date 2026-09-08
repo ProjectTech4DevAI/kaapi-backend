@@ -293,15 +293,16 @@ class TestApplicableMetrics:
 class TestBuildJudgeParams:
     """FR-9: system-config judging uses the fallback model + built-in ground-truth prompt.
 
-    The judge is a reasoning model (gpt-5-mini) that rejects a custom temperature, so
-    the request never carries one.
+    `build_judge_params` never sets a temperature, so the body never carries one.
+    The judge model has no `model_config` row, so the mapper reads it as
+    non-reasoning and drops `EVAL_JUDGE_REASONING_EFFORT` from the request.
     """
 
     def test_defaults_to_fallback_model_and_builtin_prompt(self, db: Session) -> None:
         base_params = build_judge_params(session=db)
 
         assert base_params["model"] == settings.EVAL_JUDGE_MODEL
-        assert base_params["model"] == "gpt-5-mini"
+        assert base_params["model"] == "gpt-5.6-luna"
         assert "temperature" not in base_params
         # Instructions are the per-row applicable-metric subset, so they are composed
         # in judge_row, never baked into the shared base params.

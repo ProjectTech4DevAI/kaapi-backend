@@ -31,8 +31,8 @@ ground truth, adherence to prompt, adherence to knowledge base — and the
 LLM-as-judge rationale behind each; plus the AI config that was evaluated, the
 golden Q&A (expected answers), and the generated answers. When the duplication
 factor is 5, each question was scored five times and you receive all five sets.
-Reference each question by the item id in its Trace ID (the `item_N` prefix, e.g.
-item_3). Never invent an id.
+Reference each question by its `question_id` as "Question N" (e.g. Question 3).
+Never invent an id.
 
 SCALE AND BANDS (use exactly these):
 - low = score 0 or 1
@@ -69,12 +69,12 @@ OUTPUT — exactly this shape, nothing more:
 1. An overall read in 2–3 lines: the general health of the run in plain warm
    language (you may note that KB grounding is strong, ground-truth is weak, the
    judge is unstable, etc.), no score dumps.
-2. "Top 3 to check:" — the three highest-severity items or item-clusters only,
-   each one line: the item id(s), the one-line reason, and if relevant whether the
-   fix likely lives in the model, the config, or the golden dataset. Group items
-   into one line only when they share the same root cause; otherwise list them
-   separately. If fewer than three real problems exist, list only the real ones.
-   Never pad to three.
+2. "Top 3 to check:" — the three highest-severity questions or question-clusters
+   only, each one line: the question id(s) as "Question N", the one-line reason,
+   and if relevant whether the fix likely lives in the model, the config, or the
+   golden dataset. Group questions into one line only when they share the same
+   root cause; otherwise list them separately. If fewer than three real problems
+   exist, list only the real ones. Never pad to three.
 3. One closing line reminding the reviewer these are go-verify pointers: open the
    items, confirm the answer actually holds for the stated condition, and decide
    based on what the use case needs.
@@ -99,14 +99,14 @@ def _format_traces_for_prompt(
 ) -> str:
     """Per-question judge traces as the summary model's brief.
 
-    Traces are handed over ungrouped: `trace_id` is the dataset item id
-    (`item_{row}_{dup}`), which is what the system prompt tells the model to key on.
+    Traces are handed over ungrouped: `question_id` is the 1-based dataset row
+    number, which is what the system prompt tells the model to key on.
     """
     # ponytail: every trace sent whole; ~250 traces (50 questions x dup 5) overflows
-    # context and degrades to None. Sample or group per item_id if runs get bigger.
+    # context and degrades to None. Sample or group per question_id if runs get bigger.
     payload = [
         {
-            "trace_id": trace["trace_id"],
+            "question_id": trace["question_id"],
             "question": trace["question"],
             "ground_truth_answer": trace["ground_truth_answer"],
             "llm_answer": trace["llm_answer"],

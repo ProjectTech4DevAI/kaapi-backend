@@ -25,9 +25,10 @@ from app.core.batch import (
     BATCH_KEY,
     AnthropicBatchProvider,
     BatchJobState,
-    GeminiBatchProvider,
+    GoogleGCPBatchProvider,
     MessageBatchStatus,
     OpenAIBatchProvider,
+    GeminiBatchProvider,
     extract_text_from_response_dict,
     poll_batch_status,
     process_completed_batch,
@@ -35,14 +36,17 @@ from app.core.batch import (
 )
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
+from fastapi import HTTPException
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.assessment import api
+from app.crud.credentials import get_provider_credential
 from app.crud.assessment.batch import (
     build_anthropic_jsonl,
     build_google_jsonl,
     build_openai_jsonl,
 )
+from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
@@ -59,7 +63,6 @@ from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
     AssessmentConfigBlob,
     AssessmentPreFilters,
-    DuplicateDetectionFilter,
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
@@ -69,9 +72,31 @@ from app.services.assessment.mappers import (
     map_kaapi_to_openai_params,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _google_gcp_credential(
+    *, session: Session, organization_id: int, project_id: int
+) -> dict[str, Any]:
+    """Vertex needs the SA key + bucket; a missing credential is client-fixable."""
+    cred = get_provider_credential(
+        session=session,
+        provider=LLMProvider.GOOGLE_GCP,
+        project_id=project_id,
+        org_id=organization_id,
+    )
+    if not isinstance(cred, dict):
+        raise HTTPException(
+            status_code=404,
+            detail="google-gcp credentials not configured for this project",
+        )
+    return cred
+
 
 # Re-poll cadence for a stage's provider batch, mirroring the assessment cron tick.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
@@ -81,7 +106,6 @@ class ApiStage(StrEnum):
     """Pipeline stage identifiers; names match the pre-filter config + result fields."""
 
     TOPIC_RELEVANCE = "topic_relevance"
-    DUPLICATE_DETECTION = "duplicate_detection"
     ASSESSMENT = "assessment"
 
 
@@ -126,6 +150,8 @@ _FAILED_STATUSES = {
 _SUPPORTED_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_AISTUDIO,
+    LLMProvider.GOOGLE_GCP,
     LLMProvider.ANTHROPIC,
 }
 
@@ -138,14 +164,10 @@ def build_pipeline(
     pre_filters: AssessmentPreFilters | None,
 ) -> list[dict[str, str]]:
     """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
-    present: list[tuple[ApiStage, TopicRelevanceFilter | DuplicateDetectionFilter]] = []
+    present: list[tuple[ApiStage, TopicRelevanceFilter]] = []
     if pre_filters is not None:
         if pre_filters.topic_relevance is not None:
             present.append((ApiStage.TOPIC_RELEVANCE, pre_filters.topic_relevance))
-        if pre_filters.duplicate_detection is not None:
-            present.append(
-                (ApiStage.DUPLICATE_DETECTION, pre_filters.duplicate_detection)
-            )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
@@ -213,28 +235,28 @@ def build_rows(
     return rows, text_columns, attachments
 
 
-def _stage_prompt(batch_input: BatchInput, stage: str) -> str | None:
+def _stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
+    """Per-row prompt template for a stage, sourced from the config's ``submission``.
+
+    The assessment carries a mandatory ``submission``; a pre-filter may carry its own
+    optional one (None when it declares none — its criteria then live entirely in
+    params.instructions with the item's columns + attachments as the user content).
+    """
     if stage == ApiStage.ASSESSMENT:
-        return batch_input.query
-    # Pre-filter criteria live in params.instructions (system prompt); the item's
-    # own columns + attachments are the user content, so there is no per-row
-    # prompt template for a pre-filter stage.
-    return None
+        return blob.assessment.params["submission"]
+    return cast(
+        "str | None", _prefilter_for_stage(blob, stage).params.get("submission")
+    )
 
 
 def _prefilter_for_stage(
     blob: AssessmentConfigBlob, stage: str
-) -> TopicRelevanceFilter | DuplicateDetectionFilter:
-    """The pre-filter config object for a pre-filter stage (topic_relevance / duplicate_detection)."""
+) -> TopicRelevanceFilter:
+    """The pre-filter config object for a pre-filter stage (topic_relevance)."""
     pre = blob.pre_filters
     if pre is not None:
         if stage == ApiStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
             return pre.topic_relevance
-        if (
-            stage == ApiStage.DUPLICATE_DETECTION
-            and pre.duplicate_detection is not None
-        ):
-            return pre.duplicate_detection
     raise ValueError(
         f"[_prefilter_for_stage] No pre-filter configured for stage {stage}"
     )
@@ -248,28 +270,26 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
-        params.pop(
-            "input_schema", None
-        )  # request-validation only, not a provider param
+        # submission is a prompt concern, not a provider param.
+        params.pop("submission", None)
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
         return params
 
     flt = _prefilter_for_stage(blob, stage)
     params = dict(flt.params)
+    params.pop("submission", None)  # prompt template, not a provider param
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     # The config's criteria (mandatory params.instructions) is the system prompt;
     # append the gate directive so the model returns the verdict+reasoning contract.
     criteria = params.get("instructions") or ""
     params["instructions"] = f"{criteria}\n\n{_PREFILTER_INSTRUCTION}"
-    if isinstance(flt, DuplicateDetectionFilter) and flt.knowledge_base_id:
-        params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
 
 
 def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
-    if stage in (ApiStage.TOPIC_RELEVANCE, ApiStage.DUPLICATE_DETECTION):
+    if stage == ApiStage.TOPIC_RELEVANCE:
         flt = _prefilter_for_stage(blob, stage)
         return flt.provider, flt.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
@@ -291,6 +311,16 @@ def _submit_provider_batch(
     description: str,
 ) -> BatchJob:
     """Build provider JSONL and submit it via the shared batch infra."""
+    # Resolve gs:// attachments to provider-reachable URLs before building JSONL.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
+
     if provider_name == LLMProvider.OPENAI:
         mapped, _ = map_kaapi_to_openai_params(session=session, kaapi_params=params)
         jsonl = build_openai_jsonl(
@@ -306,16 +336,32 @@ def _submit_provider_batch(
             "description": description,
             "completion_window": "24h",
         }
-    elif provider_name == LLMProvider.GOOGLE:
+    elif provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         mapped, _ = map_kaapi_to_google_params(params)
         jsonl = build_google_jsonl(
             rows, text_columns, attachments, prompt, mapped, row_indices
         )
-        gemini = GeminiClient.from_credentials(
-            session=session, org_id=organization_id, project_id=project_id
-        )
-        provider = GeminiBatchProvider(client=gemini.client, model=f"models/{model}")
-        config = {"display_name": description, "model": f"models/{model}"}
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = _google_gcp_credential(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+            provider = GoogleGCPBatchProvider.from_credentials(cred, model=model)
+            config = {"display_name": description}  # Vertex uses a bare model id
+        else:
+            gemini = GeminiClient.from_credentials(
+                session=session, org_id=organization_id, project_id=project_id
+            )
+            provider = GeminiBatchProvider(
+                client=gemini.client, model=f"models/{model}"
+            )
+            config = {"display_name": description, "model": f"models/{model}"}
+
     elif provider_name == LLMProvider.ANTHROPIC:
         mapped, _ = map_kaapi_to_anthropic_params(params)
         jsonl = build_anthropic_jsonl(
@@ -362,7 +408,18 @@ def _build_batch_provider(
                 session=session, org_id=organization_id, project_id=project_id
             )
         )
-    if provider_name == LLMProvider.GOOGLE:
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = _google_gcp_credential(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+            return GoogleGCPBatchProvider.from_credentials(cred)
         gemini = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
@@ -453,7 +510,11 @@ def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
             "response_id": response.get("id"),
         }
 
-    if provider_name == LLMProvider.GOOGLE:
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         response = result.get("response")
         text = extract_text_from_response_dict(response) if response else None
         return {
@@ -546,7 +607,10 @@ def _submit_stage(
 ) -> bool:
     """Build + submit the current stage's batch on its row subset. Returns success."""
     kind = _stage_kind(bag["pipeline"], stage)
-    input_columns = blob.assessment.params.get("input_schema")
+    input_columns = {
+        name: col.model_dump(exclude_none=True)
+        for name, col in blob.input_schema.items()
+    }
     rows, text_columns, attachments = build_rows(batch_input, input_columns)
     subset = _row_subset(bag, stage, kind, len(rows))
 
@@ -571,7 +635,7 @@ def _submit_stage(
         rows=[rows[i] for i in subset],
         text_columns=text_columns,
         attachments=attachments,
-        prompt=_stage_prompt(batch_input, stage),
+        prompt=_stage_prompt(blob, stage),
         params=_stage_params(blob, stage),
         row_indices=subset,
         organization_id=organization_id,

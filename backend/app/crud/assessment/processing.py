@@ -236,6 +236,8 @@ def parse_assessment_output(
         elif provider_name in (
             LLMProvider.GOOGLE,
             LLMProvider.GOOGLE_NATIVE,
+            LLMProvider.GOOGLE_AISTUDIO,
+            LLMProvider.GOOGLE_AISTUDIO_NATIVE,
         ):
             response = result.get("response")
             error = result.get("error")

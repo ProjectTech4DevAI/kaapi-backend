@@ -14,6 +14,7 @@ class Provider(str, Enum):
     OPENAI = "openai"
     LANGFUSE = "langfuse"
     GOOGLE_AISTUDIO = "google-aistudio"
+    GOOGLE_GCP = "google-gcp"
     SARVAMAI = "sarvamai"
     ELEVENLABS = "elevenlabs"
     ANTHROPIC = "anthropic"
@@ -68,6 +69,14 @@ class GoogleCredentials(ProviderCredentialsBase):
     api_key: str = Field(description="Google API key")
 
 
+class GoogleGcpCredentials(ProviderCredentialsBase):
+    api_key: str = Field(description="Google GCP API key")
+    project_id: str = Field(description="GCP project ID")
+    location: str = Field(description="GCP region/location")
+    sa_key: JsonValue = Field(description="Service account key JSON")
+    gcs_bucket: str = Field(description="GCS bucket name")
+
+
 class WebhookSecretCredentials(ProviderCredentialsBase):
     webhook_secret: str = Field(
         description="Shared secret used to HMAC-sign outgoing webhooks"
@@ -86,6 +95,7 @@ ProviderCredentials = Annotated[
     | ElevenLabsCredentials
     | AnthropicCredentials
     | GoogleCredentials
+    | GoogleGcpCredentials
     | WebhookSecretCredentials
     | ProxyCredentials,
     Field(
@@ -140,6 +150,10 @@ PROVIDER_CONFIGS: dict[Provider, ProviderConfig] = {
     Provider.GOOGLE: ProviderConfig(
         model=GoogleCredentials,
         sensitive_fields=["api_key"],
+    ),
+    Provider.GOOGLE_GCP: ProviderConfig(
+        model=GoogleGcpCredentials,
+        sensitive_fields=["api_key", "sa_key"],
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
         model=WebhookSecretCredentials, sensitive_fields=["webhook_secret"]
