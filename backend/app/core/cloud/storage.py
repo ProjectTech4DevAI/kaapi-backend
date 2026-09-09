@@ -7,7 +7,7 @@ import logging
 import functools as ft
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, quote, urlparse, urlunparse
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -30,6 +30,18 @@ def _mask(value: str | None) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _attachment_disposition(filename: str) -> str:
+    """
+    Build a Content-Disposition header that forces a download.
+    """
+    ascii_fallback = (
+        filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+    )
+    return (
+        f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+    )
 
 
 class CloudStorageError(Exception):
@@ -151,7 +163,9 @@ class CloudStorage(ABC):
         pass
 
     @abstractmethod
-    def get_signed_url(self, url: str, expires_in: int = 3600) -> str:
+    def get_signed_url(
+        self, url: str, expires_in: int = 3600, filename: str | None = None
+    ) -> str:
         """Generate a signed URL with an optional expiry"""
         pass
 
@@ -255,11 +269,14 @@ class AmazonCloudStorage(CloudStorage):
     # Maximum allowed expiry for signed URLs (24 hours)
     MAX_SIGNED_URL_EXPIRY = 86400
 
-    def get_signed_url(self, url: str, expires_in: int = 3600) -> str:
+    def get_signed_url(
+        self, url: str, expires_in: int = 3600, filename: str | None = None
+    ) -> str:
         """
         Generate a signed S3 URL for the given file.
         :param url: S3 url (e.g., s3://bucket/key)
         :param expires_in: Expiry time in seconds (default: 1 hour, max: 24 hours)
+        :param filename: When set, the URL forces a download under this name
         :return: Signed URL as string
         """
         # Cap expiry at maximum allowed value to prevent excessively long-lived URLs
@@ -267,9 +284,12 @@ class AmazonCloudStorage(CloudStorage):
 
         name = SimpleStorageName.from_url(url)
         try:
+            params: dict[str, str] = {"Bucket": name.Bucket, "Key": name.Key}
+            if filename:
+                params["ResponseContentDisposition"] = _attachment_disposition(filename)
             signed_url = self.aws.client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": name.Bucket, "Key": name.Key},
+                Params=params,
                 ExpiresIn=expires_in,
             )
             logger.info(
