@@ -1,6 +1,5 @@
 import logging
 import tempfile
-from pathlib import PurePosixPath
 from typing import IO, List, cast
 
 from openai import OpenAI
@@ -48,11 +47,13 @@ class OpenAIProvider(BaseProvider):
                     if doc.file_size_kb is None:
                         doc.file_size_kb = round(tmp.tell() / 1024, 2)
                     tmp.seek(0)
-                    # Stored fname keeps its case (drives the download attachment
-                    # name); file search may not match an uppercase suffix.
-                    name = PurePosixPath(doc.fname)
+                    if "." in doc.fname:
+                        filename, extension = doc.fname.rsplit(".", 1)
+                        normalized_fname = f"{filename}.{extension.lower()}"
+                    else:
+                        normalized_fname = doc.fname
                     uploaded = self.client.files.create(
-                        file=(f"{name.stem}{name.suffix.lower()}", tmp),
+                        file=(normalized_fname, tmp),
                         purpose="assistants",
                     )
             except Exception as err:
