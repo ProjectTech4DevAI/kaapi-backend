@@ -38,8 +38,9 @@ def test_before_send_filter_redacts_query_for_llm_job():
 
     request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
     assert request_data["query"] == "[REDACTED]"
+    # callback_url can carry identifying/credential data and is redacted too.
+    assert request_data["callback_url"] == "[REDACTED]"
     # Non-sensitive fields are left untouched so the trace stays useful.
-    assert request_data["callback_url"] == "https://webhooksite.net/some-id"
     assert request_data["config"] == {"blob": {"completion": {"provider": "openai"}}}
 
 

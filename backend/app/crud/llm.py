@@ -224,7 +224,7 @@ def update_llm_call_response(
     if conversation_id is not None:
         db_llm_call.conversation_id = conversation_id
     if metadata is not None:
-        existing_metadata = db_llm_call.metadata_ or {}
+        existing_metadata = dict(db_llm_call.metadata_ or {})
         existing_metadata.update(metadata)
         db_llm_call.metadata_ = existing_metadata
 

@@ -13,7 +13,13 @@ _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_chain_job",
     "app.celery.tasks.job_execution.run_response_job",
 }
-_SENSITIVE_REQUEST_DATA_KEYS = ("query", "request_metadata", "response", "output")
+_SENSITIVE_REQUEST_DATA_KEYS = (
+    "query",
+    "request_metadata",
+    "response",
+    "output",
+    "callback_url",
+)
 
 
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
@@ -102,8 +108,9 @@ def before_send_transaction_filter(
 
 
 def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Replaces end-user text fields in an LLM job's request_data with a
-    placeholder, leaving non-text fields (config, ids, callback_url) intact.
+    """Replaces end-user text fields and identifying URLs in an LLM job's
+    request_data with a placeholder, leaving non-sensitive fields (config, ids)
+    intact.
     """
     request_data = kwargs.get("request_data")
     if not isinstance(request_data, dict):
